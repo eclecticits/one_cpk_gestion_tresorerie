@@ -15,6 +15,7 @@ from app.models.ligne_requisition import LigneRequisition
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
+from app.models.requisition_annexe import RequisitionAnnexe
 from app.models.service import Service
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
@@ -22,6 +23,7 @@ from app.models.user import User
 from app.schemas.remboursement_transport import RemboursementTransportCreate
 from app.schemas.dossier_requisition import DossierRequisitionUpdate
 from app.schemas.requisition import RequisitionCreate, RequisitionExamenPayload
+from app.services import mailer as mailer_service
 from app.services import official_pdf as official_pdf_service
 from app.services.requisition_service import create_requisition_logic
 from app.services.requisition_service import (
@@ -230,14 +232,211 @@ async def test_schedule_bureau_notifications_uses_persisted_examinateur(db_sessi
         action_user=action_user,
     )
 
-    president_task = next(task for task in background_tasks.tasks if task.func.__name__ == "send_requisition_notification")
-    validation_task = next(task for task in background_tasks.tasks if task.func.__name__ == "send_requisition_workflow_email")
+    # Un seul mail part de la validation d'examen : celui au président, le
+    # reste du Bureau en copie. Le second, vers `email_validation_1`, faisait
+    # doublon pour tous ceux qui figurent dans les deux réglages.
+    assert [task.func.__name__ for task in background_tasks.tasks] == ["send_requisition_notification"]
+    president_task = background_tasks.tasks[0]
 
+    # L'examinateur nommé est celui que porte la réquisition, pas celui qui
+    # déclenche l'envoi.
     assert president_task.kwargs["examinateur"] == "Claire Examinateur"
-    assert "Examinée par : Claire Examinateur" in validation_task.kwargs["body_lines"]
-    assert "Examinée par : Bob Soumetteur" not in validation_task.kwargs["body_lines"]
     assert req.pdf_path is not None
     assert Path(president_task.kwargs["official_pdf_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_bureau_email_porte_le_lien_le_bon_et_les_annexes(db_session, monkeypatch):
+    """Le mail construit à la validation d'examen, tel qu'il part réellement.
+
+    Les autres tests s'arrêtent aux arguments de la tâche de fond ; celui-ci
+    exécute l'envoi (SMTP intercepté) et inspecte le MIME. C'est le seul
+    endroit où l'on vérifie que le lien de l'antenne, le bon officiel et les
+    annexes arrivent ensemble dans le message — trois chemins de résolution de
+    fichier différents, chacun déjà tombé en panne séparément.
+    """
+    organisation, service = await _seed_service_context(db_session)
+    organisation.slug = "cpk-test"
+    action_user = User(
+        id=uuid.uuid4(),
+        email=f"action-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Soumetteur",
+        prenom="Bob",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    db_session.add(action_user)
+    db_session.add(
+        SystemSettings(
+            organisation_id=organisation.id,
+            email_expediteur="noreply@example.com",
+            email_president="president@example.com",
+            # Le président est aussi listé dans la copie Bureau, comme sur les
+            # antennes réelles : il ne doit pas recevoir le mail deux fois.
+            emails_bureau_cc="membre1@example.com, president@example.com, membre2@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_password="secret",
+        )
+    )
+    db_session.add(
+        PrintSettings(
+            organisation_id=organisation.id,
+            organization_name="Organisation Test",
+            req_titre_officiel="Bon de requisition",
+        )
+    )
+    await db_session.flush()
+
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        created_by=action_user.id,
+    )
+    req.examen_status = "EXAMINE"
+    req.examen_par = action_user.id
+    req.examen_le = datetime(2026, 9, 10, 8, 30, tzinfo=timezone.utc)
+
+    upload_root = Path("/tmp") / f"req-tests-{uuid.uuid4().hex}"
+    monkeypatch.setattr(official_pdf_service, "UPLOAD_ROOT", str(upload_root))
+    monkeypatch.setattr(requisitions_endpoint, "UPLOAD_ROOT", str(upload_root))
+    monkeypatch.setattr(mailer_service.settings, "tenant_base_domain", "onec-rdc.org")
+
+    # Bon officiel et annexe vivent au même endroit que ce qu'écrivent les
+    # téléversements : `/uploads/tenants/<uuid>/requisitions/<aaaa>/<mm>/`.
+    depot = upload_root / "tenants" / "tenant-uuid" / "requisitions" / "2026" / "09"
+    depot.mkdir(parents=True, exist_ok=True)
+    (depot / "REQ-bon.pdf").write_bytes(b"%PDF-1.4\n% bon officiel\n")
+    (depot / "REQ-annex-1.pdf").write_bytes(b"%PDF-1.4\n% annexe\n")
+    req.pdf_path = "/uploads/tenants/tenant-uuid/requisitions/2026/09/REQ-bon.pdf"
+    db_session.add(
+        RequisitionAnnexe(
+            organisation_id=organisation.id,
+            requisition_id=req.id,
+            file_path="/uploads/tenants/tenant-uuid/requisitions/2026/09/REQ-annex-1.pdf",
+            filename="facture-fournisseur.pdf",
+            file_type="application/pdf",
+            file_size=24,
+            upload_date=_utcnow(),
+        )
+    )
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        requisitions_endpoint,
+        "resolve_smtp_config",
+        lambda ns: type(
+            "SMTPConfigStub",
+            (),
+            {
+                "host": "smtp.example.com",
+                "port": 465,
+                "user": "noreply@example.com",
+                "password": "secret",
+                "sender": "noreply@example.com",
+            },
+        )(),
+    )
+
+    envoyes = []
+    monkeypatch.setattr(
+        mailer_service,
+        "_send_email_message",
+        lambda **kwargs: envoyes.append(kwargs["msg"]),
+    )
+
+    background_tasks = BackgroundTasks()
+    await requisitions_endpoint._schedule_bureau_notifications(
+        db=db_session,
+        background_tasks=background_tasks,
+        req=req,
+        action_user=action_user,
+    )
+    for task in background_tasks.tasks:
+        task.func(**task.kwargs)
+
+    assert len(envoyes) == 1
+    msg = envoyes[0]
+    assert msg["To"] == "president@example.com"
+    assert msg["Cc"] == "membre1@example.com, membre2@example.com"
+
+    # L'objet doit se suffire à lui-même dans une boîte de réception.
+    assert msg["Subject"] == (
+        f"Réquisition {req.numero_requisition} — décision du Bureau requise (100,00 USD)"
+    )
+
+    lien = "https://cpk-test.onec-rdc.org/login"
+    texte = msg.get_body(preferencelist=("plain",)).get_content()
+    corps_html = msg.get_body(preferencelist=("html",)).get_content()
+    assert lien in texte
+    assert lien in corps_html
+
+    # Le mail part APRÈS l'examen : il appelle une décision du Bureau, pas un
+    # examen — et cette décision peut être un rejet, ce que le texte doit dire.
+    assert "soumise à votre appréciation" in texte
+    assert "il vous revient de la valider ou" in texte
+    assert "Décision du Bureau requise" in corps_html
+    assert "Valider ou rejeter la réquisition" in corps_html
+    assert "procéder à l'examen" not in texte
+    for fragment in (
+        "Service demandeur     : Service Test",
+        "Examinée par          : Bob Soumetteur, le 10 septembre 2026",
+        "Pièces jointes : le bon de réquisition signé et 1 annexe.",
+    ):
+        assert fragment in texte
+
+    pieces = {p.get_filename() for p in msg.iter_attachments()}
+    assert pieces == {"REQ-bon.pdf", "REQ-annex-1.pdf"}
+
+
+def test_corps_mail_bureau_annonce_le_bon_manquant(monkeypatch, tmp_path):
+    """Sans bon officiel, le Bureau valide sur les seules annexes : il doit le savoir.
+
+    Cas courant en production — le bon vient d'un téléversement manuel, la
+    plupart des réquisitions n'en ont pas.
+    """
+    monkeypatch.setattr(mailer_service.settings, "tenant_base_domain", "onec-rdc.org")
+    annexe = tmp_path / "facture.pdf"
+    annexe.write_bytes(b"%PDF-1.4\n% annexe\n")
+
+    envoyes = []
+    monkeypatch.setattr(
+        mailer_service,
+        "_send_email_message",
+        lambda **kwargs: envoyes.append(kwargs["msg"]),
+    )
+
+    mailer_service.send_requisition_notification(
+        smtp_host="smtp.example.com",
+        smtp_port=465,
+        smtp_user="noreply@example.com",
+        smtp_password="secret",
+        sender="noreply@example.com",
+        president_email="president@example.com",
+        cc_emails="membre1@example.com",
+        requisition_num="REQ-ADM-2026-00048",
+        montant_total=3400000.0,
+        objet="Frais de mission",
+        created_by="Alice Createur",
+        examinateur="Claire Examinateur",
+        examen_le=datetime(2026, 9, 10, tzinfo=timezone.utc),
+        service_name="Administration",
+        devise="CDF",
+        organisation_slug="cpk",
+        official_pdf_path=None,
+        attachment_paths=[str(annexe)],
+    )
+
+    texte = envoyes[0].get_body(preferencelist=("plain",)).get_content()
+    assert "Pièces jointes : 1 annexe." in texte
+    assert (
+        "Le bon de réquisition signé n'est pas joint : il n'a pas encore été téléversé"
+        in texte
+    )
+    # La devise vient de la réquisition : une demande en CDF ne s'annonce pas en USD.
+    assert "3 400 000,00 CDF" in texte
+    assert "3 400 000,00 CDF" in envoyes[0]["Subject"]
 
 
 @pytest.mark.asyncio
@@ -353,13 +552,10 @@ async def test_schedule_bureau_notifications_skips_without_official_pdf(db_sessi
         created_by=action_user.id,
     )
     req.examen_status = "EXAMINE"
+    # Aucun bon officiel sur le disque : c'est tout l'objet du test.
     upload_root = Path("/tmp") / f"req-tests-{uuid.uuid4().hex}"
     monkeypatch.setattr(official_pdf_service, "UPLOAD_ROOT", str(upload_root))
     monkeypatch.setattr(requisitions_endpoint, "UPLOAD_ROOT", str(upload_root))
-    official_pdf_path = upload_root / "requisitions" / f"{req.numero_requisition}.pdf"
-    official_pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    official_pdf_path.write_bytes(b"%PDF-1.4\n% test pdf\n")
-    req.pdf_path = f"/uploads/requisitions/{official_pdf_path.name}"
     await db_session.commit()
 
     monkeypatch.setattr(
@@ -386,8 +582,11 @@ async def test_schedule_bureau_notifications_skips_without_official_pdf(db_sessi
         action_user=action_user,
     )
 
-    assert len(background_tasks.tasks) == 2
-    assert req.pdf_path is not None
+    # Le bon officiel manque : la notification part quand même, sans pièce
+    # jointe. Un PDF introuvable ne doit pas retenir le Bureau.
+    assert [task.func.__name__ for task in background_tasks.tasks] == ["send_requisition_notification"]
+    assert background_tasks.tasks[0].kwargs["official_pdf_path"] is None
+    assert req.pdf_path is None
 
 
 @pytest.mark.asyncio

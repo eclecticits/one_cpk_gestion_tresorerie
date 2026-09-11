@@ -9,6 +9,7 @@ import os
 import re
 import smtplib
 import ssl
+from datetime import datetime
 from email.message import EmailMessage
 from typing import Any, Callable, TypeVar
 
@@ -67,6 +68,18 @@ def _format_currency(amount: float, currency: str = "USD") -> str:
     return f"{amount_fmt} {currency}"
 
 
+def _format_date_fr(value: datetime | None) -> str | None:
+    """« 10 septembre 2026 ». `strftime("%B")` dépend de la locale du conteneur,
+    qui est C : il rendrait « September »."""
+    if value is None:
+        return None
+    mois = [
+        "janvier", "février", "mars", "avril", "mai", "juin",
+        "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+    ]
+    return f"{value.day} {mois[value.month - 1]} {value.year}"
+
+
 def _notification_labels(type_requisition: str | None) -> dict[str, str]:
     is_transport = (type_requisition or "").strip().lower() == "remboursement_transport"
     if is_transport:
@@ -74,14 +87,48 @@ def _notification_labels(type_requisition: str | None) -> dict[str, str]:
             "subject_prefix": "Remboursement transport",
             "request_label": "demande de remboursement de transport",
             "number_label": "Numéro de remboursement",
-            "dossier_label": "ce dossier de remboursement",
+            "official_doc_label": "le bon de remboursement signé",
+            "cta_label": "Valider ou rejeter le remboursement",
         }
     return {
         "subject_prefix": "Réquisition",
         "request_label": "réquisition",
         "number_label": "Numéro de réquisition",
-        "dossier_label": "ce dossier",
+        "official_doc_label": "le bon de réquisition signé",
+        "cta_label": "Valider ou rejeter la réquisition",
     }
+
+
+def _resume_pieces_jointes(
+    *,
+    official_attached: bool,
+    annexes_count: int,
+    official_doc_label: str,
+) -> tuple[str, str]:
+    """Annonce des pièces jointes : (ce qui est joint, ce qui manque).
+
+    Un mail sans trombone visible ne se cherche pas : le Bureau doit lire ce
+    qu'il a sous la main, et surtout savoir quand il valide sans le bon signé —
+    cas courant, le bon vient d'un téléversement manuel.
+    """
+    annexes_label = ""
+    if annexes_count == 1:
+        annexes_label = "1 annexe"
+    elif annexes_count > 1:
+        annexes_label = f"{annexes_count} annexes"
+
+    note = (
+        f"{official_doc_label[0].upper()}{official_doc_label[1:]} n'est pas joint : "
+        "il n'a pas encore été téléversé dans ONEC Smart."
+    )
+
+    if official_attached and annexes_label:
+        return f"{official_doc_label} et {annexes_label}", ""
+    if official_attached:
+        return official_doc_label, ""
+    if annexes_label:
+        return annexes_label, note
+    return "aucune", note
 
 
 def _generer_corps_mail(
@@ -91,43 +138,60 @@ def _generer_corps_mail(
     montant_total: float,
     created_by: str,
     examinateur: str | None = None,
+    examine_le: str | None = None,
+    service_name: str | None = None,
+    devise: str = "USD",
+    pieces_valeur: str = "aucune",
+    pieces_note: str = "",
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
     organisation_slug: str | None = None,
     type_requisition: str | None = None,
 ) -> str:
     brand_label = _format_brand_label(brand_name, organisation_name)
-    montant_fmt = _format_currency(montant_total)
+    montant_fmt = _format_currency(montant_total, devise)
     labels = _notification_labels(type_requisition)
     tenant_url = _tenant_portal_url(organisation_slug)
+
+    examinateur_valeur = None
+    if examinateur:
+        examinateur_valeur = f"{examinateur}, le {examine_le}" if examine_le else examinateur
+
+    details: list[tuple[str, str]] = [
+        (labels["number_label"], requisition_num),
+        ("Objet", objet),
+        ("Montant", montant_fmt),
+    ]
+    if service_name:
+        details.append(("Service demandeur", service_name))
+    details.append(("Émise par", created_by))
+    if examinateur_valeur:
+        details.append(("Examinée par", examinateur_valeur))
+    largeur = max(len(label) for label, _ in details)
+
     lines = [
         "Chers Membres du Bureau,",
         "",
-        f"Nous vous informons qu'une nouvelle {labels['request_label']} a été enregistrée "
-        "dans ONEC Smart.",
+        f"La {labels['request_label']} ci-dessous a été examinée par le service technique",
+        "et est soumise à votre appréciation : il vous revient de la valider ou",
+        "de la rejeter.",
         "",
-        "Détails de la demande :",
-        "",
-        f"{labels['number_label']} : {requisition_num}",
-        f"Objet : {objet}",
-        f"Montant : {montant_fmt}",
-        f"Émise par : {created_by}",
     ]
-    if examinateur:
-        lines.append(f"Examinée par : {examinateur}")
+    lines.extend(f"{label.ljust(largeur)} : {valeur}" for label, valeur in details)
+    lines.extend(["", f"Pièces jointes : {pieces_valeur}."])
+    if pieces_note:
+        lines.append(pieces_note)
     if tenant_url:
-        lines.extend(["", f"Lien de l'antenne émettrice : {tenant_url}"])
+        lines.extend(["", f"Pour valider ou rejeter : {tenant_url}"])
     lines.extend(
         [
             "",
-            "Nous vous prions de bien vouloir vous connecter à la plateforme afin de procéder "
-            f"à l'examen et, le cas échéant, à la validation de {labels['dossier_label']}.",
+            "Nous vous prions d'agréer, Chers Membres du Bureau, l'expression de notre",
+            "considération distinguée.",
             "",
-            "Nous vous remercions par avance pour votre diligence.",
+            f"Le Secrétariat — {brand_label}",
             "",
-            "Cordialement,",
-            "ONEC Smart",
-            f"{brand_label}",
+            "Message automatique émis par ONEC Smart. Merci de ne pas y répondre.",
         ]
     )
     return "\n".join(lines)
@@ -140,26 +204,55 @@ def _generer_corps_mail_html(
     montant_total: float,
     created_by: str,
     examinateur: str | None = None,
+    examine_le: str | None = None,
+    service_name: str | None = None,
+    devise: str = "USD",
+    pieces_valeur: str = "aucune",
+    pieces_note: str = "",
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
     organisation_slug: str | None = None,
     type_requisition: str | None = None,
 ) -> str:
     brand_label = html.escape(_format_brand_label(brand_name, organisation_name))
-    montant_fmt = html.escape(_format_currency(montant_total))
     labels = _notification_labels(type_requisition)
     tenant_url = _tenant_portal_url(organisation_slug)
-    examinateur_block = (
-        f"<tr><td style=\"padding:6px 0;\"><strong>Examinée par :</strong> {html.escape(examinateur)}</td></tr>"
-        if examinateur
+
+    def _row(label: str, valeur: str) -> str:
+        return (
+            f'<tr><td style="padding:6px 0;"><strong>{html.escape(label)} :</strong> '
+            f"{html.escape(valeur)}</td></tr>"
+        )
+
+    rows = [
+        _row(labels["number_label"], requisition_num),
+        _row("Objet", objet),
+        _row("Montant", _format_currency(montant_total, devise)),
+    ]
+    if service_name:
+        rows.append(_row("Service demandeur", service_name))
+    rows.append(_row("Émise par", created_by))
+    if examinateur:
+        rows.append(
+            _row("Examinée par", f"{examinateur}, le {examine_le}" if examine_le else examinateur)
+        )
+    pieces_note_block = (
+        f'<div style="margin-top:4px; font-size:12px; color:#8a5a1f;">{html.escape(pieces_note)}</div>'
+        if pieces_note
         else ""
     )
+    rows.append(
+        f'<tr><td style="padding:6px 0;"><strong>Pièces jointes :</strong> '
+        f"{html.escape(pieces_valeur)}{pieces_note_block}</td></tr>"
+    )
+    details_rows = "".join(rows)
+
     tenant_link_block = (
         f"""
         <div style="margin:18px 0 4px; padding:14px 16px; border:1px solid #d9eee7; border-radius:12px; background:#f2fbf8;">
-          <div style="font-size:13px; color:#58736c; font-weight:700; margin-bottom:8px;">Antenne émettrice</div>
+          <div style="font-size:13px; color:#58736c; font-weight:700; margin-bottom:8px;">Accès au dossier</div>
           <a href="{html.escape(tenant_url)}" style="display:inline-block; padding:10px 16px; border-radius:10px; background:#0f7b62; color:#ffffff; text-decoration:none; font-weight:700;">
-            Ouvrir l'espace ONEC Smart
+            {html.escape(labels['cta_label'])}
           </a>
           <div style="margin-top:8px; font-size:12px; color:#6b7f79;">{html.escape(tenant_url)}</div>
         </div>
@@ -173,30 +266,28 @@ def _generer_corps_mail_html(
         <div style="max-width:640px; margin:0 auto; border:1px solid #dfe9e6; border-radius:16px; overflow:hidden; background:#ffffff;">
           <div style="padding:22px 24px; background:#0f7b62; color:#ffffff;">
             <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; opacity:.86;">ONEC Smart</div>
-            <h2 style="margin:6px 0 0; font-size:21px; line-height:1.25;">Nouvelle demande enregistrée</h2>
+            <h2 style="margin:6px 0 0; font-size:21px; line-height:1.25;">Décision du Bureau requise</h2>
           </div>
           <div style="padding:22px 24px;">
             <p style="margin:0 0 14px;">Chers Membres du Bureau,</p>
             <p style="margin:0 0 18px;">
-              Une nouvelle {html.escape(labels['request_label'])} a été enregistrée dans ONEC Smart.
+              La {html.escape(labels['request_label'])} ci-dessous a été examinée par le service technique et est soumise à votre appréciation : il vous revient de la valider ou de la rejeter.
             </p>
             <div style="padding:14px 16px; border:1px solid #e2ebe8; border-radius:12px; background:#fbfefd;">
               <div style="font-weight:800; color:#155d4c; margin-bottom:8px;">Détails de la demande</div>
               <table style="border-collapse: collapse; width:100%;">
-                <tr><td style="padding:6px 0;"><strong>{html.escape(labels['number_label'])} :</strong> {html.escape(requisition_num)}</td></tr>
-                <tr><td style="padding:6px 0;"><strong>Objet :</strong> {html.escape(objet)}</td></tr>
-                <tr><td style="padding:6px 0;"><strong>Montant :</strong> {montant_fmt}</td></tr>
-                <tr><td style="padding:6px 0;"><strong>Émise par :</strong> {html.escape(created_by)}</td></tr>
-                {examinateur_block}
+                {details_rows}
               </table>
             </div>
             {tenant_link_block}
             <p style="margin:18px 0 0;">
-              Merci de vous connecter à la plateforme afin de procéder à l'examen et, le cas échéant, à la validation de {html.escape(labels['dossier_label'])}.
+              Nous vous prions d'agréer, Chers Membres du Bureau, l'expression de notre considération distinguée.
             </p>
+            <p style="margin:14px 0 0; font-weight:700;">Le Secrétariat — {brand_label}</p>
           </div>
           <div style="padding:14px 24px; background:#f8fafc; color:#7b8d88; font-size:12px; text-align:center;">
-            {brand_label} · ONEC Smart
+            {brand_label} · ONEC Smart<br />
+            Message automatique émis par ONEC Smart. Merci de ne pas y répondre.
           </div>
         </div>
       </body>
@@ -297,6 +388,9 @@ def send_requisition_notification(
     objet: str,
     created_by: str,
     examinateur: str | None = None,
+    examen_le: datetime | None = None,
+    service_name: str | None = None,
+    devise: str = "USD",
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
     organisation_slug: str | None = None,
@@ -304,43 +398,56 @@ def send_requisition_notification(
     official_pdf_path: str | None = None,
     attachment_paths: list[str] | None = None,
 ) -> None:
-    cc_list = _split_emails(cc_emails)
+    # Le président est aussi membre du Bureau dans la plupart des antennes : son
+    # adresse figure alors dans les deux réglages, et il recevait le même mail
+    # deux fois, son adresse affichée deux fois dans l'en-tête.
+    cc_list = [
+        email
+        for email in _split_emails(cc_emails)
+        if email.strip().lower() != (president_email or "").strip().lower()
+    ]
     labels = _notification_labels(type_requisition)
 
+    # Les pièces sont annoncées dans le corps : il faut donc savoir avant de
+    # l'écrire lesquelles seront réellement attachées plus bas.
+    official_attached = bool(official_pdf_path and os.path.exists(official_pdf_path))
+    annexes_count = sum(1 for path in (attachment_paths or []) if path and os.path.exists(path))
+    pieces_valeur, pieces_note = _resume_pieces_jointes(
+        official_attached=official_attached,
+        annexes_count=annexes_count,
+        official_doc_label=labels["official_doc_label"],
+    )
+    corps_kwargs = dict(
+        requisition_num=requisition_num,
+        objet=objet,
+        montant_total=montant_total,
+        created_by=created_by,
+        examinateur=examinateur,
+        examine_le=_format_date_fr(examen_le),
+        service_name=service_name,
+        devise=devise,
+        pieces_valeur=pieces_valeur,
+        pieces_note=pieces_note,
+        brand_name=brand_name,
+        organisation_name=organisation_name,
+        organisation_slug=organisation_slug,
+        type_requisition=type_requisition,
+    )
+
     msg = EmailMessage()
-    msg["Subject"] = f"{labels['subject_prefix']} - {requisition_num}"
+    # Le Bureau trie sur l'objet : il doit y lire la référence, ce qu'on attend
+    # de lui et le montant, sans ouvrir le message.
+    msg["Subject"] = (
+        f"{labels['subject_prefix']} {requisition_num} — décision du Bureau requise "
+        f"({_format_currency(montant_total, devise)})"
+    )
     msg["From"] = sender
     msg["To"] = president_email
     if cc_list:
         msg["Cc"] = ", ".join(cc_list)
 
-    msg.set_content(
-        _generer_corps_mail(
-            requisition_num=requisition_num,
-            objet=objet,
-            montant_total=montant_total,
-            created_by=created_by,
-            examinateur=examinateur,
-            brand_name=brand_name,
-            organisation_name=organisation_name,
-            organisation_slug=organisation_slug,
-            type_requisition=type_requisition,
-        )
-    )
-    msg.add_alternative(
-        _generer_corps_mail_html(
-            requisition_num=requisition_num,
-            objet=objet,
-            montant_total=montant_total,
-            created_by=created_by,
-            examinateur=examinateur,
-            brand_name=brand_name,
-            organisation_name=organisation_name,
-            organisation_slug=organisation_slug,
-            type_requisition=type_requisition,
-        ),
-        subtype="html",
-    )
+    msg.set_content(_generer_corps_mail(**corps_kwargs))
+    msg.add_alternative(_generer_corps_mail_html(**corps_kwargs), subtype="html")
 
     if official_pdf_path:
         if os.path.exists(official_pdf_path):

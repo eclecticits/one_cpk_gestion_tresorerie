@@ -680,6 +680,15 @@ async def _schedule_bureau_notifications(
         if examinateur:
             examinateur_name = " ".join(filter(None, [examinateur.prenom, examinateur.nom])) or examinateur.email
 
+    # Le service demandeur figure dans le mail : le Bureau valide des dépenses
+    # de plusieurs services et le numéro seul ne le dit pas.
+    service_name = None
+    if req.service_id:
+        service_res = await db.execute(
+            select(Service.libelle).where(Service.id == req.service_id).limit(1)
+        )
+        service_name = service_res.scalar_one_or_none()
+
     official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
     await _log_requisition_email_preflight(db, req, official_pdf_path, attachment_paths)
     if not official_pdf_path:
@@ -710,6 +719,9 @@ async def _schedule_bureau_notifications(
             objet=req.objet or "",
             created_by=created_by_name,
             examinateur=examinateur_name,
+            examen_le=req.examen_le,
+            service_name=service_name,
+            devise=req.devise or "USD",
             official_pdf_path=official_pdf_path,
             attachment_paths=attachment_paths,
             brand_name="ONEC",
