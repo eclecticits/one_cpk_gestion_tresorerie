@@ -9,6 +9,7 @@ import os
 import re
 import smtplib
 import ssl
+import textwrap
 from datetime import datetime
 from email.message import EmailMessage
 from typing import Any, Callable, TypeVar
@@ -169,12 +170,19 @@ def _generer_corps_mail(
         details.append(("Examinée par", examinateur_valeur))
     largeur = max(len(label) for label, _ in details)
 
+    # Les phrases sont écrites d'un seul tenant puis repliées : le libellé
+    # « demande de remboursement de transport » est trois fois plus long que
+    # « réquisition », des retours à la ligne en dur casseraient l'un des deux.
+    intro = (
+        "Nous avons l'honneur de porter à votre connaissance que la "
+        f"{labels['request_label']} reprise ci-dessous a été examinée par le "
+        "service technique et est soumise à votre appréciation. Il vous revient "
+        "de la valider ou de la rejeter."
+    )
     lines = [
         "Chers Membres du Bureau,",
         "",
-        f"La {labels['request_label']} ci-dessous a été examinée par le service technique",
-        "et est soumise à votre appréciation : il vous revient de la valider ou",
-        "de la rejeter.",
+        *textwrap.wrap(intro, width=75),
         "",
     ]
     lines.extend(f"{label.ljust(largeur)} : {valeur}" for label, valeur in details)
@@ -186,8 +194,11 @@ def _generer_corps_mail(
     lines.extend(
         [
             "",
-            "Nous vous prions d'agréer, Chers Membres du Bureau, l'expression de notre",
-            "considération distinguée.",
+            *textwrap.wrap(
+                "Nous vous prions d'agréer, Chers Membres du Bureau, l'expression "
+                "de notre considération distinguée.",
+                width=75,
+            ),
             "",
             f"Le Secrétariat — {brand_label}",
             "",
@@ -271,7 +282,7 @@ def _generer_corps_mail_html(
           <div style="padding:22px 24px;">
             <p style="margin:0 0 14px;">Chers Membres du Bureau,</p>
             <p style="margin:0 0 18px;">
-              La {html.escape(labels['request_label'])} ci-dessous a été examinée par le service technique et est soumise à votre appréciation : il vous revient de la valider ou de la rejeter.
+              Nous avons l'honneur de porter à votre connaissance que la {html.escape(labels['request_label'])} reprise ci-dessous a été examinée par le service technique et est soumise à votre appréciation. Il vous revient de la valider ou de la rejeter.
             </p>
             <div style="padding:14px 16px; border:1px solid #e2ebe8; border-radius:12px; background:#fbfefd;">
               <div style="font-weight:800; color:#155d4c; margin-bottom:8px;">Détails de la demande</div>

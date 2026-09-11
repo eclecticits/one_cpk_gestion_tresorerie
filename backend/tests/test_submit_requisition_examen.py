@@ -374,8 +374,10 @@ async def test_bureau_email_porte_le_lien_le_bon_et_les_annexes(db_session, monk
 
     # Le mail part APRÈS l'examen : il appelle une décision du Bureau, pas un
     # examen — et cette décision peut être un rejet, ce que le texte doit dire.
-    assert "soumise à votre appréciation" in texte
-    assert "il vous revient de la valider ou" in texte
+    # Les phrases sont repliées à 75 colonnes : on compare hors retours ligne.
+    texte_plat = " ".join(texte.split())
+    assert texte_plat.startswith("Chers Membres du Bureau, Nous avons l'honneur de porter")
+    assert "est soumise à votre appréciation. Il vous revient de la valider ou de la rejeter." in texte_plat
     assert "Décision du Bureau requise" in corps_html
     assert "Valider ou rejeter la réquisition" in corps_html
     assert "procéder à l'examen" not in texte
