@@ -14,6 +14,13 @@
 - `npm run dev` starts the Vite dev server on port 5173.
 - `npm run build` builds the production frontend to `frontend/dist`.
 - `npm run preview` serves the production build for local smoke tests.
+- `make migrate` applies pending Alembic migrations to the dev database
+  (`make migrate-status` shows the current revision and the heads in the code;
+  `make migrate REV=<revision>` stops at a given revision).
+  Do **not** run `alembic upgrade` from the `backend` container: its image ships
+  a frozen copy of `alembic/versions`, so it silently reports "already up to
+  date" and migrates nothing. `make migrate` goes through `backend-tests`, which
+  mounts `backend/alembic` live, and points `DATABASE_URL` at the dev database.
 
 ## Coding Style & Naming Conventions
 - Python: follow PEP 8, use type hints where practical, and keep modules organized by feature (`app/api`, `app/models`, `app/schemas`).
