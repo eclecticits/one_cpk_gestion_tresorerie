@@ -12,7 +12,9 @@ Couvre :
 """
 from __future__ import annotations
 
+import importlib.util
 import io
+from pathlib import Path
 from datetime import date
 import uuid
 
@@ -20,7 +22,7 @@ import openpyxl
 import pytest
 from sqlalchemy import select
 
-from sqlalchemy import event
+from sqlalchemy import event, text
 
 from fastapi import HTTPException
 
@@ -37,6 +39,7 @@ from app.modules.secretariat.tableau.exporter import build_workbook
 from app.modules.secretariat.tableau.models import TableauDossier
 from app.modules.secretariat.tableau.schemas import TableauDecisionCreate
 from app.modules.secretariat.tableau.service import (
+    _norm_numero_ordre,
     _valider_lignes,
     create_decision,
     get_base_tableau,
@@ -1224,3 +1227,107 @@ class TestAnalyseSurBaseConsolidee:
             await run_analyse_base(db_session, test_admin_user, autre.id)
 
         assert erreur.value.status_code == 404
+
+
+def _migration_normalisation():
+    """Charge la migration pour éprouver son SQL, et non une copie approximative."""
+    chemin = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "20260914_tableau_numeros.py"
+    spec = importlib.util.spec_from_file_location("migration_numeros", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestNormalisationDesNumerosExistants:
+    """Les dossiers importés avant la règle de normalisation doivent s'y aligner."""
+
+    NUMEROS_SALES = [
+        ("  ec/18.00062 ", "EC/18.00062"),
+        ("EC / 18.00063", "EC/18.00063"),
+        ("ec/18.00064\t", "EC/18.00064"),
+        ("Sec/18.00065", "SEC/18.00065"),
+        ("EC/18.00066", "EC/18.00066"),
+        ("   ", None),
+    ]
+
+    async def _poser_dossiers_bruts(self, db, org, exercice, import_id):
+        """Insère en contournant l'import, pour simuler des données antérieures."""
+        for index, (sale, _) in enumerate(self.NUMEROS_SALES):
+            await db.execute(text("""
+                INSERT INTO secretariat_tableau_dossiers
+                    (organisation_id, import_id, exercice, numero_ordre, nom, categorie,
+                     statut_dossier, anomalie_detectee, created_at, updated_at)
+                VALUES (:org, :imp, :ex, :num, :nom, 'EC Cabinet',
+                        'imported', false, now(), now())
+            """), {"org": org, "imp": import_id, "ex": exercice, "num": sale, "nom": f"MEMBRE {index}"})
+        await db.flush()
+
+    @pytest.mark.asyncio
+    async def test_le_sql_de_la_migration_reproduit_la_normalisation_python(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        socle = await import_excel(db_session, test_admin_user, org, "socle.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.60001"},
+        ), "2080")
+        await self._poser_dossiers_bruts(db_session, org, "2080", socle.imp.id)
+
+        await db_session.execute(text(_migration_normalisation().UPDATE))
+        await db_session.flush()
+
+        res = await db_session.execute(
+            select(TableauDossier.nom, TableauDossier.numero_ordre)
+            .where(TableauDossier.exercice == "2080", TableauDossier.nom.like("MEMBRE %"))
+        )
+        obtenus = {nom: numero for nom, numero in res.all()}
+
+        for index, (sale, attendu) in enumerate(self.NUMEROS_SALES):
+            nom = f"MEMBRE {index}"
+            assert obtenus[nom] == attendu, f"{sale!r} normalisé en {obtenus[nom]!r}"
+            # Le SQL doit dire exactement ce que dit le service.
+            assert obtenus[nom] == _norm_numero_ordre(sale)
+
+    @pytest.mark.asyncio
+    async def test_apres_normalisation_les_situations_se_regroupent(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        ancien = await import_excel(db_session, test_admin_user, org, "ancien.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.60010", "heures": 60},
+        ), "2081", date_situation=date(2081, 1, 5))
+        # Le dossier d'origine portait la graphie du fichier.
+        await db_session.execute(text("""
+            UPDATE secretariat_tableau_dossiers SET numero_ordre = ' ec/18.60010 '
+             WHERE import_id = :imp
+        """), {"imp": ancien.imp.id})
+        await db_session.flush()
+
+        recent = await import_excel(db_session, test_admin_user, org, "recent.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.60010", "heures": 120},
+        ), "2081", date_situation=date(2081, 6, 20))
+
+        avant = await get_base_tableau(db_session, [org], exercice="2081")
+        await db_session.execute(text(_migration_normalisation().UPDATE))
+        await db_session.flush()
+        apres = await get_base_tableau(db_session, [org], exercice="2081")
+
+        # Avant, les deux graphies passaient pour deux membres distincts.
+        assert avant["total_membres"] == 2
+        assert apres["total_membres"] == 1
+        assert float(apres["dossiers"][0].heures_forco) == 120
+        assert apres["dossiers"][0].import_id == recent.imp.id
+
+    @pytest.mark.asyncio
+    async def test_la_migration_est_sans_effet_sur_des_numeros_deja_propres(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        imp = await import_excel(db_session, test_admin_user, org, "propre.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.60020"},
+            {"numero_ordre": "SEC/19.60021"},
+        ), "2082")
+
+        avant = sorted(n for n in (await db_session.execute(
+            select(TableauDossier.numero_ordre).where(TableauDossier.import_id == imp.imp.id)
+        )).scalars().all())
+        await db_session.execute(text(_migration_normalisation().UPDATE))
+        await db_session.flush()
+        apres = sorted(n for n in (await db_session.execute(
+            select(TableauDossier.numero_ordre).where(TableauDossier.import_id == imp.imp.id)
+        )).scalars().all())
+
+        assert avant == apres == ["EC/18.60020", "SEC/19.60021"]
