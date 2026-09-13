@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +21,7 @@ class TableauImport(Base):
     organisation_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     exercice: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    date_situation: Mapped[Date | None] = mapped_column(Date, nullable=True, index=True)
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
     total_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -55,6 +56,8 @@ class TableauDossier(Base):
     age: Mapped[int | None] = mapped_column(Integer, nullable=True)
     nif: Mapped[str | None] = mapped_column(String(50), nullable=True)
     anciennete: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    annee_inscription: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    anciennete_annees: Mapped[int | None] = mapped_column(Integer, nullable=True)
     conclusion: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     conclusion_motif: Mapped[str | None] = mapped_column(Text, nullable=True)
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -66,6 +69,11 @@ class TableauDossier(Base):
     raw_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    __table_args__ = (
+        # Sert la déduplication de la base consolidée (une situation par membre).
+        Index("ix_secretariat_tableau_dossiers_base", "organisation_id", "exercice", "numero_ordre"),
+    )
 
     import_ref: Mapped[TableauImport] = relationship("TableauImport", back_populates="dossiers")
     anomalies: Mapped[list[TableauAnomalie]] = relationship("TableauAnomalie", back_populates="dossier", cascade="all, delete-orphan")

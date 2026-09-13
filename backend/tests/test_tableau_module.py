@@ -13,9 +13,18 @@ Couvre :
 from __future__ import annotations
 
 import io
+from datetime import date
+import uuid
 
 import openpyxl
+import pytest
+from sqlalchemy import select
 
+from sqlalchemy import event
+
+from fastapi import HTTPException
+
+from app.models.organisation import Organisation
 from app.modules.secretariat.tableau import verdict as V
 from app.modules.secretariat.tableau.analyzer import (
     HEURES_FORCO_MIN,
@@ -25,7 +34,16 @@ from app.modules.secretariat.tableau.analyzer import (
 from app.modules.secretariat.tableau.comparison import compare_exercices
 from app.modules.secretariat.tableau.excel_import import parse_excel_bytes
 from app.modules.secretariat.tableau.exporter import build_workbook
-from app.modules.secretariat.tableau.service import _valider_lignes
+from app.modules.secretariat.tableau.models import TableauDossier
+from app.modules.secretariat.tableau.schemas import TableauDecisionCreate
+from app.modules.secretariat.tableau.service import (
+    _valider_lignes,
+    create_decision,
+    get_base_tableau,
+    import_excel,
+    run_analyse,
+    run_analyse_base,
+)
 
 
 def _dossier(**overrides) -> dict:
@@ -176,6 +194,52 @@ def _make_workbook_bytes() -> bytes:
     return buf.getvalue()
 
 
+def _make_import_bytes(*rows: dict, sheet_title: str = "EC EN CABINET 26") -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_title
+    ws.append(["N° D'ORDRE", "NOM, POST NOMS ET PRENOMS", "Sexe", "N° TELEPHONE", "E-MAIL",
+               "CABINET D'ATTACHE", "Ancienneté", "Cotisation", "NHV", "Assurance Valide",
+               "C d'affaire", "NIF"])
+    for row in rows:
+        ws.append([
+            row.get("numero_ordre"),
+            row.get("nom", "KABAMBA Jean"),
+            row.get("sexe", "M"),
+            row.get("telephone"),
+            row.get("email"),
+            row.get("cabinet", "CABINET ALPHA"),
+            row.get("anciennete", "Ancien"),
+            row.get("cotisation", "NON"),
+            row.get("heures", 60),
+            row.get("assurance", "OUI"),
+            row.get("chiffre_affaires", "OUI"),
+            row.get("nif"),
+        ])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+class _CompteurRequetes:
+    """Compte les allers-retours SQL réellement émis pendant un bloc."""
+
+    def __init__(self, session):
+        self.engine = session.bind.sync_engine
+        self.total = 0
+
+    def _on_execute(self, *_args, **_kwargs):
+        self.total += 1
+
+    def __enter__(self):
+        event.listen(self.engine, "before_cursor_execute", self._on_execute)
+        return self
+
+    def __exit__(self, *_exc):
+        event.remove(self.engine, "before_cursor_execute", self._on_execute)
+        return False
+
+
 class TestExcelImport:
     def test_parse_multi_feuilles_et_categorie_par_feuille(self):
         rows, errors = parse_excel_bytes(_make_workbook_bytes(), "2026")
@@ -282,3 +346,881 @@ class TestCompareExercices:
         b = [_dossier(id=1, nom="DUPONT", prenom="jean")]
         result = compare_exercices(a, b, "2025", "2026")
         assert result["dossiers_en_commun"] == 1
+
+
+class TestTableauSituationCourante:
+    """Le Tableau garde tous les imports, mais une seule situation fait foi par membre."""
+
+    @pytest.mark.asyncio
+    async def test_premier_import_constitue_la_base_et_calcule_l_anciennete(self, db_session, test_admin_user):
+        numero = "EC/18.00062"
+        outcome = await import_excel(
+            db_session,
+            test_admin_user,
+            test_admin_user.organisation_id,
+            "tableau-initial.xlsx",
+            _make_import_bytes({"numero_ordre": numero, "heures": 60}),
+            "2026",
+        )
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        assert outcome.imp.date_situation is not None
+        assert dossier.annee_inscription == 2018
+        assert dossier.anciennete_annees == 8
+        assert dossier.raw_data["situation"]["courante"] is True
+
+    @pytest.mark.asyncio
+    async def test_numero_d_ordre_normalise_sans_deformer_sa_structure(self, db_session, test_admin_user):
+        outcome = await import_excel(
+            db_session,
+            test_admin_user,
+            test_admin_user.organisation_id,
+            "numero-sale.xlsx",
+            _make_import_bytes({"numero_ordre": "  ec/18.00063 "}),
+            "2026",
+        )
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        assert dossier.numero_ordre == "EC/18.00063"
+
+    @pytest.mark.asyncio
+    async def test_import_suivant_actualise_sans_sommer_ni_dupliquer(self, db_session, test_admin_user):
+        numero = "EC/18.00064"
+        await import_excel(
+            db_session, test_admin_user, test_admin_user.organisation_id, "formation-1.xlsx",
+            _make_import_bytes({"numero_ordre": numero, "heures": 60, "cotisation": "NON"}), "2026",
+            date_situation=date(2026, 1, 5),
+        )
+        await import_excel(
+            db_session, test_admin_user, test_admin_user.organisation_id, "formation-2.xlsx",
+            _make_import_bytes({"numero_ordre": numero, "heures": 90, "cotisation": "OUI"}), "2026",
+            date_situation=date(2026, 3, 15),
+        )
+        dossiers = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.numero_ordre == numero)
+        )).scalars().all()
+        courantes = [d for d in dossiers if d.raw_data["situation"]["courante"]]
+
+        # Les deux situations sont conservées, une seule fait foi, et rien n'est cumulé.
+        assert len(dossiers) == 2
+        assert len(courantes) == 1
+        assert float(courantes[0].heures_forco) == 90
+        assert courantes[0].cotisation_payee is True
+
+    @pytest.mark.asyncio
+    async def test_trois_imports_successifs_designent_le_plus_recent(self, db_session, test_admin_user):
+        numero = "EC/18.00070"
+        for file_name, situation_date, heures in [
+            ("formation-jan.xlsx", date(2026, 1, 5), 60),
+            ("formation-mar.xlsx", date(2026, 3, 15), 90),
+            ("formation-jun.xlsx", date(2026, 6, 20), 120),
+        ]:
+            await import_excel(
+                db_session, test_admin_user, test_admin_user.organisation_id, file_name,
+                _make_import_bytes({"numero_ordre": numero, "heures": heures}), "2026",
+                date_situation=situation_date,
+            )
+        dossiers = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.numero_ordre == numero)
+        )).scalars().all()
+        courantes = [d for d in dossiers if d.raw_data["situation"]["courante"]]
+
+        assert len(dossiers) == 3
+        assert len(courantes) == 1
+        assert float(courantes[0].heures_forco) == 120
+
+    @pytest.mark.asyncio
+    async def test_reimport_d_un_ancien_fichier_ne_retrograde_pas_la_situation(self, db_session, test_admin_user):
+        numero = "EC/18.00071"
+        await import_excel(
+            db_session, test_admin_user, test_admin_user.organisation_id, "formation-jun.xlsx",
+            _make_import_bytes({"numero_ordre": numero, "heures": 120}), "2026",
+            date_situation=date(2026, 6, 20),
+        )
+        ancien = await import_excel(
+            db_session, test_admin_user, test_admin_user.organisation_id, "formation-mar-reimport.xlsx",
+            _make_import_bytes({"numero_ordre": numero, "heures": 90}), "2026",
+            date_situation=date(2026, 3, 15),
+        )
+        dossiers = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.numero_ordre == numero)
+        )).scalars().all()
+        courantes = [d for d in dossiers if d.raw_data["situation"]["courante"]]
+        dossier_ancien = next(d for d in dossiers if d.import_id == ancien.imp.id)
+
+        # Téléversé en dernier, mais plus ancien au sens métier : il ne prend pas la main.
+        assert len(dossiers) == 2
+        assert float(courantes[0].heures_forco) == 120
+        assert dossier_ancien.raw_data["situation"]["courante"] is False
+
+    @pytest.mark.asyncio
+    async def test_reimport_ancienne_cotisation_non_ne_retrograde_pas(self, db_session, test_admin_user):
+        numero = "EC/18.00072"
+        await import_excel(
+            db_session, test_admin_user, test_admin_user.organisation_id, "cotisation-recente.xlsx",
+            _make_import_bytes({"numero_ordre": numero, "cotisation": "OUI"}), "2026",
+            date_situation=date(2026, 6, 20),
+        )
+        await import_excel(
+            db_session, test_admin_user, test_admin_user.organisation_id, "cotisation-ancienne.xlsx",
+            _make_import_bytes({"numero_ordre": numero, "cotisation": "NON"}), "2026",
+            date_situation=date(2026, 3, 15),
+        )
+        courantes = [
+            d for d in (await db_session.execute(
+                select(TableauDossier).where(TableauDossier.numero_ordre == numero)
+            )).scalars().all()
+            if d.raw_data["situation"]["courante"]
+        ]
+
+        assert len(courantes) == 1
+        assert courantes[0].cotisation_payee is True
+
+    @pytest.mark.asyncio
+    async def test_deux_lignes_du_meme_membre_designent_la_derniere(self, db_session, test_admin_user):
+        numero = "EC/18.00073"
+        outcome = await import_excel(
+            db_session, test_admin_user, test_admin_user.organisation_id, "doublon-interne.xlsx",
+            _make_import_bytes(
+                {"numero_ordre": numero, "heures": 40},
+                {"numero_ordre": numero, "heures": 95},
+            ),
+            "2026",
+        )
+        dossiers = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalars().all()
+        courantes = [d for d in dossiers if d.raw_data["situation"]["courante"]]
+
+        assert len(dossiers) == 2
+        assert len(courantes) == 1
+        assert float(courantes[0].heures_forco) == 95
+
+    @pytest.mark.asyncio
+    async def test_ligne_sans_numero_d_ordre_reste_importee_mais_non_rattachee(self, db_session, test_admin_user):
+        outcome = await import_excel(
+            db_session, test_admin_user, test_admin_user.organisation_id, "sans-numero.xlsx",
+            _make_import_bytes({"numero_ordre": None, "nom": "MUKENDI Paul"}), "2026",
+        )
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        # L'Agent Tableau doit pouvoir corriger la ligne, donc elle n'est pas rejetée.
+        assert dossier.nom == "MUKENDI Paul"
+        assert dossier.raw_data["situation"]["courante"] is False
+
+    @pytest.mark.asyncio
+    async def test_le_cout_sql_ne_croit_pas_avec_le_nombre_de_lignes(self, db_session, test_admin_user):
+        """Un import de 200 lignes ne doit pas coûter 200 allers-retours SQL."""
+        def _fichier(debut: int, nombre: int) -> bytes:
+            return _make_import_bytes(*[
+                {"numero_ordre": f"EC/17.{debut + i:05d}", "heures": 60}
+                for i in range(nombre)
+            ])
+
+        with _CompteurRequetes(db_session) as petit:
+            await import_excel(db_session, test_admin_user, test_admin_user.organisation_id,
+                               "cout-2.xlsx", _fichier(100, 2), "2026")
+        with _CompteurRequetes(db_session) as grand:
+            await import_excel(db_session, test_admin_user, test_admin_user.organisation_id,
+                               "cout-20.xlsx", _fichier(200, 20), "2026")
+
+        assert grand.total - petit.total < 18
+
+
+class TestBaseTableauConsolidee:
+    """La base du Tableau : une situation par membre, tous imports de l'exercice confondus."""
+
+    async def _importer(self, db, user, org_id, fichier, situation, **kw):
+        return await import_excel(db, user, org_id, fichier,
+                                  _make_import_bytes(*kw["rows"]), kw.get("exercice", "2026"),
+                                  date_situation=situation)
+
+    @pytest.mark.asyncio
+    async def test_la_base_retient_la_situation_la_plus_recente_de_chaque_membre(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "jan.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10001", "nom": "ALPHA Jean", "heures": 60},
+            {"numero_ordre": "EC/18.10002", "nom": "BETA Marie", "heures": 20},
+        ), "2031", date_situation=date(2031, 1, 5))
+        await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10001", "nom": "ALPHA Jean", "heures": 120},
+        ), "2031", date_situation=date(2031, 6, 20))
+
+        base = await get_base_tableau(db_session, [org], exercice="2031")
+        par_numero = {d.numero_ordre: d for d in base["dossiers"]}
+
+        # Un seul ALPHA malgré deux imports, et c'est la situation de juin.
+        assert base["total_membres"] == 2
+        assert float(par_numero["EC/18.10001"].heures_forco) == 120
+        assert float(par_numero["EC/18.10002"].heures_forco) == 20
+        assert base["imports_couverts"] == sorted(base["imports_couverts"])
+
+    @pytest.mark.asyncio
+    async def test_un_reimport_plus_ancien_ne_fait_pas_reculer_la_base(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10010", "heures": 120},
+        ), "2032", date_situation=date(2032, 6, 20))
+        await import_excel(db_session, test_admin_user, org, "mars-reimport.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10010", "heures": 90},
+        ), "2032", date_situation=date(2032, 3, 15))
+
+        base = await get_base_tableau(db_session, [org], exercice="2032")
+
+        assert base["total_membres"] == 1
+        assert float(base["dossiers"][0].heures_forco) == 120
+
+    @pytest.mark.asyncio
+    async def test_la_base_concorde_avec_le_marqueur_pose_a_l_import(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        for situation, heures in [(date(2033, 1, 5), 60), (date(2033, 3, 15), 90), (date(2033, 6, 20), 120)]:
+            await import_excel(db_session, test_admin_user, org, f"f{heures}.xlsx", _make_import_bytes(
+                {"numero_ordre": "EC/18.10020", "heures": heures},
+            ), "2033", date_situation=situation)
+
+        base = await get_base_tableau(db_session, [org], exercice="2033")
+        marques = [
+            d for d in (await db_session.execute(
+                select(TableauDossier).where(TableauDossier.exercice == "2033")
+            )).scalars().all()
+            if d.raw_data["situation"]["courante"]
+        ]
+
+        # Les deux mécanismes doivent désigner exactement la même ligne.
+        assert [d.id for d in base["dossiers"]] == [d.id for d in marques]
+
+    @pytest.mark.asyncio
+    async def test_les_lignes_sans_numero_d_ordre_restent_toutes_presentes(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "sans-numero.xlsx", _make_import_bytes(
+            {"numero_ordre": None, "nom": "MUKENDI Paul"},
+            {"numero_ordre": None, "nom": "NGOY Sarah"},
+            {"numero_ordre": "EC/18.10030", "nom": "ALPHA Jean"},
+        ), "2034")
+
+        base = await get_base_tableau(db_session, [org], exercice="2034")
+
+        # Faute de n° d'ordre, rien ne permet de les rapprocher : elles restent à corriger.
+        assert base["total_membres"] == 3
+        assert base["membres_sans_numero"] == 2
+
+    @pytest.mark.asyncio
+    async def test_la_base_d_un_conseil_ignore_celle_d_un_autre(self, db_session, test_admin_user, test_organisation):
+        org = test_admin_user.organisation_id
+        autre = Organisation(nom="Conseil Provincial Test", slug=f"cp-test-{uuid.uuid4().hex[:8]}")
+        db_session.add(autre)
+        await db_session.flush()
+
+        await import_excel(db_session, test_admin_user, org, "conseil-a.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10040", "nom": "ALPHA Jean"},
+        ), "2035")
+        await import_excel(db_session, test_admin_user, autre.id, "conseil-b.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10041", "nom": "BETA Marie"},
+        ), "2035")
+
+        base_a = await get_base_tableau(db_session, [org], exercice="2035")
+        base_nationale = await get_base_tableau(db_session, [org, autre.id], exercice="2035", national=True)
+
+        assert [d.numero_ordre for d in base_a["dossiers"]] == ["EC/18.10040"]
+        assert base_nationale["total_membres"] == 2
+        assert sorted(base_nationale["organisations"]) == sorted([org, autre.id])
+
+    @pytest.mark.asyncio
+    async def test_un_meme_numero_dans_deux_conseils_reste_deux_lignes(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        autre = Organisation(nom="Conseil Provincial Bis", slug=f"cp-bis-{uuid.uuid4().hex[:8]}")
+        db_session.add(autre)
+        await db_session.flush()
+
+        for organisation_id, heures in [(org, 60), (autre.id, 100)]:
+            await import_excel(db_session, test_admin_user, organisation_id, "double.xlsx", _make_import_bytes(
+                {"numero_ordre": "EC/18.10050", "nom": "ALPHA Jean", "heures": heures},
+            ), "2036")
+
+        nationale = await get_base_tableau(db_session, [org, autre.id], exercice="2036", national=True)
+
+        # Chaque conseil est indépendant : la consolidation n'écrase pas l'un par l'autre.
+        assert nationale["total_membres"] == 2
+        assert sorted(float(d.heures_forco) for d in nationale["dossiers"]) == [60.0, 100.0]
+
+    @pytest.mark.asyncio
+    async def test_sans_exercice_precise_la_base_prend_le_dernier_import(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "vieux.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10060"},
+        ), "2037")
+        await import_excel(db_session, test_admin_user, org, "recent.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10061"},
+        ), "2038")
+
+        base = await get_base_tableau(db_session, [org])
+
+        assert base["exercice"] == "2038"
+        assert [d.numero_ordre for d in base["dossiers"]] == ["EC/18.10061"]
+
+    @pytest.mark.asyncio
+    async def test_base_vide_quand_aucun_import(self, db_session, test_admin_user):
+        autre = Organisation(nom="Conseil Sans Import", slug=f"cp-vide-{uuid.uuid4().hex[:8]}")
+        db_session.add(autre)
+        await db_session.flush()
+
+        base = await get_base_tableau(db_session, [autre.id])
+
+        assert base["exercice"] == ""
+        assert base["dossiers"] == []
+
+
+class TestReprisesEntreImports:
+    """Une actualisation dit ce qui change ; ce qu'elle tait ne doit pas disparaître."""
+
+    @pytest.mark.asyncio
+    async def test_cellule_vide_reprend_la_derniere_valeur_connue(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20001", "telephone": "+243899000001", "email": "jean@onec.cd", "nif": "A12345"},
+        ), "2040", date_situation=date(2040, 3, 15))
+        outcome = await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20001", "telephone": None, "email": None, "nif": None},
+        ), "2040", date_situation=date(2040, 6, 20))
+
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        assert dossier.telephone == "+243899000001"
+        assert dossier.email == "jean@onec.cd"
+        assert dossier.nif == "A12345"
+        assert outcome.reprises == 3
+        assert {r["champ"] for r in dossier.raw_data["situation"]["reprises"]} == {"telephone", "email", "nif"}
+
+    @pytest.mark.asyncio
+    async def test_un_non_explicite_n_est_pas_une_cellule_vide(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20002", "cotisation": "OUI", "assurance": "OUI"},
+        ), "2041", date_situation=date(2041, 3, 15))
+        outcome = await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20002", "cotisation": "NON", "assurance": "NON"},
+        ), "2041", date_situation=date(2041, 6, 20))
+
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        # « NON » infirme la valeur précédente : il ne doit jamais être écrasé par elle.
+        assert dossier.cotisation_payee is False
+        assert dossier.assurance is False
+        assert outcome.reprises == 0
+
+    @pytest.mark.asyncio
+    async def test_zero_heure_explicite_n_est_pas_une_cellule_vide(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20003", "heures": 90},
+        ), "2042", date_situation=date(2042, 3, 15))
+        outcome = await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20003", "heures": 0},
+        ), "2042", date_situation=date(2042, 6, 20))
+
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        assert float(dossier.heures_forco) == 0
+
+    @pytest.mark.asyncio
+    async def test_cellule_vide_reprend_les_heures_et_la_cotisation(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20004", "heures": 90, "cotisation": "OUI"},
+        ), "2043", date_situation=date(2043, 3, 15))
+        outcome = await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20004", "heures": None, "cotisation": None},
+        ), "2043", date_situation=date(2043, 6, 20))
+
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        assert float(dossier.heures_forco) == 90
+        assert dossier.cotisation_payee is True
+
+    @pytest.mark.asyncio
+    async def test_un_reimport_ancien_ne_reprend_pas_une_information_posterieure(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "jan.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20005", "telephone": "+243800000001"},
+        ), "2044", date_situation=date(2044, 1, 5))
+        await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20005", "telephone": "+243899999999"},
+        ), "2044", date_situation=date(2044, 6, 20))
+        mars = await import_excel(db_session, test_admin_user, org, "mars-reimport.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20005", "telephone": None},
+        ), "2044", date_situation=date(2044, 3, 15))
+
+        dossier_mars = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == mars.imp.id)
+        )).scalar_one()
+        base = await get_base_tableau(db_session, [org], exercice="2044")
+
+        # Mars reprend janvier, pas juin : on ne fait pas remonter le futur dans le passé.
+        assert dossier_mars.telephone == "+243800000001"
+        # Et la base continue de présenter juin, la situation la plus récente.
+        assert base["dossiers"][0].telephone == "+243899999999"
+
+    @pytest.mark.asyncio
+    async def test_le_premier_import_ne_reprend_rien(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(db_session, test_admin_user, org, "initial.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20006", "telephone": None},
+        ), "2045")
+
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        assert outcome.reprises == 0
+        assert dossier.telephone is None
+        assert "reprises" not in dossier.raw_data.get("situation", {})
+
+    @pytest.mark.asyncio
+    async def test_la_reprise_ne_traverse_pas_les_conseils(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        autre = Organisation(nom="Conseil Reprise", slug=f"cp-rep-{uuid.uuid4().hex[:8]}")
+        db_session.add(autre)
+        await db_session.flush()
+
+        await import_excel(db_session, test_admin_user, org, "conseil-a.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20007", "telephone": "+243811111111"},
+        ), "2046", date_situation=date(2046, 3, 15))
+        outcome = await import_excel(db_session, test_admin_user, autre.id, "conseil-b.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20007", "telephone": None},
+        ), "2046", date_situation=date(2046, 6, 20))
+
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        assert dossier.telephone is None
+        assert outcome.reprises == 0
+
+    @pytest.mark.asyncio
+    async def test_la_reprise_ne_traverse_pas_les_exercices(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "2047.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20008", "heures": 90},
+        ), "2047")
+        outcome = await import_excel(db_session, test_admin_user, org, "2048.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.20008", "heures": None},
+        ), "2048")
+
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        # Les heures de formation se comptent par exercice : rien ne se reporte d'une année sur l'autre.
+        assert dossier.heures_forco is None
+
+    @pytest.mark.asyncio
+    async def test_la_reprise_ne_coute_pas_une_requete_par_ligne(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+
+        def _fichier(nombre: int, telephone: str | None) -> bytes:
+            return _make_import_bytes(*[
+                {"numero_ordre": f"EC/16.{30000 + i:05d}", "telephone": telephone}
+                for i in range(nombre)
+            ])
+
+        await import_excel(db_session, test_admin_user, org, "socle.xlsx", _fichier(20, "+243800000000"),
+                           "2049", date_situation=date(2049, 1, 5))
+
+        with _CompteurRequetes(db_session) as compteur:
+            outcome = await import_excel(db_session, test_admin_user, org, "maj.xlsx", _fichier(20, None),
+                                         "2049", date_situation=date(2049, 6, 20))
+
+        assert outcome.reprises == 20
+        assert compteur.total < 15
+
+
+class TestDecisionsDeLaCommission:
+    """Ce que la commission a tranché ne doit pas être effacé par un import ni par l'analyse."""
+
+    async def _dossier_de(self, db, import_id):
+        return (await db.execute(
+            select(TableauDossier).where(TableauDossier.import_id == import_id)
+        )).scalar_one()
+
+    async def _decider(self, db, user, org, dossier_id, decision, motif=None):
+        return await create_decision(db, user, org, TableauDecisionCreate(
+            dossier_id=dossier_id,
+            type_decision="deliberation",
+            decision=decision,
+            motif=motif,
+        ))
+
+    @pytest.mark.asyncio
+    async def test_un_nouvel_import_porte_la_memoire_de_la_decision(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        mars = await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30001", "heures": 60},
+        ), "2050", date_situation=date(2050, 3, 15))
+        dossier_mars = await self._dossier_de(db_session, mars.imp.id)
+        await self._decider(db_session, test_admin_user, org, dossier_mars.id, "INSCRIT", "Dérogation accordée")
+
+        juin = await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30001", "heures": 60},
+        ), "2050", date_situation=date(2050, 6, 20))
+        dossier_juin = await self._dossier_de(db_session, juin.imp.id)
+
+        assert juin.decisions_reportees == 1
+        assert dossier_juin.raw_data["decisions"][0]["decision"] == "INSCRIT"
+        assert dossier_juin.raw_data["decisions"][0]["motif"] == "Dérogation accordée"
+
+    @pytest.mark.asyncio
+    async def test_la_decision_prime_sur_le_verdict_automatique(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        mars = await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30002", "heures": 10, "cotisation": "NON"},
+        ), "2051", date_situation=date(2051, 3, 15))
+        dossier_mars = await self._dossier_de(db_session, mars.imp.id)
+
+        # Sans décision, le verdict automatique conclut au rejet.
+        await run_analyse(db_session, test_admin_user, org, mars.imp.id)
+        await db_session.refresh(dossier_mars)
+        assert dossier_mars.conclusion == V.NON_INSCRIT
+
+        await self._decider(db_session, test_admin_user, org, dossier_mars.id, "INSCRIT", "Cas de force majeure")
+        await run_analyse(db_session, test_admin_user, org, mars.imp.id)
+        await db_session.refresh(dossier_mars)
+
+        assert dossier_mars.conclusion == V.INSCRIT
+        assert dossier_mars.statut_dossier == V.INSCRIT
+        assert dossier_mars.conclusion_motif == "Cas de force majeure"
+
+    @pytest.mark.asyncio
+    async def test_la_decision_suit_le_membre_sur_l_import_suivant(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        mars = await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30003", "heures": 10, "cotisation": "NON"},
+        ), "2052", date_situation=date(2052, 3, 15))
+        dossier_mars = await self._dossier_de(db_session, mars.imp.id)
+        await self._decider(db_session, test_admin_user, org, dossier_mars.id, "INSCRIT", "Dérogation")
+
+        juin = await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30003", "heures": 10, "cotisation": "NON"},
+        ), "2052", date_situation=date(2052, 6, 20))
+        await run_analyse(db_session, test_admin_user, org, juin.imp.id)
+        dossier_juin = await self._dossier_de(db_session, juin.imp.id)
+        await db_session.refresh(dossier_juin)
+
+        # La délibération portait sur le dossier de mars, mais elle engage le membre.
+        assert dossier_juin.conclusion == V.INSCRIT
+        assert dossier_juin.raw_data["decision_appliquee"]["verdict_automatique"] == V.NON_INSCRIT
+
+    @pytest.mark.asyncio
+    async def test_une_divergence_est_signalee_sans_etre_appliquee(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        mars = await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30004", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
+        ), "2053", date_situation=date(2053, 3, 15))
+        dossier_mars = await self._dossier_de(db_session, mars.imp.id)
+        await self._decider(db_session, test_admin_user, org, dossier_mars.id, "NON INSCRIT", "Procédure disciplinaire")
+
+        await run_analyse(db_session, test_admin_user, org, mars.imp.id)
+        await db_session.refresh(dossier_mars)
+        trace = dossier_mars.raw_data["decision_appliquee"]
+
+        # Les données diraient « inscrit » ; la commission a dit l'inverse et elle prime.
+        assert dossier_mars.conclusion == V.NON_INSCRIT
+        assert trace["verdict_automatique"] == V.INSCRIT
+        assert trace["diverge"] is True
+
+    @pytest.mark.asyncio
+    async def test_la_decision_la_plus_recente_prime(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        imp = await import_excel(db_session, test_admin_user, org, "f.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30005", "heures": 10, "cotisation": "NON"},
+        ), "2054")
+        dossier = await self._dossier_de(db_session, imp.imp.id)
+
+        await self._decider(db_session, test_admin_user, org, dossier.id, "INSCRIT", "Première délibération")
+        await self._decider(db_session, test_admin_user, org, dossier.id, "NON INSCRIT", "Réexamen")
+        await run_analyse(db_session, test_admin_user, org, imp.imp.id)
+        await db_session.refresh(dossier)
+
+        assert dossier.conclusion == V.NON_INSCRIT
+        assert dossier.conclusion_motif == "Réexamen"
+
+    @pytest.mark.asyncio
+    async def test_une_decision_sans_conclusion_ne_tranche_rien(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        imp = await import_excel(db_session, test_admin_user, org, "f.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30006", "heures": 10, "cotisation": "NON"},
+        ), "2055")
+        dossier = await self._dossier_de(db_session, imp.imp.id)
+        await self._decider(db_session, test_admin_user, org, dossier.id, "reporté", "En attente de pièces")
+
+        await run_analyse(db_session, test_admin_user, org, imp.imp.id)
+        await db_session.refresh(dossier)
+
+        # « Reporté » n'est pas une conclusion : le verdict automatique s'applique.
+        assert dossier.conclusion == V.NON_INSCRIT
+        assert "decision_appliquee" not in dossier.raw_data
+
+    @pytest.mark.asyncio
+    async def test_les_statistiques_refletent_la_decision(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        imp = await import_excel(db_session, test_admin_user, org, "f.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30007", "heures": 10, "cotisation": "NON"},
+        ), "2056")
+        dossier = await self._dossier_de(db_session, imp.imp.id)
+        await self._decider(db_session, test_admin_user, org, dossier.id, "INSCRIT", "Dérogation")
+
+        analyse = await run_analyse(db_session, test_admin_user, org, imp.imp.id)
+
+        # Les compteurs de l'analyse doivent dire la même chose que les dossiers.
+        await db_session.refresh(dossier)
+        conclusions = analyse.stats_json["conclusions"]
+        assert dossier.conclusion == V.INSCRIT
+        assert conclusions["inscrits"] == 1
+        assert conclusions["non_inscrits"] == 0
+
+    @pytest.mark.asyncio
+    async def test_la_decision_ne_traverse_pas_les_conseils(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        autre = Organisation(nom="Conseil Decision", slug=f"cp-dec-{uuid.uuid4().hex[:8]}")
+        db_session.add(autre)
+        await db_session.flush()
+
+        ici = await import_excel(db_session, test_admin_user, org, "a.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30008", "heures": 10, "cotisation": "NON"},
+        ), "2057")
+        dossier_ici = await self._dossier_de(db_session, ici.imp.id)
+        await self._decider(db_session, test_admin_user, org, dossier_ici.id, "INSCRIT", "Dérogation locale")
+
+        ailleurs = await import_excel(db_session, test_admin_user, autre.id, "b.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30008", "heures": 10, "cotisation": "NON"},
+        ), "2057")
+        await run_analyse(db_session, test_admin_user, autre.id, ailleurs.imp.id)
+        dossier_ailleurs = await self._dossier_de(db_session, ailleurs.imp.id)
+        await db_session.refresh(dossier_ailleurs)
+
+        assert ailleurs.decisions_reportees == 0
+        assert dossier_ailleurs.conclusion == V.NON_INSCRIT
+
+    @pytest.mark.asyncio
+    async def test_la_decision_ne_traverse_pas_les_exercices(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        precedent = await import_excel(db_session, test_admin_user, org, "2058.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30009", "heures": 10, "cotisation": "NON"},
+        ), "2058")
+        dossier_precedent = await self._dossier_de(db_session, precedent.imp.id)
+        await self._decider(db_session, test_admin_user, org, dossier_precedent.id, "INSCRIT", "Dérogation 2058")
+
+        suivant = await import_excel(db_session, test_admin_user, org, "2059.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.30009", "heures": 10, "cotisation": "NON"},
+        ), "2059")
+        await run_analyse(db_session, test_admin_user, org, suivant.imp.id)
+        dossier_suivant = await self._dossier_de(db_session, suivant.imp.id)
+        await db_session.refresh(dossier_suivant)
+
+        # Chaque exercice se délibère pour lui-même.
+        assert suivant.decisions_reportees == 0
+        assert dossier_suivant.conclusion == V.NON_INSCRIT
+
+
+class TestNouveauxMembres:
+    """Un import d'actualisation doit dire qui entre pour la première fois au Tableau."""
+
+    @pytest.mark.asyncio
+    async def test_le_premier_import_ne_compte_que_des_nouveaux(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(db_session, test_admin_user, org, "initial.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.40001", "nom": "ALPHA Jean"},
+            {"numero_ordre": "EC/18.40002", "nom": "BETA Marie"},
+        ), "2060")
+
+        dossiers = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalars().all()
+
+        assert outcome.nouveaux_membres == 2
+        assert all(d.raw_data["situation"]["nouveau"] is True for d in dossiers)
+
+    @pytest.mark.asyncio
+    async def test_l_import_suivant_ne_compte_que_les_arrivants(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.40010", "nom": "ALPHA Jean"},
+        ), "2061", date_situation=date(2061, 3, 15))
+        outcome = await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.40010", "nom": "ALPHA Jean"},
+            {"numero_ordre": "EC/18.40011", "nom": "GAMMA Paul"},
+        ), "2061", date_situation=date(2061, 6, 20))
+
+        dossiers = {
+            d.numero_ordre: d for d in (await db_session.execute(
+                select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+            )).scalars().all()
+        }
+
+        assert outcome.nouveaux_membres == 1
+        assert dossiers["EC/18.40010"].raw_data["situation"]["nouveau"] is False
+        assert dossiers["EC/18.40011"].raw_data["situation"]["nouveau"] is True
+
+    @pytest.mark.asyncio
+    async def test_un_membre_n_est_nouveau_qu_une_fois_tous_exercices_confondus(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "2062.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.40020"},
+        ), "2062")
+        outcome = await import_excel(db_session, test_admin_user, org, "2063.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.40020"},
+        ), "2063")
+
+        assert outcome.nouveaux_membres == 0
+
+    @pytest.mark.asyncio
+    async def test_deux_lignes_du_meme_arrivant_ne_comptent_qu_un_membre(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(db_session, test_admin_user, org, "doublon.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.40030", "heures": 40},
+            {"numero_ordre": "EC/18.40030", "heures": 95},
+        ), "2064")
+
+        assert outcome.nouveaux_membres == 1
+
+    @pytest.mark.asyncio
+    async def test_un_arrivant_dans_un_conseil_reste_nouveau_dans_l_autre(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        autre = Organisation(nom="Conseil Arrivant", slug=f"cp-arr-{uuid.uuid4().hex[:8]}")
+        db_session.add(autre)
+        await db_session.flush()
+
+        await import_excel(db_session, test_admin_user, org, "a.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.40040"},
+        ), "2065")
+        outcome = await import_excel(db_session, test_admin_user, autre.id, "b.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.40040"},
+        ), "2065")
+
+        assert outcome.nouveaux_membres == 1
+
+
+class TestAnalyseSurBaseConsolidee:
+    """Délibérer sur un fichier isolé revient à juger sur des données périmées."""
+
+    @pytest.mark.asyncio
+    async def test_l_analyse_de_la_base_juge_sur_la_situation_la_plus_recente(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.50001", "heures": 10, "cotisation": "NON"},
+        ), "2070", date_situation=date(2070, 3, 15))
+        juin = await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.50001", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
+        ), "2070", date_situation=date(2070, 6, 20))
+
+        await run_analyse_base(db_session, test_admin_user, org, exercice="2070")
+        dossier_juin = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == juin.imp.id)
+        )).scalar_one()
+        await db_session.refresh(dossier_juin)
+
+        assert dossier_juin.conclusion == V.INSCRIT
+
+    @pytest.mark.asyncio
+    async def test_l_analyse_de_la_base_couvre_les_membres_absents_du_dernier_fichier(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        mars = await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.50010", "nom": "ALPHA Jean", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
+            {"numero_ordre": "EC/18.50011", "nom": "BETA Marie", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
+        ), "2071", date_situation=date(2071, 3, 15))
+        await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.50010", "nom": "ALPHA Jean", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
+        ), "2071", date_situation=date(2071, 6, 20))
+
+        analyse = await run_analyse_base(db_session, test_admin_user, org, exercice="2071")
+        beta = (await db_session.execute(
+            select(TableauDossier).where(
+                TableauDossier.import_id == mars.imp.id,
+                TableauDossier.numero_ordre == "EC/18.50011",
+            )
+        )).scalar_one()
+        await db_session.refresh(beta)
+
+        # BETA n'est pas dans le fichier de juin : l'analyse par import l'aurait oubliée.
+        assert analyse.total_dossiers == 2
+        assert beta.conclusion == V.INSCRIT
+
+    @pytest.mark.asyncio
+    async def test_l_analyse_par_import_reste_disponible(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        mars = await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.50020", "heures": 10, "cotisation": "NON"},
+        ), "2072", date_situation=date(2072, 3, 15))
+        await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.50020", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
+        ), "2072", date_situation=date(2072, 6, 20))
+
+        await run_analyse(db_session, test_admin_user, org, mars.imp.id)
+        dossier_mars = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == mars.imp.id)
+        )).scalar_one()
+        await db_session.refresh(dossier_mars)
+
+        # Analyser un fichier précis reste possible, et juge bien ce fichier.
+        assert dossier_mars.conclusion == V.NON_INSCRIT
+
+    @pytest.mark.asyncio
+    async def test_la_decision_prime_aussi_sur_l_analyse_de_la_base(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        mars = await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.50030", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
+        ), "2073", date_situation=date(2073, 3, 15))
+        dossier_mars = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == mars.imp.id)
+        )).scalar_one()
+        await create_decision(db_session, test_admin_user, org, TableauDecisionCreate(
+            dossier_id=dossier_mars.id, type_decision="deliberation",
+            decision="NON INSCRIT", motif="Procédure disciplinaire",
+        ))
+        juin = await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.50030", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
+        ), "2073", date_situation=date(2073, 6, 20))
+
+        await run_analyse_base(db_session, test_admin_user, org, exercice="2073")
+        dossier_juin = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == juin.imp.id)
+        )).scalar_one()
+        await db_session.refresh(dossier_juin)
+
+        assert dossier_juin.conclusion == V.NON_INSCRIT
+        assert dossier_juin.raw_data["decision_appliquee"]["diverge"] is True
+
+    @pytest.mark.asyncio
+    async def test_sans_exercice_l_analyse_prend_le_dernier(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(db_session, test_admin_user, org, "2074.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.50040", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
+        ), "2074")
+
+        analyse = await run_analyse_base(db_session, test_admin_user, org)
+
+        assert analyse.exercice == "2074"
+
+    @pytest.mark.asyncio
+    async def test_analyse_de_base_sans_import_est_refusee(self, db_session, test_admin_user):
+        autre = Organisation(nom="Conseil Sans Base", slug=f"cp-nb-{uuid.uuid4().hex[:8]}")
+        db_session.add(autre)
+        await db_session.flush()
+
+        with pytest.raises(HTTPException) as erreur:
+            await run_analyse_base(db_session, test_admin_user, autre.id)
+
+        assert erreur.value.status_code == 404

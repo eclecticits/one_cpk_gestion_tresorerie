@@ -1,5 +1,5 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
-import { AlertTriangle, BarChart2, Bot, CheckCircle2, Download, FileSpreadsheet, FileText, GitCompare, RefreshCw, Settings, Table2, Upload, XCircle } from 'lucide-react'
+import { AlertTriangle, BarChart2, Bot, CheckCircle2, Download, FileSpreadsheet, FileText, GitCompare, Layers, RefreshCw, Settings, Table2, Upload, XCircle } from 'lucide-react'
 import SecretariatAgentChat from '../components/SecretariatAgentChat'
 // xlsx est lourd : chargement dynamique seulement quand l'onglet "import" est actif.
 const ImportTableauDossiers = lazy(() => import('../components/ImportTableauDossiers'))
@@ -9,6 +9,8 @@ import {
   compareTableauExercices,
   generateTableauPV,
   generateTableauReport,
+  getTableauBase,
+  runTableauAnalyseBase,
   getTableauStats,
   listTableauAnomalies,
   listTableauDossiers,
@@ -19,6 +21,7 @@ import {
   downloadTableauExport,
   type TableauReglages,
   type TableauAnalyse,
+  type TableauBase,
   type TableauAnomalie,
   type TableauComparison,
   type TableauDossier,
@@ -28,7 +31,29 @@ import {
 } from '../api/tableau'
 import styles from './SecretariatPage.module.css'
 
-type TabKey = 'dashboard' | 'import' | 'analyse' | 'anomalies' | 'comparaison' | 'rapports'
+type TabKey = 'dashboard' | 'base' | 'import' | 'analyse' | 'anomalies' | 'comparaison' | 'rapports'
+
+const baseTableStyle: React.CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: '13px',
+  background: '#fff',
+}
+
+const baseThStyle: React.CSSProperties = {
+  textAlign: 'left',
+  padding: '10px 12px',
+  borderBottom: '1px solid #e5e7eb',
+  color: '#6b7280',
+  fontWeight: 600,
+  whiteSpace: 'nowrap',
+}
+
+const baseTdStyle: React.CSSProperties = {
+  padding: '10px 12px',
+  borderBottom: '1px solid #f1f2f4',
+  color: '#374151',
+}
 
 function StatCard({ value, label, icon }: { value: number | string; label: string; icon: React.ReactNode }) {
   return (
@@ -51,6 +76,11 @@ function StatCard({ value, label, icon }: { value: number | string; label: strin
 
 export default function AgentTableauPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
+  const [base, setBase] = useState<TableauBase | null>(null)
+  const [baseLoading, setBaseLoading] = useState(false)
+  const [baseNational, setBaseNational] = useState(false)
+  const [baseError, setBaseError] = useState<string | null>(null)
+  const [baseAnalyse, setBaseAnalyse] = useState<string | null>(null)
   const [stats, setStats] = useState<TableauStats | null>(null)
   const [imports, setImports] = useState<TableauImport[]>([])
   const [dossiers, setDossiers] = useState<TableauDossier[]>([])
@@ -263,8 +293,25 @@ export default function AgentTableauPage() {
   const anomaliesMedium = anomalies.filter(a => a.gravite === 'medium')
   const anomaliesLow = anomalies.filter(a => a.gravite === 'low')
 
+  useEffect(() => {
+    if (activeTab !== 'base') return
+    let annule = false
+    setBaseLoading(true)
+    setBaseError(null)
+    getTableauBase({ national: baseNational })
+      .then(data => { if (!annule) setBase(data) })
+      .catch((error: any) => {
+        if (annule) return
+        setBase(null)
+        setBaseError(error?.message || 'Impossible de charger la base du Tableau.')
+      })
+      .finally(() => { if (!annule) setBaseLoading(false) })
+    return () => { annule = true }
+  }, [activeTab, baseNational])
+
   const tabs: Array<{ key: TabKey; label: string; icon: React.ReactNode }> = [
     { key: 'dashboard', label: 'Tableau de bord', icon: <BarChart2 size={15} /> },
+    { key: 'base', label: 'Base Tableau', icon: <Layers size={15} /> },
     { key: 'import', label: 'Import Excel', icon: <Upload size={15} /> },
     { key: 'analyse', label: 'Analyse IA', icon: <Bot size={15} /> },
     { key: 'anomalies', label: 'Anomalies', icon: <AlertTriangle size={15} /> },
@@ -381,6 +428,106 @@ export default function AgentTableauPage() {
                 </button>
               ))}
             </div>
+          </section>
+        )}
+
+        {activeTab === 'base' && (
+          <section className={styles.managerWorkspace}>
+            <div className={styles.mailToolbar}>
+              <div>
+                <h2 className={styles.sectionTitle}>Base Tableau</h2>
+                <p className={styles.sectionSubtitle}>
+                  La situation qui fait foi pour chaque membre, tous imports de l'exercice confondus.
+                  Réimporter un fichier plus ancien ne fait pas reculer la base.
+                </p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                disabled={baseLoading || !base || base.dossiers.length === 0}
+                onClick={() => {
+                  setBaseAnalyse(null)
+                  runTableauAnalyseBase(base?.exercice)
+                    .then(() => setBaseAnalyse('Base analysée : chaque membre a été délibéré sur sa situation la plus récente.'))
+                    .catch((error: any) => setBaseAnalyse(error?.message || "L'analyse de la base a échoué."))
+                }}
+                style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
+              >
+                <Bot size={15} />
+                Analyser la base
+              </button>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151' }}>
+                <input
+                  type="checkbox"
+                  checked={baseNational}
+                  onChange={(event) => setBaseNational(event.target.checked)}
+                  disabled={baseLoading}
+                />
+                Consolider tous les conseils
+              </label>
+              </div>
+            </div>
+
+            {baseAnalyse && (
+              <div className={styles.resultSummary} style={{ marginBottom: '12px' }}>
+                <p style={{ fontSize: '13px' }}>{baseAnalyse}</p>
+              </div>
+            )}
+
+            {baseError ? (
+              <div className={styles.emptyBox}>{baseError}</div>
+            ) : baseLoading ? (
+              <div className={styles.emptyBox}>Chargement de la base...</div>
+            ) : !base || base.dossiers.length === 0 ? (
+              <div className={styles.emptyBox}>
+                Aucun import pour l'instant. Chargez un fichier depuis l'onglet « Import Excel ».
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                  <StatCard value={base.total_membres} label={`Membres — exercice ${base.exercice}`} icon={<Table2 size={18} />} />
+                  <StatCard value={base.imports_couverts.length} label="Imports consolidés" icon={<Layers size={18} />} />
+                  <StatCard value={base.membres_sans_numero} label="Sans n° d'ordre" icon={<AlertTriangle size={18} />} />
+                  {base.national && (
+                    <StatCard value={base.organisations.length} label="Conseils" icon={<BarChart2 size={18} />} />
+                  )}
+                </div>
+
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={baseTableStyle}>
+                    <thead>
+                      <tr>
+                        <th style={baseThStyle}>N° d'ordre</th>
+                        <th style={baseThStyle}>Nom</th>
+                        <th style={baseThStyle}>Catégorie</th>
+                        <th style={baseThStyle}>Ancienneté</th>
+                        <th style={baseThStyle}>Heures</th>
+                        <th style={baseThStyle}>Cotisation</th>
+                        <th style={baseThStyle}>Assurance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {base.dossiers.map(dossier => (
+                        <tr key={dossier.id}>
+                          <td style={baseTdStyle}>
+                            {dossier.numero_ordre || <span style={{ color: '#b91c1c' }}>à compléter</span>}
+                          </td>
+                          <td style={baseTdStyle}>{dossier.nom}</td>
+                          <td style={baseTdStyle}>{dossier.categorie || '—'}</td>
+                          <td style={baseTdStyle}>
+                            {dossier.anciennete_annees != null ? `${dossier.anciennete_annees} an(s)` : '—'}
+                          </td>
+                          <td style={baseTdStyle}>{dossier.heures_forco ?? '—'}</td>
+                          <td style={baseTdStyle}>{dossier.cotisation_payee ? 'Payée' : 'Non'}</td>
+                          <td style={baseTdStyle}>{dossier.assurance ? 'Valide' : 'Non'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </section>
         )}
 

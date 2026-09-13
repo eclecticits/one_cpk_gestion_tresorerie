@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import TableauAnomalie, TableauAnalyse, TableauDecision, TableauDossier, TableauImport, TableauReport
@@ -42,6 +42,70 @@ async def list_dossiers(
     q = q.order_by(TableauDossier.nom.asc())
     res = await db.execute(q)
     return list(res.scalars().all())
+
+
+async def dernier_exercice(db: AsyncSession, organisation_ids: list[int]) -> str | None:
+    """Exercice du dernier import connu, tous conseils demandés confondus."""
+    res = await db.execute(
+        select(TableauImport.exercice)
+        .where(TableauImport.organisation_id.in_(organisation_ids))
+        .order_by(TableauImport.created_at.desc())
+        .limit(1)
+    )
+    return res.scalar_one_or_none()
+
+
+def _cle_membre():
+    """Identité d'un membre au Tableau : son n° d'ordre, à défaut la ligne elle-même.
+
+    Une ligne sans n° d'ordre ne peut être rapprochée d'aucune autre : elle reste
+    donc présente telle quelle dans la base, à charge pour l'Agent Tableau de la
+    corriger.
+    """
+    return func.coalesce(
+        TableauDossier.numero_ordre,
+        literal("#") + cast(TableauDossier.id, String),
+    )
+
+
+async def list_base_tableau(
+    db: AsyncSession,
+    organisation_ids: list[int],
+    exercice: str,
+    anomalie_only: bool = False,
+) -> list[TableauDossier]:
+    """Situation qui fait foi pour chaque membre de l'exercice, tous imports confondus.
+
+    Le Tableau conserve tous les imports ; la base consolidée retient, par membre,
+    la situation la plus récente au sens métier — la date de situation du fichier,
+    et non sa date de téléversement. Réimporter un ancien fichier ne fait donc pas
+    revenir la base en arrière. Le calcul ne dépend d'aucun marqueur stocké : il
+    vaut aussi pour les imports antérieurs à cette consolidation.
+    """
+    cle = _cle_membre()
+    q = (
+        select(TableauDossier)
+        .join(TableauImport, TableauImport.id == TableauDossier.import_id)
+        .where(
+            TableauDossier.organisation_id.in_(organisation_ids),
+            TableauDossier.exercice == exercice,
+        )
+        .distinct(TableauDossier.organisation_id, cle)
+        .order_by(
+            TableauDossier.organisation_id,
+            cle,
+            TableauImport.date_situation.desc().nullslast(),
+            TableauImport.created_at.desc(),
+            TableauDossier.import_id.desc(),
+            TableauDossier.id.desc(),
+        )
+    )
+    if anomalie_only:
+        q = q.where(TableauDossier.anomalie_detectee.is_(True))
+    res = await db.execute(q)
+    dossiers = list(res.scalars().all())
+    dossiers.sort(key=lambda d: (d.nom or "").lower())
+    return dossiers
 
 
 async def list_anomalies(

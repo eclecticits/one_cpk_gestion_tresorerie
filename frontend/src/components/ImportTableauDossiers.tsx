@@ -19,7 +19,15 @@ const CATEGORIES = ['Société', 'EC Cabinet', 'EC Indépendant', 'EC Salarié',
 
 export default function ImportTableauDossiers({ exercice, onImported }: ImportTableauDossiersProps) {
   const [importing, setImporting] = useState(false)
-  const [result, setResult] = useState<{ success: boolean; message: string; errors: TableauImportResult['errors'] } | null>(null)
+  const [dateSituation, setDateSituation] = useState('')
+  const [result, setResult] = useState<{
+    success: boolean
+    message: string
+    errors: TableauImportResult['errors']
+    reprises?: number
+    decisionsReportees?: number
+    nouveauxMembres?: number
+  } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const downloadTemplate = () => {
@@ -64,11 +72,14 @@ export default function ImportTableauDossiers({ exercice, onImported }: ImportTa
     setImporting(true)
     setResult(null)
     try {
-      const res = await uploadTableauExcel(exercice.trim(), file)
+      const res = await uploadTableauExcel(exercice.trim(), file, dateSituation || null)
       setResult({
         success: res.success,
         message: res.message,
         errors: res.errors || [],
+        reprises: res.reprises,
+        decisionsReportees: res.decisions_reportees,
+        nouveauxMembres: res.nouveaux_membres,
       })
       if (res.success) onImported(res.import_id)
     } catch (error: any) {
@@ -118,6 +129,18 @@ export default function ImportTableauDossiers({ exercice, onImported }: ImportTa
       </div>
 
       <div className={styles.actions}>
+        <div>
+          <label htmlFor="tableau-date-situation" style={{ display: 'block', fontSize: '12px', color: '#374151', marginBottom: '4px' }}>
+            Date de situation
+          </label>
+          <input
+            id="tableau-date-situation"
+            type="date"
+            value={dateSituation}
+            onChange={(event) => setDateSituation(event.target.value)}
+            disabled={importing}
+          />
+        </div>
         <button type="button" className={styles.downloadBtn} onClick={downloadTemplate} disabled={importing}>
           📥 Télécharger le modèle Excel
         </button>
@@ -150,6 +173,23 @@ export default function ImportTableauDossiers({ exercice, onImported }: ImportTa
           </div>
           <div className={styles.resultSummary}>
             <p>{result.message}</p>
+            {!!result.nouveauxMembres && (
+              <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                {result.nouveauxMembres} membre(s) entrent pour la première fois au Tableau de ce conseil.
+              </p>
+            )}
+            {!!result.reprises && (
+              <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                {result.reprises} valeur(s) reprise(s) de la situation précédente : une cellule vide
+                n'efface pas ce qui était déjà connu.
+              </p>
+            )}
+            {!!result.decisionsReportees && (
+              <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                {result.decisionsReportees} membre(s) portent déjà une décision de la commission :
+                elle continue de primer sur le verdict automatique.
+              </p>
+            )}
           </div>
           {result.errors.length > 0 && (
             <div className={styles.errorsTable}>

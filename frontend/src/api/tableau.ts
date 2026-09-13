@@ -14,6 +14,7 @@ export interface TableauReglages {
 export interface TableauImport {
   id: number
   exercice: string
+  date_situation: string | null
   file_name: string
   status: string
   total_rows: number
@@ -25,6 +26,7 @@ export interface TableauImport {
 export interface TableauDossier {
   id: number
   import_id: number
+  organisation_id: number | null
   exercice: string
   numero_ordre: string | null
   nom: string
@@ -41,6 +43,8 @@ export interface TableauDossier {
   age: number | null
   nif: string | null
   anciennete: string | null
+  annee_inscription: number | null
+  anciennete_annees: number | null
   conclusion: string | null
   conclusion_motif: string | null
   email: string | null
@@ -135,18 +139,51 @@ export interface TableauImportResult {
   success: boolean
   import_id: number | null
   exercice: string
+  date_situation?: string | null
   file_name: string
   imported: number
   updated: number
   skipped: number
   total_lignes: number
+  reprises?: number
+  decisions_reportees?: number
+  nouveaux_membres?: number
   errors: Array<{ ligne?: number; champ?: string; message?: string }>
   message: string
 }
 
-export const uploadTableauExcel = (exercice: string, file: File) => {
+/** Analyse la situation consolidée de l'exercice, plutôt qu'un import isolé. */
+export const runTableauAnalyseBase = (exercice?: string) =>
+  apiRequest<TableauAnalyse>('POST', `${BASE}/analyses/base${exercice ? `?exercice=${encodeURIComponent(exercice)}` : ''}`)
+
+export interface TableauBase {
+  exercice: string
+  national: boolean
+  organisations: number[]
+  total_membres: number
+  membres_sans_numero: number
+  imports_couverts: number[]
+  dossiers: TableauDossier[]
+}
+
+/** Base consolidée du Tableau : une situation par membre, tous imports de l'exercice confondus. */
+export const getTableauBase = (params?: {
+  exercice?: string
+  anomalieOnly?: boolean
+  national?: boolean
+}) => {
+  const qs = new URLSearchParams()
+  if (params?.exercice) qs.set('exercice', params.exercice)
+  if (params?.anomalieOnly) qs.set('anomalie_only', 'true')
+  if (params?.national) qs.set('national', 'true')
+  const suffix = qs.toString() ? `?${qs}` : ''
+  return apiRequest<TableauBase>('GET', `${BASE}/base${suffix}`)
+}
+
+export const uploadTableauExcel = (exercice: string, file: File, dateSituation?: string | null) => {
   const form = new FormData()
   form.append('exercice', exercice)
+  if (dateSituation) form.append('date_situation', dateSituation)
   form.append('file', file)
   return apiRequest<TableauImportResult>('POST', `${BASE}/imports`, form)
 }

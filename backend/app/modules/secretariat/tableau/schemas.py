@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class TableauImportOut(BaseModel):
     id: int
     exercice: str
+    date_situation: date | None = None
     file_name: str
     status: str
     total_rows: int
@@ -22,6 +23,7 @@ class TableauImportOut(BaseModel):
 class TableauDossierOut(BaseModel):
     id: int
     import_id: int
+    organisation_id: int | None = None
     exercice: str
     numero_ordre: str | None
     nom: str
@@ -38,6 +40,8 @@ class TableauDossierOut(BaseModel):
     age: int | None = None
     nif: str | None = None
     anciennete: str | None = None
+    annee_inscription: int | None = None
+    anciennete_annees: int | None = None
     conclusion: str | None = None
     conclusion_motif: str | None = None
     email: str | None
@@ -163,16 +167,31 @@ class TableauPVCreate(BaseModel):
     instructions: str | None = None
 
 
+class TableauBaseOut(BaseModel):
+    """Base du Tableau : une situation par membre, tous imports de l'exercice confondus."""
+    exercice: str
+    national: bool = False
+    organisations: list[int] = Field(default_factory=list)
+    total_membres: int = 0
+    membres_sans_numero: int = 0
+    imports_couverts: list[int] = Field(default_factory=list)
+    dossiers: list[TableauDossierOut] = Field(default_factory=list)
+
+
 class TableauImportResult(BaseModel):
     """Réponse standardisée d'un import (aligné sur le procédé budget)."""
     success: bool
     import_id: int | None = None
     exercice: str
+    date_situation: date | None = None
     file_name: str
     imported: int
     updated: int = 0
     skipped: int = 0
     total_lignes: int = 0
+    reprises: int = 0
+    decisions_reportees: int = 0
+    nouveaux_membres: int = 0
     errors: list[dict] = Field(default_factory=list)
     message: str
 
