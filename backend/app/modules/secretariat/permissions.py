@@ -11,6 +11,8 @@ SECRETARIAT_PERMISSIONS = [
     ("secretariat.tableau.generate_report", "Secrétariat - Tableau : générer un rapport"),
     ("secretariat.tableau.generate_pv", "Secrétariat - Tableau : générer un procès-verbal"),
     ("secretariat.tableau.export", "Secrétariat - Tableau : exporter les résultats"),
+    ("secretariat.tableau.decide", "Secrétariat - Tableau : enregistrer une décision"),
+    ("secretariat.tableau.correct", "Secrétariat - Tableau : corriger un dossier"),
     ("secretariat.use_agent_courrier", "Secrétariat - utiliser l'agent courrier"),
     ("secretariat.use_agent_reunion", "Secrétariat - utiliser l'agent réunion"),
     ("secretariat.use_agent_agenda", "Secrétariat - utiliser l'agent agenda"),
@@ -188,6 +190,8 @@ SECRETARIAT_TABLEAU_PERMISSION_CODES = (
     "secretariat.tableau.generate_report",
     "secretariat.tableau.generate_pv",
     "secretariat.tableau.export",
+    "secretariat.tableau.decide",
+    "secretariat.tableau.correct",
 )
 
 AGENT_TYPE_PERMISSIONS = {

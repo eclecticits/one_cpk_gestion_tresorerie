@@ -148,6 +148,14 @@ def build_workbook(dossiers: list[dict[str, Any]], exercice: str,
         idx = 1
         for d in rows_data:
             vres = verdict_engine.evaluer(_to_eval_dict(d), exercice_annee, reglages)
+            # Une analyse peut intégrer une décision de commission qui prime sur
+            # le calcul automatique. L'export doit reprendre ce verdict officiel.
+            if d.get("conclusion"):
+                vres = {
+                    **vres,
+                    "conclusion": d["conclusion"],
+                    "motif": d.get("conclusion_motif") or vres.get("motif"),
+                }
             for c, (key, _label) in enumerate(layout, start=1):
                 ws.cell(r, c, _cell_value(key, d, idx, vres))
             if concl_col and vres.get("conclusion") in fills:

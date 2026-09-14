@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class TableauImportOut(BaseModel):
     id: int
     exercice: str
-    date_situation: date | None = None
+    date_situation: date
     file_name: str
     status: str
     total_rows: int
@@ -50,6 +50,9 @@ class TableauDossierOut(BaseModel):
     statut_dossier: str
     anomalie_detectee: bool
     created_at: datetime
+    date_situation: date | None = None
+    source_file_name: str | None = None
+    organisation_nom: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -58,6 +61,7 @@ class TableauAnalyseOut(BaseModel):
     id: int
     import_id: int
     exercice: str
+    scope: Literal["import", "base"] = "import"
     status: str
     total_dossiers: int
     dossiers_complets: int
@@ -78,6 +82,7 @@ class TableauAnalyseOut(BaseModel):
 class TableauAnomalieOut(BaseModel):
     id: int
     dossier_id: int
+    analyse_id: int | None = None
     type_anomalie: str
     gravite: str
     description: str
@@ -127,6 +132,7 @@ class TableauReportOut(BaseModel):
 class TableauReportCreate(BaseModel):
     import_id: int
     exercice: str
+    scope: Literal["import", "base"] = "import"
     type_rapport: str = Field(default="analyse")
     titre: str
     instructions: str | None = None
@@ -135,11 +141,14 @@ class TableauReportCreate(BaseModel):
 class TableauStatsOut(BaseModel):
     dossiers_importes: int
     dossiers_analyses: int
-    dossiers_incomplets: int
+    # null tant qu'aucune analyse de base à jour ne l'a établi : le compteur est
+    # inconnu, pas nul.
+    dossiers_incomplets: int | None = None
     anomalies_detectees: int
     decisions_a_valider: int
     imports_count: int
     last_exercice: str | None
+    analyse_base_status: Literal["completed", "stale"] | None = None
 
 
 class TableauComparisonOut(BaseModel):
@@ -164,6 +173,7 @@ class TableauComparisonRequest(BaseModel):
 class TableauPVCreate(BaseModel):
     import_id: int
     exercice: str
+    scope: Literal["import", "base"] = "import"
     instructions: str | None = None
 
 
@@ -175,7 +185,36 @@ class TableauBaseOut(BaseModel):
     total_membres: int = 0
     membres_sans_numero: int = 0
     imports_couverts: list[int] = Field(default_factory=list)
+    analysis_import_id: int | None = None
+    organisation_options: list[dict[str, Any]] = Field(default_factory=list)
+    limit: int = 50
+    offset: int = 0
     dossiers: list[TableauDossierOut] = Field(default_factory=list)
+
+
+class TableauBaseAnalyseItem(BaseModel):
+    """Sort d'un conseil dans une analyse nationale, qui n'est pas tout ou rien."""
+    organisation_id: int
+    organisation_nom: str | None = None
+    status: Literal["ok", "erreur"]
+    detail: str | None = None
+    analyse: TableauAnalyseOut | None = None
+
+
+class TableauBaseAnalyseResult(BaseModel):
+    exercice: str
+    national: bool = False
+    analyses_count: int = 0
+    erreurs_count: int = 0
+    total_dossiers: int = 0
+    analyses: list[TableauAnalyseOut] = Field(default_factory=list)
+    resultats: list[TableauBaseAnalyseItem] = Field(default_factory=list)
+
+
+class TableauDossierCorrection(BaseModel):
+    changes: dict[str, Any] = Field(default_factory=dict)
+    clear_fields: list[str] = Field(default_factory=list)
+    motif: str = Field(min_length=3, max_length=500)
 
 
 class TableauImportResult(BaseModel):
@@ -183,7 +222,7 @@ class TableauImportResult(BaseModel):
     success: bool
     import_id: int | None = None
     exercice: str
-    date_situation: date | None = None
+    date_situation: date
     file_name: str
     imported: int
     updated: int = 0
@@ -198,9 +237,9 @@ class TableauImportResult(BaseModel):
 
 class TableauReglagesIn(BaseModel):
     """Réglages de délibération, configurables dans l'application."""
-    heures_formation_min: float | None = None
-    age_seuil: int | None = None
-    age_action: str | None = None            # "a_deliberer" | "inscrit" | "aucune"
-    age_conclusion_label: str | None = None  # libellé si age_action == "inscrit"
-    nouveau_anciennete_ans: int | None = None
+    heures_formation_min: float | None = Field(default=None, ge=0, le=10_000)
+    age_seuil: int | None = Field(default=None, ge=0, le=150)
+    age_action: Literal["a_deliberer", "inscrit", "aucune"] | None = None
+    age_conclusion_label: str | None = Field(default=None, min_length=1, max_length=50)
+    nouveau_anciennete_ans: int | None = Field(default=None, ge=1, le=100)
     exempter_nouveaux: bool | None = None

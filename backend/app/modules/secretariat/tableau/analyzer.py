@@ -15,16 +15,21 @@ HEURES_FORCO_MIN = verdict_engine.HEURES_FORMATION_MIN  # 120h / 3 ans
 COTISATION_CATEGORIES = {"Société", "SEC", "EC Cabinet", "EC Indépendant", "EC Salarié"}
 
 
-def detect_anomalies(dossiers: list[dict[str, Any]], exercice_annee: int | None = None) -> list[dict[str, Any]]:
+def detect_anomalies(
+    dossiers: list[dict[str, Any]],
+    exercice_annee: int | None = None,
+    reglages: "verdict_engine.TableauReglages | None" = None,
+) -> list[dict[str, Any]]:
     anomalies: list[dict[str, Any]] = []
     seen: dict[str, int] = {}
+    reglages = reglages or verdict_engine.TableauReglages()
 
     for d in dossiers:
         dossier_id = d["id"]
         nom = (d.get("nom") or "")
         prenom = (d.get("prenom") or "")
         key = f"{nom.lower()}|{prenom.lower()}"
-        nouveau = verdict_engine.est_nouveau(d, exercice_annee)
+        nouveau = verdict_engine.est_nouveau(d, exercice_annee, reglages)
         criteres = verdict_engine.CATEGORIE_CRITERES.get(d.get("categorie", ""), None)
 
         if key in seen:
@@ -76,20 +81,20 @@ def detect_anomalies(dossiers: list[dict[str, Any]], exercice_annee: int | None 
         # Formation (uniquement si requise et non exemptée)
         if "formation" in criteres and not nouveau:
             heures = d.get("heures_forco")
-            if heures is not None and heures < HEURES_FORCO_MIN:
+            if heures is not None and heures < reglages.heures_formation_min:
                 age = d.get("age")
-                gravite = "low" if (age is not None and age > verdict_engine.AGE_EXEMPTION) else "medium"
+                gravite = "low" if (age is not None and age > reglages.age_seuil) else "medium"
                 anomalies.append({
                     "dossier_id": dossier_id, "type_anomalie": "heures_forco_insuffisantes", "gravite": gravite,
-                    "description": f"Heures de formation insuffisantes : {heures}h (minimum {int(HEURES_FORCO_MIN)}h).",
+                    "description": f"Heures de formation insuffisantes : {heures}h (minimum {int(reglages.heures_formation_min)}h).",
                     "champ_concerne": "heures_forco", "valeur_trouvee": str(heures),
-                    "valeur_attendue": f">= {int(HEURES_FORCO_MIN)}h",
+                    "valeur_attendue": f">= {int(reglages.heures_formation_min)}h",
                 })
             elif heures is None and d.get("hformation") is None:
                 anomalies.append({
                     "dossier_id": dossier_id, "type_anomalie": "heures_forco_manquantes", "gravite": "low",
                     "description": "Heures de formation non renseignées.", "champ_concerne": "heures_forco",
-                    "valeur_trouvee": None, "valeur_attendue": f">= {int(HEURES_FORCO_MIN)}h",
+                    "valeur_trouvee": None, "valeur_attendue": f">= {int(reglages.heures_formation_min)}h",
                 })
 
         # Assurance (sociétés + indépendants)
@@ -135,10 +140,19 @@ def compute_analyse_stats(
     total = len(dossiers)
     verdicts = verdicts or {}
 
-    incomplets = sum(
-        1 for d in dossiers
-        if d.get("cotisation_payee") is None or d.get("heures_forco") is None or d.get("assurance") is None
-    )
+    incomplete_types = {
+        "dossier_incomplet",
+        "categorie_inconnue",
+        "cotisation_non_renseignee",
+        "heures_forco_manquantes",
+        "assurance_non_renseignee",
+        "chiffre_affaires_non_renseigne",
+    }
+    incomplete_ids = {
+        a["dossier_id"] for a in anomalies
+        if a["type_anomalie"] in incomplete_types
+    }
+    incomplets = len(incomplete_ids)
     doublons = sum(1 for a in anomalies if a["type_anomalie"] == "doublon")
     cotisations_non_payees = sum(1 for a in anomalies if a["type_anomalie"] == "cotisation_non_payee")
     heures_insuffisantes = sum(1 for a in anomalies if a["type_anomalie"] in ("heures_forco_insuffisantes", "heures_forco_manquantes"))

@@ -9,6 +9,7 @@ def generate_analyse_report(
     stats: dict[str, Any],
     anomalies: list[dict[str, Any]],
     instructions: str | None = None,
+    scope: str = "import",
 ) -> str:
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
     anomalies_haute = [a for a in anomalies if a.get("gravite") == "high"]
@@ -17,6 +18,7 @@ def generate_analyse_report(
 
     lines = [
         f"RAPPORT D'ANALYSE — TABLEAU {exercice}",
+        f"Périmètre : {'base consolidée' if scope == 'base' else 'import sélectionné'}",
         f"Généré le : {now}",
         "",
         "═" * 60,
@@ -69,20 +71,29 @@ def generate_analyse_report(
     return "\n".join(lines)
 
 
+def _ligne_decision(d: dict[str, Any]) -> str:
+    identite = d.get("membre") or f"Dossier #{d.get('dossier_id', '')}"
+    numero = d.get("numero_ordre") or "sans n° d'ordre"
+    return f"  • {identite} ({numero}) — {d.get('type_decision', '')} : {d.get('decision', '')}"
+
+
 def generate_pv(
     exercice: str,
     stats: dict[str, Any],
     decisions: list[dict[str, Any]],
     instructions: str | None = None,
+    scope: str = "import",
+    decisions_hors_perimetre: list[dict[str, Any]] | None = None,
 ) -> str:
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
 
     lines = [
         f"PROCÈS-VERBAL DE LA COMMISSION TABLEAU — EXERCICE {exercice}",
+        f"Périmètre examiné : {'base consolidée' if scope == 'base' else 'import sélectionné'}",
         f"Date de génération : {now}",
         "",
         "═" * 60,
-        "L'AN DEUX MIL VINGT-SIX, la Commission Tableau s'est réunie",
+        "La Commission Tableau s'est réunie",
         f"pour examiner le tableau de l'exercice {exercice}.",
         "",
         "ORDRE DU JOUR :",
@@ -105,8 +116,24 @@ def generate_pv(
 
     if decisions:
         lines += ["DÉCISIONS DE LA COMMISSION", "─" * 40]
-        for d in decisions[:30]:
-            lines.append(f"  • {d.get('type_decision', '')} — {d.get('decision', '')} (Dossier #{d.get('dossier_id', '')})")
+        for d in decisions:
+            lines.append(_ligne_decision(d))
+            if d.get("motif"):
+                lines.append(f"    Motif : {d['motif']}")
+        lines.append("")
+
+    if decisions_hors_perimetre:
+        lines += [
+            "DÉCISIONS NON RATTACHÉES À L'ANALYSE",
+            "─" * 40,
+            "  Ces décisions portent sur l'exercice mais sur aucun dossier du",
+            "  périmètre analysé (membre sans n° d'ordre, homonymes, ou dossier",
+            "  écarté de la consolidation). Elles sont soumises telles quelles à",
+            "  la commission.",
+            "",
+        ]
+        for d in decisions_hors_perimetre:
+            lines.append(_ligne_decision(d))
             if d.get("motif"):
                 lines.append(f"    Motif : {d['motif']}")
         lines.append("")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,7 +21,7 @@ class TableauImport(Base):
     organisation_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     exercice: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    date_situation: Mapped[Date | None] = mapped_column(Date, nullable=True, index=True)
+    date_situation: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
     total_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -86,6 +86,7 @@ class TableauAnalyse(Base):
     organisation_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
     import_id: Mapped[int] = mapped_column(Integer, ForeignKey("secretariat_tableau_imports.id", ondelete="CASCADE"), nullable=False, index=True)
     exercice: Mapped[str] = mapped_column(String(20), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="import", index=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
     total_dossiers: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     dossiers_complets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -97,8 +98,15 @@ class TableauAnalyse(Base):
     assurances_manquantes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     observations_ia: Mapped[str | None] = mapped_column(Text, nullable=True)
     stats_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_dossier_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    source_import_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    source_decision_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("organisation_id", "import_id", "scope", name="uq_tableau_analyse_scope"),
+    )
 
 
 class TableauAnomalie(Base):
@@ -106,6 +114,12 @@ class TableauAnomalie(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     organisation_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    analyse_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("secretariat_tableau_analyses.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     dossier_id: Mapped[int] = mapped_column(Integer, ForeignKey("secretariat_tableau_dossiers.id", ondelete="CASCADE"), nullable=False, index=True)
     type_anomalie: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     gravite: Mapped[str] = mapped_column(String(20), nullable=False, default="medium", index=True)

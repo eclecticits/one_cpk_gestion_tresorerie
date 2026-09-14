@@ -531,6 +531,8 @@ export const PERMISSION_TREE: PermissionModule[] = [
           { code: 'secretariat.tableau.generate_report', label: 'Générer un rapport', kind: 'create' },
           { code: 'secretariat.tableau.generate_pv', label: 'Générer un procès-verbal', kind: 'create' },
           { code: 'secretariat.tableau.export', label: 'Exporter les résultats', kind: 'export' },
+          { code: 'secretariat.tableau.decide', label: 'Enregistrer une décision', kind: 'manage' },
+          { code: 'secretariat.tableau.correct', label: 'Corriger un dossier', kind: 'manage' },
         ],
       },
       {

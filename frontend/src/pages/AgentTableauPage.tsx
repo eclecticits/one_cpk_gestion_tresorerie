@@ -1,15 +1,21 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
-import { AlertTriangle, BarChart2, Bot, CheckCircle2, Download, FileSpreadsheet, FileText, GitCompare, Layers, RefreshCw, Settings, Table2, Upload, XCircle } from 'lucide-react'
+import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Settings, Table2, Upload, X, XCircle } from 'lucide-react'
 import SecretariatAgentChat from '../components/SecretariatAgentChat'
 // xlsx est lourd : chargement dynamique seulement quand l'onglet "import" est actif.
 const ImportTableauDossiers = lazy(() => import('../components/ImportTableauDossiers'))
 import BackButton from '../components/BackButton'
 import { ApiError } from '../lib/apiClient'
+import { usePermissions } from '../hooks/usePermissions'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
+import { useAuth } from '../contexts/AuthContext'
 import {
   compareTableauExercices,
+  correctTableauDossier,
+  getTableauAnalyse,
   generateTableauPV,
   generateTableauReport,
   getTableauBase,
+  TABLEAU_CATEGORIES,
   runTableauAnalyseBase,
   getTableauStats,
   listTableauAnomalies,
@@ -55,7 +61,37 @@ const baseTdStyle: React.CSSProperties = {
   color: '#374151',
 }
 
-function StatCard({ value, label, icon }: { value: number | string; label: string; icon: React.ReactNode }) {
+function booleanStatus(value: boolean | null) {
+  if (value === true) return <span style={{ color: '#166534', fontWeight: 600 }}>Oui</span>
+  if (value === false) return <span style={{ color: '#991b1b', fontWeight: 600 }}>Non</span>
+  return <span style={{ color: '#6b7280' }}>Non renseigné</span>
+}
+
+function AnalyseObsolete({ scope, onRelancer }: { scope: 'import' | 'base'; onRelancer?: () => void }) {
+  return (
+    <div role="status" style={{
+      display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap',
+      background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px',
+      padding: '12px 14px', marginBottom: '16px', fontSize: '13px', color: '#92400e',
+    }}>
+      <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+      <span style={{ flex: 1, minWidth: '240px' }}>
+        <strong>Analyse obsolète.</strong> Un import, une correction, une décision ou un changement de
+        réglages a modifié {scope === 'base' ? 'la base consolidée' : 'cet import'} depuis ce calcul.
+        Les chiffres ci-dessous datent d'avant ; l'export, le rapport et le PV resteront refusés tant que
+        l'analyse n'aura pas été relancée.
+      </span>
+      {onRelancer && (
+        <button type="button" className={styles.secondaryButton} onClick={onRelancer}>
+          <RefreshCw size={14} />
+          Relancer l'analyse
+        </button>
+      )}
+    </div>
+  )
+}
+
+function StatCard({ value, label, icon, hint }: { value: number | string; label: string; icon: React.ReactNode; hint?: string }) {
   return (
     <div style={{
       background: '#fff',
@@ -70,26 +106,59 @@ function StatCard({ value, label, icon }: { value: number | string; label: strin
       <div style={{ color: 'var(--tenant-primary, #714b67)', opacity: 0.8 }}>{icon}</div>
       <div style={{ fontSize: '28px', fontWeight: '700', color: '#1f2933', lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: '500' }}>{label}</div>
+      {hint && <div style={{ fontSize: '11px', color: '#9ca3af' }}>{hint}</div>}
     </div>
   )
 }
 
 export default function AgentTableauPage() {
+  const { hasPermission } = usePermissions()
+  const { user } = useAuth()
+  const canImport = hasPermission('secretariat.tableau.import')
+  const canAnalyze = hasPermission('secretariat.tableau.analyze')
+  const canCompare = hasPermission('secretariat.tableau.compare')
+  const canReport = hasPermission('secretariat.tableau.generate_report')
+  const canGeneratePv = hasPermission('secretariat.tableau.generate_pv')
+  const canExport = hasPermission('secretariat.tableau.export')
+  const canCorrect = hasPermission('secretariat.tableau.correct')
+  const canNational = user?.role?.toLowerCase() === 'super_admin'
+    || (user?.role?.toLowerCase() === 'admin' && user?.organisation_slug?.toLowerCase() === 'cn')
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
   const [base, setBase] = useState<TableauBase | null>(null)
   const [baseLoading, setBaseLoading] = useState(false)
   const [baseNational, setBaseNational] = useState(false)
   const [baseError, setBaseError] = useState<string | null>(null)
   const [baseAnalyse, setBaseAnalyse] = useState<string | null>(null)
+  const [baseExercice, setBaseExercice] = useState('')
+  const [baseSearch, setBaseSearch] = useState('')
+  const [baseCategorie, setBaseCategorie] = useState('')
+  const [baseOrganisationId, setBaseOrganisationId] = useState('')
+  const [basePage, setBasePage] = useState(1)
+  const [basePageSize, setBasePageSize] = useState(50)
+  const [baseRefresh, setBaseRefresh] = useState(0)
+  // La base est consolidée à chaque requête : on n'interroge le serveur qu'une
+  // fois la frappe stabilisée.
+  const baseSearchDiffere = useDebouncedValue(baseSearch)
+  const baseExerciceDiffere = useDebouncedValue(baseExercice)
   const [stats, setStats] = useState<TableauStats | null>(null)
   const [imports, setImports] = useState<TableauImport[]>([])
   const [dossiers, setDossiers] = useState<TableauDossier[]>([])
+  const [dossierPage, setDossierPage] = useState(1)
+  const [dossierPageSize, setDossierPageSize] = useState(50)
   const [anomalies, setAnomalies] = useState<TableauAnomalie[]>([])
   const [reports, setReports] = useState<TableauReport[]>([])
   const [comparison, setComparison] = useState<TableauComparison | null>(null)
+  const [comparisonPage, setComparisonPage] = useState(1)
+  const [comparisonPageSize, setComparisonPageSize] = useState(50)
   const [analyse, setAnalyse] = useState<TableauAnalyse | null>(null)
   const [selectedImport, setSelectedImport] = useState<TableauImport | null>(null)
   const [selectedReport, setSelectedReport] = useState<TableauReport | null>(null)
+  const [analysisScope, setAnalysisScope] = useState<'import' | 'base'>('import')
+  const [correctionDossier, setCorrectionDossier] = useState<TableauDossier | null>(null)
+  const [correctionForm, setCorrectionForm] = useState({
+    numero_ordre: '', nom: '', categorie: '', email: '', telephone: '',
+    cotisation: '', assurance: '', motif: '',
+  })
 
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -139,20 +208,25 @@ export default function AgentTableauPage() {
     }
   }
 
-  const loadImportDetails = async (importId: number) => {
-    const [dossiersData, anomaliesData] = await Promise.all([
+  const loadImportDetails = async (importId: number, scope: 'import' | 'base' = 'import') => {
+    // L'analyse est relue avec le reste : c'est elle qui dit si le calcul
+    // affiché vaut encore, ou s'il a été rendu obsolète depuis.
+    const [dossiersData, anomaliesData, analyseData] = await Promise.all([
       listTableauDossiers({ import_id: importId }).catch(() => []),
-      listTableauAnomalies({ import_id: importId }).catch(() => []),
+      listTableauAnomalies({ import_id: importId, scope }).catch(() => []),
+      getTableauAnalyse(importId, scope).catch(() => null),
     ])
     setDossiers(dossiersData)
     setAnomalies(anomaliesData)
+    setAnalyse(analyseData)
   }
 
   const handleSelectImport = async (imp: TableauImport) => {
     setSelectedImport(imp)
+    setAnalysisScope('import')
     setLoading(true)
     try {
-      await loadImportDetails(imp.id)
+      await loadImportDetails(imp.id, 'import')
     } finally {
       setLoading(false)
     }
@@ -178,6 +252,7 @@ export default function AgentTableauPage() {
     try {
       const result = await runTableauAnalyse(selectedImport.id)
       setAnalyse(result)
+      setAnalysisScope('import')
       await loadImportDetails(selectedImport.id)
       await getTableauStats().then(s => s && setStats(s))
       setActiveTab('analyse')
@@ -198,6 +273,7 @@ export default function AgentTableauPage() {
     try {
       const result = await compareTableauExercices(compareExerciceA.trim(), compareExerciceB.trim())
       setComparison(result)
+      setComparisonPage(1)
     } catch (err) {
       setError(apiErr(err, 'Erreur lors de la comparaison.'))
     } finally {
@@ -213,6 +289,7 @@ export default function AgentTableauPage() {
       const r = await generateTableauReport({
         import_id: selectedImport.id,
         exercice: selectedImport.exercice,
+        scope: analysisScope,
         titre: reportTitle.trim() || `Rapport d'analyse Tableau ${selectedImport.exercice}`,
         instructions: reportInstructions.trim() || undefined,
       })
@@ -234,6 +311,7 @@ export default function AgentTableauPage() {
       const r = await generateTableauPV({
         import_id: selectedImport.id,
         exercice: selectedImport.exercice,
+        scope: analysisScope,
         instructions: pvInstructions.trim() || undefined,
       })
       setSelectedReport(r)
@@ -252,10 +330,16 @@ export default function AgentTableauPage() {
     setError(null)
     try {
       await updateTableauReglages(selectedImport.id, reglages)
-      // recalculer les conclusions avec les nouveaux réglages
-      const result = await runTableauAnalyse(selectedImport.id)
-      setAnalyse(result)
-      await loadImportDetails(selectedImport.id)
+      // Les réglages sont communs à l'exercice : recalculer le même périmètre.
+      if (analysisScope === 'base') {
+        const result = await runTableauAnalyseBase(selectedImport.exercice)
+        setAnalyse(result.analyses[0] || null)
+        setAnomalies(await listTableauAnomalies({ import_id: selectedImport.id, scope: 'base' }))
+      } else {
+        const result = await runTableauAnalyse(selectedImport.id)
+        setAnalyse(result)
+        await loadImportDetails(selectedImport.id)
+      }
     } catch (err) {
       setError(apiErr(err, 'Erreur lors de l\'enregistrement des réglages.'))
     } finally {
@@ -268,7 +352,7 @@ export default function AgentTableauPage() {
     setActionLoading('export-xlsx')
     setError(null)
     try {
-      await downloadTableauExport(selectedImport.id)
+      await downloadTableauExport(selectedImport.id, analysisScope)
     } catch (err) {
       setError(apiErr(err, 'Erreur lors de l\'export du tableau.'))
     } finally {
@@ -288,6 +372,7 @@ export default function AgentTableauPage() {
   }
 
   useEffect(() => { void loadAll() }, [])
+  useEffect(() => { setDossierPage(1) }, [selectedImport?.id, dossierPageSize])
 
   const anomaliesHigh = anomalies.filter(a => a.gravite === 'high')
   const anomaliesMedium = anomalies.filter(a => a.gravite === 'medium')
@@ -298,8 +383,21 @@ export default function AgentTableauPage() {
     let annule = false
     setBaseLoading(true)
     setBaseError(null)
-    getTableauBase({ national: baseNational })
-      .then(data => { if (!annule) setBase(data) })
+    getTableauBase({
+      exercice: baseExerciceDiffere || undefined,
+      national: baseNational,
+      q: baseSearchDiffere || undefined,
+      categorie: baseCategorie || undefined,
+      organisationId: baseOrganisationId ? Number(baseOrganisationId) : undefined,
+      limit: basePageSize,
+      offset: (basePage - 1) * basePageSize,
+    })
+      .then(data => {
+        if (annule) return
+        // L'exercice trouvé n'est pas recopié dans le champ : il s'y verrait
+        // comme une saisie, et relancerait aussitôt la même requête.
+        setBase(data)
+      })
       .catch((error: any) => {
         if (annule) return
         setBase(null)
@@ -307,17 +405,133 @@ export default function AgentTableauPage() {
       })
       .finally(() => { if (!annule) setBaseLoading(false) })
     return () => { annule = true }
-  }, [activeTab, baseNational])
+  }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePage, basePageSize, baseRefresh])
 
-  const tabs: Array<{ key: TabKey; label: string; icon: React.ReactNode }> = [
+  useEffect(() => {
+    setBasePage(1)
+  }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePageSize])
+
+  const handleBaseAnalyse = async () => {
+    if (!base?.exercice) return
+    setActionLoading('analyse-base')
+    setBaseAnalyse(null)
+    try {
+      const result = await runTableauAnalyseBase(base.exercice, baseNational)
+      // Une analyse nationale n'est pas tout ou rien : on nomme les conseils
+      // en échec plutôt que d'annoncer un succès global qui n'en est pas un.
+      const echecs = result.resultats.filter(item => item.status === 'erreur')
+      setBaseAnalyse([
+        `${result.total_dossiers} membre(s) analysé(s) dans ${result.analyses_count} conseil(s).`,
+        echecs.length
+          ? `${echecs.length} conseil(s) en échec, sans effet sur les autres : ${echecs
+              .map(item => `${item.organisation_nom || `#${item.organisation_id}`} (${item.detail || 'erreur'})`)
+              .join(' ; ')}`
+          : '',
+      ].filter(Boolean).join(' '))
+      if (!baseNational && result.analyses[0]) {
+        setAnalyse(result.analyses[0])
+        setAnalysisScope('base')
+        const imp = imports.find(item => item.id === result.analyses[0].import_id)
+        if (imp) {
+          setSelectedImport(imp)
+          const anomaliesData = await listTableauAnomalies({ import_id: imp.id, scope: 'base' })
+          setAnomalies(anomaliesData)
+        }
+      }
+      setBaseRefresh(value => value + 1)
+      await getTableauStats().then(setStats)
+    } catch (err) {
+      setBaseAnalyse(apiErr(err, "L'analyse de la base a échoué."))
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const openCorrection = (dossier: TableauDossier) => {
+    setCorrectionDossier(dossier)
+    setCorrectionForm({
+      numero_ordre: dossier.numero_ordre || '',
+      nom: dossier.nom,
+      categorie: dossier.categorie,
+      email: dossier.email || '',
+      telephone: dossier.telephone || '',
+      cotisation: '',
+      assurance: '',
+      motif: '',
+    })
+  }
+
+  const handleCorrection = async () => {
+    if (!correctionDossier || correctionForm.motif.trim().length < 3) return
+    setActionLoading('correction')
+    setBaseError(null)
+    try {
+      const changes: Record<string, unknown> = {}
+      const clearFields: string[] = []
+      for (const field of ['numero_ordre', 'nom', 'categorie', 'email', 'telephone'] as const) {
+        const next = correctionForm[field].trim()
+        const previous = String(correctionDossier[field] || '')
+        if (!next && previous && (field === 'email' || field === 'telephone' || field === 'numero_ordre')) {
+          clearFields.push(field)
+        } else if (next !== previous) {
+          changes[field] = next
+        }
+      }
+      for (const [field, value] of [['cotisation_payee', correctionForm.cotisation], ['assurance', correctionForm.assurance]] as const) {
+        if (value === 'clear') clearFields.push(field)
+        else if (value === 'true' || value === 'false') changes[field] = value === 'true'
+      }
+      await correctTableauDossier(correctionDossier.id, {
+        changes,
+        clear_fields: clearFields,
+        motif: correctionForm.motif.trim(),
+      })
+      setCorrectionDossier(null)
+      setBaseRefresh(value => value + 1)
+      // La correction rend l'analyse obsolète : on la relit pour l'annoncer,
+      // plutôt que de la masquer comme si elle n'avait jamais existé.
+      if (selectedImport) await loadImportDetails(selectedImport.id, analysisScope)
+      await getTableauStats().then(s => s && setStats(s)).catch(() => undefined)
+    } catch (err) {
+      setBaseError(apiErr(err, 'La correction a échoué.'))
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const allTabs: Array<{ key: TabKey; label: string; icon: React.ReactNode; visible?: boolean }> = [
     { key: 'dashboard', label: 'Tableau de bord', icon: <BarChart2 size={15} /> },
     { key: 'base', label: 'Base Tableau', icon: <Layers size={15} /> },
-    { key: 'import', label: 'Import Excel', icon: <Upload size={15} /> },
-    { key: 'analyse', label: 'Analyse IA', icon: <Bot size={15} /> },
+    { key: 'import', label: 'Import Excel', icon: <Upload size={15} />, visible: canImport },
+    { key: 'analyse', label: 'Analyse réglementaire', icon: <Bot size={15} /> },
     { key: 'anomalies', label: 'Anomalies', icon: <AlertTriangle size={15} /> },
-    { key: 'comparaison', label: 'Comparaison', icon: <GitCompare size={15} /> },
+    { key: 'comparaison', label: 'Comparaison', icon: <GitCompare size={15} />, visible: canCompare },
     { key: 'rapports', label: 'Rapports', icon: <FileText size={15} /> },
   ]
+  const tabs = allTabs.filter(tab => tab.visible !== false)
+  // Une analyse ne vaut que si elle est à jour : le backend refuse export, rapport
+  // et PV dès qu'elle est marquée obsolète.
+  const analyseObsolete = analyse?.status === 'stale'
+  const analysePrete = analyse?.status === 'completed'
+  const categoriesCorrection = correctionDossier && correctionDossier.categorie
+    && !(TABLEAU_CATEGORIES as readonly string[]).includes(correctionDossier.categorie)
+    ? [correctionDossier.categorie, ...TABLEAU_CATEGORIES]
+    : [...TABLEAU_CATEGORIES]
+  const relancerAnalyse = canAnalyze && selectedImport
+    ? () => void (analysisScope === 'base' ? handleBaseAnalyse() : handleAnalyse())
+    : undefined
+  const baseTotalPages = Math.max(1, Math.ceil((base?.total_membres || 0) / basePageSize))
+  const baseImport = imports.find(item => item.id === base?.analysis_import_id) || null
+  const dossierTotalPages = Math.max(1, Math.ceil(dossiers.length / dossierPageSize))
+  const dossiersAffiches = dossiers.slice(
+    (dossierPage - 1) * dossierPageSize,
+    dossierPage * dossierPageSize,
+  )
+  const comparisonTotalPages = Math.max(1, Math.ceil((comparison?.details.length || 0) / comparisonPageSize))
+  const comparisonDetailsAffiches = (comparison?.details || []).slice(
+    (comparisonPage - 1) * comparisonPageSize,
+    comparisonPage * comparisonPageSize,
+  )
 
   return (
     <div className={styles.page}>
@@ -381,19 +595,33 @@ export default function AgentTableauPage() {
           <section>
             <h2 className={styles.sectionTitle} style={{ marginBottom: '14px' }}>Vue d'ensemble Commission Tableau</h2>
             <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '24px' }}>
-              <StatCard value={stats?.dossiers_importes ?? 0} label="Dossiers importés" icon={<FileSpreadsheet size={18} />} />
-              <StatCard value={stats?.dossiers_analyses ?? 0} label="Dossiers analysés" icon={<Bot size={18} />} />
-              <StatCard value={stats?.dossiers_incomplets ?? 0} label="Dossiers incomplets" icon={<AlertTriangle size={18} />} />
+              <StatCard value={stats?.dossiers_importes ?? 0} label="Membres dans la base" icon={<FileSpreadsheet size={18} />} />
+              <StatCard value={stats?.dossiers_analyses ?? 0} label="Membres analysés" icon={<Bot size={18} />} />
+              <StatCard
+                value={stats?.dossiers_incomplets ?? '—'}
+                label="Dossiers incomplets"
+                icon={<AlertTriangle size={18} />}
+                hint={stats?.dossiers_incomplets == null ? 'Analyse de base requise' : undefined}
+              />
               <StatCard value={stats?.anomalies_detectees ?? 0} label="Anomalies détectées" icon={<XCircle size={18} />} />
               <StatCard value={stats?.decisions_a_valider ?? 0} label="Décisions enregistrées" icon={<CheckCircle2 size={18} />} />
             </div>
+
+            {stats?.last_exercice && stats.analyse_base_status !== 'completed' && (
+              <p style={{ fontSize: '12px', color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', padding: '10px 12px', marginBottom: '20px' }}>
+                {stats.analyse_base_status === 'stale'
+                  ? `L'analyse de la base ${stats.last_exercice} est obsolète : les chiffres qui en dépendent datent d'avant le dernier changement.`
+                  : `Aucune analyse de la base ${stats.last_exercice} : les chiffres qui en dépendent ne peuvent pas être établis.`}
+                {canAnalyze ? ' Lancez-la depuis l\'onglet « Base Tableau ».' : ''}
+              </p>
+            )}
 
             <div className={styles.intro}>
               <section className={styles.panel}>
                 <p className={styles.description}>
                   L'Agent Tableau assiste la Commission Tableau dans l'analyse des dossiers d'inscription,
                   de changement de catégorie, de conformité et de suivi des experts-comptables.
-                  Importez un fichier Excel, lancez l'analyse IA, détectez les anomalies et générez rapports et PV.
+                  Importez un fichier Excel, lancez l'analyse réglementaire, détectez les anomalies et générez rapports et PV.
                 </p>
               </section>
               <aside className={styles.statusPanel}>
@@ -406,12 +634,13 @@ export default function AgentTableauPage() {
             <h2 className={styles.sectionTitle} style={{ margin: '20px 0 12px' }}>Actions rapides</h2>
             <div className={styles.grid}>
               {[
-                { label: 'Importer Excel', icon: <Upload size={18} />, desc: 'Charger le tableau des experts-comptables', tab: 'import' as TabKey },
-                { label: 'Lancer l\'analyse', icon: <Bot size={18} />, desc: 'Détecter anomalies et dossiers incomplets', tab: 'analyse' as TabKey },
-                { label: 'Voir les anomalies', icon: <AlertTriangle size={18} />, desc: 'Consulter les anomalies détectées', tab: 'anomalies' as TabKey },
-                { label: 'Comparer exercices', icon: <GitCompare size={18} />, desc: 'Analyser les évolutions entre deux exercices', tab: 'comparaison' as TabKey },
-                { label: 'Générer un rapport', icon: <FileText size={18} />, desc: 'Créer un rapport d\'analyse ou un PV', tab: 'rapports' as TabKey },
-              ].map(action => (
+                { label: 'Consulter la base', icon: <Layers size={18} />, desc: 'Voir la situation actuelle par membre', tab: 'base' as TabKey, visible: true },
+                { label: 'Importer Excel', icon: <Upload size={18} />, desc: 'Actualiser le tableau des experts-comptables', tab: 'import' as TabKey, visible: canImport },
+                { label: 'Analyse réglementaire', icon: <Bot size={18} />, desc: 'Calculer les conclusions et anomalies', tab: 'analyse' as TabKey, visible: canAnalyze },
+                { label: 'Voir les anomalies', icon: <AlertTriangle size={18} />, desc: 'Consulter les anomalies détectées', tab: 'anomalies' as TabKey, visible: true },
+                { label: 'Comparer exercices', icon: <GitCompare size={18} />, desc: 'Comparer deux bases consolidées', tab: 'comparaison' as TabKey, visible: canCompare },
+                { label: 'Générer un rapport', icon: <FileText size={18} />, desc: 'Créer un rapport d\'analyse ou un PV', tab: 'rapports' as TabKey, visible: canReport || canGeneratePv },
+              ].filter(action => action.visible).map(action => (
                 <button
                   key={action.tab}
                   type="button"
@@ -442,31 +671,90 @@ export default function AgentTableauPage() {
                 </p>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className={styles.secondaryButton}
-                disabled={baseLoading || !base || base.dossiers.length === 0}
-                onClick={() => {
-                  setBaseAnalyse(null)
-                  runTableauAnalyseBase(base?.exercice)
-                    .then(() => setBaseAnalyse('Base analysée : chaque membre a été délibéré sur sa situation la plus récente.'))
-                    .catch((error: any) => setBaseAnalyse(error?.message || "L'analyse de la base a échoué."))
-                }}
-                style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
-              >
-                <Bot size={15} />
-                Analyser la base
-              </button>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151' }}>
-                <input
-                  type="checkbox"
-                  checked={baseNational}
-                  onChange={(event) => setBaseNational(event.target.checked)}
-                  disabled={baseLoading}
-                />
-                Consolider tous les conseils
-              </label>
+                {canAnalyze && (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    disabled={baseLoading || actionLoading === 'analyse-base' || !base || base.total_membres === 0}
+                    onClick={() => void handleBaseAnalyse()}
+                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
+                  >
+                    <Bot size={15} />
+                    {actionLoading === 'analyse-base' ? 'Analyse...' : 'Analyser la base'}
+                  </button>
+                )}
+                {canExport && !baseNational && baseImport && (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    disabled={actionLoading === 'export-base'}
+                    onClick={() => {
+                      setActionLoading('export-base')
+                      downloadTableauExport(baseImport.id, 'base')
+                        .catch(err => setBaseError(apiErr(err, "L'export de la base a échoué.")))
+                        .finally(() => setActionLoading(null))
+                    }}
+                  >
+                    <Download size={15} />
+                    Exporter la base
+                  </button>
+                )}
+                {canNational && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151' }}>
+                    <input
+                      type="checkbox"
+                      checked={baseNational}
+                      onChange={(event) => {
+                        setBaseNational(event.target.checked)
+                        setBaseOrganisationId('')
+                      }}
+                      disabled={baseLoading}
+                    />
+                    Tous les conseils
+                  </label>
+                )}
               </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px', padding: '0 14px' }}>
+              <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                Recherche
+                <span style={{ position: 'relative' }}>
+                  <Search size={14} style={{ position: 'absolute', left: '9px', top: '9px', color: '#6b7280' }} />
+                  <input
+                    value={baseSearch}
+                    onChange={event => setBaseSearch(event.target.value)}
+                    placeholder="N° d'ordre, nom, e-mail, NIF ou cabinet"
+                    style={{ width: '100%', padding: '7px 9px 7px 30px', border: '1px solid #c9ccd2', borderRadius: '5px' }}
+                  />
+                </span>
+              </label>
+              <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                Exercice
+                <input
+                  value={baseExercice}
+                  onChange={event => setBaseExercice(event.target.value)}
+                  placeholder={base?.exercice ? `${base.exercice} (le plus récent)` : '2026'}
+                  title="Laissé vide, l'exercice le plus récent est utilisé."
+                  style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px', width: '120px' }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                Catégorie
+                <select value={baseCategorie} onChange={event => setBaseCategorie(event.target.value)} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                  <option value="">Toutes</option>
+                  {TABLEAU_CATEGORIES.map(item => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </label>
+              {baseNational && (
+                <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                  Conseil
+                  <select value={baseOrganisationId} onChange={event => setBaseOrganisationId(event.target.value)} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                    <option value="">Tous</option>
+                    {(base?.organisation_options || []).map(item => <option key={item.id} value={item.id}>{item.nom}</option>)}
+                  </select>
+                </label>
+              )}
             </div>
 
             {baseAnalyse && (
@@ -486,7 +774,7 @@ export default function AgentTableauPage() {
             ) : (
               <>
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                  <StatCard value={base.total_membres} label={`Membres — exercice ${base.exercice}`} icon={<Table2 size={18} />} />
+                  <StatCard value={base.total_membres} label={`Membres - exercice ${base.exercice}`} icon={<Table2 size={18} />} />
                   <StatCard value={base.imports_couverts.length} label="Imports consolidés" icon={<Layers size={18} />} />
                   <StatCard value={base.membres_sans_numero} label="Sans n° d'ordre" icon={<AlertTriangle size={18} />} />
                   {base.national && (
@@ -500,11 +788,15 @@ export default function AgentTableauPage() {
                       <tr>
                         <th style={baseThStyle}>N° d'ordre</th>
                         <th style={baseThStyle}>Nom</th>
+                        {base.national && <th style={baseThStyle}>Conseil</th>}
                         <th style={baseThStyle}>Catégorie</th>
                         <th style={baseThStyle}>Ancienneté</th>
                         <th style={baseThStyle}>Heures</th>
                         <th style={baseThStyle}>Cotisation</th>
                         <th style={baseThStyle}>Assurance</th>
+                        <th style={baseThStyle}>Conclusion</th>
+                        <th style={baseThStyle}>Situation</th>
+                        {canCorrect && !baseNational && <th style={baseThStyle}>Action</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -514,17 +806,48 @@ export default function AgentTableauPage() {
                             {dossier.numero_ordre || <span style={{ color: '#b91c1c' }}>à compléter</span>}
                           </td>
                           <td style={baseTdStyle}>{dossier.nom}</td>
+                          {base.national && <td style={baseTdStyle}>{dossier.organisation_nom || `#${dossier.organisation_id}`}</td>}
                           <td style={baseTdStyle}>{dossier.categorie || '—'}</td>
                           <td style={baseTdStyle}>
                             {dossier.anciennete_annees != null ? `${dossier.anciennete_annees} an(s)` : '—'}
                           </td>
                           <td style={baseTdStyle}>{dossier.heures_forco ?? '—'}</td>
-                          <td style={baseTdStyle}>{dossier.cotisation_payee ? 'Payée' : 'Non'}</td>
-                          <td style={baseTdStyle}>{dossier.assurance ? 'Valide' : 'Non'}</td>
+                          <td style={baseTdStyle}>{booleanStatus(dossier.cotisation_payee)}</td>
+                          <td style={baseTdStyle}>{booleanStatus(dossier.assurance)}</td>
+                          <td style={baseTdStyle}>{dossier.conclusion || 'À analyser'}</td>
+                          <td style={{ ...baseTdStyle, whiteSpace: 'nowrap' }} title={dossier.source_file_name || undefined}>
+                            {dossier.date_situation ? new Date(`${dossier.date_situation}T00:00:00`).toLocaleDateString('fr-FR') : '—'}
+                          </td>
+                          {canCorrect && !baseNational && (
+                            <td style={baseTdStyle}>
+                              <button type="button" className={styles.secondaryButton} onClick={() => openCorrection(dossier)} title="Corriger le dossier" aria-label={`Corriger ${dossier.nom}`}>
+                                <Pencil size={14} />
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '0 14px' }}>
+                  <label style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    Lignes
+                    <select value={basePageSize} onChange={event => setBasePageSize(Number(event.target.value))}>
+                      {[25, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+                    </select>
+                  </label>
+                  <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                    Page {Math.min(basePage, baseTotalPages)} sur {baseTotalPages}
+                  </span>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button type="button" className={styles.secondaryButton} disabled={basePage <= 1 || baseLoading} onClick={() => setBasePage(page => Math.max(1, page - 1))} title="Page précédente">
+                      <ChevronLeft size={15} />
+                    </button>
+                    <button type="button" className={styles.secondaryButton} disabled={basePage >= baseTotalPages || baseLoading} onClick={() => setBasePage(page => page + 1)} title="Page suivante">
+                      <ChevronRight size={15} />
+                    </button>
+                  </div>
                 </div>
               </>
             )}
@@ -580,7 +903,7 @@ export default function AgentTableauPage() {
                       <div>
                         <div style={{ fontWeight: '600', fontSize: '13px' }}>{imp.file_name}</div>
                         <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                          Exercice {imp.exercice} · {imp.imported_rows} dossiers · {new Date(imp.created_at).toLocaleDateString('fr-FR')}
+                          Exercice {imp.exercice} · situation du {new Date(`${imp.date_situation}T00:00:00`).toLocaleDateString('fr-FR')} · {imp.imported_rows} dossiers
                         </div>
                         {imp.error_message && (
                           <div style={{ fontSize: '12px', color: '#dc2626', marginTop: '2px' }}>{imp.error_message}</div>
@@ -604,7 +927,7 @@ export default function AgentTableauPage() {
                   <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
                     Dossiers — {selectedImport.exercice} ({dossiers.length})
                   </h3>
-                  <button
+                  {canAnalyze && <button
                     type="button"
                     className={styles.secondaryButton}
                     onClick={() => void handleAnalyse()}
@@ -612,8 +935,9 @@ export default function AgentTableauPage() {
                     style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
                   >
                     <Bot size={15} />
-                    {actionLoading === 'analyse' ? 'Analyse...' : 'Lancer l\'analyse IA'}
+                    {actionLoading === 'analyse' ? 'Analyse...' : 'Analyser cet import'}
                   </button>
+                  }
                 </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
@@ -625,7 +949,7 @@ export default function AgentTableauPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {dossiers.slice(0, 50).map((d, i) => {
+                      {dossiersAffiches.map((d, i) => {
                         const isSociete = d.categorie === 'Société' || d.categorie === 'SEC'
                         const concl = d.conclusion || d.statut_dossier
                         const conclColor =
@@ -638,7 +962,9 @@ export default function AgentTableauPage() {
                           borderBottom: '1px solid #f3f4f6',
                           background: d.anomalie_detectee ? '#fff7ed' : '#fff',
                         }}>
-                          <td style={{ padding: '7px 10px', color: '#6b7280', fontWeight: '600' }}>{i + 1}</td>
+                          <td style={{ padding: '7px 10px', color: '#6b7280', fontWeight: '600' }}>
+                            {(dossierPage - 1) * dossierPageSize + i + 1}
+                          </td>
                           <td style={{ padding: '7px 10px', color: '#6b7280' }}>{d.numero_ordre ?? '—'}</td>
                           <td style={{ padding: '7px 10px', fontWeight: '500' }}>{d.nom}</td>
                           <td style={{ padding: '7px 10px' }}>{d.prenom ?? '—'}</td>
@@ -666,11 +992,25 @@ export default function AgentTableauPage() {
                       })}
                     </tbody>
                   </table>
-                  {dossiers.length > 50 && (
-                    <p style={{ fontSize: '12px', color: '#9ca3af', padding: '8px 10px' }}>
-                      Affichage des 50 premiers dossiers sur {dossiers.length}.
-                    </p>
-                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginTop: '10px' }}>
+                  <label style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    Lignes
+                    <select value={dossierPageSize} onChange={event => setDossierPageSize(Number(event.target.value))}>
+                      {[25, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+                    </select>
+                  </label>
+                  <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                    Page {Math.min(dossierPage, dossierTotalPages)} sur {dossierTotalPages}
+                  </span>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button type="button" className={styles.secondaryButton} disabled={dossierPage <= 1} onClick={() => setDossierPage(page => Math.max(1, page - 1))} title="Page précédente">
+                      <ChevronLeft size={15} />
+                    </button>
+                    <button type="button" className={styles.secondaryButton} disabled={dossierPage >= dossierTotalPages} onClick={() => setDossierPage(page => page + 1)} title="Page suivante">
+                      <ChevronRight size={15} />
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -681,14 +1021,14 @@ export default function AgentTableauPage() {
           <section className={styles.managerWorkspace}>
             <div className={styles.mailToolbar}>
               <div>
-                <h2 className={styles.sectionTitle}>Analyse IA</h2>
-                <p className={styles.sectionSubtitle}>Détection automatique des anomalies et statistiques de conformité.</p>
+                <h2 className={styles.sectionTitle}>Analyse réglementaire</h2>
+                <p className={styles.sectionSubtitle}>Calcul déterministe des conclusions, anomalies et statistiques de conformité.</p>
               </div>
-              {selectedImport && (
+              {selectedImport && canAnalyze && (
                 <button
                   type="button"
                   className={styles.secondaryButton}
-                  onClick={() => void handleAnalyse()}
+                  onClick={() => void (analysisScope === 'base' ? handleBaseAnalyse() : handleAnalyse())}
                   disabled={actionLoading === 'analyse'}
                   style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
                 >
@@ -697,6 +1037,8 @@ export default function AgentTableauPage() {
                 </button>
               )}
             </div>
+
+            {analyseObsolete && <AnalyseObsolete scope={analysisScope} onRelancer={relancerAnalyse} />}
 
             {!selectedImport ? (
               <div className={styles.emptyBox}>
@@ -822,26 +1164,28 @@ export default function AgentTableauPage() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
-                  <button
+                  {canReport && <button
                     type="button"
                     className={styles.secondaryButton}
                     onClick={() => void handleGenerateReport()}
-                    disabled={actionLoading === 'report'}
+                    disabled={actionLoading === 'report' || !analysePrete}
                     style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
                   >
                     <FileText size={15} />
                     {actionLoading === 'report' ? 'Génération...' : 'Générer le rapport'}
                   </button>
-                  <button
+                  }
+                  {canExport && <button
                     type="button"
                     className={styles.secondaryButton}
                     onClick={() => void handleExportTableau()}
-                    disabled={actionLoading === 'export-xlsx'}
+                    disabled={actionLoading === 'export-xlsx' || !analysePrete}
                     style={{ background: '#16a34a', color: '#fff', borderColor: '#16a34a' }}
                   >
                     <Download size={15} />
                     {actionLoading === 'export-xlsx' ? 'Export...' : 'Exporter le tableau (.xlsx)'}
                   </button>
+                  }
                   <button
                     type="button"
                     className={styles.secondaryButton}
@@ -856,7 +1200,7 @@ export default function AgentTableauPage() {
               <div className={styles.emptyBox}>
                 <Bot size={32} style={{ opacity: 0.3, marginBottom: '8px' }} />
                 <p>Aucune analyse disponible pour cet import.</p>
-                {selectedImport && (
+                {selectedImport && canAnalyze && (
                   <button
                     type="button"
                     className={styles.secondaryButton}
@@ -865,7 +1209,7 @@ export default function AgentTableauPage() {
                     style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', marginTop: '8px' }}
                   >
                     <Bot size={15} />
-                    Lancer l'analyse IA
+                    Lancer l'analyse réglementaire
                   </button>
                 )}
               </div>
@@ -879,15 +1223,17 @@ export default function AgentTableauPage() {
               <div>
                 <h2 className={styles.sectionTitle}>Anomalies détectées</h2>
                 <p className={styles.sectionSubtitle}>
-                  {anomalies.length} anomalie(s) pour l'import sélectionné.
+                  {anomalies.length} anomalie(s) pour {analysisScope === 'base' ? 'la base consolidée' : "l'import sélectionné"}.
                   {anomaliesHigh.length > 0 && ` ${anomaliesHigh.length} critique(s).`}
                 </p>
               </div>
             </div>
 
+            {analyseObsolete && <AnalyseObsolete scope={analysisScope} onRelancer={relancerAnalyse} />}
+
             {anomalies.length === 0 ? (
               <div className={styles.emptyBox}>
-                {selectedImport ? 'Aucune anomalie détectée. Lancez d\'abord l\'analyse IA.' : 'Sélectionnez un import.'}
+                {selectedImport ? 'Aucune anomalie détectée. Lancez d\'abord l\'analyse réglementaire.' : 'Sélectionnez un import.'}
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1002,8 +1348,8 @@ export default function AgentTableauPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {comparison.details.map((d, i) => (
-                          <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        {comparisonDetailsAffiches.map((d, i) => (
+                          <tr key={`${String(d.type)}-${String(d.numero_ordre ?? d.nom ?? '')}-${i}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
                             <td style={{ padding: '8px 12px' }}>
                               <span className={styles.pill} style={{
                                 background: d.type === 'nouveau' ? '#d1fae5' : d.type === 'absent' ? '#fee2e2' : '#fef3c7',
@@ -1024,6 +1370,22 @@ export default function AgentTableauPage() {
                         ))}
                       </tbody>
                     </table>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'flex-end', padding: '10px 12px', borderTop: '1px solid #e5e7eb', flexWrap: 'wrap' }}>
+                      <select value={comparisonPageSize} onChange={event => { setComparisonPageSize(Number(event.target.value)); setComparisonPage(1) }}>
+                        <option value={25}>25 par page</option>
+                        <option value={50}>50 par page</option>
+                        <option value={100}>100 par page</option>
+                      </select>
+                      <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                        Page {Math.min(comparisonPage, comparisonTotalPages)} sur {comparisonTotalPages}
+                      </span>
+                      <button type="button" className={styles.secondaryButton} disabled={comparisonPage <= 1} onClick={() => setComparisonPage(page => Math.max(1, page - 1))} title="Page précédente">
+                        <ChevronLeft size={15} />
+                      </button>
+                      <button type="button" className={styles.secondaryButton} disabled={comparisonPage >= comparisonTotalPages} onClick={() => setComparisonPage(page => page + 1)} title="Page suivante">
+                        <ChevronRight size={15} />
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1040,9 +1402,18 @@ export default function AgentTableauPage() {
               </div>
             </div>
 
-            {selectedImport && (
+            {analyseObsolete && <AnalyseObsolete scope={analysisScope} onRelancer={relancerAnalyse} />}
+
+            {selectedImport && !analyse && (canReport || canGeneratePv) && (
+              <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '16px' }}>
+                Aucune analyse enregistrée pour ce périmètre : lancez-la depuis l'onglet
+                « Analyse réglementaire » avant de générer un rapport ou un procès-verbal.
+              </p>
+            )}
+
+            {selectedImport && (canReport || canGeneratePv) && (
               <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', flex: 1, minWidth: '280px' }}>
+                {canReport && <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', flex: 1, minWidth: '280px' }}>
                   <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '12px' }}>Générer un rapport d'analyse</h3>
                   <input
                     value={reportTitle}
@@ -1061,15 +1432,15 @@ export default function AgentTableauPage() {
                     type="button"
                     className={styles.secondaryButton}
                     onClick={() => void handleGenerateReport()}
-                    disabled={actionLoading === 'report'}
+                    disabled={actionLoading === 'report' || !analysePrete}
                     style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', width: '100%', justifyContent: 'center' }}
                   >
                     <FileText size={15} />
                     {actionLoading === 'report' ? 'Génération...' : 'Générer le rapport'}
                   </button>
-                </div>
+                </div>}
 
-                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', flex: 1, minWidth: '280px' }}>
+                {canGeneratePv && <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', flex: 1, minWidth: '280px' }}>
                   <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '12px' }}>Générer un procès-verbal</h3>
                   <textarea
                     value={pvInstructions}
@@ -1082,13 +1453,13 @@ export default function AgentTableauPage() {
                     type="button"
                     className={styles.secondaryButton}
                     onClick={() => void handleGeneratePV()}
-                    disabled={actionLoading === 'pv'}
+                    disabled={actionLoading === 'pv' || !analysePrete}
                     style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', width: '100%', justifyContent: 'center' }}
                   >
                     <FileText size={15} />
                     {actionLoading === 'pv' ? 'Génération...' : 'Générer le PV'}
                   </button>
-                </div>
+                </div>}
               </div>
             )}
 
@@ -1159,6 +1530,93 @@ export default function AgentTableauPage() {
           </section>
         )}
       </div>
+
+      {correctionDossier && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tableau-correction-title"
+          style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(17, 24, 39, 0.45)', display: 'grid', placeItems: 'center', padding: '16px' }}
+          onMouseDown={event => { if (event.target === event.currentTarget) setCorrectionDossier(null) }}
+        >
+          <div style={{ width: 'min(620px, 100%)', maxHeight: '90vh', overflowY: 'auto', background: '#fff', borderRadius: '8px', border: '1px solid #d8dadd', boxShadow: '0 20px 50px rgba(0,0,0,.22)' }}>
+            <div className={styles.mailToolbar}>
+              <div>
+                <h2 id="tableau-correction-title" className={styles.sectionTitle}>Corriger le dossier</h2>
+                <p className={styles.sectionSubtitle}>{correctionDossier.nom} · exercice {correctionDossier.exercice}</p>
+              </div>
+              <button type="button" className={styles.secondaryButton} onClick={() => setCorrectionDossier(null)} title="Fermer" aria-label="Fermer">
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px' }}>
+              {([
+                ['numero_ordre', "N° d'ordre"],
+                ['nom', 'Nom'],
+                ['email', 'E-mail'],
+                ['telephone', 'Téléphone'],
+              ] as const).map(([field, label]) => (
+                <label key={field} style={{ display: 'grid', gap: '5px', fontSize: '12px', fontWeight: 600 }}>
+                  {label}
+                  <input
+                    value={correctionForm[field]}
+                    onChange={event => setCorrectionForm(current => ({ ...current, [field]: event.target.value }))}
+                    style={{ padding: '8px 10px', border: '1px solid #c9ccd2', borderRadius: '5px' }}
+                  />
+                </label>
+              ))}
+              <label style={{ display: 'grid', gap: '5px', fontSize: '12px', fontWeight: 600 }}>
+                Catégorie
+                <select value={correctionForm.categorie} onChange={event => setCorrectionForm(current => ({ ...current, categorie: event.target.value }))} style={{ padding: '8px 10px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                  {categoriesCorrection.map(item => (
+                    <option key={item} value={item}>
+                      {(TABLEAU_CATEGORIES as readonly string[]).includes(item) ? item : `${item} (valeur actuelle)`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {([
+                ['cotisation', 'Cotisation'],
+                ['assurance', 'Assurance'],
+              ] as const).map(([field, label]) => (
+                <label key={field} style={{ display: 'grid', gap: '5px', fontSize: '12px', fontWeight: 600 }}>
+                  {label}
+                  <select value={correctionForm[field]} onChange={event => setCorrectionForm(current => ({ ...current, [field]: event.target.value }))} style={{ padding: '8px 10px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                    <option value="">Conserver la valeur actuelle</option>
+                    <option value="true">Oui</option>
+                    <option value="false">Non</option>
+                    <option value="clear">Effacer la valeur</option>
+                  </select>
+                </label>
+              ))}
+              <label style={{ gridColumn: '1 / -1', display: 'grid', gap: '5px', fontSize: '12px', fontWeight: 600 }}>
+                Motif de la correction
+                <textarea
+                  value={correctionForm.motif}
+                  onChange={event => setCorrectionForm(current => ({ ...current, motif: event.target.value }))}
+                  rows={3}
+                  maxLength={500}
+                  required
+                  style={{ padding: '8px 10px', border: '1px solid #c9ccd2', borderRadius: '5px', resize: 'vertical' }}
+                />
+              </label>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '0 16px 16px' }}>
+              <button type="button" className={styles.secondaryButton} onClick={() => setCorrectionDossier(null)}>Annuler</button>
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                disabled={actionLoading === 'correction' || correctionForm.motif.trim().length < 3}
+                onClick={() => void handleCorrection()}
+                style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
+              >
+                <Save size={15} />
+                {actionLoading === 'correction' ? 'Enregistrement...' : 'Enregistrer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

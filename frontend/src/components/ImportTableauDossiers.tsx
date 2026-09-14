@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
+import { Download, Upload } from 'lucide-react'
 import { uploadTableauExcel, type TableauImportResult } from '../api/tableau'
 import styles from './ImportModules.module.css'
 
@@ -19,7 +20,11 @@ const CATEGORIES = ['Société', 'EC Cabinet', 'EC Indépendant', 'EC Salarié',
 
 export default function ImportTableauDossiers({ exercice, onImported }: ImportTableauDossiersProps) {
   const [importing, setImporting] = useState(false)
-  const [dateSituation, setDateSituation] = useState('')
+  const [dateSituation, setDateSituation] = useState(() => {
+    const now = new Date()
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+    return local.toISOString().slice(0, 10)
+  })
   const [result, setResult] = useState<{
     success: boolean
     message: string
@@ -68,11 +73,16 @@ export default function ImportTableauDossiers({ exercice, onImported }: ImportTa
       e.target.value = ''
       return
     }
+    if (!dateSituation) {
+      setResult({ success: false, message: 'La date de situation est obligatoire.', errors: [] })
+      e.target.value = ''
+      return
+    }
 
     setImporting(true)
     setResult(null)
     try {
-      const res = await uploadTableauExcel(exercice.trim(), file, dateSituation || null)
+      const res = await uploadTableauExcel(exercice.trim(), file, dateSituation)
       setResult({
         success: res.success,
         message: res.message,
@@ -139,14 +149,17 @@ export default function ImportTableauDossiers({ exercice, onImported }: ImportTa
             value={dateSituation}
             onChange={(event) => setDateSituation(event.target.value)}
             disabled={importing}
+            required
           />
         </div>
         <button type="button" className={styles.downloadBtn} onClick={downloadTemplate} disabled={importing}>
-          📥 Télécharger le modèle Excel
+          <Download size={15} />
+          Télécharger le modèle Excel
         </button>
         <div className={styles.uploadSection}>
           <label htmlFor="tableau-membres-file" className={styles.uploadBtn}>
-            📤 Sélectionner le fichier à importer
+            <Upload size={15} />
+            Sélectionner le fichier à importer
           </label>
           <input
             id="tableau-membres-file"

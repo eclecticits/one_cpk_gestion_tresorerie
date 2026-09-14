@@ -36,16 +36,31 @@ from app.modules.secretariat.tableau.analyzer import (
 from app.modules.secretariat.tableau.comparison import compare_exercices
 from app.modules.secretariat.tableau.excel_import import parse_excel_bytes
 from app.modules.secretariat.tableau.exporter import build_workbook
-from app.modules.secretariat.tableau.models import TableauDossier
-from app.modules.secretariat.tableau.schemas import TableauDecisionCreate
+from app.modules.secretariat.tableau.models import TableauAnalyse, TableauDossier
+from app.modules.secretariat.tableau import router as tableau_router
+from app.modules.secretariat.tableau.repository import get_stats, list_anomalies
+from app.modules.secretariat.tableau.schemas import (
+    TableauDecisionCreate,
+    TableauDossierCorrection,
+    TableauPVCreate,
+)
+from app.modules.secretariat.tableau.models import TableauDecision
+from app.modules.secretariat.tableau.report_generator import generate_pv
 from app.modules.secretariat.tableau.service import (
+    _appliquer_decisions,
+    _cle_decision,
+    _normaliser_correction,
     _norm_numero_ordre,
     _valider_lignes,
+    corriger_dossier,
     create_decision,
+    create_pv,
+    export_tableau,
     get_base_tableau,
     import_excel,
     run_analyse,
     run_analyse_base,
+    valider_date_situation,
 )
 
 
@@ -324,6 +339,30 @@ class TestComputeAnalyseStats:
         assert concl["inscrits"] == 1
         assert concl["non_inscrits"] == 1
 
+    def test_stagiaire_et_societe_n_exigent_pas_de_formation(self):
+        dossiers = [
+            _dossier(id=1, categorie="Stagiaire", cotisation_payee=None, heures_forco=None, assurance=None),
+            _dossier(id=2, categorie="Société", nom="Cabinet", heures_forco=None),
+        ]
+        anomalies = detect_anomalies(dossiers)
+        stats = compute_analyse_stats(dossiers, anomalies)
+
+        assert stats["dossiers_incomplets"] == 0
+
+    def test_champ_requis_non_renseigne_compte_une_seule_fois(self):
+        dossier = _dossier(
+            id=1,
+            categorie="EC Indépendant",
+            cotisation_payee=None,
+            heures_forco=None,
+            assurance=None,
+            chiffre_affaires=None,
+        )
+        stats = compute_analyse_stats([dossier], detect_anomalies([dossier]))
+
+        assert stats["dossiers_incomplets"] == 1
+        assert stats["dossiers_complets"] == 0
+
 
 class TestCompareExercices:
     def test_dossiers_identiques_sont_en_commun(self):
@@ -334,7 +373,10 @@ class TestCompareExercices:
 
     def test_nouveau_dossier_dans_exercice_b(self):
         a = [_dossier(id=1, nom="Dupont", prenom="Jean")]
-        b = [_dossier(id=1, nom="Dupont", prenom="Jean"), _dossier(id=2, nom="Martin", prenom="Alice")]
+        b = [
+            _dossier(id=1, nom="Dupont", prenom="Jean"),
+            _dossier(id=2, numero_ordre="EC/20.00002", nom="Martin", prenom="Alice"),
+        ]
         result = compare_exercices(a, b, "2025", "2026")
         assert result["nouveaux_dans_b"] == 1
 
@@ -345,10 +387,21 @@ class TestCompareExercices:
         assert result["changements_categorie"] == 1
 
     def test_matching_ignore_casse_et_espaces(self):
-        a = [_dossier(id=1, nom="  Dupont ", prenom=" Jean")]
-        b = [_dossier(id=1, nom="DUPONT", prenom="jean")]
+        a = [_dossier(id=1, numero_ordre=None, nom="  Dupont ", prenom=" Jean")]
+        b = [_dossier(id=1, numero_ordre=None, nom="DUPONT", prenom="jean")]
         result = compare_exercices(a, b, "2025", "2026")
         assert result["dossiers_en_commun"] == 1
+
+    def test_details_ne_sont_pas_tronques(self):
+        result = compare_exercices(
+            [],
+            [_dossier(id=i, numero_ordre=f"EC/26.{i:05d}") for i in range(125)],
+            "2025",
+            "2026",
+        )
+
+        assert result["nouveaux_dans_b"] == 125
+        assert len(result["details"]) == 125
 
 
 class TestTableauSituationCourante:
@@ -1331,3 +1384,574 @@ class TestNormalisationDesNumerosExistants:
         )).scalars().all())
 
         assert avant == apres == ["EC/18.60020", "SEC/19.60021"]
+
+
+class TestFiabilisationTableau:
+    def test_date_de_situation_hors_exercice_refusee(self):
+        with pytest.raises(HTTPException) as erreur:
+            valider_date_situation("2026", date(2025, 12, 31))
+
+        assert erreur.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_import_et_base_conservent_des_analyses_distinctes(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(
+            db_session,
+            test_admin_user,
+            org,
+            "perimetres.xlsx",
+            _make_import_bytes({
+                "numero_ordre": "EC/18.70001",
+                "cotisation": "NON",
+                "heures": 10,
+            }),
+            "2090",
+            date_situation=date(2090, 6, 30),
+        )
+
+        analyse_import = await run_analyse(db_session, test_admin_user, org, outcome.imp.id)
+        analyse_base = await run_analyse_base(db_session, test_admin_user, org, exercice="2090")
+        anomalies_import = await list_anomalies(db_session, org, analyse_id=analyse_import.id)
+        anomalies_base = await list_anomalies(db_session, org, analyse_id=analyse_base.id)
+
+        assert analyse_import.id != analyse_base.id
+        assert {analyse_import.scope, analyse_base.scope} == {"import", "base"}
+        assert anomalies_import
+        assert anomalies_base
+        assert {a.analyse_id for a in anomalies_import} == {analyse_import.id}
+        assert {a.analyse_id for a in anomalies_base} == {analyse_base.id}
+
+    @pytest.mark.asyncio
+    async def test_nouvel_import_invalide_l_analyse_de_base(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(
+            db_session,
+            test_admin_user,
+            org,
+            "initial.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.70010"}),
+            "2091",
+            date_situation=date(2091, 3, 1),
+        )
+        analyse = await run_analyse_base(db_session, test_admin_user, org, exercice="2091")
+
+        await import_excel(
+            db_session,
+            test_admin_user,
+            org,
+            "actualisation.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.70010", "heures": 140}),
+            "2091",
+            date_situation=date(2091, 6, 1),
+        )
+        await db_session.refresh(analyse)
+
+        assert analyse.status == "stale"
+
+    @pytest.mark.asyncio
+    async def test_filtre_anomalie_s_applique_apres_consolidation(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        ancien = await import_excel(
+            db_session,
+            test_admin_user,
+            org,
+            "ancien.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.70020"}),
+            "2092",
+            date_situation=date(2092, 2, 1),
+        )
+        ancien_dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == ancien.imp.id)
+        )).scalar_one()
+        ancien_dossier.anomalie_detectee = True
+        await db_session.commit()
+        await import_excel(
+            db_session,
+            test_admin_user,
+            org,
+            "recent.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.70020"}),
+            "2092",
+            date_situation=date(2092, 8, 1),
+        )
+
+        base = await get_base_tableau(db_session, [org], exercice="2092", anomalie_only=True)
+
+        assert base["total_membres"] == 0
+        assert base["dossiers"] == []
+
+    @pytest.mark.asyncio
+    async def test_pagination_ne_fausse_pas_les_totaux(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        await import_excel(
+            db_session,
+            test_admin_user,
+            org,
+            "pagination.xlsx",
+            _make_import_bytes(
+                {"numero_ordre": "EC/18.70030", "nom": "ALPHA Jean"},
+                {"numero_ordre": "EC/18.70031", "nom": "BETA Marie"},
+                {"numero_ordre": "EC/18.70032", "nom": "GAMMA Luc"},
+            ),
+            "2093",
+            date_situation=date(2093, 4, 1),
+        )
+
+        base = await get_base_tableau(
+            db_session,
+            [org],
+            exercice="2093",
+            limit=1,
+            offset=1,
+        )
+
+        assert base["total_membres"] == 3
+        assert len(base["dossiers"]) == 1
+        assert base["dossiers"][0].nom.startswith("BETA")
+
+    @pytest.mark.asyncio
+    async def test_correction_est_tenant_scopee_et_invalide_les_analyses(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(
+            db_session,
+            test_admin_user,
+            org,
+            "correction.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.70040"}),
+            "2094",
+            date_situation=date(2094, 4, 1),
+        )
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+        analyse_import = await run_analyse(db_session, test_admin_user, org, outcome.imp.id)
+        analyse_base = await run_analyse_base(db_session, test_admin_user, org, exercice="2094")
+
+        autre = Organisation(nom="Conseil Correction", slug=f"cp-corr-{uuid.uuid4().hex[:8]}")
+        db_session.add(autre)
+        await db_session.commit()
+        with pytest.raises(HTTPException) as erreur:
+            await corriger_dossier(
+                db_session,
+                test_admin_user,
+                autre.id,
+                dossier.id,
+                TableauDossierCorrection(changes={"nom": "INTERDIT"}, motif="Mauvais conseil"),
+            )
+        assert erreur.value.status_code == 404
+
+        corrige = await corriger_dossier(
+            db_session,
+            test_admin_user,
+            org,
+            dossier.id,
+            TableauDossierCorrection(
+                changes={"numero_ordre": " ec/19.70040 ", "cotisation_payee": True},
+                clear_fields=["telephone"],
+                motif="Pièces justificatives reçues",
+            ),
+        )
+        await db_session.refresh(analyse_import)
+        await db_session.refresh(analyse_base)
+
+        assert corrige.numero_ordre == "EC/19.70040"
+        assert corrige.conclusion is None
+        assert analyse_import.status == "stale"
+        assert analyse_base.status == "stale"
+
+    @pytest.mark.asyncio
+    async def test_export_refuse_une_analyse_absente_ou_obsolete(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(
+            db_session,
+            test_admin_user,
+            org,
+            "export.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.70050"}),
+            "2095",
+            date_situation=date(2095, 5, 1),
+        )
+
+        with pytest.raises(HTTPException) as absente:
+            await export_tableau(db_session, org, outcome.imp.id)
+        assert absente.value.status_code == 409
+
+        await run_analyse(db_session, test_admin_user, org, outcome.imp.id)
+        contenu, nom = await export_tableau(db_session, org, outcome.imp.id)
+        assert contenu.startswith(b"PK")
+        assert nom.endswith(".xlsx")
+
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+        await corriger_dossier(
+            db_session,
+            test_admin_user,
+            org,
+            dossier.id,
+            TableauDossierCorrection(changes={"email": "membre@example.cd"}, motif="Adresse confirmée"),
+        )
+        with pytest.raises(HTTPException) as obsolete:
+            await export_tableau(db_session, org, outcome.imp.id)
+        assert obsolete.value.status_code == 409
+
+
+class TestDecisionsSansNumeroDOrdre:
+    """Une décision prise sur un membre « à compléter » doit survivre à l'analyse."""
+
+    def _dossier_orm(self, id: int, numero_ordre: str | None, nom: str, prenom: str | None = None):
+        return TableauDossier(
+            id=id,
+            organisation_id=1,
+            import_id=1,
+            exercice="2026",
+            numero_ordre=numero_ordre,
+            nom=nom,
+            prenom=prenom,
+            categorie="EC Cabinet",
+        )
+
+    def _decision(self, id: int, dossier_id: int, decision: str = "INSCRIT"):
+        return TableauDecision(
+            id=id,
+            organisation_id=1,
+            dossier_id=dossier_id,
+            user_id=uuid.uuid4(),
+            type_decision="inscription",
+            decision=decision,
+            motif="Pièces produites en séance",
+        )
+
+    def test_cle_prefere_le_numero_puis_le_nom(self):
+        assert _cle_decision(" ec/18.00062 ", "Dupont", "Jean") == "ordre:EC/18.00062"
+        assert _cle_decision(None, "  Dupont ", " Jean") == "nom:dupont|jean"
+        assert _cle_decision(None, "", None) is None
+
+    def test_decision_s_applique_a_un_membre_sans_numero(self):
+        dossier = self._dossier_orm(1, None, "Dupont", "Jean")
+        verdicts = {1: {"conclusion": V.NON_INSCRIT, "motif": "cotisation non réglée"}}
+
+        appliquees = _appliquer_decisions(
+            [dossier],
+            verdicts,
+            {"nom:dupont|jean": [self._decision(10, 1)]},
+        )
+
+        assert appliquees[1]["decision_id"] == 10
+        assert verdicts[1]["conclusion"] == V.INSCRIT
+
+    def test_homonymes_sans_numero_ne_recoivent_aucune_decision(self):
+        dossiers = [
+            self._dossier_orm(1, None, "Dupont", "Jean"),
+            self._dossier_orm(2, None, "DUPONT", "jean"),
+        ]
+        verdicts = {1: {"conclusion": V.NON_INSCRIT}, 2: {"conclusion": V.NON_INSCRIT}}
+
+        appliquees = _appliquer_decisions(
+            dossiers,
+            verdicts,
+            {"nom:dupont|jean": [self._decision(10, 1)]},
+        )
+
+        assert appliquees == {}
+        assert verdicts[1]["conclusion"] == V.NON_INSCRIT
+        assert verdicts[2]["conclusion"] == V.NON_INSCRIT
+
+    def test_le_pv_signale_les_decisions_hors_perimetre(self):
+        contenu = generate_pv(
+            "2026",
+            {"total_dossiers": 1},
+            [],
+            decisions_hors_perimetre=[{
+                "decision_id": 10,
+                "dossier_id": 1,
+                "numero_ordre": None,
+                "membre": "DUPONT Jean",
+                "type_decision": "inscription",
+                "decision": "INSCRIT",
+                "motif": "Pièces produites en séance",
+            }],
+        )
+
+        assert "DÉCISIONS NON RATTACHÉES À L'ANALYSE" in contenu
+        assert "DUPONT Jean" in contenu
+        assert "sans n° d'ordre" in contenu
+        assert "Pièces produites en séance" in contenu
+
+    @pytest.mark.asyncio
+    async def test_le_pv_reprend_la_decision_d_un_membre_sans_numero(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(
+            db_session, test_admin_user, org, "sans_numero.xlsx",
+            _make_import_bytes({"numero_ordre": None, "nom": "MBAYA Sylvie"}),
+            "2096", date_situation=date(2096, 4, 1),
+        )
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+        assert dossier.numero_ordre is None
+
+        await create_decision(db_session, test_admin_user, org, TableauDecisionCreate(
+            dossier_id=dossier.id, type_decision="inscription", decision="INSCRIT",
+            motif="Dossier régularisé en séance",
+        ))
+        await run_analyse(db_session, test_admin_user, org, outcome.imp.id)
+
+        pv = await create_pv(db_session, test_admin_user, org, TableauPVCreate(
+            import_id=outcome.imp.id, exercice="2096",
+        ))
+
+        assert "MBAYA Sylvie" in pv.contenu
+        assert "Dossier régularisé en séance" in pv.contenu
+
+    @pytest.mark.asyncio
+    async def test_le_pv_signale_la_decision_rendue_inapplicable_par_un_homonyme(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(
+            db_session, test_admin_user, org, "homonymes.xlsx",
+            _make_import_bytes(
+                {"numero_ordre": None, "nom": "KALALA Paul"},
+                {"numero_ordre": None, "nom": "KALALA Paul"},
+            ),
+            "2097", date_situation=date(2097, 4, 1),
+        )
+        dossiers = list((await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id).order_by(TableauDossier.id)
+        )).scalars().all())
+        assert len(dossiers) == 2
+
+        await create_decision(db_session, test_admin_user, org, TableauDecisionCreate(
+            dossier_id=dossiers[0].id, type_decision="inscription", decision="INSCRIT",
+            motif="Homonymie à lever avant application",
+        ))
+        analyse = await run_analyse(db_session, test_admin_user, org, outcome.imp.id)
+
+        # Indistinguables : la décision n'est appliquée à aucun des deux...
+        assert analyse.source_decision_ids == []
+        for dossier in dossiers:
+            await db_session.refresh(dossier)
+            assert dossier.conclusion != V.INSCRIT
+
+        # ...mais le PV la soumet quand même à la commission.
+        pv = await create_pv(db_session, test_admin_user, org, TableauPVCreate(
+            import_id=outcome.imp.id, exercice="2097",
+        ))
+        assert "DÉCISIONS NON RATTACHÉES À L'ANALYSE" in pv.contenu
+        assert "Homonymie à lever avant application" in pv.contenu
+
+    def test_le_pv_n_est_plus_tronque_a_trente_decisions(self):
+        decisions = [
+            {"dossier_id": i, "membre": f"MEMBRE {i}", "numero_ordre": f"EC/26.{i:05d}",
+             "type_decision": "inscription", "decision": "INSCRIT"}
+            for i in range(40)
+        ]
+
+        contenu = generate_pv("2026", {}, decisions)
+
+        assert "MEMBRE 39" in contenu
+
+
+class TestCategoriesCorrigeables:
+    """La liste des catégories corrigeables suit le barème de délibération."""
+
+    def test_toutes_les_categories_du_bareme_sont_corrigeables(self):
+        for categorie in V.CATEGORIE_CRITERES:
+            assert _normaliser_correction("categorie", categorie) == categorie
+
+    def test_categorie_hors_bareme_refusee(self):
+        with pytest.raises(ValueError):
+            _normaliser_correction("categorie", "Inconnu")
+
+
+
+def _migration_droits_repris():
+    """Charge la migration pour éprouver son SQL, et non une copie approximative."""
+    chemin = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "20260914_tableau_droits_repris.py"
+    spec = importlib.util.spec_from_file_location("migration_droits_repris", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestRepriseDesDroitsTableau:
+    """Le durcissement des routes ne doit retirer aucune capacité déjà exercée."""
+
+    async def _poser_permissions(self, db, codes):
+        for code in codes:
+            await db.execute(text(
+                "INSERT INTO permissions (code, description, created_at) VALUES (:c, :c, now())"
+                " ON CONFLICT (code) DO NOTHING"
+            ), {"c": code})
+
+    async def _creer_role(self, db, code, codes_permissions):
+        res = await db.execute(text(
+            "INSERT INTO roles (code, label, created_at) VALUES (:c, :c, now()) RETURNING id"
+        ), {"c": code})
+        role_id = res.scalar_one()
+        for code_perm in codes_permissions:
+            await db.execute(text("""
+                INSERT INTO role_permissions (role_id, permission_id)
+                SELECT :role, id FROM permissions WHERE code = :perm
+            """), {"role": role_id, "perm": code_perm})
+        return role_id
+
+    async def _droits(self, db, role_id) -> set[str]:
+        res = await db.execute(text("""
+            SELECT p.code FROM role_permissions rp
+              JOIN permissions p ON p.id = rp.permission_id
+             WHERE rp.role_id = :role
+        """), {"role": role_id})
+        return set(res.scalars().all())
+
+    @pytest.mark.asyncio
+    async def test_un_role_qui_consultait_garde_ce_qu_il_exercait(self, db_session):
+        migration = _migration_droits_repris()
+        await self._poser_permissions(db_session, [
+            "secretariat.tableau.view", "secretariat.tableau.correct", *migration.DROITS_REPRIS,
+        ])
+        consultant = await self._creer_role(db_session, f"tableau-consultant-{uuid.uuid4().hex[:8]}", [
+            "secretariat.tableau.view",
+        ])
+        etranger = await self._creer_role(db_session, f"sans-tableau-{uuid.uuid4().hex[:8]}", [
+            "secretariat.tableau.correct",
+        ])
+
+        await db_session.execute(text(migration.REPRISE))
+        await db_session.flush()
+
+        droits = await self._droits(db_session, consultant)
+        assert set(migration.DROITS_REPRIS) <= droits
+        # La correction n'existait pas avant : elle ne se donne pas d'office.
+        assert "secretariat.tableau.correct" not in droits
+        # Un rôle sans consultation n'hérite de rien.
+        assert await self._droits(db_session, etranger) == {"secretariat.tableau.correct"}
+
+    @pytest.mark.asyncio
+    async def test_la_reprise_est_rejouable_sans_doublon(self, db_session):
+        migration = _migration_droits_repris()
+        await self._poser_permissions(db_session, [
+            "secretariat.tableau.view", *migration.DROITS_REPRIS,
+        ])
+        role = await self._creer_role(db_session, f"tableau-rejoue-{uuid.uuid4().hex[:8]}", [
+            "secretariat.tableau.view", "secretariat.tableau.export",
+        ])
+
+        await db_session.execute(text(migration.REPRISE))
+        await db_session.execute(text(migration.REPRISE))
+        await db_session.flush()
+
+        res = await db_session.execute(text("""
+            SELECT count(*) FROM role_permissions rp
+              JOIN permissions p ON p.id = rp.permission_id
+             WHERE rp.role_id = :role AND p.code = 'secretariat.tableau.export'
+        """), {"role": role})
+        assert res.scalar_one() == 1
+
+
+
+class TestAnalyseNationaleConseilParConseil:
+    """Un conseil en échec ne doit ni bloquer ni masquer le sort des autres."""
+
+    @pytest.mark.asyncio
+    async def test_un_conseil_en_echec_laisse_les_autres_analyses_valides(
+        self, db_session, test_admin_user, monkeypatch,
+    ):
+        premier = test_admin_user.organisation_id
+        second = Organisation(nom="Conseil National Test", slug=f"cp-nat-{uuid.uuid4().hex[:8]}")
+        db_session.add(second)
+        await db_session.commit()
+        # Le rollback du conseil en échec expire les objets de cette session :
+        # l'identifiant est retenu avant, et non relu après.
+        second_id = second.id
+
+        for org in (premier, second_id):
+            await import_excel(
+                db_session, test_admin_user, org, f"national_{org}.xlsx",
+                _make_import_bytes({"numero_ordre": f"EC/18.8{org:04d}"}),
+                "2098", date_situation=date(2098, 3, 1),
+            )
+
+        vraie_analyse = tableau_router.run_analyse_base
+
+        async def analyse_qui_echoue_sur_le_second(db, user, organisation_id, exercice=None):
+            if organisation_id == second_id:
+                raise HTTPException(status_code=500, detail="Panne simulée")
+            return await vraie_analyse(db, user, organisation_id, exercice=exercice)
+
+        monkeypatch.setattr(tableau_router, "run_analyse_base", analyse_qui_echoue_sur_le_second)
+        monkeypatch.setattr(test_admin_user, "role", "super_admin")
+
+        resultat = await tableau_router.analyse_base(
+            exercice="2098", national=True, db=db_session, user=test_admin_user, tenant_id=premier,
+        )
+
+        assert resultat.analyses_count == 1
+        assert resultat.erreurs_count == 1
+        sorts = {item.organisation_id: item.status for item in resultat.resultats}
+        assert sorts[premier] == "ok"
+        assert sorts[second_id] == "erreur"
+        assert "Panne simulée" in next(i.detail for i in resultat.resultats if i.status == "erreur")
+
+        # L'analyse du conseil épargné est bien enregistrée, pas annulée.
+        enregistree = (await db_session.execute(
+            select(TableauAnalyse).where(
+                TableauAnalyse.organisation_id == premier,
+                TableauAnalyse.exercice == "2098",
+                TableauAnalyse.scope == "base",
+            )
+        )).scalars().first()
+        assert enregistree is not None and enregistree.status == "completed"
+
+
+class TestCompteursDuTableauDeBord:
+    """Un compteur qui ne peut pas être calculé se dit inconnu, il n'affiche pas zéro."""
+
+    async def _conseil_neuf(self, db):
+        conseil = Organisation(nom="Conseil Compteurs", slug=f"cp-cpt-{uuid.uuid4().hex[:8]}")
+        db.add(conseil)
+        await db.commit()
+        return conseil.id
+
+    @pytest.mark.asyncio
+    async def test_les_incomplets_restent_inconnus_sans_analyse_de_base(self, db_session, test_admin_user):
+        org = await self._conseil_neuf(db_session)
+        await import_excel(
+            db_session, test_admin_user, org, "compteurs.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.90001", "cotisation": None, "heures": None}),
+            "2099", date_situation=date(2099, 3, 1),
+        )
+
+        stats = await get_stats(db_session, org)
+
+        assert stats["dossiers_incomplets"] is None
+        assert stats["analyse_base_status"] is None
+
+    @pytest.mark.asyncio
+    async def test_l_analyse_de_base_renseigne_puis_perime_les_compteurs(self, db_session, test_admin_user):
+        # Corriger un dossier exige que l'utilisateur appartienne au conseil :
+        # ce test reste donc sur celui de l'admin, avec l'exercice le plus
+        # récent du fichier — c'est lui que le tableau de bord mesure.
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(
+            db_session, test_admin_user, org, "compteurs2.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.90010", "cotisation": None, "heures": None}),
+            "2099", date_situation=date(2099, 3, 1),
+        )
+        await run_analyse_base(db_session, test_admin_user, org, exercice="2099")
+
+        stats = await get_stats(db_session, org)
+        assert stats["analyse_base_status"] == "completed"
+        assert stats["dossiers_incomplets"] == 1
+
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+        await corriger_dossier(
+            db_session, test_admin_user, org, dossier.id,
+            TableauDossierCorrection(changes={"cotisation_payee": True}, motif="Reçu présenté"),
+        )
+
+        stats = await get_stats(db_session, org)
+        assert stats["analyse_base_status"] == "stale"
+        assert stats["dossiers_incomplets"] is None

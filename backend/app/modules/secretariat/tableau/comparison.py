@@ -10,6 +10,9 @@ def compare_exercices(
     exercice_b: str,
 ) -> dict[str, Any]:
     def key(d: dict) -> str:
+        numero = (d.get("numero_ordre") or "").strip().upper().replace(" ", "")
+        if numero:
+            return f"ordre:{numero}"
         return f"{(d.get('nom') or '').strip().lower()}|{(d.get('prenom') or '').strip().lower()}"
 
     map_a = {key(d): d for d in dossiers_a}
@@ -29,6 +32,7 @@ def compare_exercices(
         if cat_a != cat_b:
             d = map_b[k]
             changements_categorie.append({
+                "numero_ordre": d.get("numero_ordre"),
                 "nom": d.get("nom"),
                 "prenom": d.get("prenom"),
                 "categorie_avant": cat_a,
@@ -36,25 +40,27 @@ def compare_exercices(
             })
 
     details: list[dict[str, Any]] = []
-    for k in sorted(nouveaux_dans_b)[:50]:
+    for k in sorted(nouveaux_dans_b):
         d = map_b[k]
         details.append({
             "type": "nouveau",
+            "numero_ordre": d.get("numero_ordre"),
             "nom": d.get("nom"),
             "prenom": d.get("prenom"),
             "categorie": d.get("categorie"),
             "exercice": exercice_b,
         })
-    for k in sorted(absents_de_b)[:50]:
+    for k in sorted(absents_de_b):
         d = map_a[k]
         details.append({
             "type": "absent",
+            "numero_ordre": d.get("numero_ordre"),
             "nom": d.get("nom"),
             "prenom": d.get("prenom"),
             "categorie": d.get("categorie"),
             "exercice": exercice_a,
         })
-    for item in changements_categorie[:50]:
+    for item in changements_categorie:
         details.append({"type": "changement_categorie", **item})
 
     return {
