@@ -1387,6 +1387,13 @@ export default function SortiesFonds() {
 
     if (submitting) return
 
+    // Une sortie directe exécute un ordre déjà autorisé : son motif fait foi.
+    // Ne pas dépendre de la copie d'affichage dans formData, qui peut être
+    // momentanément vide alors que le champ est verrouillé dans le formulaire.
+    const motifEffectif = String(
+      isSortieDirecte ? (selectedOrdre?.motif || formData.motif) : formData.motif
+    ).trim()
+
     if (!formData.montant_paye) {
       notifyWarning('Montant requis', 'Veuillez saisir le montant.')
       return
@@ -1438,7 +1445,7 @@ export default function SortiesFonds() {
       return
     }
 
-    if (!formData.motif.trim()) {
+    if (!motifEffectif) {
       notifyWarning('Motif requis', 'Le motif est obligatoire pour toutes les sorties.')
       return
     }
@@ -1559,7 +1566,7 @@ export default function SortiesFonds() {
         devise: deviseFinale,
         canal: formData.canal,
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
-        motif: formData.motif,
+        motif: motifEffectif,
         beneficiaire: beneficiaireFinal,
         piece_justificative: formData.piece_justificative || null,
         commentaire: formData.commentaire || null,

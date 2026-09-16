@@ -1,6 +1,26 @@
 import { apiRequest, API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 
-const BASE = '/secretariat/tableau'
+const BASE = '/tableau'
+
+export interface TableauActualisation {
+  id: number; date_situation: string; revision_number: number; actualized_at: string
+  status: string; reference_snapshot_id: number; imports_count: number; total_rows: number; is_current: boolean
+}
+export interface TableauActualisationRow {
+  id: number; actualisation_id: number; identity_id: number; official_expert_id: string | null
+  numero_ordre: string; reference_status: string; proposal_status: string
+  official_values: Record<string, unknown>; proposed_values: Record<string, unknown>
+  field_provenance: Record<string, unknown>; differences: Array<Record<string, unknown>>
+  difference_codes: string[]; anomalies: Array<Record<string, unknown>>; anomaly_codes: string[]
+}
+export interface TableauActualisationStats { total: number; proposal_status: Record<string, number>; anomaly_rows: number; reference_status: Record<string, number> }
+export const listTableauActualisations = (dateSituation?: string) => apiRequest<{items: TableauActualisation[]; total: number}>('GET', `${BASE}/actualisations${dateSituation ? `?date_situation=${encodeURIComponent(dateSituation)}` : ''}`)
+export const listTableauActualisationRows = (id: number, params?: Record<string, string | number | boolean>) => {
+  const qs = new URLSearchParams(Object.entries(params || {}).map(([k, v]) => [k, String(v)]))
+  return apiRequest<{items: TableauActualisationRow[]; total: number; limit: number; offset: number}>('GET', `${BASE}/actualisations/${id}/lignes?${qs}`)
+}
+export const getTableauActualisationStats = (id: number) => apiRequest<TableauActualisationStats>('GET', `${BASE}/actualisations/${id}/stats`)
+export const getTableauActualisationRow = (actualisationId: number, rowId: number) => apiRequest<TableauActualisationRow & { source_imports: unknown[]; ca_declarations: unknown[]; insurance_declarations: unknown[] }>('GET', `${BASE}/actualisations/${actualisationId}/lignes/${rowId}`)
 
 export interface TableauReglages {
   heures_formation_min?: number
@@ -15,10 +35,16 @@ export interface TableauImport {
   id: number
   exercice: string
   date_situation: string
+  source_type: 'personnes_physiques' | 'personnes_morales' | 'chiffres_affaires' | 'assurances' | 'tableau'
   file_name: string
+  file_sha256: string | null
+  file_size: number | null
   status: string
   total_rows: number
   imported_rows: number
+  accepted_rows: number
+  rejected_rows: number
+  error_count: number
   error_message: string | null
   created_at: string
 }
@@ -147,11 +173,18 @@ export interface TableauImportResult {
   import_id: number | null
   exercice: string
   date_situation?: string | null
+  source_type?: string
+  status?: string
+  duplicate_detected?: boolean
+  file_sha256?: string | null
   file_name: string
   imported: number
   updated: number
   skipped: number
   total_lignes: number
+  accepted_rows?: number
+  rejected_rows?: number
+  error_count?: number
   reprises?: number
   decisions_reportees?: number
   nouveaux_membres?: number
@@ -222,10 +255,11 @@ export const getTableauBase = (params?: {
   return apiRequest<TableauBase>('GET', `${BASE}/base${suffix}`)
 }
 
-export const uploadTableauExcel = (exercice: string, file: File, dateSituation: string) => {
+export const uploadTableauExcel = (exercice: string, file: File, dateSituation: string, sourceType = 'tableau') => {
   const form = new FormData()
   form.append('exercice', exercice)
   form.append('date_situation', dateSituation)
+  form.append('source_type', sourceType)
   form.append('file', file)
   return apiRequest<TableauImportResult>('POST', `${BASE}/imports`, form)
 }
@@ -284,6 +318,10 @@ export const generateTableauPV = (payload: {
   instructions?: string
 }) => apiRequest<TableauReport>('POST', `${BASE}/pv`, payload)
 
+/** Règles de délibération en vigueur pour l'exercice de cet import. */
+export const getTableauReglages = (import_id: number) =>
+  apiRequest<TableauReglages>('GET', `${BASE}/reglages/${import_id}`)
+
 export const updateTableauReglages = (import_id: number, reglages: TableauReglages) =>
   apiRequest<TableauReglages>('PUT', `${BASE}/reglages/${import_id}`, reglages)
 
@@ -319,3 +357,42 @@ export const correctTableauDossier = (
   dossierId: number,
   payload: { changes: Record<string, unknown>; clear_fields: string[]; motif: string },
 ) => apiRequest<TableauDossier>('PATCH', `${BASE}/dossiers/${dossierId}`, payload)
+
+// ── Assistant et journal du module ───────────────────────────────────────────
+
+export interface TableauAssistantMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface TableauAssistantResponse {
+  response: string
+  actions_taken: string[]
+  tool_results: Array<Record<string, unknown>>
+}
+
+/** Questions sur la base, les anomalies et les règles. L'assistant ne modifie rien. */
+export const tableauAssistantChat = (input: {
+  message: string
+  conversation_history?: TableauAssistantMessage[]
+}) => apiRequest<TableauAssistantResponse>('POST', `${BASE}/assistant/chat`, input)
+
+export interface TableauAuditEntry {
+  id: number
+  action: string
+  target_type: string | null
+  target_id: string | null
+  status: string
+  user_id: string | null
+  metadata_json: Record<string, unknown> | null
+  created_at: string
+}
+
+export const listTableauAudit = (params: { limit?: number; offset?: number; action?: string } = {}) => {
+  const q = new URLSearchParams()
+  if (params.limit) q.set('limit', String(params.limit))
+  if (params.offset) q.set('offset', String(params.offset))
+  if (params.action) q.set('action', params.action)
+  const qs = q.toString()
+  return apiRequest<TableauAuditEntry[]>('GET', `${BASE}/audit${qs ? '?' + qs : ''}`)
+}

@@ -59,10 +59,6 @@ from __future__ import annotations
 from alembic import op
 from sqlalchemy import text
 
-from app.modules.secretariat.permissions import (
-    SECRETARIAT_PERMISSION_DESCRIPTIONS,
-    SECRETARIAT_TABLEAU_PERMISSION_CODES,
-)
 
 
 revision = "20260822_treso_actions"
@@ -136,9 +132,18 @@ TRESO_PERMISSIONS: list[tuple[str, str]] = [
 
 MENU_COMPTABILITE: tuple[str, str] = ("menu_comptabilite", "Accès au module Comptabilité")
 
+# Recopiés plutôt qu'importés : une migration décrit un état passé, elle ne doit
+# pas changer de sens quand le catalogue applicatif évolue. Ces sept codes sont
+# ceux qui existaient le 2026-08-22 ; ils ont depuis été renommés en « tableau.* »
+# par 20260915_tableau_module, qui les fait sortir du Secrétariat.
 TABLEAU_PERMISSIONS: list[tuple[str, str]] = [
-    (code, SECRETARIAT_PERMISSION_DESCRIPTIONS[code])
-    for code in SECRETARIAT_TABLEAU_PERMISSION_CODES
+    ("secretariat.tableau.view", "Secrétariat - Tableau : consulter"),
+    ("secretariat.tableau.import", "Secrétariat - Tableau : importer un fichier Excel"),
+    ("secretariat.tableau.analyze", "Secrétariat - Tableau : lancer l'analyse"),
+    ("secretariat.tableau.compare", "Secrétariat - Tableau : comparer deux exercices"),
+    ("secretariat.tableau.generate_report", "Secrétariat - Tableau : générer un rapport"),
+    ("secretariat.tableau.generate_pv", "Secrétariat - Tableau : générer un procès-verbal"),
+    ("secretariat.tableau.export", "Secrétariat - Tableau : exporter les résultats"),
 ]
 
 ALL_PERMISSIONS: list[tuple[str, str]] = [*TRESO_PERMISSIONS, MENU_COMPTABILITE, *TABLEAU_PERMISSIONS]
@@ -205,7 +210,7 @@ RETRO_GRANTS: list[tuple[str, list[str]]] = [
     # has_any_permission de tableau/router.py, donc ses porteurs peuvent déjà
     # importer, analyser, comparer, générer et exporter.
     (code, ["secretariat.view"])
-    for code in SECRETARIAT_TABLEAU_PERMISSION_CODES
+    for code, _ in TABLEAU_PERMISSIONS
 ]
 
 

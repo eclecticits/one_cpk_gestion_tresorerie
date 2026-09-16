@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -10,10 +11,16 @@ class TableauImportOut(BaseModel):
     id: int
     exercice: str
     date_situation: date
+    source_type: str = "tableau"
     file_name: str
+    file_sha256: str | None = None
+    file_size: int | None = None
     status: str
     total_rows: int
     imported_rows: int
+    accepted_rows: int = 0
+    rejected_rows: int = 0
+    error_count: int = 0
     error_message: str | None
     created_at: datetime
 
@@ -151,6 +158,66 @@ class TableauStatsOut(BaseModel):
     analyse_base_status: Literal["completed", "stale"] | None = None
 
 
+class TableauActualisationListItem(BaseModel):
+    id: int
+    date_situation: date
+    revision_number: int
+    actualized_at: datetime
+    status: str
+    reference_snapshot_id: int
+    imports_count: int
+    total_rows: int
+    is_current: bool
+
+
+class TableauActualisationListOut(BaseModel):
+    items: list[TableauActualisationListItem]
+    total: int
+
+
+class TableauActualisationOut(TableauActualisationListItem):
+    ruleset_version: str
+    knowledge_cutoff_at: datetime | None = None
+    metadata_json: dict | None = None
+
+
+class TableauActualisationRowOut(BaseModel):
+    id: int
+    actualisation_id: int
+    identity_id: int
+    official_expert_id: uuid.UUID | None
+    numero_ordre: str
+    reference_status: str
+    proposal_status: str
+    official_values: dict
+    proposed_values: dict
+    field_provenance: dict
+    differences: list[dict]
+    difference_codes: list[str]
+    anomalies: list[dict]
+    anomaly_codes: list[str]
+
+
+class TableauActualisationRowsOut(BaseModel):
+    items: list[TableauActualisationRowOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class TableauActualisationStatsOut(BaseModel):
+    total: int
+    proposal_status: dict[str, int]
+    anomaly_rows: int
+    reference_status: dict[str, int]
+
+
+class TableauActualisationDetailOut(TableauActualisationRowOut):
+    source_imports: list[dict] = []
+    ca_declarations: list[dict] = []
+    insurance_declarations: list[dict] = []
+
+
 class TableauComparisonOut(BaseModel):
     exercice_a: str
     exercice_b: str
@@ -223,11 +290,18 @@ class TableauImportResult(BaseModel):
     import_id: int | None = None
     exercice: str
     date_situation: date
+    source_type: str = "tableau"
     file_name: str
+    status: str = "completed"
+    duplicate_detected: bool = False
+    file_sha256: str | None = None
     imported: int
     updated: int = 0
     skipped: int = 0
     total_lignes: int = 0
+    accepted_rows: int = 0
+    rejected_rows: int = 0
+    error_count: int = 0
     reprises: int = 0
     decisions_reportees: int = 0
     nouveaux_membres: int = 0
@@ -243,3 +317,27 @@ class TableauReglagesIn(BaseModel):
     age_conclusion_label: str | None = Field(default=None, min_length=1, max_length=50)
     nouveau_anciennete_ans: int | None = Field(default=None, ge=1, le=100)
     exempter_nouveaux: bool | None = None
+
+
+class TableauAssistantIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    conversation_history: list[dict[str, Any]] | None = None
+
+
+class TableauAssistantOut(BaseModel):
+    response: str
+    actions_taken: list[str] = Field(default_factory=list)
+    tool_results: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class TableauAuditLogOut(BaseModel):
+    id: int
+    action: str
+    target_type: str | None = None
+    target_id: str | None = None
+    status: str
+    user_id: uuid.UUID | None = None
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

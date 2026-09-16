@@ -10,10 +10,8 @@ from app.modules.secretariat.routers.documents import router as documents_router
 from app.modules.secretariat.routers.manager import router as manager_router
 from app.modules.secretariat.routers.oauth import router as oauth_router
 from app.modules.secretariat.routers.reunion import router as reunion_router
-from app.modules.secretariat.tableau.router import router as tableau_router
 
 router = APIRouter()
-router.include_router(tableau_router)
 router.include_router(core_router)
 router.include_router(oauth_router)
 router.include_router(courrier_router)

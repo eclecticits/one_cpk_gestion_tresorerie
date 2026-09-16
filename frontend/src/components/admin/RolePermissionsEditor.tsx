@@ -60,6 +60,7 @@ const MODULE_ACCESS_CODE: Record<string, string | undefined> = {
   tresorerie: undefined,
   rh: undefined,
   secretariat: 'menu_secretariat',
+  tableau: 'menu_tableau',
   comptabilite: 'menu_comptabilite',
 }
 

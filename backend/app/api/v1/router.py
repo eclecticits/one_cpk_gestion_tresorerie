@@ -59,6 +59,7 @@ from app.api.v1.endpoints import (
 from app.core.config import settings as app_settings
 from app.api.deps import has_permission, has_any_permission, require_module
 from app.modules.secretariat import routes as secretariat
+from app.modules.tableau import router as tableau
 from app.modules.comptabilite.routers import ecritures as comptabilite
 from app.modules.comptabilite.routers import parametrage as comptabilite_parametrage
 from app.modules.comptabilite.routers import restitutions as comptabilite_restitutions
@@ -155,6 +156,7 @@ api_router.include_router(banques.router, tags=["banques"])
 api_router.include_router(projets_activites.router, tags=["projets-activites"])
 api_router.include_router(transferts.router, prefix="/transferts-internes", tags=["transferts-internes"])
 api_router.include_router(secretariat.router, prefix="/secretariat", tags=["secretariat"], dependencies=[Depends(require_module("secretariat"))])
+api_router.include_router(tableau.router, tags=["tableau"], dependencies=[Depends(require_module("tableau"))])
 api_router.include_router(comptabilite.router, prefix="/comptabilite", tags=["comptabilite"], dependencies=[Depends(require_module("comptabilite"))])
 api_router.include_router(comptabilite_parametrage.router, prefix="/comptabilite", tags=["comptabilite"], dependencies=[Depends(require_module("comptabilite"))])
 api_router.include_router(comptabilite_restitutions.router, prefix="/comptabilite", tags=["comptabilite"], dependencies=[Depends(require_module("comptabilite"))])

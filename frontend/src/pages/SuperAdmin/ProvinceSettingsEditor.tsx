@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Save, Database, Zap, Users, FileText, Wallet, Settings2, Calculator } from 'lucide-react'
+import { Save, Database, Zap, Users, FileText, Wallet, Settings2, Calculator, Table2 } from 'lucide-react'
 import {
   getOrganisationSettings,
   updateOrganisationSettings,
@@ -9,6 +9,7 @@ import {
   type SecretariatModuleConfig,
   type TresorerieModuleConfig,
   type ComptabiliteModuleConfig,
+  type TableauModuleConfig,
 } from '../../api/superAdmin'
 import styles from './ProvinceSettingsEditor.module.css'
 
@@ -49,11 +50,16 @@ const DEFAULT_COMPTABILITE: ComptabiliteModuleConfig = {
   enabled: false,
 }
 
+const DEFAULT_TABLEAU: TableauModuleConfig = {
+  enabled: false,
+}
+
 function mergeModules(saved: ModulesConfig | null): ModulesConfig {
   return {
     tresorerie: { ...DEFAULT_TRESORERIE, ...(saved?.tresorerie ?? {}) },
     rh: { ...DEFAULT_RH, ...(saved?.rh ?? {}) },
     secretariat: { ...DEFAULT_SECRETARIAT, ...(saved?.secretariat ?? {}) },
+    tableau: { ...DEFAULT_TABLEAU, ...(saved?.tableau ?? {}) },
     comptabilite: { ...DEFAULT_COMPTABILITE, ...(saved?.comptabilite ?? {}) },
   }
 }
@@ -65,7 +71,7 @@ type ProvinceSettingsEditorProps = {
   onSaved?: (settings: OrganisationSettings) => void
 }
 
-type ActiveTab = 'quotas' | 'systeme' | 'tresorerie' | 'rh' | 'secretariat' | 'comptabilite' | 'theme'
+type ActiveTab = 'quotas' | 'systeme' | 'tresorerie' | 'rh' | 'secretariat' | 'tableau' | 'comptabilite' | 'theme'
 
 // ── Composant principal ───────────────────────────────────────────────────────
 
@@ -168,6 +174,7 @@ export default function ProvinceSettingsEditor({ provinceId, onSaved }: Province
     { id: 'tresorerie',  label: 'Trésorerie',    icon: <Wallet size={14} />, badge: modules.tresorerie?.enabled ? 'ON' : 'OFF' },
     { id: 'rh',          label: 'R.H.',          icon: <Users size={14} />, badge: modules.rh?.enabled ? 'ON' : 'OFF' },
     { id: 'secretariat', label: 'Secrétariat',   icon: <FileText size={14} />, badge: modules.secretariat?.enabled ? 'ON' : 'OFF' },
+    { id: 'tableau',     label: 'Tableau',       icon: <Table2 size={14} />, badge: modules.tableau?.enabled ? 'ON' : 'OFF' },
     { id: 'comptabilite', label: 'Comptabilité', icon: <Calculator size={14} />, badge: modules.comptabilite?.enabled ? 'ON' : 'OFF' },
     { id: 'theme',       label: 'Thème',         icon: <Settings2 size={14} /> },
   ]
@@ -423,6 +430,21 @@ export default function ProvinceSettingsEditor({ provinceId, onSaved }: Province
       )}
 
       {/* ── Tab: Comptabilité ── */}
+      {activeTab === 'tableau' && (
+        <ModuleTab
+          title="Module Tableau"
+          description="Tableau de l'Ordre — base des membres par exercice, analyse réglementaire, décisions et procès-verbaux."
+          color="#0f766e"
+          enabled={modules.tableau?.enabled ?? false}
+          onToggle={v => patchMod('tableau', { enabled: v })}
+        >
+          <p className={styles.sectionDesc}>
+            Une fois activé, la Commission Tableau importe le tableau des experts-comptables,
+            délibère sur la situation consolidée de l'exercice et produit rapports et PV.
+          </p>
+        </ModuleTab>
+      )}
+
       {activeTab === 'comptabilite' && (
         <ModuleTab
           title="Module Comptabilité"

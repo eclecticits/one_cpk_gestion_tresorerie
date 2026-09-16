@@ -1,6 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Settings, Table2, Upload, X, XCircle } from 'lucide-react'
-import SecretariatAgentChat from '../components/SecretariatAgentChat'
+import TableauAssistantChat from '../components/TableauAssistantChat'
 // xlsx est lourd : chargement dynamique seulement quand l'onglet "import" est actif.
 const ImportTableauDossiers = lazy(() => import('../components/ImportTableauDossiers'))
 import BackButton from '../components/BackButton'
@@ -15,16 +16,21 @@ import {
   generateTableauPV,
   generateTableauReport,
   getTableauBase,
+  getTableauReglages,
+  listTableauAudit,
   TABLEAU_CATEGORIES,
   runTableauAnalyseBase,
   getTableauStats,
   listTableauAnomalies,
   listTableauDossiers,
   listTableauImports,
+  listTableauActualisations,
+  type TableauActualisation,
   listTableauReports,
   runTableauAnalyse,
   updateTableauReglages,
   downloadTableauExport,
+  type TableauAuditEntry,
   type TableauReglages,
   type TableauAnalyse,
   type TableauBase,
@@ -37,7 +43,25 @@ import {
 } from '../api/tableau'
 import styles from './SecretariatPage.module.css'
 
-type TabKey = 'dashboard' | 'base' | 'import' | 'analyse' | 'anomalies' | 'comparaison' | 'rapports'
+type TabKey = 'dashboard' | 'actualisations' | 'base' | 'import' | 'analyse' | 'anomalies' | 'comparaison' | 'rapports' | 'reglages' | 'journal'
+
+/** Chaque écran du module a son adresse : le menu de gauche y mène, et un lien
+ *  vers une anomalie ou un rapport reste partageable. */
+const CHEMINS: Record<TabKey, string> = {
+  dashboard: '/tableau',
+  actualisations: '/tableau/actualisations',
+  base: '/tableau/base',
+  import: '/tableau/imports',
+  analyse: '/tableau/analyse',
+  anomalies: '/tableau/anomalies',
+  comparaison: '/tableau/comparaison',
+  rapports: '/tableau/rapports',
+  reglages: '/tableau/reglages',
+  journal: '/tableau/journal',
+}
+const ONGLETS: Record<string, TabKey> = Object.fromEntries(
+  Object.entries(CHEMINS).map(([onglet, chemin]) => [chemin, onglet as TabKey]),
+)
 
 const baseTableStyle: React.CSSProperties = {
   width: '100%',
@@ -59,6 +83,37 @@ const baseTdStyle: React.CSSProperties = {
   padding: '10px 12px',
   borderBottom: '1px solid #f1f2f4',
   color: '#374151',
+}
+
+const TITRES: Record<TabKey, string> = {
+  dashboard: "Tableau de l'Ordre",
+  actualisations: 'Actualisations',
+  base: 'Base Tableau',
+  import: 'Imports Excel',
+  analyse: 'Analyse réglementaire',
+  anomalies: 'Anomalies',
+  comparaison: 'Comparaison d\'exercices',
+  rapports: 'Rapports & procès-verbaux',
+  reglages: 'Règles de délibération',
+  journal: 'Journal des actions',
+}
+
+const LIBELLES_AUDIT: Record<string, string> = {
+  'tableau.dossier.correct': 'Correction d\'un dossier',
+  'tableau.decision.create': 'Décision de commission',
+  'tableau.assistant.chat': 'Question à l\'assistant',
+}
+
+/** Ce que l'entrée dit en une ligne, sans étaler le contenu du journal. */
+function resumerAudit(entree: TableauAuditEntry): string {
+  const meta = entree.metadata_json || {}
+  const morceaux: string[] = []
+  if (typeof meta.numero_ordre === 'string') morceaux.push(meta.numero_ordre)
+  if (Array.isArray(meta.champs) && meta.champs.length) morceaux.push(`champs : ${meta.champs.join(', ')}`)
+  if (typeof meta.decision === 'string') morceaux.push(meta.decision)
+  if (typeof meta.motif === 'string') morceaux.push(`« ${meta.motif} »`)
+  if (Array.isArray(meta.outils) && meta.outils.length) morceaux.push(`outils : ${meta.outils.join(', ')}`)
+  return morceaux.join(' · ') || '—'
 }
 
 function booleanStatus(value: boolean | null) {
@@ -111,19 +166,25 @@ function StatCard({ value, label, icon, hint }: { value: number | string; label:
   )
 }
 
-export default function AgentTableauPage() {
+export default function TableauModulePage() {
   const { hasPermission } = usePermissions()
   const { user } = useAuth()
-  const canImport = hasPermission('secretariat.tableau.import')
-  const canAnalyze = hasPermission('secretariat.tableau.analyze')
-  const canCompare = hasPermission('secretariat.tableau.compare')
-  const canReport = hasPermission('secretariat.tableau.generate_report')
-  const canGeneratePv = hasPermission('secretariat.tableau.generate_pv')
-  const canExport = hasPermission('secretariat.tableau.export')
-  const canCorrect = hasPermission('secretariat.tableau.correct')
+  const canImport = hasPermission('tableau.import')
+  const canAnalyze = hasPermission('tableau.analyze')
+  const canCompare = hasPermission('tableau.compare')
+  const canReport = hasPermission('tableau.generate_report')
+  const canGeneratePv = hasPermission('tableau.generate_pv')
+  const canExport = hasPermission('tableau.export')
+  const canCorrect = hasPermission('tableau.correct')
+  const canSettings = hasPermission('tableau.settings')
+  const canUseAssistant = hasPermission('tableau.use_assistant')
+  const canViewAudit = hasPermission('tableau.view_audit_logs')
   const canNational = user?.role?.toLowerCase() === 'super_admin'
     || (user?.role?.toLowerCase() === 'admin' && user?.organisation_slug?.toLowerCase() === 'cn')
-  const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
+  const location = useLocation()
+  const navigate = useNavigate()
+  const activeTab: TabKey = ONGLETS[location.pathname.replace(/\/+$/, '') || '/tableau'] ?? 'dashboard'
+  const setActiveTab = (tab: TabKey) => navigate(CHEMINS[tab])
   const [base, setBase] = useState<TableauBase | null>(null)
   const [baseLoading, setBaseLoading] = useState(false)
   const [baseNational, setBaseNational] = useState(false)
@@ -142,6 +203,7 @@ export default function AgentTableauPage() {
   const baseExerciceDiffere = useDebouncedValue(baseExercice)
   const [stats, setStats] = useState<TableauStats | null>(null)
   const [imports, setImports] = useState<TableauImport[]>([])
+  const [actualisations, setActualisations] = useState<TableauActualisation[]>([])
   const [dossiers, setDossiers] = useState<TableauDossier[]>([])
   const [dossierPage, setDossierPage] = useState(1)
   const [dossierPageSize, setDossierPageSize] = useState(50)
@@ -155,6 +217,8 @@ export default function AgentTableauPage() {
   const [selectedReport, setSelectedReport] = useState<TableauReport | null>(null)
   const [analysisScope, setAnalysisScope] = useState<'import' | 'base'>('import')
   const [correctionDossier, setCorrectionDossier] = useState<TableauDossier | null>(null)
+  const [journal, setJournal] = useState<TableauAuditEntry[]>([])
+  const [journalLoading, setJournalLoading] = useState(false)
   const [correctionForm, setCorrectionForm] = useState({
     numero_ordre: '', nom: '', categorie: '', email: '', telephone: '',
     cotisation: '', assurance: '', motif: '',
@@ -163,6 +227,11 @@ export default function AgentTableauPage() {
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (activeTab !== 'actualisations') return
+    listTableauActualisations().then(result => setActualisations(result.items)).catch(() => setError('Impossible de charger les actualisations.'))
+  }, [activeTab])
 
   const [exercice, setExercice] = useState(String(new Date().getFullYear()))
   const [compareExerciceA, setCompareExerciceA] = useState('')
@@ -178,7 +247,6 @@ export default function AgentTableauPage() {
     nouveau_anciennete_ans: 3,
     exempter_nouveaux: true,
   })
-  const [showReglages, setShowReglages] = useState(false)
 
   const apiErr = (err: unknown, fallback: string) =>
     err instanceof ApiError ? err.message : fallback
@@ -372,7 +440,31 @@ export default function AgentTableauPage() {
   }
 
   useEffect(() => { void loadAll() }, [])
+
+  // Les règles en vigueur se lisent sur le serveur : les valeurs par défaut du
+  // code ne disent pas ce qui gouverne l'exercice.
+  useEffect(() => {
+    if (!selectedImport) return
+    let annule = false
+    getTableauReglages(selectedImport.id)
+      .then(valeurs => { if (!annule && valeurs) setReglages(valeurs) })
+      .catch(() => undefined)
+    return () => { annule = true }
+  }, [selectedImport?.id])
   useEffect(() => { setDossierPage(1) }, [selectedImport?.id, dossierPageSize])
+
+  // Le journal ne se charge qu'à l'ouverture de son écran : il n'entre dans
+  // aucun autre calcul de la page.
+  useEffect(() => {
+    if (activeTab !== 'journal' || !canViewAudit) return
+    let annule = false
+    setJournalLoading(true)
+    listTableauAudit({ limit: 100 })
+      .then(entrees => { if (!annule) setJournal(entrees) })
+      .catch(() => { if (!annule) setJournal([]) })
+      .finally(() => { if (!annule) setJournalLoading(false) })
+    return () => { annule = true }
+  }, [activeTab, canViewAudit])
 
   const anomaliesHigh = anomalies.filter(a => a.gravite === 'high')
   const anomaliesMedium = anomalies.filter(a => a.gravite === 'medium')
@@ -499,18 +591,9 @@ export default function AgentTableauPage() {
     }
   }
 
-  const allTabs: Array<{ key: TabKey; label: string; icon: React.ReactNode; visible?: boolean }> = [
-    { key: 'dashboard', label: 'Tableau de bord', icon: <BarChart2 size={15} /> },
-    { key: 'base', label: 'Base Tableau', icon: <Layers size={15} /> },
-    { key: 'import', label: 'Import Excel', icon: <Upload size={15} />, visible: canImport },
-    { key: 'analyse', label: 'Analyse réglementaire', icon: <Bot size={15} /> },
-    { key: 'anomalies', label: 'Anomalies', icon: <AlertTriangle size={15} /> },
-    { key: 'comparaison', label: 'Comparaison', icon: <GitCompare size={15} />, visible: canCompare },
-    { key: 'rapports', label: 'Rapports', icon: <FileText size={15} /> },
-  ]
-  const tabs = allTabs.filter(tab => tab.visible !== false)
   // Une analyse ne vaut que si elle est à jour : le backend refuse export, rapport
   // et PV dès qu'elle est marquée obsolète.
+  const exercicesConnus = [...new Set(imports.map(item => item.exercice))]
   const analyseObsolete = analyse?.status === 'stale'
   const analysePrete = analyse?.status === 'completed'
   const categoriesCorrection = correctionDossier && correctionDossier.categorie
@@ -535,19 +618,19 @@ export default function AgentTableauPage() {
 
   return (
     <div className={styles.page}>
-      <SecretariatAgentChat />
+      {canUseAssistant && <TableauAssistantChat />}
 
       <div className={styles.controlPanel}>
         <div className={styles.topRow}>
           <div>
-            <div className={styles.breadcrumb}>Secrétariat / Agent Tableau</div>
+            <div className={styles.breadcrumb}>Tableau de l'Ordre</div>
             <h1 className={styles.title}>
               <span className={styles.iconBox}><Table2 size={19} /></span>
-              Agent Tableau
+              {TITRES[activeTab]}
             </h1>
           </div>
           <div className={styles.actions}>
-            <BackButton fallback="/secretariat" />
+            <BackButton fallback="/tableau" />
             <button type="button" className={styles.secondaryButton} onClick={() => void loadAll()} disabled={loading}>
               <RefreshCw size={15} />
               Actualiser
@@ -555,32 +638,6 @@ export default function AgentTableauPage() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '4px', marginTop: '10px', flexWrap: 'wrap' }}>
-          {tabs.map(tab => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 12px',
-                borderRadius: '5px',
-                border: '1px solid',
-                borderColor: activeTab === tab.key ? 'var(--tenant-primary, #714b67)' : '#e5e7eb',
-                background: activeTab === tab.key ? 'var(--tenant-primary, #714b67)' : '#fff',
-                color: activeTab === tab.key ? '#fff' : '#374151',
-                fontSize: '13px',
-                fontWeight: activeTab === tab.key ? '600' : '400',
-                cursor: 'pointer',
-              }}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className={styles.content}>
@@ -634,6 +691,7 @@ export default function AgentTableauPage() {
             <h2 className={styles.sectionTitle} style={{ margin: '20px 0 12px' }}>Actions rapides</h2>
             <div className={styles.grid}>
               {[
+                { label: 'Actualisations', icon: <RefreshCw size={18} />, desc: 'Consulter les révisions matérialisées', tab: 'actualisations' as TabKey, visible: true },
                 { label: 'Consulter la base', icon: <Layers size={18} />, desc: 'Voir la situation actuelle par membre', tab: 'base' as TabKey, visible: true },
                 { label: 'Importer Excel', icon: <Upload size={18} />, desc: 'Actualiser le tableau des experts-comptables', tab: 'import' as TabKey, visible: canImport },
                 { label: 'Analyse réglementaire', icon: <Bot size={18} />, desc: 'Calculer les conclusions et anomalies', tab: 'analyse' as TabKey, visible: canAnalyze },
@@ -656,6 +714,19 @@ export default function AgentTableauPage() {
                   <span className={styles.pill}>Ouvrir →</span>
                 </button>
               ))}
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'actualisations' && (
+          <section className={styles.managerWorkspace}>
+            <h2 className={styles.sectionTitle}>Actualisations du Tableau</h2>
+            <p className={styles.sectionSubtitle}>Les révisions sont matérialisées par le backend et restent immuables.</p>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={baseTableStyle}><thead><tr><th style={baseThStyle}>Situation</th><th style={baseThStyle}>Révision</th><th style={baseThStyle}>Actualisée le</th><th style={baseThStyle}>Lignes</th><th style={baseThStyle}>Statut</th></tr></thead>
+                <tbody>{actualisations.map(a => <tr key={a.id}><td style={baseTdStyle}>{a.date_situation}</td><td style={baseTdStyle}>#{a.revision_number}{a.is_current && <span className={styles.pill} style={{ marginLeft: 8 }}>Courante</span>}</td><td style={baseTdStyle}>{new Date(a.actualized_at).toLocaleString()}</td><td style={baseTdStyle}>{a.total_rows}</td><td style={baseTdStyle}>{a.status}</td></tr>)}</tbody>
+              </table>
+              {!actualisations.length && <div className={styles.emptyBox}>Aucune actualisation disponible.</div>}
             </div>
           </section>
         )}
@@ -1094,51 +1165,6 @@ export default function AgentTableauPage() {
                   )
                 })()}
 
-                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-                       onClick={() => setShowReglages(v => !v)}>
-                    <h3 style={{ fontSize: '13px', fontWeight: '600', color: '#374151', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Settings size={15} /> Réglages de délibération
-                    </h3>
-                    <span style={{ fontSize: '12px', color: '#6b7280' }}>{showReglages ? 'Masquer ▲' : 'Modifier ▼'}</span>
-                  </div>
-                  {showReglages && (
-                    <div style={{ marginTop: '12px' }}>
-                      <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                        <div>
-                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Heures de formation min.</label>
-                          <input type="number" value={reglages.heures_formation_min ?? 120}
-                            onChange={e => setReglages(r => ({ ...r, heures_formation_min: Number(e.target.value) }))}
-                            style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '120px' }} />
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Seuil d'âge (exemption)</label>
-                          <input type="number" value={reglages.age_seuil ?? 60}
-                            onChange={e => setReglages(r => ({ ...r, age_seuil: Number(e.target.value) }))}
-                            style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '120px' }} />
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Au-delà du seuil d'âge</label>
-                          <select value={reglages.age_action ?? 'a_deliberer'}
-                            onChange={e => setReglages(r => ({ ...r, age_action: e.target.value as TableauReglages['age_action'] }))}
-                            style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '200px' }}>
-                            <option value="a_deliberer">Marquer « À DÉLIBÉRER »</option>
-                            <option value="inscrit">Valider directement (INSCRIT)</option>
-                            <option value="aucune">Ne rien changer (soumis aux 120h)</option>
-                          </select>
-                        </div>
-                      </div>
-                      <button type="button" className={styles.secondaryButton}
-                        onClick={() => void handleSaveReglages()}
-                        disabled={actionLoading === 'reglages'}
-                        style={{ marginTop: '12px', background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}>
-                        <Settings size={15} />
-                        {actionLoading === 'reglages' ? 'Application...' : 'Appliquer et recalculer'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '16px' }}>
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>
@@ -1527,6 +1553,145 @@ export default function AgentTableauPage() {
                 </div>
               )}
             </div>
+          </section>
+        )}
+
+        {activeTab === 'journal' && (
+          <section className={styles.managerWorkspace}>
+            <div className={styles.mailToolbar}>
+              <div>
+                <h2 className={styles.sectionTitle}>Journal des actions</h2>
+                <p className={styles.sectionSubtitle}>
+                  Ce que le module a enregistré : corrections, décisions et questions posées à
+                  l'assistant. Les 100 entrées les plus récentes.
+                </p>
+              </div>
+            </div>
+
+            {journalLoading ? (
+              <div className={styles.emptyBox}>Chargement du journal…</div>
+            ) : journal.length === 0 ? (
+              <div className={styles.emptyBox}>Aucune action enregistrée pour ce conseil.</div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr>
+                      <th style={baseThStyle}>Date</th>
+                      <th style={baseThStyle}>Action</th>
+                      <th style={baseThStyle}>Cible</th>
+                      <th style={baseThStyle}>Détail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {journal.map(entree => (
+                      <tr key={entree.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ ...baseTdStyle, whiteSpace: 'nowrap' }}>
+                          {new Date(entree.created_at).toLocaleString('fr-FR')}
+                        </td>
+                        <td style={baseTdStyle}>{LIBELLES_AUDIT[entree.action] || entree.action}</td>
+                        <td style={baseTdStyle}>
+                          {entree.target_type ? `${entree.target_type}${entree.target_id ? ` #${entree.target_id}` : ''}` : '—'}
+                        </td>
+                        <td style={{ ...baseTdStyle, color: '#6b7280' }}>{resumerAudit(entree)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeTab === 'reglages' && (
+          <section className={styles.managerWorkspace}>
+            <div className={styles.mailToolbar}>
+              <div>
+                <h2 className={styles.sectionTitle}>Règles de délibération</h2>
+                <p className={styles.sectionSubtitle}>
+                  Ces règles décident des conclusions : elles valent pour tout l'exercice choisi,
+                  quel que soit le fichier par lequel la situation est arrivée.
+                </p>
+              </div>
+            </div>
+
+            {exercicesConnus.length === 0 ? (
+              <div className={styles.emptyBox}>
+                Aucun import : les règles s'appliquent à un exercice, il faut donc en charger un d'abord.
+              </div>
+            ) : (
+              <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px' }}>
+                <label style={{ display: 'grid', gap: '5px', fontSize: '12px', fontWeight: 600, maxWidth: '260px', marginBottom: '16px' }}>
+                  Exercice concerné
+                  <select
+                    value={selectedImport?.exercice || ''}
+                    onChange={event => {
+                      const imp = imports.find(item => item.exercice === event.target.value)
+                      if (imp) void handleSelectImport(imp)
+                    }}
+                    style={{ padding: '8px 10px', border: '1px solid #c9ccd2', borderRadius: '5px' }}
+                  >
+                    {exercicesConnus.map(ex => <option key={ex} value={ex}>{ex}</option>)}
+                  </select>
+                </label>
+
+                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Heures de formation min.</label>
+                    <input type="number" min={0} value={reglages.heures_formation_min ?? 120}
+                      disabled={!canSettings}
+                      onChange={e => setReglages(r => ({ ...r, heures_formation_min: Number(e.target.value) }))}
+                      style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '120px' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Seuil d'âge (exemption)</label>
+                    <input type="number" min={0} value={reglages.age_seuil ?? 60}
+                      disabled={!canSettings}
+                      onChange={e => setReglages(r => ({ ...r, age_seuil: Number(e.target.value) }))}
+                      style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '120px' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Au-delà du seuil d'âge</label>
+                    <select value={reglages.age_action ?? 'a_deliberer'}
+                      disabled={!canSettings}
+                      onChange={e => setReglages(r => ({ ...r, age_action: e.target.value as TableauReglages['age_action'] }))}
+                      style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '220px' }}>
+                      <option value="a_deliberer">Marquer « À DÉLIBÉRER »</option>
+                      <option value="inscrit">Valider directement (INSCRIT)</option>
+                      <option value="aucune">Ne rien changer (soumis au minimum d'heures)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Ancienneté « nouveau membre » (ans)</label>
+                    <input type="number" min={1} value={reglages.nouveau_anciennete_ans ?? 3}
+                      disabled={!canSettings}
+                      onChange={e => setReglages(r => ({ ...r, nouveau_anciennete_ans: Number(e.target.value) }))}
+                      style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '120px' }} />
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151', alignSelf: 'flex-end', paddingBottom: '8px' }}>
+                    <input type="checkbox" checked={reglages.exempter_nouveaux ?? true}
+                      disabled={!canSettings}
+                      onChange={e => setReglages(r => ({ ...r, exempter_nouveaux: e.target.checked }))} />
+                    Exempter les nouveaux membres de formation
+                  </label>
+                </div>
+
+                <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '14px' }}>
+                  Enregistrer relance l'analyse du périmètre en cours : les conclusions déjà
+                  calculées seraient sinon celles des anciennes règles.
+                </p>
+
+                {canSettings && (
+                  <button type="button" className={styles.secondaryButton}
+                    onClick={() => void handleSaveReglages()}
+                    disabled={actionLoading === 'reglages' || !selectedImport}
+                    style={{ marginTop: '8px', background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}>
+                    <Settings size={15} />
+                    {actionLoading === 'reglages' ? 'Application...' : 'Enregistrer et recalculer'}
+                  </button>
+                )}
+              </div>
+            )}
           </section>
         )}
       </div>

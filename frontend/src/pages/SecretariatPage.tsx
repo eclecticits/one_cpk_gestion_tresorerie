@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Bot, CalendarDays, CheckCircle2, ClipboardList, FileText, Mail, MessageSquare, Paperclip, RefreshCw, Settings2, ShieldCheck, Table2, UsersRound } from 'lucide-react'
+import { Bot, CalendarDays, CheckCircle2, ClipboardList, FileText, Mail, MessageSquare, Paperclip, RefreshCw, Settings2, ShieldCheck, UsersRound } from 'lucide-react'
 import SecretariatAgentChat from '../components/SecretariatAgentChat'
 import AiContentBanner from '../components/AiContentBanner'
 import BackButton from '../components/BackButton'
@@ -1290,7 +1290,6 @@ export default function SecretariatPage({ kind }: { kind: SecretariatPageKind })
                 { title: 'Agent Réunion', desc: 'Préparation, PV, décisions et actions de suivi', path: '/secretariat/reunion', icon: <UsersRound size={18} /> },
                 { title: 'Agent Agenda', desc: 'Échéances, rappels et agenda interne', path: '/secretariat/agenda', icon: <CalendarDays size={18} /> },
                 { title: 'Agent Documents', desc: 'Classement, résumés et fiches synthèse', path: '/secretariat/documents', icon: <FileText size={18} /> },
-                { title: 'Agent Tableau', desc: 'Analyse des dossiers experts-comptables, anomalies, PV Commission', path: '/secretariat/tableau', icon: <Table2 size={18} /> },
                 { title: 'Agent Manager', desc: 'Coordination, tâches et pilotage global', path: '/secretariat/manager', icon: <Bot size={18} /> },
                 { title: 'Validations', desc: 'Approbation humaine des actions sensibles', path: '/secretariat/validations', icon: <ShieldCheck size={18} /> },
               ] as Array<{ title: string; desc: string; path: string; icon: ReactNode }>).map((agent) => (

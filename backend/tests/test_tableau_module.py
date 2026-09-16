@@ -27,26 +27,27 @@ from sqlalchemy import event, text
 from fastapi import HTTPException
 
 from app.models.organisation import Organisation
-from app.modules.secretariat.tableau import verdict as V
-from app.modules.secretariat.tableau.analyzer import (
+from app.models.organisation_settings import OrganisationSettings
+from app.modules.tableau import verdict as V
+from app.modules.tableau.analyzer import (
     HEURES_FORCO_MIN,
     compute_analyse_stats,
     detect_anomalies,
 )
-from app.modules.secretariat.tableau.comparison import compare_exercices
-from app.modules.secretariat.tableau.excel_import import parse_excel_bytes
-from app.modules.secretariat.tableau.exporter import build_workbook
-from app.modules.secretariat.tableau.models import TableauAnalyse, TableauDossier
-from app.modules.secretariat.tableau import router as tableau_router
-from app.modules.secretariat.tableau.repository import get_stats, list_anomalies
-from app.modules.secretariat.tableau.schemas import (
+from app.modules.tableau.comparison import compare_exercices
+from app.modules.tableau.excel_import import parse_excel_bytes
+from app.modules.tableau.exporter import build_workbook
+from app.modules.tableau.models import TableauAnalyse, TableauAuditLog, TableauDossier
+from app.modules.tableau import router as tableau_router
+from app.modules.tableau.repository import get_stats, list_anomalies
+from app.modules.tableau.schemas import (
     TableauDecisionCreate,
     TableauDossierCorrection,
     TableauPVCreate,
 )
-from app.modules.secretariat.tableau.models import TableauDecision
-from app.modules.secretariat.tableau.report_generator import generate_pv
-from app.modules.secretariat.tableau.service import (
+from app.modules.tableau.models import TableauDecision
+from app.modules.tableau.report_generator import generate_pv
+from app.modules.tableau.service import (
     _appliquer_decisions,
     _cle_decision,
     _normaliser_correction,
@@ -1955,3 +1956,193 @@ class TestCompteursDuTableauDeBord:
         stats = await get_stats(db_session, org)
         assert stats["analyse_base_status"] == "stale"
         assert stats["dossiers_incomplets"] is None
+
+
+
+def _migration_module_tableau():
+    """Charge la migration pour éprouver son SQL, et non une copie approximative."""
+    chemin = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "20260915_tableau_module.py"
+    spec = importlib.util.spec_from_file_location("migration_module_tableau", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestSortieDuSecretariat:
+    """Le Tableau devient un module sans qu'aucun rôle ait à être refait."""
+
+    async def _appliquer(self, db, migration):
+        for requete, params in migration.instructions():
+            await db.execute(text(requete), params)
+        await db.flush()
+
+    @pytest.mark.asyncio
+    async def test_les_codes_sont_renommes_et_les_roles_conserves(self, db_session):
+        migration = _migration_module_tableau()
+        for code in ("secretariat.tableau.view", "secretariat.tableau.analyze"):
+            await db_session.execute(text(
+                "INSERT INTO permissions (code, description, created_at) VALUES (:c, :c, now())"
+                " ON CONFLICT (code) DO NOTHING"
+            ), {"c": code})
+        role = (await db_session.execute(text(
+            "INSERT INTO roles (code, label, created_at) VALUES (:c, :c, now()) RETURNING id"
+        ), {"c": f"tableau-module-{uuid.uuid4().hex[:8]}"})).scalar_one()
+        for code in ("secretariat.tableau.view", "secretariat.tableau.analyze"):
+            await db_session.execute(text("""
+                INSERT INTO role_permissions (role_id, permission_id)
+                SELECT :role, id FROM permissions WHERE code = :perm
+            """), {"role": role, "perm": code})
+
+        await self._appliquer(db_session, migration)
+
+        droits = set((await db_session.execute(text("""
+            SELECT p.code FROM role_permissions rp
+              JOIN permissions p ON p.id = rp.permission_id
+             WHERE rp.role_id = :role
+        """), {"role": role})).scalars().all())
+
+        assert "tableau.view" in droits and "tableau.analyze" in droits
+        assert not any(code.startswith("secretariat.tableau.") for code in droits)
+        # Le module apparaît au menu, et ses réglages suivent le droit d'analyser.
+        assert "menu_tableau" in droits
+        assert "tableau.settings" in droits
+
+        restants = (await db_session.execute(text(
+            "SELECT count(*) FROM permissions WHERE code LIKE 'secretariat.tableau.%'"
+        ))).scalar_one()
+        assert restants == 0
+
+    @pytest.mark.asyncio
+    async def test_le_module_herite_de_l_activation_du_secretariat(self, db_session):
+        migration = _migration_module_tableau()
+        conseils = {}
+        for libelle, actif in (("actif", True), ("coupe", False)):
+            org = Organisation(nom=f"Conseil {libelle}", slug=f"cp-mod-{uuid.uuid4().hex[:8]}")
+            db_session.add(org)
+            await db_session.commit()
+            db_session.add(OrganisationSettings(
+                organisation_id=org.id,
+                modules_config={"secretariat": {"enabled": actif}},
+            ))
+            conseils[libelle] = org.id
+        await db_session.flush()
+
+        await self._appliquer(db_session, migration)
+
+        for libelle, attendu in (("actif", True), ("coupe", False)):
+            actif_en_base = (await db_session.execute(text(
+                "SELECT (modules_config -> 'tableau' ->> 'enabled')::boolean"
+                "  FROM organisation_settings WHERE organisation_id = :org"
+            ), {"org": conseils[libelle]})).scalar_one()
+            assert actif_en_base is attendu
+
+
+
+def _migration_audit_tableau():
+    """Charge la migration pour éprouver son SQL, et non une copie approximative."""
+    chemin = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "20260915_tableau_audit.py"
+    spec = importlib.util.spec_from_file_location("migration_audit_tableau", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestJournalDuModule:
+    """Le module consigne lui-même ses actes, et n'écrit plus chez le Secrétariat."""
+
+    @pytest.mark.asyncio
+    async def test_correction_et_decision_sont_consignees_dans_le_module(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(
+            db_session, test_admin_user, org, "journal.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.95001"}),
+            "2085", date_situation=date(2085, 4, 1),
+        )
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+
+        await create_decision(db_session, test_admin_user, org, TableauDecisionCreate(
+            dossier_id=dossier.id, type_decision="inscription", decision="INSCRIT", motif="Dossier complet",
+        ))
+        await corriger_dossier(
+            db_session, test_admin_user, org, dossier.id,
+            TableauDossierCorrection(changes={"email": "membre@example.cd"}, motif="Adresse confirmée"),
+        )
+
+        entrees = list((await db_session.execute(
+            select(TableauAuditLog)
+            .where(TableauAuditLog.organisation_id == org, TableauAuditLog.target_id == str(dossier.id))
+            .order_by(TableauAuditLog.id)
+        )).scalars().all())
+
+        assert [e.action for e in entrees] == ["tableau.decision.create", "tableau.dossier.correct"]
+        # Le motif est la valeur du journal ; le texte libre sensible n'y entre pas.
+        assert entrees[1].metadata_json["motif"] == "Adresse confirmée"
+        assert "observations" not in (entrees[0].metadata_json or {})
+
+    @pytest.mark.asyncio
+    async def test_la_migration_deplace_les_entrees_sans_les_dupliquer(self, db_session, test_admin_user):
+        migration = _migration_audit_tableau()
+        org = test_admin_user.organisation_id
+        await db_session.execute(text("""
+            INSERT INTO secretariat_audit_logs
+                (organisation_id, user_id, agent_type, action, target_type, target_id, status, created_at)
+            VALUES (:org, NULL, 'tableau', 'tableau.dossier.correct', 'tableau_dossier', '999', 'success', now()),
+                   (:org, NULL, 'courrier', 'mail.read', 'mail', '1', 'success', now())
+        """), {"org": org})
+        await db_session.flush()
+
+        for requete, params in migration.instructions():
+            await db_session.execute(text(requete), params)
+        await db_session.flush()
+
+        reprise = (await db_session.execute(text(
+            "SELECT count(*) FROM tableau_audit_logs WHERE organisation_id = :org AND target_id = '999'"
+        ), {"org": org})).scalar_one()
+        restant = (await db_session.execute(text(
+            "SELECT count(*) FROM secretariat_audit_logs WHERE organisation_id = :org AND agent_type = 'tableau'"
+        ), {"org": org})).scalar_one()
+        intact = (await db_session.execute(text(
+            "SELECT count(*) FROM secretariat_audit_logs WHERE organisation_id = :org AND agent_type = 'courrier'"
+        ), {"org": org})).scalar_one()
+
+        assert reprise == 1
+        assert restant == 0, "les entrées reprises ne doivent pas rester chez le Secrétariat"
+        assert intact == 1, "les entrées des autres agents ne bougent pas"
+
+
+class TestAssistantDuModule:
+    """L'assistant lit les données du module et n'y touche pas."""
+
+    @pytest.mark.asyncio
+    async def test_les_outils_repondent_sur_les_donnees_du_module(self, db_session, test_admin_user):
+        from app.modules.tableau.assistant import _executer_outil
+
+        # Conseil dédié : les outils sans exercice explicite visent le plus récent
+        # du conseil, qu'un autre test ne doit pas décider à leur place.
+        conseil = Organisation(nom="Conseil Assistant", slug=f"cp-ia-{uuid.uuid4().hex[:8]}")
+        db_session.add(conseil)
+        await db_session.commit()
+        org = conseil.id
+        await import_excel(
+            db_session, test_admin_user, org, "assistant.xlsx",
+            _make_import_bytes({"numero_ordre": "EC/18.96001", "nom": "NGOY Bernard"}),
+            "2086", date_situation=date(2086, 4, 1),
+        )
+
+        base = await _executer_outil("consulter_base", {"exercice": "2086"}, db_session, org)
+        membre = await _executer_outil("situation_membre", {"recherche": "NGOY"}, db_session, org)
+        regles = await _executer_outil("regles_de_deliberation", {}, db_session, org)
+
+        assert base["total_membres"] == 1
+        assert membre["trouve"] is True
+        assert membre["membres"][0]["numero_ordre"] == "EC/18.96001"
+        assert regles["reglages"]["heures_formation_min"] > 0
+
+    def test_aucun_outil_ne_modifie_la_base(self):
+        from app.modules.tableau.assistant import TOOLS
+
+        noms = {outil["function"]["name"] for outil in TOOLS}
+        interdits = {"corriger", "creer", "supprimer", "importer", "decider", "generer", "modifier"}
+        assert not any(mot in nom for nom in noms for mot in interdits), noms

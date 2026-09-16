@@ -20,6 +20,7 @@ const CATEGORIES = ['Société', 'EC Cabinet', 'EC Indépendant', 'EC Salarié',
 
 export default function ImportTableauDossiers({ exercice, onImported }: ImportTableauDossiersProps) {
   const [importing, setImporting] = useState(false)
+  const [sourceType, setSourceType] = useState('tableau')
   const [dateSituation, setDateSituation] = useState(() => {
     const now = new Date()
     const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
@@ -82,7 +83,7 @@ export default function ImportTableauDossiers({ exercice, onImported }: ImportTa
     setImporting(true)
     setResult(null)
     try {
-      const res = await uploadTableauExcel(exercice.trim(), file, dateSituation)
+      const res = await uploadTableauExcel(exercice.trim(), file, dateSituation, sourceType)
       setResult({
         success: res.success,
         message: res.message,
@@ -139,6 +140,18 @@ export default function ImportTableauDossiers({ exercice, onImported }: ImportTa
       </div>
 
       <div className={styles.actions}>
+        <div>
+          <label htmlFor="tableau-source-type" style={{ display: 'block', fontSize: '12px', color: '#374151', marginBottom: '4px' }}>
+            Type de source
+          </label>
+          <select id="tableau-source-type" value={sourceType} onChange={event => setSourceType(event.target.value)} disabled={importing}>
+            <option value="tableau">Tableau</option>
+            <option value="personnes_physiques">Personnes physiques</option>
+            <option value="personnes_morales">Personnes morales</option>
+            <option value="chiffres_affaires">Chiffres d'affaires</option>
+            <option value="assurances">Assurances</option>
+          </select>
+        </div>
         <div>
           <label htmlFor="tableau-date-situation" style={{ display: 'block', fontSize: '12px', color: '#374151', marginBottom: '4px' }}>
             Date de situation

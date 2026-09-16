@@ -22,6 +22,7 @@ MODULE_PERMISSION_MAP: dict[str, str] = {
     "denominations": "menu_denominations",
     "secretariat": "menu_secretariat",
     "comptabilite": "menu_comptabilite",
+    "tableau": "menu_tableau",
 }
 
 ALL_MENUS = list(MODULE_PERMISSION_MAP.keys())

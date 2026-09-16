@@ -22,6 +22,7 @@ import { setTenantOverride, getPortalOrigin, isTenantSubdomainHost } from '../ut
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import styles from './Layout.module.css'
 import {
+  AlertTriangle,
   ArrowDownCircle,
   BookOpenCheck,
   Briefcase,
@@ -36,7 +37,9 @@ import {
   FileBarChart2,
   FileText,
   FolderOpen,
+  GitCompare,
   Landmark,
+  Layers,
   LayoutDashboard,
   LayoutList,
   LogOut,
@@ -47,7 +50,7 @@ import {
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
-  Table2,
+  Upload,
   UserCog,
   Users,
   Wallet,
@@ -256,10 +259,21 @@ const SECRETARIAT_NAV: NavItem[] = [
   { path: '/secretariat/reunion', label: 'Agent Réunion', permission: 'secretariat.use_agent_reunion', icon: <Users size={18} /> },
   { path: '/secretariat/agenda', label: 'Agent Agenda', permission: 'secretariat.use_agent_agenda', icon: <CalendarDays size={18} /> },
   { path: '/secretariat/documents', label: 'Agent Documents', permission: 'secretariat.use_agent_documents', icon: <FolderOpen size={18} /> },
-  { path: '/secretariat/tableau', label: 'Agent Tableau', permission: 'secretariat.view', icon: <Table2 size={18} /> },
   { path: '/secretariat/manager', label: 'Agent Manager', permission: 'secretariat.use_agent_manager', icon: <Bot size={18} /> },
   { path: '/secretariat/validations', label: 'Validations', permission: 'secretariat.view_approvals', icon: <ShieldCheck size={18} /> },
   { path: '/secretariat/parametres-ia', label: 'Paramètres IA', permission: 'secretariat.manage_ai_settings', icon: <SlidersHorizontal size={18} /> },
+]
+
+const TABLEAU_NAV: NavItem[] = [
+  { path: '/tableau', label: 'Tableau de bord', permission: 'tableau.view', icon: <LayoutDashboard size={18} /> },
+  { path: '/tableau/base', label: 'Base Tableau', permission: 'tableau.view', icon: <Layers size={18} /> },
+  { path: '/tableau/imports', label: 'Imports Excel', permission: 'tableau.import', icon: <Upload size={18} /> },
+  { path: '/tableau/analyse', label: 'Analyse réglementaire', permission: 'tableau.view', icon: <Bot size={18} /> },
+  { path: '/tableau/anomalies', label: 'Anomalies', permission: 'tableau.view', icon: <AlertTriangle size={18} /> },
+  { path: '/tableau/comparaison', label: 'Comparaison', permission: 'tableau.compare', icon: <GitCompare size={18} /> },
+  { path: '/tableau/rapports', label: 'Rapports & PV', permission: 'tableau.view', icon: <FileText size={18} /> },
+  { path: '/tableau/reglages', label: 'Règles de délibération', permission: 'tableau.settings', icon: <Settings2 size={18} /> },
+  { path: '/tableau/journal', label: 'Journal des actions', permission: 'tableau.view_audit_logs', icon: <ShieldCheck size={18} /> },
 ]
 
 const COMPTA_ANY_PERMISSION = [
@@ -289,6 +303,7 @@ const NAV_BY_APP = {
   TREASURY: TREASURY_NAV,
   HR: HR_NAV,
   SECRETARIAT: SECRETARIAT_NAV,
+  TABLEAU: TABLEAU_NAV,
   COMPTABILITE: COMPTABILITE_NAV,
 }
 
@@ -354,7 +369,7 @@ export default function Layout() {
     return !!modCfg && modCfg.enabled !== false
   }
 
-  const MODULE_KEY: Record<string, string> = { TREASURY: 'tresorerie', HR: 'rh', SECRETARIAT: 'secretariat', COMPTABILITE: 'comptabilite' }
+  const MODULE_KEY: Record<string, string> = { TREASURY: 'tresorerie', HR: 'rh', SECRETARIAT: 'secretariat', TABLEAU: 'tableau', COMPTABILITE: 'comptabilite' }
   const navItems: NavItem[] = isModuleEnabled(MODULE_KEY[activeApp] ?? '')
     ? activeApp === 'TREASURY'
       ? NAV_BY_APP.TREASURY

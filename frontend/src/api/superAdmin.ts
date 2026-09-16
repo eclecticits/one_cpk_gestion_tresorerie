@@ -141,10 +141,15 @@ export interface ComptabiliteModuleConfig {
   enabled: boolean
 }
 
+export interface TableauModuleConfig {
+  enabled: boolean
+}
+
 export interface ModulesConfig {
   tresorerie?: TresorerieModuleConfig
   rh?: RHModuleConfig
   secretariat?: SecretariatModuleConfig
+  tableau?: TableauModuleConfig
   comptabilite?: ComptabiliteModuleConfig
 }
 

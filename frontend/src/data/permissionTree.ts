@@ -123,6 +123,11 @@ export const PERMISSION_TREE: PermissionModule[] = [
           { code: 'treso.requisitions.delete', label: 'Supprimer une réquisition', kind: 'delete' },
           { code: 'treso.requisitions.cancel', label: 'Annuler une réquisition', kind: 'cancel', deferred: true },
           { code: 'treso.requisitions.export', label: 'Exporter les réquisitions', kind: 'export' },
+          // Corrige l'imputation d'une réquisition déjà validée et payée : déplace
+          // engagement, réalisé et imputations figées d'un poste à l'autre. Accordé à
+          // aucun rôle par défaut ; super-admin et administrateur y accèdent par le
+          // court-circuit de has_permission.
+          { code: 'treso.requisitions.reimputer', label: 'Corriger le poste budgétaire (après paiement)', kind: 'manage' },
         ],
       },
       {
@@ -520,22 +525,6 @@ export const PERMISSION_TREE: PermissionModule[] = [
         ],
       },
       {
-        key: 'sec_tableau',
-        label: 'Agent Tableau',
-        menuCode: 'secretariat.tableau.view',
-        tasks: [
-          { code: 'secretariat.tableau.view', label: 'Consulter le tableau', kind: 'read' },
-          { code: 'secretariat.tableau.import', label: 'Importer un fichier Excel', kind: 'create' },
-          { code: 'secretariat.tableau.analyze', label: 'Lancer l\'analyse', kind: 'other' },
-          { code: 'secretariat.tableau.compare', label: 'Comparer deux exercices', kind: 'other' },
-          { code: 'secretariat.tableau.generate_report', label: 'Générer un rapport', kind: 'create' },
-          { code: 'secretariat.tableau.generate_pv', label: 'Générer un procès-verbal', kind: 'create' },
-          { code: 'secretariat.tableau.export', label: 'Exporter les résultats', kind: 'export' },
-          { code: 'secretariat.tableau.decide', label: 'Enregistrer une décision', kind: 'manage' },
-          { code: 'secretariat.tableau.correct', label: 'Corriger un dossier', kind: 'manage' },
-        ],
-      },
-      {
         key: 'sec_manager',
         label: 'Agent Manager',
         menuCode: 'secretariat.use_agent_manager',
@@ -567,6 +556,68 @@ export const PERMISSION_TREE: PermissionModule[] = [
           { code: 'secretariat.manage_agents', label: 'Gérer les agents', kind: 'manage' },
           { code: 'secretariat.manage_oauth', label: 'Connexions OAuth', kind: 'manage' },
           { code: 'secretariat.view_audit_logs', label: 'Journaux d\'audit', kind: 'read' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'tableau',
+    label: 'Tableau',
+    color: '#0f766e',
+    menus: [
+      {
+        key: 'tableau_module',
+        label: 'Accès au module',
+        menuCode: 'menu_tableau',
+        tasks: [
+          { code: 'menu_tableau', label: 'Accès au module', kind: 'other' },
+          { code: 'tableau.view', label: 'Consulter le Tableau', kind: 'read' },
+        ],
+      },
+      {
+        key: 'tableau_imports',
+        label: 'Imports Excel',
+        menuCode: 'tableau.import',
+        tasks: [
+          { code: 'tableau.import', label: 'Importer un fichier Excel', kind: 'create' },
+        ],
+      },
+      {
+        key: 'tableau_analyse',
+        label: 'Analyse réglementaire',
+        menuCode: 'tableau.analyze',
+        tasks: [
+          { code: 'tableau.analyze', label: 'Lancer l\'analyse', kind: 'other' },
+          { code: 'tableau.decide', label: 'Enregistrer une décision', kind: 'manage' },
+          { code: 'tableau.correct', label: 'Corriger un dossier', kind: 'manage' },
+        ],
+      },
+      {
+        key: 'tableau_restitutions',
+        label: 'Rapports & exports',
+        menuCode: 'tableau.generate_report',
+        tasks: [
+          { code: 'tableau.generate_report', label: 'Générer un rapport', kind: 'create' },
+          { code: 'tableau.generate_pv', label: 'Générer un procès-verbal', kind: 'create' },
+          { code: 'tableau.export', label: 'Exporter les résultats', kind: 'export' },
+          { code: 'tableau.compare', label: 'Comparer deux exercices', kind: 'other' },
+        ],
+      },
+      {
+        key: 'tableau_reglages',
+        label: 'Règles de délibération',
+        menuCode: 'tableau.settings',
+        tasks: [
+          { code: 'tableau.settings', label: 'Modifier les règles de délibération', kind: 'manage' },
+        ],
+      },
+      {
+        key: 'tableau_journal',
+        label: 'Journal & assistant',
+        menuCode: 'tableau.view_audit_logs',
+        tasks: [
+          { code: 'tableau.view_audit_logs', label: 'Consulter le journal des actions', kind: 'read' },
+          { code: 'tableau.use_assistant', label: 'Utiliser l\'assistant', kind: 'other' },
         ],
       },
     ],

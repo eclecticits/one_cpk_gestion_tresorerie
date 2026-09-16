@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LayoutGrid, Landmark, UsersRound, BookOpen, Calculator } from 'lucide-react'
+import { LayoutGrid, Landmark, UsersRound, BookOpen, Calculator, Table2 } from 'lucide-react'
 import { useApp, AppId, AppDefinition } from '../contexts/AppContext'
 import styles from './AppSwitcher.module.css'
 
@@ -8,6 +8,7 @@ const APP_ICONS: Record<AppId, React.ReactNode> = {
   TREASURY: <Landmark size={28} />,
   HR: <UsersRound size={28} />,
   SECRETARIAT: <BookOpen size={28} />,
+  TABLEAU: <Table2 size={28} />,
   COMPTABILITE: <Calculator size={28} />,
 }
 

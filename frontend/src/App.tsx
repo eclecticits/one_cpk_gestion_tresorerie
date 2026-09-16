@@ -59,7 +59,7 @@ const AgentDocumentsPage = lazy(() => import('./pages/AgentDocumentsPage'))
 const AgentManagerPage = lazy(() => import('./pages/AgentManagerPage'))
 const SecretariatApprovalsPage = lazy(() => import('./pages/SecretariatApprovalsPage'))
 const SecretariatSettingsPage = lazy(() => import('./pages/SecretariatSettingsPage'))
-const AgentTableauPage = lazy(() => import('./pages/AgentTableauPage'))
+const TableauModulePage = lazy(() => import('./pages/TableauModulePage'))
 const Comptabilite = lazy(() => import('./pages/Comptabilite'))
 
 function LoadingFallback() {
@@ -315,7 +315,15 @@ function AppRoutes() {
         <Route path="secretariat/reunion" element={<ModuleRoute permission="secretariat.use_agent_reunion" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentReunionPage /></Suspense></ModuleRoute>} />
         <Route path="secretariat/agenda" element={<ModuleRoute permission="secretariat.use_agent_agenda" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentAgendaPage /></Suspense></ModuleRoute>} />
         <Route path="secretariat/documents" element={<ModuleRoute permission="secretariat.use_agent_documents" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentDocumentsPage /></Suspense></ModuleRoute>} />
-        <Route path="secretariat/tableau" element={<ModuleRoute permission={["secretariat.tableau.view", "secretariat.view"]} moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentTableauPage /></Suspense></ModuleRoute>} />
+        <Route path="tableau" element={<ModuleRoute permission="tableau.view" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
+        <Route path="tableau/base" element={<ModuleRoute permission="tableau.view" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
+        <Route path="tableau/imports" element={<ModuleRoute permission="tableau.import" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
+        <Route path="tableau/analyse" element={<ModuleRoute permission="tableau.view" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
+        <Route path="tableau/anomalies" element={<ModuleRoute permission="tableau.view" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
+        <Route path="tableau/comparaison" element={<ModuleRoute permission="tableau.compare" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
+        <Route path="tableau/rapports" element={<ModuleRoute permission="tableau.view" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
+        <Route path="tableau/reglages" element={<ModuleRoute permission="tableau.settings" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
+        <Route path="tableau/journal" element={<ModuleRoute permission="tableau.view_audit_logs" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
         <Route path="secretariat/manager" element={<ModuleRoute permission="secretariat.use_agent_manager" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentManagerPage /></Suspense></ModuleRoute>} />
         <Route path="secretariat/validations" element={<ModuleRoute permission="secretariat.view_approvals" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><SecretariatApprovalsPage /></Suspense></ModuleRoute>} />
         <Route path="secretariat/parametres-ia" element={<ModuleRoute permission="secretariat.manage_ai_settings" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><SecretariatSettingsPage /></Suspense></ModuleRoute>} />

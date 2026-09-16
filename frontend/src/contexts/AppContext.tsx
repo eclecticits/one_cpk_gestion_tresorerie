@@ -3,7 +3,7 @@ import { usePermissionsContext } from './PermissionsContext'
 import { useOrganisationSettings } from './OrganisationSettingsContext'
 import { useAuth } from './AuthContext'
 
-export type AppId = 'TREASURY' | 'HR' | 'SECRETARIAT' | 'COMPTABILITE'
+export type AppId = 'TREASURY' | 'HR' | 'SECRETARIAT' | 'TABLEAU' | 'COMPTABILITE'
 
 export interface AppDefinition {
   id: AppId
@@ -49,6 +49,16 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     moduleKey: 'secretariat',
   },
   {
+    id: 'TABLEAU',
+    label: 'Tableau',
+    subtitle: "Tableau de l'Ordre",
+    entryPath: '/tableau',
+    accessPermissions: ['tableau.view'],
+    color: '#0f766e',
+    bgColor: 'rgba(15, 118, 110, 0.12)',
+    moduleKey: 'tableau',
+  },
+  {
     id: 'COMPTABILITE',
     label: 'Comptabilité',
     subtitle: 'Comptabilité générale',
@@ -71,6 +81,7 @@ const ROUTE_TO_APP: { prefix: string; app: AppId }[] = [
   { prefix: '/rh', app: 'HR' },
   { prefix: '/secretariat', app: 'SECRETARIAT' },
   { prefix: '/comptabilite', app: 'COMPTABILITE' },
+  { prefix: '/tableau', app: 'TABLEAU' },
 ]
 
 export function detectAppFromPath(pathname: string): AppId | null {

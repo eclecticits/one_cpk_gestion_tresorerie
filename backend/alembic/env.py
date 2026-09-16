@@ -102,13 +102,25 @@ from app.modules.secretariat.models import (  # noqa: F401
     SecretariatMessage,
     SecretariatTask,
 )
-from app.modules.secretariat.tableau.models import (  # noqa: F401
+from app.modules.tableau.models import (  # noqa: F401
+    TableauActualisation,
+    TableauActualisationInput,
+    TableauActualisationRow,
     TableauAnomalie,
+    TableauAuditLog,
     TableauAnalyse,
+    TableauCaDeclaration,
     TableauDecision,
     TableauDossier,
     TableauImport,
+    TableauInsuranceDeclaration,
+    TableauMemberIdentity,
+    TableauPersonneMoraleSnapshot,
+    TableauPersonnePhysiqueSnapshot,
+    TableauReferenceMember,
+    TableauReferenceSnapshot,
     TableauReport,
+    TableauSourceRow,
 )
 from app.modules.comptabilite.models import (  # noqa: F401
     ComptaCompte,
