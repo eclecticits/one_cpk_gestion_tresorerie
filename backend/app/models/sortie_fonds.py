@@ -62,6 +62,15 @@ class SortieFonds(Base):
         nullable=True,
         index=True,
     )
+    # Quelle ligne ce décaissement a payée. Facultatif : `NULL` signifie que la
+    # sortie couvre la réquisition entière — la forme de toutes les sorties
+    # antérieures au lien, qu'aucune reprise ne peut rattacher après coup.
+    ligne_requisition_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("lignes_requisition.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     rubrique_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     budget_poste_id: Mapped[int | None] = mapped_column(
         Integer,

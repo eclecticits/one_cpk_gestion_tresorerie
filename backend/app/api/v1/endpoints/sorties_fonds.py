@@ -1148,6 +1148,90 @@ async def _assert_budget_rate(db: AsyncSession, tenant_id: int, devise: str | No
         )
 
 
+async def _ventiler_par_ligne(
+    db: AsyncSession,
+    requisition_uid: uuid.UUID | None,
+    repartition: list[tuple[int, Decimal]],
+) -> list[tuple[int, Decimal, uuid.UUID | None]]:
+    """Descend une répartition par poste au niveau des lignes.
+
+    Le circuit autorise et paie par poste — c'est la maille de la décision. Le
+    budget, lui, gagne à savoir de quelle ligne vient chaque impact : sans cela,
+    corriger l'imputation d'une seule ligne oblige à répartir le réalisé au
+    jugé. La part d'un poste se ventile donc sur ses lignes, au prorata de leurs
+    montants, le centime d'arrondi revenant à la plus grosse — celle qu'il
+    déforme le moins.
+
+    Un poste dont on ne connaît pas les lignes — sortie directe, réquisition sans
+    imputation — garde une entrée sans ligne : `NULL` dit « on ne sait pas », ce
+    qui vaut mieux qu'un rattachement inventé.
+    """
+    if requisition_uid is None:
+        return [(pid, montant, None) for pid, montant in repartition]
+
+    res = await db.execute(
+        select(
+            LigneRequisition.id,
+            LigneRequisition.budget_poste_id,
+            LigneRequisition.montant_total,
+        )
+        .where(
+            LigneRequisition.requisition_id == requisition_uid,
+            LigneRequisition.budget_poste_id.isnot(None),
+        )
+        .order_by(LigneRequisition.montant_total.desc())
+    )
+    par_poste: dict[int, list[tuple[uuid.UUID, Decimal]]] = {}
+    for lid, pid, montant in res.all():
+        par_poste.setdefault(int(pid), []).append((lid, Decimal(str(montant or 0))))
+
+    ventilee: list[tuple[int, Decimal, uuid.UUID | None]] = []
+    for pid, montant_poste in repartition:
+        lignes = par_poste.get(pid) or []
+        total = sum((m for _, m in lignes), Decimal("0"))
+        if not lignes or total <= 0:
+            # Une ligne unique reste identifiable même à montant nul ; au-delà,
+            # aucune répartition n'a de sens et le lien reste vide.
+            ventilee.append((pid, montant_poste, lignes[0][0] if len(lignes) == 1 else None))
+            continue
+        parts = [
+            (lid, (montant_poste * montant / total).quantize(Decimal("0.01")))
+            for lid, montant in lignes
+        ]
+        ecart = montant_poste - sum(m for _, m in parts)
+        if ecart != 0:
+            parts[0] = (parts[0][0], parts[0][1] + ecart)
+        ventilee.extend((pid, montant, lid) for lid, montant in parts if montant > 0)
+    return ventilee
+
+
+async def _ligne_unique_de_requisition(
+    db: AsyncSession, requisition_uid: uuid.UUID | None
+) -> uuid.UUID | None:
+    """La ligne que ce décaissement paie, quand il n'y a pas d'ambiguïté.
+
+    Le circuit de décaissement raisonne par poste, jamais par ligne : une
+    réquisition multi-postes est répartie sur ses postes (`repartition_postes`),
+    et un ordre de tranche ne porte lui non plus que des `budget_poste_id`. Une
+    sortie ne se rapporte donc à une ligne précise que lorsque la réquisition
+    n'en porte qu'une seule.
+
+    Au-delà, on laisse `NULL`, qui a son sens plein — « couvre la réquisition
+    entière » — et que la ré-imputation traite en répartissant l'imputation au
+    prorata, poste par poste. Y inscrire une ligne au hasard serait pire : un
+    lien faux se lit comme un lien vrai.
+    """
+    if requisition_uid is None:
+        return None
+    res = await db.execute(
+        select(LigneRequisition.id)
+        .where(LigneRequisition.requisition_id == requisition_uid)
+        .limit(2)
+    )
+    lignes = list(res.scalars().all())
+    return lignes[0] if len(lignes) == 1 else None
+
+
 @router.post("/drafts", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
 async def create_sortie_fonds_draft(
     payload: SortieFondsDraftCreate,
@@ -1221,6 +1305,7 @@ async def create_sortie_fonds_draft(
         type_sortie=(payload.type_sortie or "requisition"),
         organisation_id=tenant_id,
         requisition_id=requisition_uid,
+        ligne_requisition_id=await _ligne_unique_de_requisition(db, requisition_uid),
         rubrique_code=payload.rubrique_code,
         budget_poste_id=payload.budget_poste_id,
         service_id=payload.service_id,
@@ -1859,6 +1944,10 @@ async def create_sortie_fonds(
                         detail="Rubrique verrouillée par la réquisition",
                     )
                 payload.budget_poste_id = locked_budget_id
+                # Un seul poste, mais peut-être plusieurs lignes : la répartition
+                # sert ici à ventiler l'impact ligne par ligne, pas à éclater le
+                # poste. `multi_poste` reste faux, la sortie garde son poste.
+                repartition_postes = [(locked_budget_id, montant_paye)]
         if nature_mouvement == "FONDS_DE_TIERS":
             fonds_tiers_operation = await assert_fonds_tiers_refundable(
                 db,
@@ -1905,6 +1994,9 @@ async def create_sortie_fonds(
     # sortie. `imputations` porte la conversion vers la devise du budget : les
     # deux ne coïncident qu'en USD, et l'imputation persistée garde les deux.
     montants_mouvement: list[Decimal] = []
+    # Ligne de réquisition dont chaque imputation procède, quand le circuit la
+    # connaît. Aligné sur `imputations`, une entrée par impact.
+    lignes_imputees: list[uuid.UUID | None] = []
     if not impact_budgetaire:
         # Un transfert interne (caisse <-> banque) n'est pas une dépense :
         # aucune imputation budgétaire. Même règle pour hors budget/fonds tiers.
@@ -1917,7 +2009,9 @@ async def create_sortie_fonds(
         budget_line = None
         montant_paye_budget = Decimal("0")
         await _assert_budget_rate(db, tenant_id, devise)
-        for pid, montant_ligne in repartition_postes:
+        for pid, montant_ligne, ligne_imputee_id in await _ventiler_par_ligne(
+            db, requisition_uid, repartition_postes
+        ):
             res_bp = await db.execute(
                 select(BudgetPoste)
                 .where(BudgetPoste.id == pid, BudgetPoste.is_deleted.is_(False))
@@ -1941,6 +2035,7 @@ async def create_sortie_fonds(
                     )
             imputations.append((bl, m_budget))
             montants_mouvement.append(montant_ligne)
+            lignes_imputees.append(ligne_imputee_id)
         # Tranche ne visant qu'un seul poste : on le référence sur la sortie
         # (budget_poste_id/libellé) au lieu de « Réparti sur N postes ».
         if len({p.id for p, _ in imputations}) == 1:
@@ -1979,6 +2074,10 @@ async def create_sortie_fonds(
                 )
         imputations = [(budget_line, montant_paye_budget)]
         montants_mouvement = [montant_paye]
+        # Ce chemin sert les sorties sans répartition : directe, ou réquisition
+        # dont aucune ligne ne porte de poste. Dans les deux cas la ligne est
+        # inconnue, et le lien reste vide plutôt que deviné.
+        lignes_imputees = [None]
 
     # --- Bascule d'écriture : ce type, pour cette organisation, part au moteur
     # dédié. Placée ici, après toutes les validations de payload (compte actif,
@@ -2139,6 +2238,7 @@ async def create_sortie_fonds(
         type_sortie=payload.type_sortie,
         organisation_id=tenant_id,
         requisition_id=requisition_uid,
+        ligne_requisition_id=await _ligne_unique_de_requisition(db, requisition_uid),
         rubrique_code=payload.rubrique_code,
         budget_poste_id=(None if multi_poste else payload.budget_poste_id),
         budget_poste_code=(None if multi_poste else (budget_line.code if budget_line else None)),
@@ -2204,12 +2304,15 @@ async def create_sortie_fonds(
         else:
             caisse_appro.solde_cdf = (caisse_appro.solde_cdf or 0) + montant_paye
         caisse_appro.derniere_maj = datetime.now(timezone.utc)
-    for (poste_impute, montant_impute), montant_mouvement in zip(imputations, montants_mouvement, strict=True):
+    for (poste_impute, montant_impute), montant_mouvement, ligne_imputee in zip(
+        imputations, montants_mouvement, lignes_imputees, strict=True
+    ):
         await create_budget_imputation(
             db,
             organisation_id=tenant_id,
             sortie_fonds_id=sortie.id,
             budget_poste_id=poste_impute.id,
+            ligne_requisition_id=ligne_imputee,
             sens="DEPENSE_PAYEE",
             montant_mouvement=montant_mouvement,
             devise_mouvement=devise,

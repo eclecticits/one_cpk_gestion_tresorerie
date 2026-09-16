@@ -69,6 +69,7 @@ async def create_budget_imputation(
     retour_caisse_id: uuid.UUID | None = None,
     regularisation_budgetaire_id: uuid.UUID | None = None,
     exchange_rate_snapshot: Decimal | None = None,
+    ligne_requisition_id: uuid.UUID | None = None,
 ) -> MouvementBudgetImputation:
     if sum(1 for value in (encaissement_id, payment_history_id, sortie_fonds_id, retour_caisse_id) if value is not None) != 1:
         raise HTTPException(status_code=400, detail="Une imputation doit référencer exactement une source")
@@ -94,6 +95,7 @@ async def create_budget_imputation(
         retour_caisse_id=retour_caisse_id,
         regularisation_budgetaire_id=regularisation_budgetaire_id,
         budget_poste_id=budget_poste_id,
+        ligne_requisition_id=ligne_requisition_id,
         sens=sens,
         montant_mouvement=montant_mouvement,
         devise_mouvement=(devise_mouvement or "USD").upper(),

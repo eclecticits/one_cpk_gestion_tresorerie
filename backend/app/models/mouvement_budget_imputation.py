@@ -50,6 +50,15 @@ class MouvementBudgetImputation(Base):
     retour_caisse_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("retours_caisse.id", ondelete="RESTRICT"), nullable=True)
     regularisation_budgetaire_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("regularisations_budgetaires.id", ondelete="RESTRICT"), nullable=True, index=True)
     budget_poste_id: Mapped[int] = mapped_column(Integer, ForeignKey("budget_postes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    # De quelle ligne de réquisition vient cet impact. Facultatif : `NULL` dit
+    # que le circuit ne l'a pas enregistré — le cas de toute imputation
+    # antérieure au lien —, et la ré-imputation répartit alors au prorata du poste.
+    ligne_requisition_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("lignes_requisition.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     sens: Mapped[str] = mapped_column(String(30), nullable=False)
     montant_mouvement: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     devise_mouvement: Mapped[str] = mapped_column(String(3), nullable=False)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from datetime import datetime, timezone
 import logging
 import os
@@ -9,6 +10,7 @@ from typing import Any
 import io
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Response, Request
+from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse
 from PIL import Image
 from sqlalchemy import select, func, or_
@@ -34,6 +36,7 @@ from app.models.service import Service
 from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
 from app.services.budget_engagement import resynchroniser_engagement_requisition
+from app.services.reimputation_budgetaire import apercu_reimputation, reimputer_requisition
 from app.services.mailer import normalize_email_list, send_requisition_notification, send_requisition_workflow_email
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
@@ -2246,3 +2249,130 @@ async def restore_requisition(
     await db.commit()
     await db.refresh(req)
     return _requisition_out(req)
+
+
+class ReimputationIn(BaseModel):
+    """Correction du poste budgétaire d'une réquisition, y compris payée."""
+    budget_poste_id: int = Field(ge=1)
+    motif: str = Field(min_length=3, max_length=500)
+    forcer: bool = False
+    # Les lignes à déplacer. Omis, toute la réquisition suit — une réquisition
+    # peut porter plusieurs lignes, sur autant de postes.
+    ligne_ids: list[uuid.UUID] | None = None
+
+
+class ReimputationOut(BaseModel):
+    postes_avant: list[int]
+    nouveau_poste_id: int
+    nouveau_poste_code: str
+    lignes_deplacees: int
+    lignes_total: int
+    sorties_deplacees: int
+    sorties_reparties: int
+    imputations_deplacees: int
+    montant_engage_deplace: Decimal
+    montant_paye_deplace: Decimal
+    postes_resynchronises: int
+    fusionne_plusieurs_postes: bool
+    depassement_assume: bool
+
+
+async def _requisition_pour_reimputation(db: AsyncSession, requisition_id: str, tenant_id: int) -> Requisition:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Identifiant de réquisition invalide")
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == rid,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
+    req = res.scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable")
+    return req
+
+
+@router.get(
+    "/{requisition_id}/reimputation",
+    summary="Ce que déplacerait une ré-imputation, sans rien écrire",
+    dependencies=[Depends(has_permission("treso.requisitions.reimputer"))],
+)
+async def previsualiser_reimputation(
+    requisition_id: str,
+    budget_poste_id: int = Query(..., ge=1),
+    ligne_ids: list[uuid.UUID] | None = Query(None, description="Lignes à déplacer ; toutes si absent"),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict:
+    req = await _requisition_pour_reimputation(db, requisition_id, tenant_id)
+    return await apercu_reimputation(
+        db, requisition=req, nouveau_poste_id=budget_poste_id, ligne_ids=ligne_ids
+    )
+
+
+@router.post(
+    "/{requisition_id}/reimputation",
+    response_model=ReimputationOut,
+    summary="Ré-imputer une réquisition sur un autre poste budgétaire",
+    dependencies=[Depends(has_permission("treso.requisitions.reimputer"))],
+)
+async def reimputer(
+    requisition_id: str,
+    payload: ReimputationIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> ReimputationOut:
+    """Corrige l'imputation budgétaire d'une réquisition, quel que soit son statut.
+
+    `ligne_ids` désigne les lignes à déplacer ; sans lui, toute la réquisition
+    suit. Le circuit accompagne les lignes choisies : sorties de fonds,
+    imputations figées du paiement et compteurs des postes. L'engagement n'est
+    jamais décrémenté à la main, il est recalculé depuis les lignes.
+    """
+    req = await _requisition_pour_reimputation(db, requisition_id, tenant_id)
+    avant = await apercu_reimputation(
+        db,
+        requisition=req,
+        nouveau_poste_id=payload.budget_poste_id,
+        ligne_ids=payload.ligne_ids,
+    )
+
+    resultat = await reimputer_requisition(
+        db,
+        requisition=req,
+        nouveau_poste_id=payload.budget_poste_id,
+        ligne_ids=payload.ligne_ids,
+        user_id=user.id,
+        motif=payload.motif,
+        forcer=payload.forcer,
+    )
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="requisition.reimputation",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"postes": avant["postes_avant"], "statut": req.status, "examen": req.examen_status},
+        new_value={
+            "poste": payload.budget_poste_id,
+            "motif": resultat["motif"],
+            # Quelles lignes ont bougé, et sur combien : une correction partielle
+            # ne se relit pas si le journal ne dit que le poste d'arrivée.
+            "lignes": [str(lid) for lid in payload.ligne_ids] if payload.ligne_ids else "toutes",
+            "lignes_deplacees": f"{resultat['lignes_deplacees']}/{resultat['lignes_total']}",
+            "engage_deplace": str(resultat["montant_engage_deplace"]),
+            "paye_deplace": str(resultat["montant_paye_deplace"]),
+            "sorties_reparties": resultat["sorties_reparties"],
+            "fusionne_plusieurs_postes": resultat["fusionne_plusieurs_postes"],
+            "depassement_assume": resultat["depassement_assume"],
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    return ReimputationOut(**{k: v for k, v in resultat.items() if k in ReimputationOut.model_fields})
