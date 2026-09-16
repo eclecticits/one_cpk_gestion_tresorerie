@@ -549,67 +549,275 @@ def _actualisation_row_payload(row):
             "anomalies": anomalies, "anomaly_codes": [a.get("code") for a in anomalies if isinstance(a, dict) and a.get("code")]}
 
 
-async def _get_actual(db, tenant_id, actualisation_id):
-    obj = (await db.execute(select(TableauActualisation).where(TableauActualisation.id == actualisation_id, TableauActualisation.organisation_id == tenant_id))).scalar_one_or_none()
+async def _get_actual(
+    db: AsyncSession, tenant_id: int, actualisation_id: int
+) -> TableauActualisation:
+    """L'actualisation demandée, à condition qu'elle appartienne à l'organisation.
+
+    Appelée en tête de chaque lecture : les lignes et les entrées d'une
+    actualisation ne portent pas d'`organisation_id`, elles sont cadrées par leur
+    parent. Sans ce contrôle, un identifiant suffirait à lire les données d'une
+    autre organisation.
+    """
+    obj = (await db.execute(
+        select(TableauActualisation).where(
+            TableauActualisation.id == actualisation_id,
+            TableauActualisation.organisation_id == tenant_id,
+        )
+    )).scalar_one_or_none()
     if obj is None:
         raise HTTPException(404, "Actualisation introuvable")
     return obj
 
 
-@router.get("/actualisations", response_model=TableauActualisationListOut, dependencies=[Depends(has_any_permission(VIEW_PERMS))])
-async def tableau_actualisations(date_situation: date | None = Query(None), db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)):
+def _actualisation_resume(
+    a: TableauActualisation, *, imports_count: int, total_rows: int, is_current: bool
+) -> dict:
+    """Le résumé commun à la liste et au détail, pour qu'ils ne divergent pas."""
+    return {
+        "id": a.id,
+        "date_situation": a.date_situation,
+        "revision_number": a.revision_number,
+        "actualized_at": a.actualized_at,
+        "status": a.status,
+        "reference_snapshot_id": a.reference_snapshot_id,
+        "imports_count": imports_count,
+        "total_rows": total_rows,
+        "is_current": is_current,
+    }
+
+
+@router.get(
+    "/actualisations",
+    response_model=TableauActualisationListOut,
+    dependencies=[Depends(has_any_permission(VIEW_PERMS))],
+)
+async def tableau_actualisations(
+    date_situation: date | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     where = [TableauActualisation.organisation_id == tenant_id]
-    if date_situation: where.append(TableauActualisation.date_situation == date_situation)
-    actuals = list((await db.execute(select(TableauActualisation).where(*where).order_by(TableauActualisation.date_situation.desc(), TableauActualisation.revision_number.desc()))).scalars().all())
+    if date_situation:
+        where.append(TableauActualisation.date_situation == date_situation)
+
+    actuals = list((await db.execute(
+        select(TableauActualisation)
+        .where(*where)
+        .order_by(
+            TableauActualisation.date_situation.desc(),
+            TableauActualisation.revision_number.desc(),
+        )
+    )).scalars().all())
+
     items = []
     for a in actuals:
-        ni = (await db.execute(select(func.count(TableauActualisationInput.id)).where(TableauActualisationInput.actualisation_id == a.id))).scalar_one()
-        nr = (await db.execute(select(func.count(TableauActualisationRow.id)).where(TableauActualisationRow.actualisation_id == a.id))).scalar_one()
-        cur = await get_current_tableau_actualisation(db, organisation_id=tenant_id, date_situation=a.date_situation)
-        items.append({"id": a.id, "date_situation": a.date_situation, "revision_number": a.revision_number, "actualized_at": a.actualized_at, "status": a.status, "reference_snapshot_id": a.reference_snapshot_id, "imports_count": ni, "total_rows": nr, "is_current": bool(cur and cur.id == a.id)})
+        imports_count = (await db.execute(
+            select(func.count(TableauActualisationInput.id))
+            .where(TableauActualisationInput.actualisation_id == a.id)
+        )).scalar_one()
+        total_rows = (await db.execute(
+            select(func.count(TableauActualisationRow.id))
+            .where(TableauActualisationRow.actualisation_id == a.id)
+        )).scalar_one()
+        courante = await get_current_tableau_actualisation(
+            db, organisation_id=tenant_id, date_situation=a.date_situation
+        )
+        items.append(_actualisation_resume(
+            a,
+            imports_count=imports_count,
+            total_rows=total_rows,
+            is_current=bool(courante and courante.id == a.id),
+        ))
     return {"items": items, "total": len(items)}
 
 
-@router.get("/actualisations/{actualisation_id}", response_model=TableauActualisationOut, dependencies=[Depends(has_any_permission(VIEW_PERMS))])
-async def tableau_actualisation(actualisation_id: int, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)):
+@router.get(
+    "/actualisations/{actualisation_id}",
+    response_model=TableauActualisationOut,
+    dependencies=[Depends(has_any_permission(VIEW_PERMS))],
+)
+async def tableau_actualisation(
+    actualisation_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     a = await _get_actual(db, tenant_id, actualisation_id)
-    ni = (await db.execute(select(func.count(TableauActualisationInput.id)).where(TableauActualisationInput.actualisation_id == a.id))).scalar_one()
-    nr = (await db.execute(select(func.count(TableauActualisationRow.id)).where(TableauActualisationRow.actualisation_id == a.id))).scalar_one()
-    cur = await get_current_tableau_actualisation(db, organisation_id=tenant_id, date_situation=a.date_situation)
-    return {"id": a.id, "date_situation": a.date_situation, "revision_number": a.revision_number, "actualized_at": a.actualized_at, "status": a.status, "reference_snapshot_id": a.reference_snapshot_id, "imports_count": ni, "total_rows": nr, "is_current": bool(cur and cur.id == a.id), "ruleset_version": a.ruleset_version, "knowledge_cutoff_at": (a.metadata_json or {}).get("knowledge_cutoff_at"), "metadata_json": a.metadata_json}
+    imports_count = (await db.execute(
+        select(func.count(TableauActualisationInput.id))
+        .where(TableauActualisationInput.actualisation_id == a.id)
+    )).scalar_one()
+    total_rows = (await db.execute(
+        select(func.count(TableauActualisationRow.id))
+        .where(TableauActualisationRow.actualisation_id == a.id)
+    )).scalar_one()
+    courante = await get_current_tableau_actualisation(
+        db, organisation_id=tenant_id, date_situation=a.date_situation
+    )
+    resume = _actualisation_resume(
+        a,
+        imports_count=imports_count,
+        total_rows=total_rows,
+        is_current=bool(courante and courante.id == a.id),
+    )
+    resume["ruleset_version"] = a.ruleset_version
+    resume["knowledge_cutoff_at"] = (a.metadata_json or {}).get("knowledge_cutoff_at")
+    resume["metadata_json"] = a.metadata_json
+    return resume
 
 
-@router.get("/actualisations/{actualisation_id}/lignes", response_model=TableauActualisationRowsOut, dependencies=[Depends(has_any_permission(VIEW_PERMS))])
-async def tableau_actualisation_lignes(actualisation_id: int, q: str | None = Query(None, max_length=120), proposal_status: str | None = None, reference_status: str | None = None, anomaly_only: bool = False, sort: Literal["numero_ordre", "proposal_status", "reference_status", "id"] = "numero_ordre", order: Literal["asc", "desc"] = "asc", limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)):
+@router.get(
+    "/actualisations/{actualisation_id}/lignes",
+    response_model=TableauActualisationRowsOut,
+    dependencies=[Depends(has_any_permission(VIEW_PERMS))],
+)
+async def tableau_actualisation_lignes(
+    actualisation_id: int,
+    q: str | None = Query(None, max_length=120),
+    proposal_status: str | None = None,
+    reference_status: str | None = None,
+    anomaly_only: bool = False,
+    sort: Literal["numero_ordre", "proposal_status", "reference_status", "id"] = "numero_ordre",
+    order: Literal["asc", "desc"] = "asc",
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     await _get_actual(db, tenant_id, actualisation_id)
+
     where = [TableauActualisationRow.actualisation_id == actualisation_id]
     if q:
-        name = TableauActualisationRow.proposed_values.op("->>")("nom_denomination")
-        where.append(or_(TableauActualisationRow.numero_ordre.ilike(f"%{q}%"), name.ilike(f"%{q}%")))
-    if proposal_status: where.append(TableauActualisationRow.proposal_status == proposal_status)
-    if reference_status: where.append(TableauActualisationRow.reference_status == reference_status)
-    if anomaly_only: where.append(func.jsonb_array_length(TableauActualisationRow.anomalies_json) > 0)
-    cols = {"numero_ordre": TableauActualisationRow.numero_ordre, "proposal_status": TableauActualisationRow.proposal_status, "reference_status": TableauActualisationRow.reference_status, "id": TableauActualisationRow.id}
-    col = cols[sort].desc() if order == "desc" else cols[sort]
-    total = (await db.execute(select(func.count(TableauActualisationRow.id)).where(*where))).scalar_one()
-    rows = list((await db.execute(select(TableauActualisationRow).where(*where).order_by(col).offset(offset).limit(limit))).scalars().all())
-    return {"items": [_actualisation_row_payload(r) for r in rows], "total": total, "limit": limit, "offset": offset}
+        nom = TableauActualisationRow.proposed_values.op("->>")("nom_denomination")
+        where.append(or_(
+            TableauActualisationRow.numero_ordre.ilike(f"%{q}%"),
+            nom.ilike(f"%{q}%"),
+        ))
+    if proposal_status:
+        where.append(TableauActualisationRow.proposal_status == proposal_status)
+    if reference_status:
+        where.append(TableauActualisationRow.reference_status == reference_status)
+    if anomaly_only:
+        where.append(func.jsonb_array_length(TableauActualisationRow.anomalies_json) > 0)
+
+    colonnes = {
+        "numero_ordre": TableauActualisationRow.numero_ordre,
+        "proposal_status": TableauActualisationRow.proposal_status,
+        "reference_status": TableauActualisationRow.reference_status,
+        "id": TableauActualisationRow.id,
+    }
+    tri = colonnes[sort].desc() if order == "desc" else colonnes[sort]
+
+    total = (await db.execute(
+        select(func.count(TableauActualisationRow.id)).where(*where)
+    )).scalar_one()
+    rows = list((await db.execute(
+        select(TableauActualisationRow)
+        .where(*where)
+        .order_by(tri)
+        .offset(offset)
+        .limit(limit)
+    )).scalars().all())
+
+    return {
+        "items": [_actualisation_row_payload(r) for r in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
-@router.get("/actualisations/{actualisation_id}/lignes/{ligne_id}", response_model=TableauActualisationDetailOut, dependencies=[Depends(has_any_permission(VIEW_PERMS))])
-async def tableau_actualisation_ligne(actualisation_id: int, ligne_id: int, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)):
+@router.get(
+    "/actualisations/{actualisation_id}/lignes/{ligne_id}",
+    response_model=TableauActualisationDetailOut,
+    dependencies=[Depends(has_any_permission(VIEW_PERMS))],
+)
+async def tableau_actualisation_ligne(
+    actualisation_id: int,
+    ligne_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     await _get_actual(db, tenant_id, actualisation_id)
-    row = (await db.execute(select(TableauActualisationRow).where(TableauActualisationRow.id == ligne_id, TableauActualisationRow.actualisation_id == actualisation_id))).scalar_one_or_none()
-    if row is None: raise HTTPException(404, "Ligne introuvable")
+
+    row = (await db.execute(
+        select(TableauActualisationRow).where(
+            TableauActualisationRow.id == ligne_id,
+            TableauActualisationRow.actualisation_id == actualisation_id,
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(404, "Ligne introuvable")
+
     out = _actualisation_row_payload(row)
-    out["source_imports"] = [{"id": i.id, "import_id": i.import_id, "source_type": i.source_type, "date_situation": i.date_situation, "file_name": i.file_name, "file_sha256": i.file_sha256} for i in (await db.execute(select(TableauActualisationInput).where(TableauActualisationInput.actualisation_id == actualisation_id))).scalars().all()]
-    out["ca_declarations"] = [{"id": x.id, "date_situation": x.date_situation, "annee": x.annee, "ca_facture": x.ca_facture, "ca_collecte": x.ca_collecte} for x in (await db.execute(select(TableauCaDeclaration).where(TableauCaDeclaration.identity_id == row.identity_id))).scalars().all()]
-    out["insurance_declarations"] = [{"id": x.id, "date_situation": x.date_situation, "declare": x.declare_normalise, "souscrit": x.souscrit_normalise, "assureur": x.assureur_normalise} for x in (await db.execute(select(TableauInsuranceDeclaration).where(TableauInsuranceDeclaration.identity_id == row.identity_id))).scalars().all()]
+
+    imports = (await db.execute(
+        select(TableauActualisationInput)
+        .where(TableauActualisationInput.actualisation_id == actualisation_id)
+    )).scalars().all()
+    out["source_imports"] = [
+        {
+            "id": i.id,
+            "import_id": i.import_id,
+            "source_type": i.source_type,
+            "date_situation": i.date_situation,
+            "file_name": i.file_name,
+            "file_sha256": i.file_sha256,
+        }
+        for i in imports
+    ]
+
+    # Déclarations rattachées à l'identité de la ligne. Le cadrage vient du
+    # parent : la ligne appartient à une actualisation déjà vérifiée ci-dessus.
+    ca = (await db.execute(
+        select(TableauCaDeclaration).where(TableauCaDeclaration.identity_id == row.identity_id)
+    )).scalars().all()
+    out["ca_declarations"] = [
+        {
+            "id": x.id,
+            "date_situation": x.date_situation,
+            "annee": x.annee,
+            "ca_facture": x.ca_facture,
+            "ca_collecte": x.ca_collecte,
+        }
+        for x in ca
+    ]
+
+    assurances = (await db.execute(
+        select(TableauInsuranceDeclaration)
+        .where(TableauInsuranceDeclaration.identity_id == row.identity_id)
+    )).scalars().all()
+    out["insurance_declarations"] = [
+        {
+            "id": x.id,
+            "date_situation": x.date_situation,
+            "declare": x.declare_normalise,
+            "souscrit": x.souscrit_normalise,
+            "assureur": x.assureur_normalise,
+        }
+        for x in assurances
+    ]
     return out
 
 
-@router.get("/actualisations/{actualisation_id}/stats", response_model=TableauActualisationStatsOut, dependencies=[Depends(has_any_permission(VIEW_PERMS))])
-async def tableau_actualisation_stats(actualisation_id: int, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)):
+@router.get(
+    "/actualisations/{actualisation_id}/stats",
+    response_model=TableauActualisationStatsOut,
+    dependencies=[Depends(has_any_permission(VIEW_PERMS))],
+)
+async def tableau_actualisation_stats(
+    actualisation_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     await _get_actual(db, tenant_id, actualisation_id)
-    rows = list((await db.execute(select(TableauActualisationRow).where(TableauActualisationRow.actualisation_id == actualisation_id))).scalars().all())
-    return {"total": len(rows), "proposal_status": dict(Counter(r.proposal_status for r in rows)), "anomaly_rows": sum(bool(r.anomalies_json) for r in rows), "reference_status": dict(Counter(r.reference_status for r in rows))}
+    rows = list((await db.execute(
+        select(TableauActualisationRow)
+        .where(TableauActualisationRow.actualisation_id == actualisation_id)
+    )).scalars().all())
+    return {
+        "total": len(rows),
+        "proposal_status": dict(Counter(r.proposal_status for r in rows)),
+        "anomaly_rows": sum(bool(r.anomalies_json) for r in rows),
+        "reference_status": dict(Counter(r.reference_status for r in rows)),
+    }
