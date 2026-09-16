@@ -6,6 +6,7 @@ import { scoreRequisitions } from '../api/ai'
 import { useNotification } from '../contexts/NotificationContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import BudgetDecisionTable from '../components/BudgetDecisionTable'
+import ReimputationBudgetaire from '../components/ReimputationBudgetaire'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { toNumber } from '../utils/amount'
 import type { Money, Requisition } from '../types'
@@ -59,6 +60,7 @@ export default function RequisitionDetail() {
     requisitionFromList && String(requisitionFromList.id) === String(id) ? requisitionFromList : null
   )
   const [lignes, setLignes] = useState<any[]>([])
+  const [rafraichirLignes, setRafraichirLignes] = useState(0)
   const [chargementFiche, setChargementFiche] = useState(!requisition)
   const [chargementLignes, setChargementLignes] = useState(true)
   const [introuvable, setIntrouvable] = useState(false)
@@ -138,7 +140,7 @@ export default function RequisitionDetail() {
     charger()
     return () => { annule = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
+  }, [id, rafraichirLignes])
 
   useEffect(() => {
     if (!id) return
@@ -365,6 +367,13 @@ export default function RequisitionDetail() {
         <section className={`${styles.section} ${styles.areaReperes}`}>
           <h2>Repères budgétaires</h2>
           <BudgetDecisionTable lines={lignes} requestedAmount={requisition.montant_total} />
+          <div style={{ marginTop: '12px' }}>
+            <ReimputationBudgetaire
+              requisitionId={String(requisition.id)}
+              lignes={lignes}
+              onReimpute={() => setRafraichirLignes(v => v + 1)}
+            />
+          </div>
         </section>
 
         <section className={`${styles.section} ${styles.areaPieces}`}>

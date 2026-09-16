@@ -273,6 +273,14 @@ function buildUrl(path: string, params?: Record<string, any>): string {
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
       if (v === undefined || v === null) return
+      // Un tableau devient une clé répétée — `?id=a&id=b` —, la forme que
+      // FastAPI attend pour un paramètre de liste. Le joindre par des virgules
+      // ne donnerait qu'une seule valeur, illisible côté serveur.
+      if (Array.isArray(v)) {
+        v.filter(item => item !== undefined && item !== null)
+          .forEach(item => url.searchParams.append(k, String(item)))
+        return
+      }
       url.searchParams.set(k, String(v))
     })
   }

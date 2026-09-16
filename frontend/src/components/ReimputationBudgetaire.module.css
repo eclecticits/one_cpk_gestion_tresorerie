@@ -1,0 +1,459 @@
+/* Correction d'imputation budgétaire.
+   Une opération rare et lourde de conséquences : elle déplace de l'argent d'un
+   poste à l'autre, parfois après paiement. L'écran doit se lire comme une
+   décision — ce qui part, d'où, vers où, pour quel motif — et non comme un
+   formulaire de plus. D'où la hiérarchie : les lignes d'abord, la destination
+   ensuite, puis le montant déplacé en gros caractères, le motif en dernier. */
+
+.declencheur {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  height: var(--control-h);
+  padding: 0 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--tenant-text);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.declencheur:hover {
+  background: var(--color-bg-muted);
+  border-color: var(--tenant-primary);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--spacing-md);
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: min(580px, 100%);
+  max-height: min(90vh, 760px);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-4);
+  overflow: hidden;
+}
+
+/* --- En-tête ------------------------------------------------------------- */
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg) var(--spacing-lg) var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-title);
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  margin: var(--spacing-xs) 0 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+}
+
+/* La sortie de la fiche se voit au premier coup d'œil : c'est un vrai bouton,
+   pas un glyphe teinté. Même parti que les autres modales du produit. */
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.close:hover {
+  background: var(--color-danger-text);
+  border-color: var(--color-danger-text);
+  color: #fff;
+}
+
+/* --- Corps --------------------------------------------------------------- */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  overflow-y: auto;
+}
+
+.champ {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.aide {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+}
+
+.select,
+.textarea {
+  width: 100%;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-family: inherit;
+  font-size: 0.88rem;
+  color: var(--tenant-text);
+}
+
+.select {
+  height: var(--control-h);
+}
+
+.textarea {
+  padding: 9px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.select:focus-visible,
+.textarea:focus-visible {
+  outline: none;
+  border-color: var(--tenant-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tenant-primary) 18%, transparent);
+}
+
+/* --- Choix des lignes ---------------------------------------------------- */
+
+.lignes {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.ligne {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--spacing-sm) 10px;
+  padding: 9px 12px;
+  border-left: 3px solid transparent;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.ligne + .ligne {
+  border-top: 1px solid var(--color-border);
+}
+
+.ligne:hover {
+  background: var(--color-bg-muted);
+}
+
+/* Une ligne retenue est une ligne qui va bouger : elle se distingue par la
+   couleur de la marque, pas seulement par sa case cochée. */
+.ligneRetenue {
+  border-left-color: var(--tenant-primary);
+  background: color-mix(in srgb, var(--tenant-primary) 6%, transparent);
+}
+
+.ligneRetenue:hover {
+  background: color-mix(in srgb, var(--tenant-primary) 10%, transparent);
+}
+
+.ligneIntitule {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tenant-text);
+}
+
+.ligneNonRetenue .ligneIntitule {
+  color: var(--color-text-muted);
+}
+
+.posteTag {
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.posteTagVide {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+.ligneMontant {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--tenant-text);
+  white-space: nowrap;
+}
+
+.avertissementChamp {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-danger-text);
+}
+
+/* --- Aperçu -------------------------------------------------------------- */
+
+.apercu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+}
+
+/* Le trajet de l'argent, énoncé avant les montants : d'où, vers où. */
+.trajet {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.trajetPoste {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trajetArrivee {
+  color: var(--tenant-primary);
+}
+
+.trajetFleche {
+  flex-shrink: 0;
+  color: var(--color-border-strong);
+}
+
+.montants {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-sm);
+}
+
+.montant {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.montantLabel {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.montantValeur {
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-title);
+  letter-spacing: -0.01em;
+}
+
+.montantNul {
+  color: var(--color-border-strong);
+}
+
+.detail {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* --- Alertes ------------------------------------------------------------- */
+
+.alerte {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.alerteIcone {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.alerteBloquante {
+  background: var(--color-danger-bg);
+  border: 1px solid #fca5a5;
+  color: var(--color-danger-text);
+}
+
+.alerteAttention {
+  background: var(--color-warning-bg);
+  border: 1px solid #fcd9a4;
+  color: var(--color-warning-text);
+}
+
+.forcer {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* --- Pied ---------------------------------------------------------------- */
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.bouton {
+  height: var(--control-h);
+  padding: 0 18px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), opacity var(--transition-fast);
+}
+
+.secondaire {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  color: var(--tenant-text);
+}
+
+.secondaire:hover {
+  background: var(--color-bg-muted);
+}
+
+.principal {
+  background: var(--tenant-primary);
+  color: var(--tenant-button-text);
+}
+
+.principal:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tenant-primary) 86%, #000);
+}
+
+.bouton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.bouton:focus-visible,
+.close:focus-visible,
+.ligne:focus-within {
+  outline: 2px solid var(--tenant-primary);
+  outline-offset: 2px;
+}
+
+/* --- Étroit -------------------------------------------------------------- */
+
+@media (max-width: 480px) {
+  .overlay {
+    padding: 0;
+    place-items: end stretch;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: 94vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .header,
+  .body,
+  .footer {
+    padding-left: var(--spacing-md);
+    padding-right: var(--spacing-md);
+  }
+
+  .montants {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Le montant repasse sous l'intitulé : à cette largeur, quatre colonnes
+     rognent le libellé jusqu'à le rendre illisible. */
+  .ligne {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .ligneMontant {
+    grid-column: 2 / -1;
+    text-align: left;
+  }
+
+  .footer {
+    flex-direction: column-reverse;
+  }
+
+  .bouton {
+    width: 100%;
+  }
+}

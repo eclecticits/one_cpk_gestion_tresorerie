@@ -16,6 +16,7 @@ import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import { toNumber } from '../utils/amount'
 import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import RequisitionEditModal from '../components/RequisitionEditModal'
+import ReimputationBudgetaire from '../components/ReimputationBudgetaire'
 import { peutModifierRequisition } from '../utils/requisitionLock'
 import { compareBudgetCodes } from '../utils/budgetCode'
 import { sousTotalGroupeUsd, trouverGroupeEnDepassement } from '../utils/budgetGroups'
@@ -3906,6 +3907,14 @@ export default function Requisitions() {
                     Modifier
                   </button>
                 )}
+                {/* La correction d'imputation ne dépend pas de `peutModifierRequisition` :
+                    elle existe précisément pour les réquisitions que ce verrou protège,
+                    validées et payées. */}
+                <ReimputationBudgetaire
+                  requisitionId={String(selectedRequisition.id)}
+                  lignes={selectedLignes}
+                  onReimpute={() => void viewDetails(selectedRequisition)}
+                />
                 <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn} aria-label="Fermer la fiche"><X size={18} aria-hidden="true" /></button>
               </div>
             </div>
