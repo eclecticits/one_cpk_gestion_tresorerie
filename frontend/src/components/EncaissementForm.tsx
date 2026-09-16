@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format } from 'date-fns'
+import { AlertTriangle } from 'lucide-react'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, NatureMouvement, TypeClient, Service } from '../types'
 import { toNumber } from '../utils/amount'
@@ -114,6 +115,8 @@ export default function EncaissementForm({
   const [ftTiersLabel, setFtTiersLabel] = useState('')
   // Référentiel clients (anti-doublons) : suggestions pendant la saisie du nom.
   const [clientId, setClientId] = useState('')
+  // Ce que le client sélectionné doit encore, s'il doit quelque chose.
+  const [creanceClient, setCreanceClient] = useState<{ reste: number; notes: number } | null>(null)
   const [clientEmail, setClientEmail] = useState('')
   const [clientTelephone, setClientTelephone] = useState('')
   const [clientSexe, setClientSexe] = useState('')
@@ -320,6 +323,13 @@ export default function EncaissementForm({
 
   const selectClient = (c: any) => {
     setClientId(String(c.id))
+    // La dette suit le client sélectionné : elle doit rester sous les yeux
+    // pendant qu'on saisit le montant, pas disparaître avec la liste.
+    setCreanceClient(
+      Number(c.nb_impayes) > 0
+        ? { reste: Number(c.reste_du || 0), notes: Number(c.nb_impayes) }
+        : null,
+    )
     setFormData((prev) => ({
       ...prev,
       client_nom: c.nom,
@@ -340,6 +350,7 @@ export default function EncaissementForm({
 
   const resetClientSelection = () => {
     setClientId('')
+    setCreanceClient(null)
     setClientEmail('')
     setClientTelephone('')
     setClientSexe('')
@@ -1035,8 +1046,28 @@ export default function EncaissementForm({
                               : ''}
                           </div>
                         )}
+                        {Number(c.nb_impayes) > 0 && (
+                          <div className={styles.creanceLigne}>
+                            <AlertTriangle size={12} aria-hidden="true" />
+                            Doit <span className={styles.creanceMontant}>{formatCurrency(c.reste_du)}</span>
+                            {' '}sur {c.nb_impayes} note{Number(c.nb_impayes) > 1 ? 's' : ''}
+                          </div>
+                        )}
                       </div>
                     ))}
+                  </div>
+                )}
+                {creanceClient && (
+                  <div className={styles.creanceBanniere} role="status">
+                    <AlertTriangle size={16} aria-hidden="true" style={{ flexShrink: 0, marginTop: '1px' }} />
+                    <span>
+                      Ce client doit encore{' '}
+                      <span className={styles.creanceMontant}>{formatCurrency(creanceClient.reste)}</span>
+                      {' '}sur {creanceClient.notes} note{creanceClient.notes > 1 ? 's' : ''} de débit.
+                      <span className={styles.creanceReserve}>
+                        Vous pouvez encaisser ce solde ici, ou le compléter depuis la note concernée.
+                      </span>
+                    </span>
                   </div>
                 )}
                 {isSearchingClients && <small>Recherche de clients…</small>}

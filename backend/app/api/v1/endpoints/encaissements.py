@@ -4,19 +4,20 @@ import uuid
 import hashlib
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, status, Request, UploadFile
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import String, and_, case, cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, get_current_tenant_id, has_permission
+from app.services.creances import agregats_creance, est_exigible, montant_du
 from app.core.auth_user import AuthUser, cached_permission_codes
 from app.core.config import settings as app_settings
 from app.core.horodatage import resoudre_date_operation
@@ -86,6 +87,48 @@ from app.services.audit_service import get_request_ip, log_action
 
 router = APIRouter(dependencies=[Depends(has_permission("menu_encaissements"))])
 logger = logging.getLogger("onec_cpk_api.encaissements")
+
+
+def _tranche_anciennete(jours: int) -> str:
+    """La tranche d'âge d'une créance, telle qu'on la relance.
+
+    Des bornes plutôt qu'un nombre de jours brut : c'est par tranche qu'on
+    décide quoi faire — relancer, appeler, engager un recouvrement —, et une
+    créance de 61 jours n'appelle pas un autre geste qu'une de 67.
+    """
+    if jours < 30:
+        return "moins_30"
+    if jours < 60:
+        return "30_60"
+    if jours < 90:
+        return "60_90"
+    return "plus_90"
+
+
+async def _portee_encaissements(
+    db: AsyncSession, user: User, tenant_id: int
+) -> list | None:
+    """Les encaissements que cet utilisateur a le droit de voir.
+
+    Trois règles qui doivent rester solidaires : l'organisation, les services
+    auxquels il est rattaché s'il n'a pas l'accès au module, et les opérations
+    annulées s'il a le droit de les lire. Les recopier écran par écran, c'est
+    accepter qu'un jour l'un d'eux en oublie une — et une créance vue depuis un
+    autre service, c'est une fuite, pas un détail d'affichage.
+
+    Renvoie `None` quand l'utilisateur n'a accès à aucun service : il n'y a
+    alors rien à montrer, et ce n'est pas la même chose qu'une liste vide de
+    conditions, qui montrerait tout.
+    """
+    portee = [Encaissement.organisation_id == tenant_id, Encaissement.is_deleted.is_(False)]
+    if not await has_module_menu_access(db, user, "menu_encaissements"):
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            return None
+        portee.append(Encaissement.service_id.in_(service_ids))
+    if not await _user_has_permission(db, user, "view_cancelled_financial_operations"):
+        portee.append(Encaissement.statut_operation != "ANNULEE")
+    return portee
 
 
 TYPE_CLIENTS = {
@@ -902,20 +945,26 @@ async def suggerer_payeurs(
     Le filtre cherche sur trois colonnes (nom saisi, dénomination de l'expert,
     numéro d'ordre) : les propositions couvrent le même terrain, sinon elles
     désigneraient autre chose que ce qu'elles déclenchent.
+
+    Chaque proposition dit aussi ce que le payeur doit encore (`reste_du`,
+    `nb_impayes`), et les débiteurs passent devant. C'est au moment où l'on
+    saisit un encaissement que la dette d'un client sert à quelque chose : la
+    découvrir dans un rapport le mois suivant, c'est l'avoir laissée repartir.
+
+    `identite_sure` dit sur quoi le rapprochement repose. Un expert est
+    identifié par son numéro d'ordre, unique : sa dette est complète. Un payeur
+    saisi à la main n'est groupé que sur son nom, et deux orthographes font deux
+    payeurs — le montant annoncé est alors un minimum, pas un total.
     """
     terme = q.strip()
     if not terme:
         return []
     motif = f"%{terme}%"
+    reste, impayees = agregats_creance()
 
-    portee = [Encaissement.organisation_id == tenant_id, Encaissement.is_deleted.is_(False)]
-    if not await has_module_menu_access(db, user, "menu_encaissements"):
-        service_ids = await get_user_service_ids(db, user)
-        if not service_ids:
-            return []
-        portee.append(Encaissement.service_id.in_(service_ids))
-    if not await _user_has_permission(db, user, "view_cancelled_financial_operations"):
-        portee.append(Encaissement.statut_operation != "ANNULEE")
+    portee = await _portee_encaissements(db, user, tenant_id)
+    if portee is None:
+        return []
 
     # Les payeurs saisis à la main, groupés sur le nom tel qu'il a été écrit.
     noms = (await db.execute(
@@ -923,6 +972,8 @@ async def suggerer_payeurs(
             Encaissement.client_nom,
             func.count().label("nb"),
             func.max(Encaissement.date_encaissement).label("dernier"),
+            reste.label("reste_du"),
+            impayees.label("nb_impayes"),
         )
         .where(*portee, Encaissement.client_nom.isnot(None), Encaissement.client_nom.ilike(motif))
         .group_by(Encaissement.client_nom)
@@ -939,6 +990,8 @@ async def suggerer_payeurs(
             ExpertComptable.numero_ordre,
             func.count(Encaissement.id).label("nb"),
             func.max(Encaissement.date_encaissement).label("dernier"),
+            reste.label("reste_du"),
+            impayees.label("nb_impayes"),
         )
         .join(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
         .where(
@@ -961,6 +1014,12 @@ async def suggerer_payeurs(
             "type": "client",
             "nb": int(ligne.nb or 0),
             "dernier": ligne.dernier.isoformat() if ligne.dernier else None,
+            "reste_du": float(ligne.reste_du or 0),
+            "nb_impayes": int(ligne.nb_impayes or 0),
+            # Un payeur saisi à la main n'est rapproché que par son nom : deux
+            # orthographes font deux payeurs, et la dette annoncée peut donc
+            # être incomplète. L'écran doit pouvoir le dire.
+            "identite_sure": False,
         }
         for ligne in noms
     ] + [
@@ -971,11 +1030,183 @@ async def suggerer_payeurs(
             "type": "expert",
             "nb": int(ligne.nb or 0),
             "dernier": ligne.dernier.isoformat() if ligne.dernier else None,
+            "reste_du": float(ligne.reste_du or 0),
+            "nb_impayes": int(ligne.nb_impayes or 0),
+            # Le numéro d'ordre est unique : la dette d'un expert est complète.
+            "identite_sure": True,
         }
         for ligne in experts
     ]
-    propositions.sort(key=lambda p: p["nb"], reverse=True)
+    # Un payeur qui doit de l'argent passe devant, quel que soit son nombre
+    # d'opérations : c'est l'information qu'on ne veut pas rater au moment de
+    # saisir un encaissement. À dette égale, le plus fréquent reste en tête.
+    propositions.sort(key=lambda p: (p["nb_impayes"] > 0, p["reste_du"], p["nb"]), reverse=True)
     return [p for p in propositions if p["valeur"]][:limit]
+
+
+@router.get("/debiteurs")
+async def lister_debiteurs(
+    q: str | None = Query(default=None, description="Nom, dénomination ou numéro d'ordre"),
+    type_client: str | None = Query(default=None),
+    anciennete_min: int = Query(default=0, ge=0, description="Âge minimum de la plus vieille note, en jours"),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Qui nous doit de l'argent, et depuis combien de temps.
+
+    La dette existe note de débit par note de débit ; personne n'en fait jamais
+    la somme par personne. Un client avec trois règlements partiels apparaît
+    trois fois, et son ardoise réelle n'est affichée nulle part.
+
+    Le regroupement suit l'identité la plus sûre disponible : l'expert par son
+    identifiant — son numéro d'ordre est unique —, le client du référentiel par
+    le sien, et à défaut le payeur par son nom normalisé (casse, espaces
+    multiples). Ce dernier cas est signalé (`identite_sure: false`) : deux
+    orthographes font deux débiteurs, et le montant annoncé est alors un
+    minimum, pas un total. Taire cette nuance donnerait un chiffre auquel on ne
+    peut pas se fier.
+
+    L'ancienneté n'est pas un ornement : une liste de débiteurs sans âge est une
+    liste sur laquelle on ne peut pas agir. Le tri va donc du plus ancien au
+    plus récent, et non du plus gros montant au plus petit.
+    """
+    portee = await _portee_encaissements(db, user, tenant_id)
+    if portee is None:
+        return {"total_du": 0.0, "nb_debiteurs": 0, "debiteurs": []}
+
+    conditions = [*portee, est_exigible()]
+    if type_client:
+        conditions.append(Encaissement.type_client == type_client)
+
+    # Le nom normalisé : c'est le seul rattrapage possible pour un payeur saisi
+    # à la main. Même normalisation que le reste du produit — casse repliée,
+    # espaces multiples ramenés à un seul, bords coupés.
+    nom_normalise = func.regexp_replace(
+        func.lower(func.btrim(Encaissement.client_nom)), r"\s+", " ", "g"
+    )
+    famille = case(
+        (Encaissement.expert_comptable_id.isnot(None), "expert"),
+        (Encaissement.client_id.isnot(None), "client"),
+        else_="libre",
+    )
+    cle = case(
+        (Encaissement.expert_comptable_id.isnot(None), cast(Encaissement.expert_comptable_id, String)),
+        (Encaissement.client_id.isnot(None), cast(Encaissement.client_id, String)),
+        else_=nom_normalise,
+    )
+
+    if q and q.strip():
+        motif = f"%{q.strip()}%"
+        conditions.append(
+            or_(
+                Encaissement.client_nom.ilike(motif),
+                Encaissement.expert_comptable_id.in_(
+                    select(ExpertComptable.id).where(
+                        or_(
+                            ExpertComptable.nom_denomination.ilike(motif),
+                            ExpertComptable.numero_ordre.ilike(motif),
+                        )
+                    )
+                ),
+                Encaissement.client_id.in_(
+                    select(Client.id).where(Client.nom.ilike(motif))
+                ),
+            )
+        )
+
+    groupe = (
+        select(
+            famille.label("famille"),
+            cle.label("cle"),
+            func.sum(montant_du()).label("reste_du"),
+            func.count(Encaissement.id).label("nb_notes"),
+            func.min(Encaissement.date_encaissement).label("plus_ancienne_le"),
+            func.max(Encaissement.client_nom).label("nom_libre"),
+            func.coalesce(func.sum(Encaissement.relance_count), 0).label("relances"),
+            func.max(Encaissement.derniere_relance_le).label("derniere_relance_le"),
+            func.max(Encaissement.type_client).label("type_client"),
+        )
+        .where(*conditions)
+        .group_by(famille, cle)
+    ).subquery()
+
+    if anciennete_min > 0:
+        seuil = datetime.now(timezone.utc) - timedelta(days=anciennete_min)
+        filtre_age = [groupe.c.plus_ancienne_le <= seuil]
+    else:
+        filtre_age = []
+
+    # Le total porte sur l'ensemble filtré, pas sur la page : c'est le chiffre
+    # que cherche le trésorier, et une somme de page ne veut rien dire.
+    totaux = (await db.execute(
+        select(
+            func.coalesce(func.sum(groupe.c.reste_du), 0),
+            func.count(),
+        ).select_from(groupe).where(*filtre_age)
+    )).one()
+
+    lignes = (await db.execute(
+        select(groupe)
+        .where(*filtre_age)
+        .order_by(groupe.c.plus_ancienne_le.asc())
+        .limit(limit)
+        .offset(offset)
+    )).all()
+
+    # Les libellés vivent dans les référentiels : une requête par famille plutôt
+    # qu'une jointure sur l'agrégat, qui obligerait à grouper aussi sur le nom.
+    ids_experts = [uuid.UUID(l.cle) for l in lignes if l.famille == "expert"]
+    ids_clients = [uuid.UUID(l.cle) for l in lignes if l.famille == "client"]
+    experts = {
+        str(e.id): e
+        for e in (await db.execute(
+            select(ExpertComptable).where(ExpertComptable.id.in_(ids_experts))
+        )).scalars().all()
+    } if ids_experts else {}
+    clients = {
+        str(c.id): c
+        for c in (await db.execute(
+            select(Client).where(Client.id.in_(ids_clients))
+        )).scalars().all()
+    } if ids_clients else {}
+
+    maintenant = datetime.now(timezone.utc)
+    debiteurs = []
+    for ligne in lignes:
+        expert = experts.get(ligne.cle)
+        client = clients.get(ligne.cle)
+        jours = (maintenant - ligne.plus_ancienne_le).days if ligne.plus_ancienne_le else 0
+        debiteurs.append({
+            "cle": ligne.cle,
+            "famille": ligne.famille,
+            "libelle": (
+                (expert.nom_denomination if expert else None)
+                or (client.nom if client else None)
+                or ligne.nom_libre
+                or "Payeur inconnu"
+            ),
+            "detail": expert.numero_ordre if expert else None,
+            "type_client": ligne.type_client,
+            "reste_du": float(ligne.reste_du or 0),
+            "nb_notes": int(ligne.nb_notes or 0),
+            "plus_ancienne_le": ligne.plus_ancienne_le.isoformat() if ligne.plus_ancienne_le else None,
+            "jours": jours,
+            "tranche": _tranche_anciennete(jours),
+            "relances": int(ligne.relances or 0),
+            "derniere_relance_le": (
+                ligne.derniere_relance_le.isoformat() if ligne.derniere_relance_le else None
+            ),
+            "identite_sure": ligne.famille != "libre",
+        })
+
+    return {
+        "total_du": float(totaux[0] or 0),
+        "nb_debiteurs": int(totaux[1] or 0),
+        "debiteurs": debiteurs,
+    }
 
 
 @router.get("/entrees-caisse")

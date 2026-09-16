@@ -2204,3 +2204,48 @@
   border-color: #dc2626;
   color: #ffffff;
 }
+
+/* --- Créance d'un payeur -------------------------------------------------
+   Ce qu'un client doit encore, annoncé pendant la frappe. L'information n'a de
+   valeur qu'à cet instant : la découvrir dans un rapport le mois suivant, c'est
+   avoir laissé repartir la personne qui devait payer. D'où le contraste — elle
+   doit accrocher l'œil sans ressembler à une erreur de saisie. */
+
+.creanceLigne {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-warning-text, #9a3412);
+}
+
+.creanceBanniere {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #fcd9a4;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-warning-bg, #fff4dd);
+  color: var(--color-warning-text, #9a3412);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.creanceMontant {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* Une dette reconstituée à partir d'un nom saisi peut être incomplète : deux
+   orthographes font deux payeurs. On le dit, plutôt que d'afficher un total
+   auquel on ne peut pas se fier. */
+.creanceReserve {
+  display: block;
+  margin-top: 3px;
+  font-weight: 400;
+  opacity: 0.85;
+}

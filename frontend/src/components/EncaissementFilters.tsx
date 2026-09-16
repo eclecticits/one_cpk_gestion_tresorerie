@@ -1,4 +1,5 @@
 import styles from '../pages/Encaissements.module.css'
+import DebiteursPanel from './DebiteursPanel'
 
 interface EncaissementFiltersProps {
   dateDebut: string
@@ -341,6 +342,10 @@ export default function EncaissementFilters({
             Réinitialiser les filtres
           </button>
         )}
+        {/* Les créances ne dépendent pas des filtres de la liste : elles
+            répondent à une autre question — qui doit encore, et depuis quand —
+            et doivent rester atteignables même quand la liste est vide. */}
+        <DebiteursPanel />
         {totalCount > 0 && (
           <>
             <button onClick={exportToExcel} className={styles.excelBtn}>

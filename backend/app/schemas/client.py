@@ -99,6 +99,11 @@ class ClientOut(BaseModel):
     active: bool = True
     nb_encaissements: int | None = None
     dernier_encaissement: datetime | None = None
+    # Ce que le client doit encore, et sur combien de notes de débit. Annoncé
+    # pendant la frappe : c'est au moment d'encaisser qu'une dette sert, pas
+    # dans un rapport le mois suivant.
+    reste_du: float = 0.0
+    nb_impayes: int = 0
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

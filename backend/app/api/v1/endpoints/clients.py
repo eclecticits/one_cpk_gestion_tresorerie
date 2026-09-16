@@ -13,6 +13,7 @@ from app.models.client import Client
 from app.models.encaissement import Encaissement
 from app.models.user import User
 from app.schemas.client import ClientCreate, ClientOut, ClientUpdate
+from app.services.creances import agregats_creance
 
 router = APIRouter()
 
@@ -21,7 +22,14 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _out(client: Client, *, nb: int | None = None, dernier: datetime | None = None) -> ClientOut:
+def _out(
+    client: Client,
+    *,
+    nb: int | None = None,
+    dernier: datetime | None = None,
+    reste_du: float = 0.0,
+    nb_impayes: int = 0,
+) -> ClientOut:
     return ClientOut(
         id=client.id,
         nom=client.nom,
@@ -34,6 +42,8 @@ def _out(client: Client, *, nb: int | None = None, dernier: datetime | None = No
         active=client.active,
         nb_encaissements=nb,
         dernier_encaissement=dernier,
+        reste_du=reste_du,
+        nb_impayes=nb_impayes,
         created_at=client.created_at,
     )
 
@@ -77,20 +87,32 @@ async def list_clients(
     if not clients:
         return []
 
-    # Historique : nombre d'encaissements et date du dernier, par client.
+    # Historique et créance, par client. La dette est jointe ici plutôt que
+    # laissée à un second appel : c'est pendant la frappe qu'elle sert, et une
+    # requête de plus par caractère tapé ne tiendrait pas.
     ids = [c.id for c in clients]
+    reste, impayees = agregats_creance()
     stats_res = await db.execute(
         select(
             Encaissement.client_id,
             func.count(Encaissement.id),
             func.max(Encaissement.date_encaissement),
+            reste,
+            impayees,
         )
         .where(Encaissement.client_id.in_(ids))
         .group_by(Encaissement.client_id)
     )
-    stats = {row[0]: (row[1], row[2]) for row in stats_res.all()}
+    stats = {row[0]: row for row in stats_res.all()}
+    vide = (None, 0, None, 0, 0)
     return [
-        _out(c, nb=stats.get(c.id, (0, None))[0], dernier=stats.get(c.id, (0, None))[1])
+        _out(
+            c,
+            nb=stats.get(c.id, vide)[1],
+            dernier=stats.get(c.id, vide)[2],
+            reste_du=float(stats.get(c.id, vide)[3] or 0),
+            nb_impayes=int(stats.get(c.id, vide)[4] or 0),
+        )
         for c in clients
     ]
 
