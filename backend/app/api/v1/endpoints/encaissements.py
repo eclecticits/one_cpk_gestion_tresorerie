@@ -105,6 +105,26 @@ def _tranche_anciennete(jours: int) -> str:
     return "plus_90"
 
 
+async def _services_de_l_utilisateur(db: AsyncSession, user: User) -> list[int] | None:
+    """Les services auxquels cet utilisateur est borné pour lire les encaissements.
+
+    Trois issues, et elles ne se confondent pas :
+
+      - `None` : rien à borner, il a l'accès au module et voit l'organisation ;
+      - une liste d'identifiants : il ne voit que ces services ;
+      - une liste vide : il n'est rattaché à aucun service et ne doit rien voir.
+        L'appelant s'arrête là — ne poser aucun filtre lui montrerait tout.
+
+    Cette part est la seule que tous les écrans partagent. Le reste diffère à
+    dessein : la liste expose les opérations annulées et supprimées par
+    paramètres, sous contrôle de droit, là où une suggestion ne les montre
+    jamais.
+    """
+    if await has_module_menu_access(db, user, "menu_encaissements"):
+        return None
+    return await get_user_service_ids(db, user)
+
+
 async def _portee_encaissements(
     db: AsyncSession, user: User, tenant_id: int
 ) -> list | None:
@@ -121,8 +141,8 @@ async def _portee_encaissements(
     conditions, qui montrerait tout.
     """
     portee = [Encaissement.organisation_id == tenant_id, Encaissement.is_deleted.is_(False)]
-    if not await has_module_menu_access(db, user, "menu_encaissements"):
-        service_ids = await get_user_service_ids(db, user)
+    service_ids = await _services_de_l_utilisateur(db, user)
+    if service_ids is not None:
         if not service_ids:
             return None
         portee.append(Encaissement.service_id.in_(service_ids))
@@ -882,15 +902,12 @@ async def suggerer_numeros_note_debit(
     Elle rend peu de colonnes, et peu de lignes : de quoi reconnaître la bonne
     note (client, montant, date), pas de quoi remplir un écran.
     """
-    conditions = [Encaissement.organisation_id == tenant_id]
     # Même restriction que la liste : sans accès au menu, on ne voit que ses
     # services. Une suggestion est une lecture comme une autre — la contourner
     # laisserait deviner l'existence de notes hors de son périmètre.
-    if not await has_module_menu_access(db, user, "menu_encaissements"):
-        service_ids = await get_user_service_ids(db, user)
-        if not service_ids:
-            return []
-        conditions.append(Encaissement.service_id.in_(service_ids))
+    conditions = await _portee_encaissements(db, user, tenant_id)
+    if conditions is None:
+        return []
 
     condition_recherche = condition_numero(
         q, Encaissement.numero_recu, Encaissement.numero_proforma
@@ -899,12 +916,9 @@ async def suggerer_numeros_note_debit(
         return []
     conditions.append(condition_recherche)
 
-    if not await _user_has_permission(db, user, "view_cancelled_financial_operations"):
-        conditions.append(Encaissement.statut_operation != "ANNULEE")
-
     res = await db.execute(
         select(Encaissement)
-        .where(*conditions, Encaissement.is_deleted.is_(False))
+        .where(*conditions)
         .order_by(Encaissement.date_encaissement.desc())
         .limit(limit)
     )
@@ -1289,8 +1303,8 @@ async def list_encaissements(
     if op_status in {"ANNULEE", "ALL"} and not can_view_cancelled:
         raise HTTPException(status_code=403, detail="Privilèges insuffisants (view_cancelled_financial_operations)")
 
-    if not await has_module_menu_access(db, user, "menu_encaissements"):
-        service_ids = await get_user_service_ids(db, user)
+    service_ids = await _services_de_l_utilisateur(db, user)
+    if service_ids is not None:
         if not service_ids:
             return []
         conditions.append(Encaissement.service_id.in_(service_ids))
