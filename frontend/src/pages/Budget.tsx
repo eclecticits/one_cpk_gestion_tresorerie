@@ -1252,13 +1252,24 @@ export default function Budget() {
                 <span className={ecart >= 0 ? styles.statusOk : styles.statusWarn}>{recetteStatus}</span>
               ) : (
                 <div className={styles.progressRow}>
+                  {/* La barre pleine vaut le nombre écrit à côté — payé sur
+                      prévu. Derrière, en teinte claire, le crédit consommé
+                      (engagé ou payé) : les confondre affichait une barre
+                      remplie à côté d'un 0 %. */}
                   <div
                     className={styles.progressTrack}
-                    title={`Crédit consommé (engagé ou payé) : ${pourcentage.toFixed(1)} %`}
+                    title={
+                      `Réalisé : ${totals.tauxRealisation.toFixed(1)} % du prévu\n` +
+                      `Crédit consommé (engagé ou payé) : ${pourcentage.toFixed(1)} %`
+                    }
                   >
                     <div
+                      className={`${styles.progressEngage} ${styles[`progress${tone}`]}`}
+                      style={{ width: `${Math.max(0, Math.min(pourcentage, 100))}%` }}
+                    />
+                    <div
                       className={`${styles.progressFill} ${styles[`progress${tone}`]}`}
-                      style={{ width: `${Math.min(pourcentage, 120)}%` }}
+                      style={{ width: `${Math.max(0, Math.min(totals.tauxRealisation, 100))}%` }}
                     />
                   </div>
                   <span className={styles.progressLabel}>{totals.tauxRealisation.toFixed(1)}%</span>

@@ -914,6 +914,7 @@
 }
 
 .progressTrack {
+  position: relative;
   flex: 1;
   min-width: 0;
   height: 6px;
@@ -922,7 +923,18 @@
   overflow: hidden;
 }
 
+/* Le crédit engagé mais pas encore décaissé, derrière le réalisé : la barre
+   pleine vaut toujours le pourcentage écrit à côté. */
+.progressEngage {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  border-radius: 999px;
+  opacity: 0.32;
+}
+
 .progressFill {
+  position: relative;
   height: 100%;
   border-radius: 999px;
 }
