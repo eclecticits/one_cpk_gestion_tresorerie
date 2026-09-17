@@ -259,6 +259,10 @@ async def _fake_payment_ecriture(
     type_origine: str = "encaissement",
     objet_origine_id: str | None = None,
     rubrique_produit_defaut: str | None = None,
+    # Une recette répartie sur plusieurs postes passe une ligne de produit par
+    # poste. La doublure n'en fait rien, mais elle doit accepter l'argument :
+    # sinon elle ne reproduit plus la fonction qu'elle remplace.
+    imputations: list | None = None,
 ) -> ComptaEcriture:
     origin_id = objet_origine_id or encaissement_id
     existing = (

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.budget import BudgetPoste
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
-from app.models.encaissement import Encaissement
+from app.models.encaissement import Encaissement, EncaissementArticle
 from app.models.payment_history import PaymentHistory
 from app.modules.comptabilite.services.generation_service import (
     annuler_ecriture_operation,
@@ -20,6 +20,7 @@ from app.modules.comptabilite.services.generation_service import (
 )
 from app.modules.comptabilite.services.integration_mode import get_accounting_integration_mode
 from app.services.audit_service import log_action
+from app.services.encaissement_repartition import repartir
 from app.services.mouvements_budgetaires import (
     cancel_budget_imputations,
     create_budget_imputation,
@@ -299,24 +300,44 @@ async def record_encaissement_payment(
         compte_bancaire_id=compte_bancaire_id,
         montant=montant,
     )
-    if impact_budgetaire:
-        await _adjust_budget(
-            db,
-            organisation_id=organisation_id,
-            budget_poste_id=budget_poste_id,
-            montant=montant,
-            direction=1,
+    # Les articles portent chacun leur poste : un versement se répartit entre
+    # eux au prorata. Un encaissement mono-poste — le cas courant — donne une
+    # seule part, du montant exact du versement.
+    articles = (
+        await db.execute(
+            select(EncaissementArticle.budget_poste_id, EncaissementArticle.montant).where(
+                EncaissementArticle.encaissement_id == encaissement.id,
+                EncaissementArticle.organisation_id == organisation_id,
+            )
         )
-        if budget_poste_id is not None:
+    ).all()
+    repartition = (
+        repartir(
+            [(ligne.budget_poste_id, Decimal(str(ligne.montant or 0))) for ligne in articles],
+            montant,
+            poste_par_defaut=budget_poste_id,
+        )
+        if impact_budgetaire
+        else []
+    )
+    if impact_budgetaire:
+        for poste_id, part in repartition:
+            await _adjust_budget(
+                db,
+                organisation_id=organisation_id,
+                budget_poste_id=poste_id,
+                montant=part,
+                direction=1,
+            )
             await create_budget_imputation(
                 db,
                 organisation_id=organisation_id,
                 payment_history_id=payment.id,
-                budget_poste_id=budget_poste_id,
+                budget_poste_id=poste_id,
                 sens="RECETTE_REALISEE",
-                montant_mouvement=montant,
+                montant_mouvement=part,
                 devise_mouvement=devise,
-                montant_budget=montant,
+                montant_budget=part,
                 exchange_rate_snapshot=taux_change,
                 created_by=user_id,
             )
@@ -343,6 +364,9 @@ async def record_encaissement_payment(
             type_origine="payment_history",
             objet_origine_id=str(payment.id),
             rubrique_produit_defaut=rubrique_produit_defaut,
+            # Une recette répartie porte un produit par poste : l'écriture suit
+            # la même répartition que le budget, sinon les deux se contrediraient.
+            imputations=repartition if len(repartition) > 1 else None,
         )
         payment.statut_comptabilisation = PAYMENT_COMPTA_RECORDED
         payment.message_comptabilisation = None

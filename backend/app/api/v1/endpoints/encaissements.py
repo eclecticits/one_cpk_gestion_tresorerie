@@ -636,6 +636,7 @@ def _encaissement_to_response(
                 "quantite": article.quantite,
                 "prix_unitaire": article.prix_unitaire,
                 "montant": article.montant,
+                "budget_poste_id": article.budget_poste_id,
                 "sort_order": article.sort_order,
                 "created_at": article.created_at,
             }
@@ -752,6 +753,7 @@ def _normalize_article_payloads(payload: EncaissementCreate, montant_total: Deci
                 "quantite": quantite,
                 "prix_unitaire": prix_unitaire,
                 "montant": montant,
+                "budget_poste_id": article.budget_poste_id,
                 "sort_order": idx,
             }
         )
@@ -764,6 +766,7 @@ def _normalize_article_payloads(payload: EncaissementCreate, montant_total: Deci
                 "quantite": Decimal("1.00"),
                 "prix_unitaire": montant_total,
                 "montant": montant_total,
+                "budget_poste_id": payload.budget_poste_id,
                 "sort_order": 0,
             }
         )
@@ -773,6 +776,74 @@ def _normalize_article_payloads(payload: EncaissementCreate, montant_total: Deci
         raise HTTPException(status_code=400, detail="Le total des articles doit correspondre au montant total")
 
     return normalized
+
+
+async def _valider_postes_articles(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    service_id: int | None,
+    articles: list[dict[str, Any]],
+    impact_budgetaire: bool,
+) -> None:
+    """Les postes désignés par les articles subissent les contrôles du poste
+    principal : recette, actif, du bon conseil, autorisé au service.
+
+    Sans cela, la ligne d'un reçu pourrait créditer une dépense, un poste
+    désactivé ou la recette d'un service auquel l'agent n'a pas accès — que le
+    poste de l'encaissement, lui, refuse déjà.
+    """
+    postes_demandes = sorted({
+        int(article["budget_poste_id"])
+        for article in articles
+        if article.get("budget_poste_id") is not None
+    })
+    if not postes_demandes:
+        return
+    if not impact_budgetaire:
+        raise HTTPException(
+            status_code=400,
+            detail="Un mouvement sans impact budgétaire ne doit pas porter de poste budgétaire",
+        )
+
+    trouves = {
+        poste.id: poste
+        for poste in (
+            await db.execute(
+                select(BudgetPoste).where(
+                    BudgetPoste.id.in_(postes_demandes),
+                    BudgetPoste.organisation_id == tenant_id,
+                    BudgetPoste.is_deleted.is_(False),
+                )
+            )
+        ).scalars().all()
+    }
+    for poste_id in postes_demandes:
+        poste = trouves.get(poste_id)
+        if poste is None or (poste.type or "").upper() != "RECETTE":
+            raise HTTPException(
+                status_code=400, detail=f"Poste budgétaire d'article invalide (type RECETTE requis) : {poste_id}"
+            )
+        if poste.active is False:
+            raise HTTPException(status_code=400, detail=f"Rubrique budgétaire inactive : {poste.code}")
+
+    if service_id is not None:
+        autorises = {
+            row[0]
+            for row in (
+                await db.execute(
+                    select(ServiceRubrique.budget_poste_id).where(
+                        ServiceRubrique.service_id == service_id,
+                        ServiceRubrique.budget_poste_id.in_(postes_demandes),
+                    )
+                )
+            ).all()
+        }
+        refuses = [trouves[pid].code for pid in postes_demandes if pid not in autorises]
+        if refuses:
+            raise HTTPException(
+                status_code=403, detail=f"Rubrique non autorisée pour ce service : {', '.join(refuses)}"
+            )
 
 
 def _add_encaissement_articles(
@@ -791,6 +862,9 @@ def _add_encaissement_articles(
                 quantite=article["quantite"],
                 prix_unitaire=article["prix_unitaire"],
                 montant=article["montant"],
+                # Le poste de l'encaissement reste le repli : une ligne qui n'en
+                # désigne pas s'impute là où l'encaissement s'impute.
+                budget_poste_id=article.get("budget_poste_id") or encaissement.budget_poste_id,
                 sort_order=article["sort_order"],
             )
         )
@@ -2069,6 +2143,14 @@ async def create_encaissement(
         )
         if allowed_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail="Rubrique non autorisée pour ce service")
+
+    await _valider_postes_articles(
+        db,
+        tenant_id=tenant_id,
+        service_id=service_id,
+        articles=article_payloads,
+        impact_budgetaire=impact_budgetaire,
+    )
 
     date_encaissement = payload.date_encaissement
     if isinstance(date_encaissement, str):

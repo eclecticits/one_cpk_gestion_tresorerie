@@ -220,6 +220,15 @@ class EncaissementArticle(Base):
     quantite: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=1)
     prix_unitaire: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     montant: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
+    #: Poste de recette de CETTE ligne. Un même reçu mêle des natures
+    #: différentes — une cotisation et des frais d'inscription ne tombent pas au
+    #: même endroit. Nul = la ligne suit le poste de l'encaissement.
+    budget_poste_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("budget_postes.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 

@@ -327,6 +327,7 @@ async def generer_ecriture_encaissement(
     rubrique_produit_defaut: str | None = None,
     type_origine: str = "encaissement",
     objet_origine_id: str | None = None,
+    imputations: list[tuple[int, Decimal]] | None = None,
 ) -> ComptaEcriture:
     """Débit Trésorerie / Crédit Produit — cf. catalogue §4.5 du dossier d'architecture.
 
@@ -338,13 +339,29 @@ async def generer_ecriture_encaissement(
     du paiement en ligne, créé par webhook sans imputation budgétaire. Reste
     un paramétrage en base (aucun compte en dur) et demeure bloquant si la
     rubrique n'est pas mappée.
+
+    `imputations` : réservé aux recettes réparties sur plusieurs postes (des
+    articles d'un même reçu qui ne tombent pas au même endroit) — une ligne de
+    produit par poste `(budget_poste_id, montant_ligne)`, qui remplace
+    `budget_poste_id` quand elle est fournie. Même convention que
+    `generer_ecriture_sortie_fonds`, et la somme doit égaler `montant`.
     """
     origine_id = objet_origine_id or encaissement_id
     existing = await _find_existing_ecriture(db, organisation_id, "encaissements", type_origine, origine_id)
     if existing is not None:
         return existing
 
-    if budget_poste_id is None and rubrique_produit_defaut is None:
+    if imputations:
+        total_impute = sum((m for _, m in imputations), Decimal("0"))
+        if total_impute != montant:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Répartition budgétaire incohérente : somme des imputations "
+                    f"({total_impute}) différente du montant encaissé ({montant})."
+                ),
+            )
+    elif budget_poste_id is None and rubrique_produit_defaut is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Encaissement sans poste budgétaire : impossible de résoudre le compte de produit.",
@@ -356,11 +373,18 @@ async def generer_ecriture_encaissement(
     journal = await _get_journal(db, organisation_id, societe.id, journal_code)
 
     compte_tresorerie = await resolve_compte_tresorerie(db, organisation_id, societe, canal, compte_bancaire_id)
-    compte_produit = (
-        await resolve_compte_poste_budgetaire(db, organisation_id, budget_poste_id)
-        if budget_poste_id is not None
-        else await resolve_compte_rubrique(db, organisation_id, rubrique_produit_defaut)
-    )
+    lignes_produit: list[tuple[int, Decimal]] = []
+    if imputations:
+        for poste_id, montant_ligne in imputations:
+            compte = await resolve_compte_poste_budgetaire(db, organisation_id, poste_id)
+            lignes_produit.append((compte.id, montant_ligne))
+    else:
+        compte_produit = (
+            await resolve_compte_poste_budgetaire(db, organisation_id, budget_poste_id)
+            if budget_poste_id is not None
+            else await resolve_compte_rubrique(db, organisation_id, rubrique_produit_defaut)
+        )
+        lignes_produit.append((compte_produit.id, montant))
 
     taux = await _taux_vers_tenue(
         db, organisation_id=organisation_id, exercice=exercice, devise=devise,
@@ -392,7 +416,7 @@ async def generer_ecriture_encaissement(
         devise=devise, taux=taux,
         lignes=[
             (compte_tresorerie.id, montant, Decimal("0"), libelle),
-            (compte_produit.id, Decimal("0"), montant, libelle),
+            *[(compte_id, Decimal("0"), montant_ligne, libelle) for compte_id, montant_ligne in lignes_produit],
         ],
     )
     await db.flush()

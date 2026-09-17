@@ -61,6 +61,9 @@ class EncaissementArticleBase(DecimalBaseModel):
     quantite: Decimal = Field(gt=0, default=1)
     prix_unitaire: Decimal = Field(ge=0)
     montant: Decimal | None = Field(default=None, ge=0)
+    #: Poste de recette de cette ligne. Vide = la ligne suit le poste de
+    #: l'encaissement, comme avant les postes par article.
+    budget_poste_id: int | None = None
 
 
 class EncaissementArticleCreate(EncaissementArticleBase):
