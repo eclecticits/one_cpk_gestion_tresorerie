@@ -607,12 +607,26 @@
 .colDelta { width: 100px; text-align: right; }
 .colReal { width: 108px; text-align: right; }
 .colAvailable { width: 116px; text-align: right; }
+.colEngage { width: 108px; text-align: right; }
+.colResteEngager { width: 112px; text-align: right; }
+.colTauxEngagement { width: 92px; text-align: right; }
 .colProgress { width: 132px; }
 .colActions {
   width: 112px;
   overflow: visible !important;
 }
 .colSelect { width: 48px; text-align: center; }
+
+/* Vue depense : trois colonnes d'engagement s'ajoutent (Engage, Reste a
+   engager, Taux d'engagement), soit 312 px. Les autres reviennent a leur
+   plancher — le libelle rend 68 px, le taux de realisation 20 — pour ramener
+   l'ensemble a 1180 px. Au-dela des 1015 px que laisse un ecran de 1366, le
+   conteneur defile horizontalement, comme il le fait deja pour la N-1. */
+.tableEngagement .colLabel { width: 220px; }
+.tableEngagement .colAmount { width: 112px; }
+.tableEngagement .colReal { width: 100px; }
+.tableEngagement .colAvailable { width: 108px; }
+.tableEngagement .colProgress { width: 112px; }
 
 /* Comparaison N-1 depliee : deux colonnes de 100 px s'ajoutent. Les autres
    reviennent a leur plancher pour limiter le debordement — 1096 px au lieu
@@ -630,7 +644,10 @@
 .colPrevYear,
 .colDelta,
 .colReal,
-.colAvailable {
+.colAvailable,
+.colEngage,
+.colResteEngager,
+.colTauxEngagement {
   font-variant-numeric: tabular-nums;
 }
 

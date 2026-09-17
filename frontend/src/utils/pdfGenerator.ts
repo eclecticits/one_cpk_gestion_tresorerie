@@ -1638,12 +1638,44 @@ export const generateBudgetPDF = async (
   // en dépendent : les coder en dur casserait silencieusement la colorisation
   // du taux et l'indentation du libellé dès qu'une variante s'ajoute.
   const DECALAGE = avecComparaison ? 2 : 0
-  const COL_TAUX = 4 + DECALAGE
-  const COL_COMMENTAIRES = 6 + DECALAGE
-  const LARGEUR_PREVISION = 27
-  const LARGEUR_REALISATION = 27
-  const LARGEUR_TAUX = 28
-  const LARGEUR_SOLDE = 28
+  const COL_ENGAGE = 3 + DECALAGE
+  const COL_REALISATION = 4 + DECALAGE
+  const COL_TAUX = 5 + DECALAGE
+  const COL_SOLDE = 6 + DECALAGE
+  const COL_COMMENTAIRES = 7 + DECALAGE
+  // Cinq colonnes chiffrées au lieu de quatre : les 110 mm qu'occupaient
+  // Prévision, Réalisation, Taux et Solde se partagent désormais à cinq, soit
+  // 22 mm chacune — l'enveloppe du tableau ne bouge pas, le portrait tenant
+  // déjà au millimètre.
+  //
+  // 22 mm laissent 18 mm utiles, de quoi écrire « 1 625 761,00 $ » à la police
+  // calibrée plus bas. Au-delà, la colonne s'élargit jusqu'à 26 mm et c'est le
+  // couple Code + Poste budgétaire qui rend la différence : un libellé se
+  // replie proprement sur deux lignes, un montant coupé en deux ne se lit plus
+  // comme un nombre.
+  const CHIFFRES_PADDING = 2
+  const CHIFFRES_FONT_MAX = 9.5
+  const CHIFFRES_FONT_MIN = 7
+  const LARGEUR_CHIFFRES = (() => {
+    const policeAvant = doc.getFontSize()
+    doc.setFontSize(CHIFFRES_FONT_MAX)
+    const plusLarge = Math.max(
+      0,
+      ...lignes.flatMap((l) => [
+        doc.getTextWidth(`${formatBudgetAmount(l.montant_prevu)} $`),
+        doc.getTextWidth(`${formatBudgetAmount(l.montant_engage)} $`),
+        doc.getTextWidth(`${formatBudgetAmount(l.montant_paye)} $`),
+        doc.getTextWidth(`${formatBudgetAmount(l.montant_disponible)} $`),
+      ]),
+    )
+    doc.setFontSize(policeAvant)
+    return Math.min(26, Math.max(22, Math.ceil(plusLarge + 2 * CHIFFRES_PADDING)))
+  })()
+  const LARGEUR_PREVISION = LARGEUR_CHIFFRES
+  const LARGEUR_ENGAGE = LARGEUR_CHIFFRES
+  const LARGEUR_REALISATION = LARGEUR_CHIFFRES
+  const LARGEUR_TAUX = LARGEUR_CHIFFRES
+  const LARGEUR_SOLDE = LARGEUR_CHIFFRES
   const codeCell = (ligne: { code?: string; is_parent?: boolean; level?: number }) =>
     ligne.is_parent
       ? `${'»'.repeat(Math.min((ligne.level ?? 0) + 1, 3))} ${ligne.code || ''}`
@@ -1655,12 +1687,12 @@ export const generateBudgetPDF = async (
   // La colonne Code suit son contenu au lieu de prendre une largeur fixe.
   // Le reste du couple Code + Poste budgétaire revient au libellé.
   const LARGEUR_CODE = Math.min(avecComparaison ? 18 : 20, Math.max(12, Math.ceil(codeWidthContent + 7)))
-  const LARGEUR_CODE_LIBELLE = avecComparaison ? 64 : 72
+  const LARGEUR_CODE_LIBELLE = (avecComparaison ? 64 : 72) - 5 * (LARGEUR_CHIFFRES - 22)
   const LARGEUR_LIBELLE = LARGEUR_CODE_LIBELLE - LARGEUR_CODE
   const LARGEUR_COMPARAISON = avecComparaison ? 24 + 24 : 0
   const FIXED_COLS_WIDTH =
-    LARGEUR_CODE + LARGEUR_LIBELLE + LARGEUR_PREVISION + LARGEUR_REALISATION +
-    LARGEUR_TAUX + LARGEUR_SOLDE + LARGEUR_COMPARAISON
+    LARGEUR_CODE + LARGEUR_LIBELLE + LARGEUR_PREVISION + LARGEUR_ENGAGE +
+    LARGEUR_REALISATION + LARGEUR_TAUX + LARGEUR_SOLDE + LARGEUR_COMPARAISON
   const TABLE_MARGIN_X = 10
 
   /** Prévision N-1 d'un poste, ou null s'il n'existait pas l'exercice précédent. */
@@ -1698,6 +1730,7 @@ export const generateBudgetPDF = async (
       row.push(n1 === null ? '—' : `${formatBudgetAmount(prevu - n1)} $`)
     }
     row.push(
+      `${formatBudgetAmount(ligne.montant_engage)} $`,
       `${formatBudgetAmount(consomme)} $`,
       prevu > 0 ? `${pct.toFixed(1)} %` : '—',
       vue === 'RECETTE'
@@ -1716,12 +1749,58 @@ export const generateBudgetPDF = async (
   const HEADER_SOLDE_BUDGETAIRE = 'Solde\nbudgétaire'
   const isRecette = vue === 'RECETTE'
 
+  // La police des colonnes chiffrées, calée sur le plus long montant qu'elles
+  // impriment vraiment. En 9,5 pt avec les 3,2 mm de marge interne d'origine,
+  // une colonne n'offrait que 20,6 mm utiles : « 625 761,00 $ » y entrait à
+  // 0,36 mm près, et tout ce qui dépassait le million se coupait en deux. La
+  // marge interne tombe donc à 2 mm sur ces seules colonnes, et la police
+  // descend jusqu'à 7 pt si le montant l'exige — chaque colonne jugée sur son
+  // propre contenu, la plus étroite ne se calant pas sur une plus large.
+  const colonnesChiffrees = [
+    2,
+    ...(avecComparaison ? [3, 4] : []),
+    COL_ENGAGE,
+    COL_REALISATION,
+    COL_TAUX,
+    COL_SOLDE,
+  ]
+  const largeursChiffrees = [
+    LARGEUR_PREVISION,
+    ...(avecComparaison ? [24, 24] : []),
+    LARGEUR_ENGAGE,
+    LARGEUR_REALISATION,
+    LARGEUR_TAUX,
+    LARGEUR_SOLDE,
+  ]
+  const CHIFFRES_FONT = (() => {
+    const policeAvant = doc.getFontSize()
+    doc.setFontSize(CHIFFRES_FONT_MAX)
+    // Chaque colonne est jugée sur ses propres montants : la plus étroite ne
+    // doit pas être calibrée sur le plus long nombre d'une colonne plus large.
+    const ratios = colonnesChiffrees.map((col, i) => {
+      const utile = largeursChiffrees[i] - 2 * CHIFFRES_PADDING
+      const plusLarge = Math.max(
+        0,
+        ...tableData.map((row) => doc.getTextWidth(row[col] ?? '')),
+      )
+      return plusLarge > utile ? utile / plusLarge : 1
+    })
+    doc.setFontSize(policeAvant)
+    return Math.max(CHIFFRES_FONT_MIN, CHIFFRES_FONT_MAX * Math.min(...ratios))
+  })()
+  const styleChiffres = {
+    halign: 'right' as const,
+    fontSize: CHIFFRES_FONT,
+    cellPadding: CHIFFRES_PADDING,
+  }
+
   autoTable(doc, {
     head: [[
       'Code',
       'Poste budgétaire',
       'Prévision',
       ...(avecComparaison ? ['Budget N-1', HEADER_SOLDE_BUDGETAIRE] : []),
+      'Engagé',
       'Réalisation',
       HEADER_TAUX_REALISATION,
       HEADER_SOLDE_BUDGETAIRE,
@@ -1755,16 +1834,17 @@ export const generateBudgetPDF = async (
     columnStyles: {
       0: { cellWidth: LARGEUR_CODE },
       1: { cellWidth: LARGEUR_LIBELLE },
-      2: { cellWidth: LARGEUR_PREVISION, halign: 'right' },
+      2: { cellWidth: LARGEUR_PREVISION, ...styleChiffres },
       ...(avecComparaison
         ? {
-            3: { cellWidth: 24, halign: 'right' as const },
-            4: { cellWidth: 24, halign: 'right' as const },
+            3: { cellWidth: 24, ...styleChiffres },
+            4: { cellWidth: 24, ...styleChiffres },
           }
         : {}),
-      [3 + DECALAGE]: { cellWidth: LARGEUR_REALISATION, halign: 'right' as const },
-      [COL_TAUX]: { cellWidth: LARGEUR_TAUX, halign: 'right' as const, fontStyle: 'bold' as const },
-      [5 + DECALAGE]: { cellWidth: LARGEUR_SOLDE, halign: 'right' as const },
+      [COL_ENGAGE]: { cellWidth: LARGEUR_ENGAGE, ...styleChiffres },
+      [COL_REALISATION]: { cellWidth: LARGEUR_REALISATION, ...styleChiffres },
+      [COL_TAUX]: { cellWidth: LARGEUR_TAUX, ...styleChiffres, fontStyle: 'bold' as const },
+      [COL_SOLDE]: { cellWidth: LARGEUR_SOLDE, ...styleChiffres },
       ...(avecCommentaires
         ? {
             [COL_COMMENTAIRES]: {
@@ -1803,7 +1883,7 @@ export const generateBudgetPDF = async (
         data.cell.styles.cellPadding = { top: 3, right: 3, bottom: 3, left: 3 + lvl * 4 }
       }
       const isTauxCell = data.column.index === COL_TAUX
-      const isSoldeCell = data.column.index === 5 + DECALAGE
+      const isSoldeCell = data.column.index === COL_SOLDE
       if (!stat) return
       const depassement = stat.pct > 100
       const seuilAtteint = stat.pct >= 100 && !depassement
@@ -1903,10 +1983,13 @@ export const generateBudgetPDF = async (
       ]
     : [
         { label: 'Prévision totale', value: `${formatBudgetAmount(totalPrevu)} $` },
+        { label: 'Total engagé', value: `${formatBudgetAmount(totalEngage)} $` },
         { label: 'Total réalisé', value: `${formatBudgetAmount(totalConsomme)} $` },
         { label: 'Solde budgétaire', value: `${formatBudgetAmount(totalDisponible)} $` },
       ]
-  const cardW = (contentW - 8) / 3
+  // La largeur suit le nombre de cartes : quatre en dépense, où l'engagé a sa
+  // place, trois en recette, où il n'y a pas de circuit d'engagement.
+  const cardW = (contentW - 4 * (kpis.length - 1)) / kpis.length
   kpis.forEach((k, i) => {
     const cx = marginX + i * (cardW + 4)
     doc.setDrawColor(ONEC_GREEN)

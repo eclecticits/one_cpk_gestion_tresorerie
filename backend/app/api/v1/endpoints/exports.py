@@ -1292,8 +1292,12 @@ async def construire_classeur_budget(
         tot_paye = sum((node_totals(p)[2] for p, _, _ in leaves), Decimal(0))
         # Recettes : le solde budgétaire se lit « réalisation − prévision »
         # (positif = objectif dépassé), comme dans le PDF. Dépenses : le
-        # disponible se lit « prévision − payé ».
-        tot_disp = (tot_paye - tot_prevu) if is_recette else (tot_prevu - tot_paye)
+        # disponible se lit « prévision − max(engagé, payé) », la définition
+        # qu'applique le contrôle de saisie des réquisitions (`_base_consomme`).
+        # Retenir le seul payé annoncerait ici un crédit que la création d'une
+        # réquisition refuse, et laisserait une correction d'imputation non
+        # encore décaissée sans effet sur le solde.
+        tot_disp = (tot_paye - tot_prevu) if is_recette else (tot_prevu - max(tot_engage, tot_paye))
         tot_reste_engager = tot_prevu - tot_engage
 
         # Total N-1 sur le meme perimetre que tot_prevu : les feuilles hors
@@ -1393,7 +1397,7 @@ async def construire_classeur_budget(
             if montant_prev is not None:
                 ws.cell(row=r, column=7, value=float(montant_prev))
             ws.cell(row=r, column=8, value=f'=IF(G{r}="","",F{r}-G{r})')
-            ws.cell(row=r, column=11, value=(f"=J{r}-F{r}" if is_recette else f"=F{r}-J{r}"))
+            ws.cell(row=r, column=11, value=(f"=J{r}-F{r}" if is_recette else f"=F{r}-MAX(I{r},J{r})"))
             ws.cell(row=r, column=12, value=f"=F{r}-I{r}")
             ws.cell(row=r, column=13, value=f"=IF(F{r}>0,I{r}/F{r}*100,0)")
             ws.cell(row=r, column=14, value=f"=IF(F{r}>0,J{r}/F{r}*100,0)")
@@ -1464,7 +1468,11 @@ async def construire_classeur_budget(
         ws.cell(
             row=total_row,
             column=11,
-            value=(f"=J{total_row}-F{total_row}" if is_recette else f"=F{total_row}-J{total_row}"),
+            value=(
+                f"=J{total_row}-F{total_row}"
+                if is_recette
+                else f"=F{total_row}-MAX(I{total_row},J{total_row})"
+            ),
         )
         ws.cell(row=total_row, column=12, value=f"=F{total_row}-I{total_row}")
         ws.cell(row=total_row, column=13, value=f"=IF(F{total_row}>0,I{total_row}/F{total_row}*100,0)")

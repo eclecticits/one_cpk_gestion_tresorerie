@@ -200,7 +200,6 @@ async def build_finance_snapshot(db: AsyncSession, tenant_id: int) -> dict[str, 
     top_sorties = (await db.execute(top_sorties_stmt)).scalars().all()
 
     budget_lines: list[dict[str, Any]] = []
-    pending_by_line: dict[int, float] = {}
     try:
         exercice_res = await db.execute(
             select(func.max(BudgetExercice.annee)).where(
@@ -209,24 +208,6 @@ async def build_finance_snapshot(db: AsyncSession, tenant_id: int) -> dict[str, 
         )
         annee = exercice_res.scalar_one_or_none()
         if annee is not None:
-            pending_stmt = (
-                select(
-                    LigneRequisition.budget_poste_id,
-                    func.coalesce(func.sum(func.coalesce(LigneRequisition.montant_total, 0)), 0),
-                )
-                .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
-                .where(
-                    LigneRequisition.budget_poste_id.is_not(None),
-                    Requisition.organisation_id == tenant_id,
-                    func.upper(Requisition.status).in_(
-                        ["EN_ATTENTE_COMMISSION", "EN_ATTENTE", "AUTORISEE", "APPROUVEE", "PENDING_VALIDATION_IMPORT"]
-                    ),
-                )
-                .group_by(LigneRequisition.budget_poste_id)
-            )
-            for row in (await db.execute(pending_stmt)).all():
-                pending_by_line[int(row[0])] = _to_float(row[1])
-
             budget_lines_res = await db.execute(
                 select(BudgetPoste)
                 .join(BudgetExercice, BudgetExercice.id == BudgetPoste.exercice_id)
@@ -246,9 +227,18 @@ async def build_finance_snapshot(db: AsyncSession, tenant_id: int) -> dict[str, 
             for line in budget_lines_res.scalars().all():
                 prevu = _to_float(line.montant_prevu)
                 paye = _to_float(line.montant_paye)
-                pending = pending_by_line.get(int(line.id), 0.0)
+                # `montant_engage` est la valeur dérivée tenue par
+                # `budget_engagement` : la somme des lignes des réquisitions qui
+                # engagent réellement le crédit. La reconstituer ici à partir
+                # d'une liste de statuts tenue à part donnait un troisième
+                # chiffre, qui comptait deux fois une réquisition payée — le
+                # paiement ne libère pas l'engagement, il le consomme.
+                engage = _to_float(line.montant_engage)
+                # Ce qui est gelé sans être encore décaissé. Un paiement direct,
+                # sans réquisition, consomme du crédit sans l'avoir engagé : le
+                # plancher évite d'annoncer une attente négative.
+                pending = max(engage - paye, 0.0)
                 consomme_pct = (paye / prevu * 100) if prevu > 0 else 0
-                engage = paye + pending
                 engage_pct = (engage / prevu * 100) if prevu > 0 else 0
                 budget_lines.append(
                     {
@@ -256,6 +246,7 @@ async def build_finance_snapshot(db: AsyncSession, tenant_id: int) -> dict[str, 
                         "libelle": line.libelle,
                         "montant_prevu": prevu,
                         "montant_paye": paye,
+                        "montant_engage": engage,
                         "montant_en_attente": pending,
                         "pourcentage_consomme": round(consomme_pct, 1),
                         "pourcentage_engage": round(engage_pct, 1),
@@ -607,7 +598,12 @@ async def _local_answer(question: str, snapshot: dict[str, Any]) -> dict[str, An
         lines = snapshot.get("budget_postes", [])
         line = _match_budget_line(lines, question)
         if line:
-            remaining = _to_float(line["montant_prevu"]) - _to_float(line["montant_paye"])
+            # `prévu - max(engagé, payé)` : la définition unique du disponible
+            # (cf. `_base_consomme`). Sur le seul payé, l'assistant annonçait un
+            # crédit que la création d'une réquisition refuse.
+            remaining = _to_float(line["montant_prevu"]) - max(
+                _to_float(line.get("montant_engage", 0)), _to_float(line["montant_paye"])
+            )
             pending_val = _to_float(line.get("montant_en_attente", 0))
             engage_pct = line.get("pourcentage_engage", line["pourcentage_consomme"])
             return {

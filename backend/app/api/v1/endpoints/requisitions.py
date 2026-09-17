@@ -37,6 +37,7 @@ from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
 from app.services.budget_engagement import resynchroniser_engagement_requisition
 from app.services.reimputation_budgetaire import apercu_reimputation, reimputer_requisition
+from app.services.report_cache import invalidate_report_summary_cache
 from app.services.mailer import normalize_email_list, send_requisition_notification, send_requisition_workflow_email
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
@@ -2375,4 +2376,7 @@ async def reimputer(
         ip_address=get_request_ip(request),
     )
     await db.commit()
+    # Une ré-imputation déplace du réalisé d'un poste à l'autre : les résumés
+    # mémorisés diraient encore l'ancienne ventilation le temps du TTL.
+    await invalidate_report_summary_cache(tenant_id)
     return ReimputationOut(**{k: v for k, v in resultat.items() if k in ReimputationOut.model_fields})

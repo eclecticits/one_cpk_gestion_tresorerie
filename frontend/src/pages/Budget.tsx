@@ -46,6 +46,36 @@ const ImportBudgetPostes = lazy(() => import('../components/ImportBudgetPostes')
 type BudgetTypeFilter = 'TOUT' | 'DEPENSE' | 'RECETTE'
 type BudgetPosteNode = BudgetPosteTree
 
+// Part du crédit déjà consommée par un poste. Une seule définition du
+// disponible dans toute l'application : celle que le contrôle de saisie
+// applique, `prévu - max(engagé, payé)` pour une dépense (cf. `_base_consomme`,
+// côté serveur). Ne retenir que le payé promettait ici un crédit que la
+// création de réquisition refuse, et rendait invisible toute correction
+// d'imputation non encore payée : l'engagement changeait de poste sans qu'une
+// seule colonne ne bouge.
+//
+// Les postes de recettes n'ont pas de circuit d'engagement : `montant_engage`
+// y porte le réalisé, et `montant_paye` le suit.
+const baseConsommee = (type: string | null | undefined, engage: number, paye: number) =>
+  (type || '').toUpperCase() === 'DEPENSE' ? Math.max(engage, paye) : engage
+
+/** Montants d'un poste, sous-postes compris, et les trois lectures qu'on en
+ *  tire. Les mêmes colonnes que l'export Excel, aux mêmes définitions :
+ *  `taux d'engagement = engagé / prévu`, `taux de réalisation = payé / prévu`.
+ *  `pourcentage` reste la consommation du crédit — celle qui déclenche les
+ *  alertes et remplit les barres : un poste engagé à 100 % doit alerter, même
+ *  si rien n'en est encore décaissé. */
+type BudgetTotals = {
+  prevu: number
+  engage: number
+  paye: number
+  disponible: number
+  pourcentage: number
+  resteAEngager: number
+  tauxEngagement: number
+  tauxRealisation: number
+}
+
 export default function Budget() {
   const [lines, setLines] = useState<BudgetPosteNode[]>([])
   const [annee, setAnnee] = useState<number | null>(null)
@@ -179,7 +209,7 @@ export default function Budget() {
     return acc
   }
 
-  const computeNodeTotals = (node: BudgetPosteNode, map: Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>) => {
+  const computeNodeTotals = (node: BudgetPosteNode, map: Map<number, BudgetTotals>) => {
     let prevu = toNumber(node.montant_prevu)
     let engage = toNumber(node.montant_engage)
     let paye = toNumber(node.montant_paye)
@@ -200,10 +230,19 @@ export default function Budget() {
       })
     }
 
-    const baseConsomme = paye
+    const baseConsomme = baseConsommee(node.type, engage, paye)
     const disponible = prevu - baseConsomme
     const pourcentage = prevu > 0 ? (baseConsomme / prevu) * 100 : 0
-    const totals = { prevu, engage, paye, disponible, pourcentage }
+    const totals: BudgetTotals = {
+      prevu,
+      engage,
+      paye,
+      disponible,
+      pourcentage,
+      resteAEngager: prevu - engage,
+      tauxEngagement: prevu > 0 ? (engage / prevu) * 100 : 0,
+      tauxRealisation: prevu > 0 ? (paye / prevu) * 100 : 0,
+    }
     map.set(node.id, totals)
     return totals
   }
@@ -325,7 +364,7 @@ export default function Budget() {
         const params = filter === 'TOUT' ? { annee: prevYear } : { annee: prevYear, type: filter }
         const response = await getBudgetPostesTree(params)
         const normalized = normalizeTree(response.postes || [])
-        const totalsMap = new Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>()
+        const totalsMap = new Map<number, BudgetTotals>()
         normalized.forEach((node) => computeNodeTotals(node, totalsMap))
         const flatPrev = flattenTree(normalized, [])
         const codeMap = new Map<string, number>()
@@ -465,7 +504,7 @@ export default function Budget() {
   }
 
   const { totalsById, rootTotals, flatLines } = useMemo(() => {
-    const totalsMap = new Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>()
+    const totalsMap = new Map<number, BudgetTotals>()
     const rootTotals = { prevu: 0, engage: 0, paye: 0, disponible: 0 }
 
     lines.forEach((line) => {
@@ -883,7 +922,7 @@ export default function Budget() {
       setExporting('pdf')
       // Arbre complet : les postes parents (lignes annuelles) sont exportés avec
       // leurs sous-postes. Les montants d'un parent = somme de ses enfants.
-      const totalsMap = new Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>()
+      const totalsMap = new Map<number, BudgetTotals>()
       lines.forEach((root) => computeNodeTotals(root, totalsMap))
       const depthMap = new Map<number, number>()
       const walkDepth = (nodes: BudgetPosteNode[], d: number) => {
@@ -1005,12 +1044,19 @@ export default function Budget() {
       const hasChildren = line.children && line.children.length > 0
       const isCollapsed = collapsedIds.has(line.id)
       const isLeaf = !hasChildren
-      const totals = totalsById.get(line.id) || {
+      const totals: BudgetTotals = totalsById.get(line.id) || {
         prevu: toNumber(line.montant_prevu),
         engage: toNumber(line.montant_engage),
         paye: toNumber(line.montant_paye),
         disponible: toNumber(line.montant_disponible),
         pourcentage: toNumber(line.pourcentage_consomme),
+        resteAEngager: toNumber(line.montant_prevu) - toNumber(line.montant_engage),
+        tauxEngagement: toNumber(line.montant_prevu) > 0
+          ? (toNumber(line.montant_engage) / toNumber(line.montant_prevu)) * 100
+          : 0,
+        tauxRealisation: toNumber(line.montant_prevu) > 0
+          ? (toNumber(line.montant_paye) / toNumber(line.montant_prevu)) * 100
+          : 0,
       }
       const pourcentage = totals.pourcentage
       const warningThreshold = Math.max(0, Math.min(100, alertThreshold))
@@ -1171,6 +1217,7 @@ export default function Budget() {
                 </td>
               </>
             )}
+            {!isRecetteView && <td className={styles.colEngage}>{formatAmount(totals.engage)}</td>}
             <td className={styles.colReal}>{formatAmount(totals.paye)}</td>
             <td className={`${styles.colAvailable} ${isOverrun ? styles.overrunValue : ''}`}>
               {isRecetteView ? formatAmount(totals.paye) : formatAmount(totals.disponible)}
@@ -1186,18 +1233,35 @@ export default function Budget() {
                 </div>
               )}
             </td>
+            {!isRecetteView && (
+              <td className={styles.colResteEngager}>
+                {/* Ce qu'il reste à engager peut être négatif : un poste forcé
+                    au-delà de son crédit doit le montrer, pas l'arrondir à zéro. */}
+                <span className={totals.resteAEngager < -0.005 ? styles.overrunValue : ''}>
+                  {formatAmount(totals.resteAEngager)}
+                </span>
+              </td>
+            )}
+            {!isRecetteView && (
+              <td className={styles.colTauxEngagement}>
+                {totals.prevu > 0 ? `${totals.tauxEngagement.toFixed(1)} %` : '—'}
+              </td>
+            )}
             <td className={styles.colProgress}>
               {isRecetteView ? (
                 <span className={ecart >= 0 ? styles.statusOk : styles.statusWarn}>{recetteStatus}</span>
               ) : (
                 <div className={styles.progressRow}>
-                  <div className={styles.progressTrack}>
+                  <div
+                    className={styles.progressTrack}
+                    title={`Crédit consommé (engagé ou payé) : ${pourcentage.toFixed(1)} %`}
+                  >
                     <div
                       className={`${styles.progressFill} ${styles[`progress${tone}`]}`}
                       style={{ width: `${Math.min(pourcentage, 120)}%` }}
                     />
                   </div>
-                  <span className={styles.progressLabel}>{pourcentage.toFixed(1)}%</span>
+                  <span className={styles.progressLabel}>{totals.tauxRealisation.toFixed(1)}%</span>
                 </div>
               )}
             </td>
@@ -1700,7 +1764,7 @@ export default function Budget() {
           className={`${styles.tableWrapper} ${openMenuId !== null ? styles.tableWrapperMenuOpen : ''}`}
           data-tree-scroll
         >
-          <table className={`${styles.table} ${compareN1 ? styles.tableCompare : ''}`}>
+          <table className={`${styles.table} ${compareN1 ? styles.tableCompare : ''} ${!isRecetteView ? styles.tableEngagement : ''}`}>
             <thead>
               <tr>
                 <th className={styles.colCode}>Code</th>
@@ -1718,8 +1782,16 @@ export default function Budget() {
                     <th className={styles.colDelta} title="Écart de prévision avec l'exercice précédent">Écart N-1</th>
                   </>
                 )}
+                {/* Colonnes d'engagement : celles de l'export Excel, aux mêmes
+                    libellés et aux mêmes définitions. Absentes en vue recette,
+                    où un poste n'a pas de circuit d'engagement — `montant_engage`
+                    y porte le réalisé, et les trois colonnes ne feraient que
+                    répéter les deux voisines. */}
+                {!isRecetteView && <th className={styles.colEngage}>Engagé</th>}
                 <th className={styles.colReal}>Réalisé</th>
                 <th className={styles.colAvailable}>{isRecetteView ? 'Réalisation' : 'Solde budgétaire'}</th>
+                {!isRecetteView && <th className={styles.colResteEngager}>Reste à engager</th>}
+                {!isRecetteView && <th className={styles.colTauxEngagement}>Taux d'engagement</th>}
                 <th className={styles.colProgress}>{isRecetteView ? 'Statut' : 'Taux de réalisation'}</th>
                 <th className={styles.colActions}>Actions</th>
                 <th className={`${styles.colSelect} ${styles.selectHeader}`} title="Sélection de sous-postes">Sél.</th>
