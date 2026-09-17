@@ -387,6 +387,46 @@
   min-width: 0;
 }
 
+.topControls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
+
+.destinationControlStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.destinationControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #f5f9ff;
+  color: #1e3a5f;
+}
+
+.destinationControlLabel {
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.destinationWarning {
+  max-width: 250px;
+  color: #b45309;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .natureHelp {
   max-width: 360px;
   margin: 0;
@@ -1149,8 +1189,14 @@
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
 }
 
-.modalHeader .natureControlStack {
+.modalHeader .topControls {
   margin-left: auto;
+}
+
+.createIntroCopy {
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
 }
 
 .createFormIntro h2 {
@@ -1189,6 +1235,7 @@
 }
 
 .createMain .formSection {
+  min-width: 0;
   margin-bottom: 0;
   padding: 14px;
   background: #ffffff;
@@ -1265,8 +1312,20 @@
 
 .segmentedItemActive,
 .segmentedItemActive:hover {
-  background: #3b82f6;
+  background: var(--tenant-primary, #3b82f6);
   color: #ffffff;
+}
+
+.segmentedItem:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid #60a5fa;
+  outline-offset: -2px;
+}
+
+.segmentedItem:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .warningText {
@@ -1384,6 +1443,40 @@
 .amountReview {
   display: grid;
   gap: 9px;
+}
+
+.summaryDestination {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+}
+
+.summaryDestination[data-canal="caisse"] {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.summaryDestination div {
+  display: grid;
+  gap: 3px;
+}
+
+.summaryDestination span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.summaryDestination strong {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
 .summaryRows div,
@@ -1534,6 +1627,12 @@
   .createFormIntro {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .topControls {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .compactGrid {

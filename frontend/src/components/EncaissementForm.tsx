@@ -38,6 +38,11 @@ const SEXES = [
   { value: 'F', libelle: 'Féminin' },
 ] as const
 
+const CANAUX = [
+  { value: 'CAISSE', libelle: 'Caisse' },
+  { value: 'BANQUE', libelle: 'Banque' },
+] as const
+
 const roundMoney = (value: number): number => {
   return Math.round((value + Number.EPSILON) * 100) / 100
 }
@@ -218,15 +223,6 @@ export default function EncaissementForm({
   }, [isCashClosed, formData.canal])
 
   useEffect(() => {
-    if (formData.canal === 'BANQUE' && formData.mode_paiement === 'cash') {
-      setFormData((prev) => ({ ...prev, mode_paiement: 'virement', reference: prev.reference || '' }))
-    }
-    if (formData.canal === 'CAISSE' && formData.mode_paiement !== 'cash') {
-      setFormData((prev) => ({ ...prev, mode_paiement: 'cash', reference: '' }))
-    }
-  }, [formData.canal, formData.mode_paiement])
-
-  useEffect(() => {
     const devise = formData.devise_perception || 'USD'
     const next = formData.canal === 'BANQUE'
       ? comptesBancaires.filter(
@@ -239,11 +235,13 @@ export default function EncaissementForm({
 
     setFormData((prev) => {
       const selectedStillAvailable = next.some((c) => String(c.id) === String(prev.compte_bancaire_id))
-      const nextCompteId = formData.canal === 'CAISSE'
+      // Plusieurs comptes éligibles : on impose un choix explicite, se tromper de
+      // compte de dépôt ne se rattrape qu'au rapprochement. Un seul : rien à choisir.
+      const nextCompteId = formData.canal !== 'BANQUE'
         ? ''
         : selectedStillAvailable
           ? prev.compte_bancaire_id
-          : next.length > 0
+          : next.length === 1
             ? String(next[0].id)
             : ''
       return prev.compte_bancaire_id === nextCompteId
@@ -749,11 +747,14 @@ export default function EncaissementForm({
   }, [projetsActivites, formData.project_activity_id])
 
   const selectedCompteLabel = useMemo(() => {
-    if (formData.canal === 'CAISSE') return 'Caisse du tenant'
     const compte = comptesBancaires.find((item) => String(item.id) === String(formData.compte_bancaire_id))
     if (!compte) return 'Compte non sélectionné'
-    return `${compte.banque?.nom || 'Banque'} - ${compte.intitule} (${compte.devise})`
-  }, [comptesBancaires, formData.compte_bancaire_id, formData.canal])
+    const numeroCompte = String(compte.numero_compte || '').replace(/\s+/g, '')
+    const numeroMasque = numeroCompte ? `••••${numeroCompte.slice(-4)}` : ''
+    return [compte.banque?.nom || 'Banque', compte.devise, numeroMasque, compte.intitule]
+      .filter(Boolean)
+      .join(' — ')
+  }, [comptesBancaires, formData.compte_bancaire_id])
 
   const montantPayeUSD = getMontantPayeUSD()
   const solde = roundMoney(Math.max(0, montantTotalArticles - montantPayeUSD))
@@ -780,12 +781,65 @@ export default function EncaissementForm({
         ? "Référence de l'opération bancaire *"
         : 'Référence de paiement'
 
+  const selectCanal = (nextCanal: 'CAISSE' | 'BANQUE') => {
+    setFormData(prev => ({
+      ...prev,
+      canal: nextCanal,
+      mode_paiement: nextCanal === 'CAISSE'
+        ? 'cash'
+        : prev.mode_paiement === 'cash'
+          ? 'virement'
+          : prev.mode_paiement,
+      reference: nextCanal === 'CAISSE' ? '' : prev.reference,
+    }))
+  }
+
+  const renderCanalControl = () => (
+    <div className={styles.destinationControlStack}>
+      <div className={styles.destinationControl}>
+        <span id={`${formId}-canal-label`} className={styles.destinationControlLabel}>Encaisser sur</span>
+        <div
+          className={styles.segmented}
+          role="radiogroup"
+          aria-labelledby={`${formId}-canal-label`}
+          // Le bouton Caisse désactivé sort du parcours clavier : sans cela, la
+          // raison de son absence ne serait lue nulle part.
+          aria-describedby={isCashClosed ? `${formId}-canal-warning` : undefined}
+        >
+          {CANAUX.map(({ value, libelle }) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={formData.canal === value}
+              className={
+                formData.canal === value
+                  ? `${styles.segmentedItem} ${styles.segmentedItemActive}`
+                  : styles.segmentedItem
+              }
+              onClick={() => selectCanal(value)}
+              disabled={value === 'CAISSE' && isCashClosed}
+            >
+              {libelle}
+            </button>
+          ))}
+        </div>
+      </div>
+      {isCashClosed && (
+        <small id={`${formId}-canal-warning`} className={styles.destinationWarning}>
+          Caisse fermée : seule la banque est disponible.
+        </small>
+      )}
+    </div>
+  )
+
   return (
     <div className={isPage ? styles.createPageShell : styles.modal}>
       <div className={isPage ? styles.createPageContent : styles.modalContent}>
         {!isPage && (
           <div className={styles.modalHeader}>
             <h2>Nouvel encaissement</h2>
+            <div className={styles.topControls}>
             <div className={styles.natureControlStack}>
             <div className={`${styles.natureControl} ${natureToneClass}`}>
               <label htmlFor={`${formId}-nature`}>Nature</label>
@@ -823,6 +877,8 @@ export default function EncaissementForm({
             </div>
             <p className={styles.natureHelp}>{natureHelpText}</p>
             </div>
+            {renderCanalControl()}
+            </div>
             <button onClick={onClose} className={styles.closeBtn} disabled={activeSubmitAction !== null}>×</button>
           </div>
         )}
@@ -830,10 +886,18 @@ export default function EncaissementForm({
         <form id={formId} onSubmit={handleSubmit} className={`${styles.form} ${isPage ? styles.createForm : ''}`} aria-busy={activeSubmitAction !== null}>
           {isPage && (
             <div className={styles.createFormIntro}>
-              <div>
+              <div className={styles.createIntroCopy}>
                 <span className={styles.sectionEyebrow}>Recette</span>
                 <h2>Informations principales</h2>
+                <p>
+                  {estFondsDeTiers
+                    ? 'Tiers, objet du fonds, montant et paiement sont regroupés pour une saisie rapide.'
+                    : natureMouvement === 'HORS_BUDGET_A_REGULARISER'
+                      ? 'Client, montant et paiement sont regroupés sans affectation budgétaire obligatoire.'
+                      : 'Client, affectation, articles et paiement sont regroupés sur une grille large pour une saisie rapide.'}
+                </p>
               </div>
+              <div className={styles.topControls}>
               <div className={styles.natureControlStack}>
               <div className={`${styles.natureControl} ${natureToneClass}`}>
                 <label htmlFor={`${formId}-nature`}>Nature</label>
@@ -871,13 +935,8 @@ export default function EncaissementForm({
               </div>
               <p className={styles.natureHelp}>{natureHelpText}</p>
               </div>
-              <p>
-                {estFondsDeTiers
-                  ? 'Tiers, objet du fonds, montant et paiement sont regroupés pour une saisie rapide.'
-                  : natureMouvement === 'HORS_BUDGET_A_REGULARISER'
-                    ? 'Client, montant et paiement sont regroupés sans affectation budgétaire obligatoire.'
-                    : 'Client, affectation, articles et paiement sont regroupés sur une grille large pour une saisie rapide.'}
-              </p>
+              {renderCanalControl()}
+              </div>
             </div>
           )}
           <div className={isPage ? styles.createLayout : undefined}>
@@ -1321,35 +1380,16 @@ export default function EncaissementForm({
               />
             </div>
 
-            {/* Ligne 2 — où et comment l'argent entre. */}
-            <div className={`${styles.field} ${styles.col2}`}>
-              <label>{formData.canal === 'CAISSE' ? 'Caisse' : 'Banque'} *</label>
-              <select
-                value={formData.canal}
-                onChange={(e) => {
-                  const nextCanal = e.target.value as 'CAISSE' | 'BANQUE'
-                  setFormData(prev => ({
-                    ...prev,
-                    canal: nextCanal,
-                    mode_paiement: nextCanal === 'CAISSE' ? 'cash' : prev.mode_paiement === 'cash' ? 'virement' : prev.mode_paiement,
-                    reference: nextCanal === 'CAISSE' ? '' : prev.reference,
-                  }))
-                }}
-              >
-                <option value="CAISSE" disabled={isCashClosed}>Caisse</option>
-                <option value="BANQUE">Banque</option>
-              </select>
-              {isCashClosed && <small className={styles.warningText}>Caisse fermée : encaissement en caisse indisponible.</small>}
-            </div>
+            {/* Ligne 2 — le canal est choisi une seule fois, en haut du formulaire. */}
             {formData.canal === 'BANQUE' ? (
-              <div className={`${styles.field} ${styles.col2}`}>
+              <div className={`${styles.field} ${styles.col3}`}>
                 <label>Compte bancaire *</label>
                 <select
                   value={formData.compte_bancaire_id}
                   onChange={(e) => setFormData(prev => ({ ...prev, compte_bancaire_id: e.target.value }))}
                   required
                 >
-                  <option value="">Sélectionner un compte</option>
+                  <option value="">Sélectionner un compte bancaire</option>
                   {filteredComptes.map(c => (
                     <option key={c.id} value={c.id}>
                       {c.banque?.nom || 'Banque'} - {c.intitule} ({c.devise})
@@ -1358,39 +1398,23 @@ export default function EncaissementForm({
                 </select>
                 {filteredComptes.length === 0 && <small className={styles.warningText}>Aucun compte bancaire disponible pour cette devise.</small>}
               </div>
-            ) : (
-              <div className={`${styles.field} ${styles.col2}`}>
-                <label>Caisse</label>
-                <input type="text" value="Caisse du tenant" disabled />
-                {isCashClosed && <small className={styles.warningText}>Caisse fermée : encaissement en caisse indisponible.</small>}
+            ) : null}
+            {/* En caisse, le mode est nécessairement les espèces : une liste à une
+                seule entrée ne se choisit pas, le récapitulatif l'affiche. */}
+            {formData.canal === 'BANQUE' && (
+              <div className={`${styles.field} ${styles.col3}`}>
+                <label>Mode de paiement *</label>
+                <select
+                  value={formData.mode_paiement}
+                  onChange={e => setFormData(prev => ({ ...prev, mode_paiement: e.target.value as ModePaiement }))}
+                >
+                  <option value="mobile_money">Mobile Money</option>
+                  <option value="card">Carte</option>
+                  <option value="virement">Opération bancaire</option>
+                  <option value="cheque">Chèque</option>
+                </select>
               </div>
             )}
-            <div className={`${styles.field} ${styles.col2}`}>
-              <label>Mode de paiement *</label>
-              <select
-                value={formData.mode_paiement}
-                onChange={e => {
-                  const nextMode = e.target.value as ModePaiement
-                  setFormData(prev => ({
-                    ...prev,
-                    mode_paiement: nextMode,
-                    canal: nextMode === 'cash' && !isCashClosed ? 'CAISSE' : 'BANQUE',
-                    reference: nextMode === 'cash' ? '' : prev.reference,
-                  }))
-                }}
-              >
-                {formData.canal === 'CAISSE' ? (
-                  <option value="cash" disabled={isCashClosed}>Espèces</option>
-                ) : (
-                  <>
-                    <option value="mobile_money">Mobile Money</option>
-                    <option value="card">Carte</option>
-                    <option value="virement">Opération bancaire</option>
-                    <option value="cheque">Chèque</option>
-                  </>
-                )}
-              </select>
-            </div>
             {/* Ligne 3 — référence de l'opération et date. */}
             {formData.mode_paiement !== 'cash' && (
               <div className={`${styles.field} ${styles.col4}`}>
@@ -1493,9 +1517,14 @@ export default function EncaissementForm({
                     <span>Solde éventuel</span><strong>{formatCurrency(solde)}</strong>
                   </div>
                 </div>
+                <div className={styles.summaryDestination} data-canal={formData.canal.toLowerCase()}>
+                  <div><span>Encaisser sur</span><strong>{formData.canal === 'CAISSE' ? 'Caisse' : 'Banque'}</strong></div>
+                  {formData.canal === 'BANQUE' && (
+                    <div><span>Compte bancaire</span><strong>{selectedCompteLabel}</strong></div>
+                  )}
+                </div>
                 <div className={styles.summaryRows}>
                   <div><span>Mode</span><strong>{modePaiementLabel[formData.mode_paiement]}</strong></div>
-                  <div><span>Caisse / Banque</span><strong>{selectedCompteLabel}</strong></div>
                   <div><span>Devise</span><strong>{formData.devise_perception}</strong></div>
                   <div><span>Statut prévu</span><strong>{expectedStatus}</strong></div>
                 </div>
