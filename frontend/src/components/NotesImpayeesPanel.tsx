@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { format } from 'date-fns'
 import { AlertTriangle, X } from 'lucide-react'
 import {
@@ -81,8 +82,11 @@ export default function NotesImpayeesPanel({ cible, libelle, onClose, onCreanceC
     try {
       // La note complète plutôt que la ligne de liste : le règlement affiche
       // l'historique, les relances et l'état de l'opération, qu'un résumé de
-      // liste ne porte pas.
-      setNoteEnPaiement(await apiRequest<Encaissement>('GET', `/encaissements/${note.id}`))
+      // liste ne porte pas. `expert_comptable` est demandé explicitement : sans
+      // lui, le règlement d'une note d'expert s'ouvre sur un client sans nom.
+      setNoteEnPaiement(await apiRequest<Encaissement>('GET', `/encaissements/${note.id}`, {
+        params: { include: 'expert_comptable' },
+      }))
     } catch (err) {
       setErreur(
         err instanceof ApiError ? err.message : "Impossible d'ouvrir cette note de débit.",
@@ -108,7 +112,9 @@ export default function NotesImpayeesPanel({ cible, libelle, onClose, onCreanceC
   const rafraichirApresPaiement = async (noteId: string) => {
     const [, note] = await Promise.all([
       charger(),
-      apiRequest<Encaissement>('GET', `/encaissements/${noteId}`).catch(() => null),
+      apiRequest<Encaissement>('GET', `/encaissements/${noteId}`, {
+        params: { include: 'expert_comptable' },
+      }).catch(() => null),
     ])
     if (note) setNoteEnPaiement(note)
   }
@@ -121,7 +127,12 @@ export default function NotesImpayeesPanel({ cible, libelle, onClose, onCreanceC
     if (ouvertureAutomatique.current || !res || res.notes.length === 0) onClose()
   }
 
-  return (
+  // Porté par `document.body` : l'écran de saisie vit sous `.pageTransition`,
+  // dont l'animation crée un « containing block » qui confine le
+  // `position: fixed` — le panneau s'ouvrait alors au milieu de la PAGE, sous la
+  // ligne de flottaison, invisible sans défiler. Même parade que les autres
+  // modales du dépôt.
+  const panneau = (
     <>
       <div
         role="dialog"
@@ -211,4 +222,6 @@ export default function NotesImpayeesPanel({ cible, libelle, onClose, onCreanceC
       )}
     </>
   )
+
+  return createPortal(panneau, document.body)
 }
