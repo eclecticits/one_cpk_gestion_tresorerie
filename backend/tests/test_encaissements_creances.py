@@ -306,3 +306,165 @@ async def test_une_proforma_n_entre_pas_dans_l_ardoise(db_session):
 
     assert res["nb_debiteurs"] == 0
     assert res["total_du"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Sur quoi il doit : les notes à solder, depuis la saisie
+# ---------------------------------------------------------------------------
+#
+# La liste des débiteurs dit QUI doit ; celle-ci dit SUR QUOI. Sans elle, le
+# caissier averti pendant la frappe n'a aucun chemin vers la note à compléter :
+# il encaisse « ici », une seconde note naît, et la première reste ouverte pour
+# toujours. L'argent rentre, la créance demeure.
+
+
+async def _notes_impayees(db_session, user, **kwargs):
+    from app.api.v1.endpoints.encaissements import lister_notes_impayees
+    params = {"client_id": None, "expert_comptable_id": None, "nom": None, "limit": 20}
+    params.update(kwargs)
+    return await lister_notes_impayees(
+        tenant_id=user.organisation_id, user=user, db=db_session, **params
+    )
+
+
+async def _client_du_referentiel(db_session, org, nom):
+    from app.models.client import Client
+    client = Client(id=uuid.uuid4(), organisation_id=org.id, nom=nom, active=True)
+    db_session.add(client)
+    await db_session.flush()
+    return client
+
+
+@pytest.mark.asyncio
+async def test_les_notes_d_un_client_se_listent_de_la_plus_ancienne(db_session):
+    """L'ordre sert le geste : on solde d'abord la note qu'on relance."""
+    org = await _enc_org(db_session, name=f"Notes {_suffix()}")
+    user = await _enc_user(db_session, org)
+    client = await _client_du_referentiel(db_session, org, f"Mwamba {_suffix()}")
+
+    recente = await _devoir(db_session, org, user, nom=client.nom, total=500, paye=0)
+    recente.client_id = client.id
+    recente.date_encaissement = datetime.now(timezone.utc) - timedelta(days=5)
+    ancienne = await _devoir(db_session, org, user, nom=client.nom, total=1000, paye=400)
+    ancienne.client_id = client.id
+    ancienne.date_encaissement = datetime.now(timezone.utc) - timedelta(days=95)
+    await db_session.flush()
+
+    res = await _notes_impayees(db_session, user, client_id=str(client.id))
+
+    assert res["nb_notes"] == 2
+    assert res["total_du"] == pytest.approx(1100.0)
+    assert res["identite_sure"] is True
+    assert [n["id"] for n in res["notes"]] == [str(ancienne.id), str(recente.id)]
+    assert res["notes"][0]["reste_du"] == pytest.approx(600.0)
+    assert res["notes"][0]["tranche"] == "plus_90"
+
+
+@pytest.mark.asyncio
+async def test_une_note_soldee_ou_une_proforma_ne_se_liste_pas(db_session):
+    """Même règle que partout ailleurs : le montant fait foi, pas le statut, et
+    un devis n'est pas une dette."""
+    org = await _enc_org(db_session, name=f"Notes {_suffix()}")
+    user = await _enc_user(db_session, org)
+    client = await _client_du_referentiel(db_session, org, f"Soldeur {_suffix()}")
+
+    for total, paye, proforma in ((500, 500, False), (300, 0, True)):
+        note = await _devoir(
+            db_session, org, user, nom=client.nom, total=total, paye=paye, est_proforma=proforma
+        )
+        note.client_id = client.id
+    # Un statut resté en arrière ne doit ni ajouter ni retirer une note.
+    due = await _devoir(db_session, org, user, nom=client.nom, total=200, paye=50)
+    due.client_id = client.id
+    due.statut_paiement = "complet"
+    await db_session.flush()
+
+    res = await _notes_impayees(db_session, user, client_id=str(client.id))
+
+    assert res["nb_notes"] == 1
+    assert res["notes"][0]["id"] == str(due.id)
+    assert res["total_du"] == pytest.approx(150.0)
+
+
+@pytest.mark.asyncio
+async def test_un_client_du_referentiel_n_est_rapproche_que_sur_son_identifiant(db_session):
+    """La bannière annonce la dette comptée par identifiant : la liste qui
+    prétend la détailler doit compter pareil.
+
+    Une note au même nom mais sans fiche liée appartient peut-être à un
+    homonyme : l'ajouter ici ferait deux totaux différents pour le même client,
+    au même instant, sur le même écran.
+    """
+    org = await _enc_org(db_session, name=f"Notes {_suffix()}")
+    user = await _enc_user(db_session, org)
+    client = await _client_du_referentiel(db_session, org, f"Homonyme {_suffix()}")
+
+    liee = await _devoir(db_session, org, user, nom=client.nom, total=400, paye=0)
+    liee.client_id = client.id
+    await _devoir(db_session, org, user, nom=client.nom, total=900, paye=0)  # saisie libre
+    await db_session.flush()
+
+    res = await _notes_impayees(db_session, user, client_id=str(client.id))
+
+    assert [n["id"] for n in res["notes"]] == [str(liee.id)]
+    assert res["total_du"] == pytest.approx(400.0)
+
+
+@pytest.mark.asyncio
+async def test_un_payeur_saisi_a_la_main_se_retrouve_sur_son_nom_normalise(db_session):
+    """Sans fiche, il reste le nom — et la réserve qui va avec."""
+    org = await _enc_org(db_session, name=f"Notes {_suffix()}")
+    user = await _enc_user(db_session, org)
+    nom = f"Alain Luka {_suffix()}"
+    await _devoir(db_session, org, user, nom=f"  {nom.upper()}  ", total=600, paye=100)
+    await _devoir(db_session, org, user, nom=nom.lower(), total=400, paye=0)
+    await db_session.flush()
+
+    res = await _notes_impayees(db_session, user, nom=f"{nom}  ")
+
+    assert res["nb_notes"] == 2
+    assert res["total_du"] == pytest.approx(900.0)
+    assert res["identite_sure"] is False
+
+
+@pytest.mark.asyncio
+async def test_les_notes_d_un_expert_suivent_son_identifiant(db_session):
+    """Un expert doit comme un client, et par un numéro d'ordre unique : ce que
+    la caisse a tapé ce jour-là n'entre pas dans le rapprochement."""
+    org = await _enc_org(db_session, name=f"Notes {_suffix()}")
+    user = await _enc_user(db_session, org)
+    expert = ExpertComptable(
+        id=uuid.uuid4(),
+        numero_ordre=f"EC/{_suffix()[:5]}",
+        nom_denomination=f"Cabinet {_suffix()}",
+        type_ec="EC",
+        active=True,
+    )
+    db_session.add(expert)
+    await db_session.flush()
+    for libelle, total, paye in ((f"Cabinet {_suffix()}", 800, 300), (f"CAB. {_suffix()}", 200, 0)):
+        note = await _devoir(db_session, org, user, nom=libelle, total=total, paye=paye)
+        note.type_client = "expert_comptable"
+        note.expert_comptable_id = expert.id
+    await db_session.flush()
+
+    res = await _notes_impayees(db_session, user, expert_comptable_id=str(expert.id))
+
+    assert res["nb_notes"] == 2
+    assert res["total_du"] == pytest.approx(700.0)
+    assert res["identite_sure"] is True
+
+
+@pytest.mark.asyncio
+async def test_sans_payeur_designe_la_liste_refuse_de_repondre(db_session):
+    """Une liste de notes sans payeur, ce sont les notes de tout le monde : le
+    panneau afficherait la dette d'autrui sous le nom qu'on est en train de
+    taper."""
+    from fastapi import HTTPException
+
+    org = await _enc_org(db_session, name=f"Notes {_suffix()}")
+    user = await _enc_user(db_session, org)
+
+    with pytest.raises(HTTPException) as refus:
+        await _notes_impayees(db_session, user)
+    assert refus.value.status_code == 400

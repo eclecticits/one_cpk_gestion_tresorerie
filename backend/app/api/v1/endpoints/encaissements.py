@@ -1223,6 +1223,123 @@ async def lister_debiteurs(
     }
 
 
+@router.get("/notes-impayees")
+async def lister_notes_impayees(
+    client_id: str | None = Query(default=None),
+    expert_comptable_id: str | None = Query(default=None),
+    nom: str | None = Query(
+        default=None, description="Nom du payeur, pour les notes saisies au nom libre"
+    ),
+    limit: int = Query(default=20, ge=1, le=100),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Les notes de débit qu'un payeur n'a pas soldées, de la plus ancienne d'abord.
+
+    La liste des débiteurs dit QUI doit ; celle-ci dit SUR QUOI, pour un payeur.
+    C'est ce qui manquait pour aller de la dette au règlement : sans elle, un
+    encaissement saisi pour un client qui doit déjà crée une seconde note et
+    laisse la première ouverte pour toujours — l'argent rentre, la créance
+    reste.
+
+    Le rapprochement suit l'identité la plus sûre : l'expert ou le client du
+    référentiel par son identifiant, et à défaut le nom normalisé (casse,
+    espaces). Ce dernier cas est signalé (`identite_sure: false`) : deux
+    orthographes font deux payeurs, et la liste est alors un minimum.
+
+    Un client du référentiel est rapproché sur son seul identifiant, jamais
+    aussi sur son nom : c'est ainsi que `GET /clients` compte la dette annoncée
+    pendant la frappe, et deux comptes différents pour la même personne au même
+    instant ne s'expliqueraient à personne.
+
+    La règle de ce qui est dû est celle du module `creances` — jamais
+    `statut_paiement`, qui est dérivé et qu'une reprise de données peut avoir
+    laissé en arrière.
+    """
+    portee = await _portee_encaissements(db, user, tenant_id)
+    if portee is None:
+        return {"identite_sure": True, "total_du": 0.0, "nb_notes": 0, "notes": []}
+
+    conditions = [*portee, est_exigible()]
+    identite_sure = True
+    if expert_comptable_id:
+        try:
+            conditions.append(Encaissement.expert_comptable_id == uuid.UUID(expert_comptable_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid expert_comptable_id UUID")
+    elif client_id:
+        try:
+            conditions.append(Encaissement.client_id == uuid.UUID(client_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid client_id UUID")
+    elif nom and nom.strip():
+        # Même normalisation que la liste des débiteurs : sans elle, « Jean
+        # Kabeya » et « jean  kabeya » sont deux payeurs, et la note qu'on
+        # cherche à solder n'apparaît pas.
+        conditions.append(
+            func.regexp_replace(func.lower(func.btrim(Encaissement.client_nom)), r"\s+", " ", "g")
+            == re.sub(r"\s+", " ", nom.strip().lower())
+        )
+        identite_sure = False
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Indiquez le payeur : client_id, expert_comptable_id ou nom",
+        )
+
+    # Le total porte sur toutes ses notes, pas sur la page : c'est le montant
+    # annoncé par la bannière de créance, et les deux doivent dire la même chose.
+    totaux = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(montant_du()), 0),
+                func.count(Encaissement.id),
+            ).where(*conditions)
+        )
+    ).one()
+
+    # De la plus ancienne à la plus récente : c'est celle-là qu'on solde en
+    # premier, et c'est elle qui compte pour la relance.
+    lignes = (
+        await db.execute(
+            select(Encaissement)
+            .where(*conditions)
+            .order_by(Encaissement.date_encaissement.asc())
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    maintenant = datetime.now(timezone.utc)
+    notes = []
+    for note in lignes:
+        jours = (maintenant - note.date_encaissement).days if note.date_encaissement else 0
+        total = Decimal(note.montant_total or 0)
+        paye = Decimal(note.montant_paye or 0)
+        notes.append({
+            "id": str(note.id),
+            "numero_recu": note.numero_recu,
+            "libelle": note.libelle,
+            "date_encaissement": (
+                note.date_encaissement.isoformat() if note.date_encaissement else None
+            ),
+            "montant_total": float(total),
+            "montant_paye": float(paye),
+            "reste_du": float(total - paye),
+            "jours": jours,
+            "tranche": _tranche_anciennete(jours),
+            "statut_paiement": note.statut_paiement,
+            "relance_count": int(note.relance_count or 0),
+        })
+
+    return {
+        "identite_sure": identite_sure,
+        "total_du": float(totaux[0] or 0),
+        "nb_notes": int(totaux[1] or 0),
+        "notes": notes,
+    }
+
+
 @router.get("/entrees-caisse")
 async def list_entrees_caisse(
     date_debut: str | None = Query(default=None),

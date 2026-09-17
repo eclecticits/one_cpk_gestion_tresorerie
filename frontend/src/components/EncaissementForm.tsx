@@ -7,6 +7,8 @@ import { toNumber } from '../utils/amount'
 import { TYPE_CLIENT_LABELS, typeClientDemandeLeSexe } from '../utils/encaissementHelpers'
 import type { ProjetActivite } from '../api/projetsActivites'
 import { uploadEncaissementPiece } from '../api/encaissementPieces'
+import { listerNotesImpayees } from '../api/creances'
+import NotesImpayeesPanel, { type CiblePayeur } from './NotesImpayeesPanel'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import OrganisationAutocomplete, {
   ORGANISATION_OTHER_VALUE,
@@ -122,6 +124,12 @@ export default function EncaissementForm({
   const [clientId, setClientId] = useState('')
   // Ce que le client sélectionné doit encore, s'il doit quelque chose.
   const [creanceClient, setCreanceClient] = useState<{ reste: number; notes: number } | null>(null)
+  // Idem pour un expert-comptable : un expert doit comme un client, et le
+  // chemin vers ses notes doit être le même. Sa dette n'accompagne pas la
+  // recherche d'experts : elle est lue à la sélection, geste explicite.
+  const [creanceExpert, setCreanceExpert] = useState<{ reste: number; notes: number } | null>(null)
+  // Le payeur dont on ouvre les notes impayées, s'il y en a un.
+  const [payeurAuxNotes, setPayeurAuxNotes] = useState<{ cible: CiblePayeur; libelle: string } | null>(null)
   const [clientEmail, setClientEmail] = useState('')
   const [clientTelephone, setClientTelephone] = useState('')
   const [clientSexe, setClientSexe] = useState('')
@@ -292,6 +300,17 @@ export default function EncaissementForm({
     setSearchEC(`${expert.numero_ordre} - ${expert.nom_denomination}`)
     setSelectedExpert(expert)
     setFilteredExperts([])
+    setCreanceExpert(null)
+    // Sa dette doit être sous les yeux pendant qu'on saisit le montant : c'est
+    // là que se décide « encaisser ici » ou « compléter sa note ».
+    void (async () => {
+      try {
+        const res = await listerNotesImpayees({ expert_comptable_id: expert.id, limit: 1 })
+        setCreanceExpert(res.nb_notes > 0 ? { reste: res.total_du, notes: res.nb_notes } : null)
+      } catch {
+        /* La créance est un signalement : son absence ne doit pas bloquer la saisie. */
+      }
+    })()
   }
 
   // Recherche de clients existants pendant la saisie (anti-doublons) :
@@ -349,12 +368,46 @@ export default function EncaissementForm({
   const resetClientSelection = () => {
     setClientId('')
     setCreanceClient(null)
+    setCreanceExpert(null)
     setClientEmail('')
     setClientTelephone('')
     setClientSexe('')
     setClientSuggestions([])
     setShowClientDropdown(false)
   }
+
+  /** Ce que ce payeur doit encore, et le chemin pour le solder.
+   *
+   *  Encaisser son solde ici crée une SECONDE note de débit : l'argent rentre,
+   *  la première reste ouverte, et il garde une dette qu'il a pourtant payée.
+   *  Le bouton mène à ses notes — le seul geste qui solde réellement. C'est
+   *  pourquoi il est plus visible que le chemin qui ne solde rien. */
+  const banniereCreance = (
+    creance: { reste: number; notes: number } | null,
+    sujet: string,
+    cible: CiblePayeur,
+    libelle: string,
+  ) =>
+    creance ? (
+      <div className={styles.creanceBanniere} role="status">
+        <AlertTriangle size={16} aria-hidden="true" style={{ flexShrink: 0, marginTop: '1px' }} />
+        <span className={styles.creanceTexte}>
+          {sujet} doit encore{' '}
+          <span className={styles.creanceMontant}>{formatCurrency(creance.reste)}</span>
+          {' '}sur {creance.notes} note{creance.notes > 1 ? 's' : ''} de débit.
+          <span className={styles.creanceReserve}>
+            Encaisser ici crée une nouvelle note : la sienne resterait ouverte.
+          </span>
+        </span>
+        <button
+          type="button"
+          className={styles.creanceBouton}
+          onClick={() => setPayeurAuxNotes({ cible, libelle })}
+        >
+          Compléter le paiement
+        </button>
+      </div>
+    ) : null
 
   const filteredBudgetTree = useMemo(() => {
     const query = budgetSearch.trim().toLowerCase()
@@ -834,6 +887,7 @@ export default function EncaissementForm({
   )
 
   return (
+    <>
     <div className={isPage ? styles.createPageShell : styles.modal}>
       <div className={isPage ? styles.createPageContent : styles.modalContent}>
         {!isPage && (
@@ -1058,6 +1112,12 @@ export default function EncaissementForm({
                   ))}
                 </div>
               )}
+              {banniereCreance(
+                creanceExpert,
+                'Cet expert-comptable',
+                { expert_comptable_id: formData.expert_comptable_id },
+                selectedExpert?.nom_denomination || 'cet expert-comptable',
+              )}
               {isSearchingExperts && <small>Recherche en cours…</small>}
             </div>
           ) : (
@@ -1106,28 +1166,32 @@ export default function EncaissementForm({
                           </div>
                         )}
                         {Number(c.nb_impayes) > 0 && (
-                          <div className={styles.creanceLigne}>
+                          // Dès la frappe : la dette annoncée devient le chemin
+                          // vers la note à solder, sans passer par la sélection.
+                          <button
+                            type="button"
+                            className={styles.creanceLigneBouton}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              selectClient(c)
+                              setPayeurAuxNotes({ cible: { client_id: String(c.id) }, libelle: c.nom })
+                            }}
+                          >
                             <AlertTriangle size={12} aria-hidden="true" />
                             Doit <span className={styles.creanceMontant}>{formatCurrency(c.reste_du)}</span>
                             {' '}sur {c.nb_impayes} note{Number(c.nb_impayes) > 1 ? 's' : ''}
-                          </div>
+                            {' — Compléter le paiement'}
+                          </button>
                         )}
                       </div>
                     ))}
                   </div>
                 )}
-                {creanceClient && (
-                  <div className={styles.creanceBanniere} role="status">
-                    <AlertTriangle size={16} aria-hidden="true" style={{ flexShrink: 0, marginTop: '1px' }} />
-                    <span>
-                      Ce client doit encore{' '}
-                      <span className={styles.creanceMontant}>{formatCurrency(creanceClient.reste)}</span>
-                      {' '}sur {creanceClient.notes} note{creanceClient.notes > 1 ? 's' : ''} de débit.
-                      <span className={styles.creanceReserve}>
-                        Vous pouvez encaisser ce solde ici, ou le compléter depuis la note concernée.
-                      </span>
-                    </span>
-                  </div>
+                {banniereCreance(
+                  creanceClient,
+                  'Ce client',
+                  clientId ? { client_id: clientId } : { nom: formData.client_nom },
+                  formData.client_nom || 'ce client',
                 )}
                 {isSearchingClients && <small>Recherche de clients…</small>}
                 {clientId ? (
@@ -1545,5 +1609,21 @@ export default function EncaissementForm({
         </form>
       </div>
     </div>
+
+    {/* Hors du formulaire à dessein : le règlement en porte un, et deux
+        formulaires imbriqués ne sont pas du HTML valide. */}
+    {payeurAuxNotes && (
+      <NotesImpayeesPanel
+        cible={payeurAuxNotes.cible}
+        libelle={payeurAuxNotes.libelle}
+        onClose={() => setPayeurAuxNotes(null)}
+        onCreanceChange={({ total_du, nb_notes }) => {
+          const creance = nb_notes > 0 ? { reste: total_du, notes: nb_notes } : null
+          if (payeurAuxNotes.cible.expert_comptable_id) setCreanceExpert(creance)
+          else setCreanceClient(creance)
+        }}
+      />
+    )}
+    </>
   )
 }

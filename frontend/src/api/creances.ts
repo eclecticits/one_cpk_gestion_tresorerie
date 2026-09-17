@@ -51,3 +51,43 @@ export const listerDebiteurs = (params: {
       Object.entries(params).filter(([, v]) => v !== undefined && v !== '' && v !== null),
     ),
   })
+
+/** Une note de débit non soldée d'un payeur donné. */
+export interface NoteImpayee {
+  id: string
+  numero_recu: string | null
+  libelle: string
+  date_encaissement: string | null
+  montant_total: number
+  montant_paye: number
+  reste_du: number
+  jours: number
+  tranche: TrancheAnciennete
+  statut_paiement: string
+  relance_count: number
+}
+
+export interface NotesImpayees {
+  /**
+   * Faux quand le rapprochement ne repose que sur le nom saisi : la liste est
+   * alors un minimum, comme le total des débiteurs.
+   */
+  identite_sure: boolean
+  /** Porte sur toutes ses notes, jamais sur la seule page reçue. */
+  total_du: number
+  nb_notes: number
+  notes: NoteImpayee[]
+}
+
+/** Sur quoi ce payeur doit encore — pour aller de la dette au règlement. */
+export const listerNotesImpayees = (params: {
+  client_id?: string
+  expert_comptable_id?: string
+  nom?: string
+  limit?: number
+}) =>
+  apiRequest<NotesImpayees>('GET', '/encaissements/notes-impayees', {
+    params: Object.fromEntries(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== '' && v !== null),
+    ),
+  })

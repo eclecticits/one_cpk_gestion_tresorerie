@@ -2323,6 +2323,7 @@
 .creanceBanniere {
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 8px;
   padding: 10px 12px;
@@ -2347,4 +2348,59 @@
   margin-top: 3px;
   font-weight: 400;
   opacity: 0.85;
+}
+
+/* Le texte prend la place qui reste : l'action garde la sienne, à droite, et
+   passe dessous quand la colonne devient étroite. */
+.creanceTexte {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* Aller à la note qu'il faut solder. Le rouge de la créance — celui de la
+   bannière et de son triangle —, pas celui des boutons qui détruisent : c'est
+   la suite de l'alerte, pas un danger. Seul élément rouge cliquable de l'écran,
+   donc impossible à manquer. */
+.creanceBouton {
+  flex-shrink: 0;
+  align-self: center;
+  padding: 8px 14px;
+  border: 1px solid var(--color-warning-text, #9a3412);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-warning-text, #9a3412);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.creanceBouton:hover {
+  opacity: 0.88;
+}
+
+/* La même action, proposée dès la frappe sur la suggestion : la dette annoncée
+   est elle-même le chemin vers la note. */
+.creanceLigneBouton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 3px;
+  padding: 4px 7px;
+  border: 1px solid #fcd9a4;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-warning-bg, #fff4dd);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--color-warning-text, #9a3412);
+  cursor: pointer;
+}
+
+.creanceLigneBouton:hover {
+  border-color: var(--color-warning-text, #9a3412);
 }
