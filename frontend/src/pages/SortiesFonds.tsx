@@ -1162,8 +1162,13 @@ export default function SortiesFonds() {
     if (sortie?.requisition_id) {
       const statusValue = String(reqDetails?.status ?? reqDetails?.statut ?? sortie?.requisition?.status ?? sortie?.requisition?.statut ?? '')
       const normalized = statusValue.toUpperCase()
-      if (normalized && normalized !== 'APPROUVEE' && normalized !== 'PAYEE') {
-        if (!opts.silent) notifyWarning('Validation requise', 'La réquisition doit être approuvée (2/2) avant impression du bon.')
+      // Tout statut postérieur à la validation finale autorise le bon. Une
+      // réquisition à décaissement progressif passe EN_DECAISSEMENT dès la
+      // première tranche payée : le bon de cette tranche doit rester imprimable.
+      // Le message ne dit pas « 2/2 » : quand le circuit n'a pas de visa, la
+      // 1re validation est la validation finale.
+      if (normalized && !['APPROUVEE', 'EN_DECAISSEMENT', 'PAYEE'].includes(normalized)) {
+        if (!opts.silent) notifyWarning('Validation requise', 'La réquisition doit avoir reçu sa validation finale avant impression du bon.')
         return
       }
     }
