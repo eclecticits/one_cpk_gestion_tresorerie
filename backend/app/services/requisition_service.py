@@ -49,6 +49,7 @@ from app.services.audit_service import log_action, get_request_ip
 from app.services.historical_snapshots import (
     FINAL_REQUISITION_STATUSES,
     ensure_requisition_editable,
+    is_requisition_locked_for_edit,
     requisition_examen_requis,
     requisition_examinee,
     ensure_requisition_historical_snapshot,
@@ -290,11 +291,21 @@ def requisition_exige_des_lignes(req: Requisition) -> bool:
 
 
 # Ce qui reste modifiable sur une pièce verrouillée (visée ou validée) : le
-# motif de rejet, écrit par le refus lui-même, et l'horodatage technique. La
-# liste est tenue en négatif à dessein : l'ancienne énumération des champs
-# « sensibles » laissait passer tout champ ajouté ensuite à RequisitionUpdate,
-# alors qu'un champ nouveau doit être gelé par défaut.
-CHAMPS_AMENDABLES_APRES_VERROU = {"motif_rejet", "updated_at"}
+# motif de rejet, écrit par le refus lui-même, l'horodatage technique, et le
+# bénéficiaire. La liste est tenue en négatif à dessein : l'ancienne
+# énumération des champs « sensibles » laissait passer tout champ ajouté
+# ensuite à RequisitionUpdate, alors qu'un champ nouveau doit être gelé par
+# défaut.
+#
+# Le bénéficiaire fait exception parce qu'il n'est pas toujours connu quand la
+# pièce part au circuit : le formulaire le laisse vide, et il se renseigne
+# quand le fournisseur est arrêté — souvent après la validation. Le refuser
+# obligeait à rejeter puis resaisir une réquisition entière pour un nom. La
+# base est du même avis : `prevent_requisition_sensitive_update_after_final`
+# gèle l'objet, le montant, la devise, le service et les signataires, mais pas
+# lui. Toute correction d'après-verrou laisse en revanche une trace nominative
+# (cf. `update_requisition_logic`).
+CHAMPS_AMENDABLES_APRES_VERROU = {"motif_rejet", "updated_at", "beneficiaire"}
 
 
 def ensure_requisition_examinee(req: Requisition) -> None:
@@ -855,7 +866,27 @@ async def update_requisition_logic(
         await resolve_service(payload.service_id, db)
         req.service_id = payload.service_id
     if payload.beneficiaire is not None:
+        beneficiaire_avant = req.beneficiaire
         req.beneficiaire = payload.beneficiaire
+        # Le bénéficiaire est le seul champ de fond qui traverse le verrou : sa
+        # correction sur une pièce déjà visée ou validée se trace à part, avec
+        # son état d'avant. Sur une pièce encore ouverte, la modification est
+        # ordinaire et n'a pas à peser sur le journal.
+        if beneficiaire_avant != req.beneficiaire and is_requisition_locked_for_edit(req, user=user):
+            await log_action(
+                db,
+                user_id=user.id,
+                action="requisition.beneficiaire",
+                target_table="requisitions",
+                target_id=str(req.id),
+                old_value={"beneficiaire": beneficiaire_avant},
+                new_value={
+                    "beneficiaire": req.beneficiaire,
+                    "statut": req.status,
+                    "examen": req.examen_status,
+                },
+                ip_address=get_request_ip(request) if request else None,
+            )
     # Même règle qu'à la création, mais opposée à l'état RÉSULTANT : le
     # bénéficiaire peut déjà être sur la ligne et absent du payload, et la
     # nature peut basculer vers HORS_BUDGET sans que le payload ne reparle du

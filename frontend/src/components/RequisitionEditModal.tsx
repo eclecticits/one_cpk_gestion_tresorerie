@@ -187,6 +187,28 @@ export default function RequisitionEditModal({ requisition, utilisateurId, onClo
     return null
   }
 
+  /** Le bénéficiaire seul, sur une pièce que le verrou ferme par ailleurs. */
+  const enregistrerBeneficiaire = async () => {
+    // Le serveur n'applique un bénéficiaire que s'il en reçoit un : envoyer
+    // `null` ne l'efface pas, la mise à jour repartirait sans rien changer.
+    // Mieux vaut le dire que laisser croire à un enregistrement.
+    if (!beneficiaire.trim() && (requisition.beneficiaire || '').trim()) {
+      setErreur("Le bénéficiaire ne s'efface pas ici : remplacez-le par un autre nom.")
+      return
+    }
+    setEnregistrement(true)
+    setErreur(null)
+    try {
+      await updateRequisition(requisition.id, { beneficiaire: beneficiaire.trim() || null })
+      onSaved()
+      onClose()
+    } catch (e: any) {
+      setErreur(e?.message || "L'enregistrement a échoué.")
+    } finally {
+      setEnregistrement(false)
+    }
+  }
+
   const enregistrer = async () => {
     const probleme = valider()
     if (probleme) {
@@ -244,11 +266,13 @@ export default function RequisitionEditModal({ requisition, utilisateurId, onClo
         <div className={styles.entete}>
           <div>
             <h2 id="edit-req-titre">
-              Modifier la réquisition {requisition.numero_requisition || ''}
+              {motifVerrou ? 'Bénéficiaire de la réquisition' : 'Modifier la réquisition'}{' '}
+              {requisition.numero_requisition || ''}
             </h2>
             <p className={styles.sousTitre}>
-              La correction repasse par les contrôles budgétaires : poste actif, rubrique autorisée,
-              disponible suffisant.
+              {motifVerrou
+                ? "La pièce est close : seul le bénéficiaire peut encore être renseigné ou corrigé."
+                : 'La correction repasse par les contrôles budgétaires : poste actif, rubrique autorisée, disponible suffisant.'}
             </p>
           </div>
           <button type="button" className={styles.fermer} onClick={onClose} aria-label="Fermer">
@@ -257,8 +281,30 @@ export default function RequisitionEditModal({ requisition, utilisateurId, onClo
         </div>
 
         {motifVerrou ? (
+          // La pièce est fermée, mais le bénéficiaire n'est pas toujours connu
+          // quand elle part au circuit : il reste saisissable, seul, et sa
+          // correction laisse une trace nominative côté serveur. Tout le reste
+          // — objet, lignes, montants — est ce que les validateurs ont signé.
           <div className={styles.corps}>
             <p className={styles.blocage}>{motifVerrou}</p>
+            {erreur && <p className={styles.erreur}>{erreur}</p>}
+            <section className={styles.section}>
+              <h3>Bénéficiaire</h3>
+              <div className={styles.grilleChamps}>
+                <label className={`${styles.champ} ${styles.champLarge}`}>
+                  <span>Bénéficiaire</span>
+                  <input
+                    value={beneficiaire}
+                    onChange={(e) => setBeneficiaire(e.target.value)}
+                    placeholder="Nom du fournisseur ou du destinataire du paiement"
+                  />
+                </label>
+              </div>
+              <p className={styles.sousTitre}>
+                Seul ce champ reste modifiable : il se renseigne souvent une fois le
+                fournisseur arrêté, après la validation.
+              </p>
+            </section>
           </div>
         ) : (
           <div className={styles.corps}>
@@ -371,6 +417,16 @@ export default function RequisitionEditModal({ requisition, utilisateurId, onClo
           <button type="button" className={styles.secondaire} onClick={onClose}>
             {motifVerrou ? 'Fermer' : 'Annuler'}
           </button>
+          {motifVerrou && (
+            <button
+              type="button"
+              className={styles.principal}
+              onClick={enregistrerBeneficiaire}
+              disabled={enregistrement || beneficiaire.trim() === (requisition.beneficiaire || '')}
+            >
+              {enregistrement ? 'Enregistrement…' : 'Enregistrer le bénéficiaire'}
+            </button>
+          )}
           {!motifVerrou && (
             <button
               type="button"

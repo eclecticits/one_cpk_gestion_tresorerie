@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import select, text
 
+from app.models.audit_log import AuditLog
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.ligne_requisition import LigneRequisition
 from app.models.organisation import Organisation
@@ -333,6 +334,63 @@ async def test_requisition_finalisee_refuse_modification_montant(db_session):
         )
 
     assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_requisition_finalisee_accepte_le_beneficiaire_seul(db_session):
+    """Le bénéficiaire traverse le verrou, et lui seul.
+
+    Il n'est pas toujours connu quand la pièce part au circuit : le formulaire
+    le laisse vide, et le nom du fournisseur s'arrête souvent après la
+    validation. La base ne le compte d'ailleurs pas parmi les colonnes
+    historiques sensibles. Mais il ne sert pas de cheval de Troie : accompagné
+    d'un autre champ, la mise à jour entière est refusée.
+    """
+    db = db_session
+    org = await _org(db)
+    service = await _service(db, org)
+    user = await _user(db, org)
+    await _print_settings(db, org)
+    req = await _approved_requisition(db, org, service, user)
+    objet_avant = req.objet
+
+    modifiee = await update_requisition_logic(
+        db=db,
+        requisition_id=req.id,
+        payload=RequisitionUpdate(beneficiaire="Fournisseur arrêté après coup"),
+        user=user,
+        tenant_id=org.id,
+        request=_FakeRequest(),
+    )
+    assert modifiee.beneficiaire == "Fournisseur arrêté après coup"
+
+    # La correction d'une pièce close laisse une trace nominative.
+    trace = (
+        await db.execute(
+            select(AuditLog).where(
+                AuditLog.entity_id == str(req.id),
+                AuditLog.action == "requisition.beneficiaire",
+            )
+        )
+    ).scalars().all()
+    assert len(trace) == 1
+    assert trace[0].new_value["beneficiaire"] == "Fournisseur arrêté après coup"
+
+    with pytest.raises(HTTPException) as exc:
+        await update_requisition_logic(
+            db=db,
+            requisition_id=req.id,
+            payload=RequisitionUpdate(
+                beneficiaire="Autre fournisseur",
+                objet="Objet réécrit dans la foulée",
+            ),
+            user=user,
+            tenant_id=org.id,
+            request=_FakeRequest(),
+        )
+    assert exc.value.status_code == 409
+    await db.refresh(req)
+    assert req.objet == objet_avant
 
 
 @pytest.mark.asyncio

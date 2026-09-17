@@ -3897,16 +3897,20 @@ export default function Requisitions() {
             <div className={styles.modalHeader}>
               <h2>Détails de la réquisition {selectedRequisition.numero_requisition}</h2>
               <div className={styles.modalHeaderActions}>
-                {peutModifierRequisition(selectedRequisition as any, user?.id) && (
-                  <button
-                    type="button"
-                    className={styles.editReqBtn}
-                    onClick={() => setRequisitionAModifier(selectedRequisition)}
-                  >
-                    <Pencil size={14} aria-hidden="true" />
-                    Modifier
-                  </button>
-                )}
+                {/* Le bouton ne disparaît plus sur une pièce close : le
+                    bénéficiaire, souvent inconnu au départ, s'y renseigne
+                    encore. La modale n'ouvre alors que ce champ — le reste est
+                    ce que les validateurs ont signé. */}
+                <button
+                  type="button"
+                  className={styles.editReqBtn}
+                  onClick={() => setRequisitionAModifier(selectedRequisition)}
+                >
+                  <Pencil size={14} aria-hidden="true" />
+                  {peutModifierRequisition(selectedRequisition as any, user?.id)
+                    ? 'Modifier'
+                    : 'Bénéficiaire'}
+                </button>
                 {/* La correction d'imputation ne dépend pas de `peutModifierRequisition` :
                     elle existe précisément pour les réquisitions que ce verrou protège,
                     validées et payées. */}
