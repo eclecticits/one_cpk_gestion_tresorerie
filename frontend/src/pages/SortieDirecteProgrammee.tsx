@@ -1,10 +1,31 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { format } from 'date-fns'
+import {
+  ArrowRight,
+  AlertCircle,
+  Banknote,
+  CheckCircle2,
+  CircleDollarSign,
+  Clock3,
+  FileText,
+  Loader2,
+  Pencil,
+  Plus,
+  Printer,
+  ReceiptText,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Trash2,
+  WalletCards,
+  XCircle,
+} from 'lucide-react'
 import { getServices } from '../api/services'
 import { getBudgetPostes } from '../api/budget'
 import {
   listOrdresDecaissement,
   createOrdreDecaissement,
+  updateOrdreDecaissement,
   annulerOrdreDecaissement,
 } from '../api/ordresDecaissement'
 import type { Service } from '../types'
@@ -25,17 +46,28 @@ const generateOrdreDirectPDF: PdfGeneratorOrdreDirectModule['generateOrdreDirect
 import { useToast } from '../hooks/useToast'
 import PageHeader from '../components/PageHeader'
 import BackButton from '../components/BackButton'
+import ResponsiveModal from '../components/ResponsiveModal'
 import styles from './SortieDirecteProgrammee.module.css'
 
 const LIMITE_USD = 100
 
 interface LigneForm {
+  clientId: string
   budget_poste_id: number | null
   description: string
   montant: string
 }
 
-const emptyLigne = (): LigneForm => ({ budget_poste_id: null, description: '', montant: '' })
+let ligneSequence = 0
+const emptyLigne = (): LigneForm => ({
+  clientId: `direct-line-${++ligneSequence}`,
+  budget_poste_id: null,
+  description: '',
+  montant: '',
+})
+
+const isLigneValid = (ligne: LigneForm) =>
+  Boolean(ligne.budget_poste_id && Number.isFinite(parseFloat(ligne.montant)) && parseFloat(ligne.montant) > 0)
 
 const fmtMontant = (v: unknown, devise: string) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: devise === 'CDF' ? 'CDF' : 'USD' }).format(
@@ -57,14 +89,28 @@ export default function SortieDirecteProgrammee() {
   const [services, setServices] = useState<Service[]>([])
   const [postes, setPostes] = useState<BudgetPosteSummary[]>([])
   const [ordres, setOrdres] = useState<OrdreDecaissement[]>([])
+  const [ordersTotal, setOrdersTotal] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [referencesLoading, setReferencesLoading] = useState(true)
+  const [referencesError, setReferencesError] = useState<string | null>(null)
+  const [ordersError, setOrdersError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [validationAttempted, setValidationAttempted] = useState(false)
+  const [confirmationOpen, setConfirmationOpen] = useState(false)
+  const [editTarget, setEditTarget] = useState<OrdreDecaissement | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<OrdreDecaissement | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelling, setCancelling] = useState(false)
 
+  // Bon en attente de caisse qu'on corrige : son identifiant tant que le
+  // formulaire sert à le reprendre, `null` quand il sert à en programmer un.
+  const [ordreEnCorrection, setOrdreEnCorrection] = useState<string | null>(null)
   const [serviceId, setServiceId] = useState<string>('')
   const [beneficiaire, setBeneficiaire] = useState('')
   const [devise, setDevise] = useState<'USD' | 'CDF'>('USD')
   const [motif, setMotif] = useState('')
   const [lignes, setLignes] = useState<LigneForm[]>([emptyLigne()])
+  const formRef = useRef<HTMLFormElement>(null)
 
   const postesById = useMemo(() => {
     const m = new Map<number, BudgetPosteSummary>()
@@ -72,38 +118,93 @@ export default function SortieDirecteProgrammee() {
     return m
   }, [postes])
 
+  const selectedService = useMemo(
+    () => services.find((service) => service.id === Number(serviceId)),
+    [serviceId, services]
+  )
+
   const total = useMemo(
     () => lignes.reduce((sum, l) => sum + (Number.isFinite(parseFloat(l.montant)) ? parseFloat(l.montant) : 0), 0),
     [lignes]
   )
 
+  const formIsDirty = useMemo(
+    () => Boolean(
+      serviceId ||
+      beneficiaire.trim() ||
+      motif.trim() ||
+      lignes.some((ligne) => ligne.budget_poste_id || ligne.description.trim() || ligne.montant.trim())
+    ),
+    [beneficiaire, lignes, motif, serviceId]
+  )
+
+  const [searchTerm, setSearchTerm] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'TOUS' | 'AUTORISE' | 'PAYE' | 'ANNULE'>('TOUS')
+
+  const ordreStats = useMemo(
+    () => ({
+      pending: ordres.filter((ordre) => ordre.statut === 'AUTORISE').length,
+      paid: ordres.filter((ordre) => ordre.statut === 'PAYE').length,
+      cancelled: ordres.filter((ordre) => ordre.statut === 'ANNULE').length,
+    }),
+    [ordres]
+  )
+
+  const filteredOrdres = useMemo(() => {
+    const query = searchTerm.trim().toLocaleLowerCase('fr')
+    return ordres.filter((ordre) => {
+      if (statusFilter !== 'TOUS' && ordre.statut !== statusFilter) return false
+      if (!query) return true
+      const searchable = [
+        ordre.numero_ordre,
+        ordre.beneficiaire,
+        ordre.motif,
+        personName(ordre.autorise_par_user),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase('fr')
+      return searchable.includes(query)
+    })
+  }, [ordres, searchTerm, statusFilter])
+
   const loadOrdres = useCallback(async () => {
     setLoading(true)
+    setOrdersError(null)
     try {
       const res = await listOrdresDecaissement({ sans_requisition: true, limit: 100 })
       setOrdres(res.items || [])
+      setOrdersTotal(res.total || (res.items || []).length)
     } catch (err) {
       console.error('Erreur chargement sorties directes:', err)
+      setOrdersError('Impossible de charger les sorties directes. Vérifiez votre connexion puis réessayez.')
     } finally {
       setLoading(false)
     }
   }, [])
 
+  const loadReferences = useCallback(async () => {
+    setReferencesLoading(true)
+    setReferencesError(null)
+    try {
+      const [srv, bud] = await Promise.all([
+        getServices({ active: true }),
+        getBudgetPostes({ type: 'DEPENSE', active: true }),
+      ])
+      setServices(Array.isArray(srv) ? srv : [])
+      setPostes(bud?.postes || [])
+    } catch (err) {
+      console.error('Erreur chargement données:', err)
+      setReferencesError('Les services et postes budgétaires n’ont pas pu être chargés.')
+    } finally {
+      setReferencesLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
-    void (async () => {
-      try {
-        const [srv, bud] = await Promise.all([
-          getServices({ active: true }),
-          getBudgetPostes({ type: 'DEPENSE', active: true }),
-        ])
-        setServices(Array.isArray(srv) ? srv : [])
-        setPostes(bud?.postes || [])
-      } catch (err) {
-        console.error('Erreur chargement données:', err)
-      }
-    })()
+    void loadReferences()
     void loadOrdres()
-  }, [loadOrdres])
+  }, [loadOrdres, loadReferences])
 
   const updateLigne = (index: number, field: keyof LigneForm, value: string) => {
     setLignes((prev) => {
@@ -118,15 +219,63 @@ export default function SortieDirecteProgrammee() {
     setLignes((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev))
 
   const resetForm = () => {
+    setOrdreEnCorrection(null)
     setServiceId('')
     setBeneficiaire('')
     setMotif('')
     setDevise('USD')
     setLignes([emptyLigne()])
+    setValidationAttempted(false)
   }
 
-  const handleSubmit = async (e: FormEvent) => {
+  /**
+   * Reprend un bon que la caisse n'a pas encore payé.
+   *
+   * Rien n'a bougé tant qu'il est en attente : ni trésorerie, ni budget. Le
+   * corriger vaut mieux que l'annuler et le ressaisir, qui laissait deux pièces
+   * au journal pour une seule dépense. Le serveur rejoue de toute façon le
+   * plafond et le cumul anti-fractionnement.
+   */
+  const corrigerOrdre = (ordre: OrdreDecaissement) => {
+    const brut = ordre as any
+    setOrdreEnCorrection(String(ordre.id))
+    setServiceId(brut.service_id ? String(brut.service_id) : '')
+    setBeneficiaire(brut.beneficiaire || '')
+    setMotif(brut.motif || '')
+    setDevise((brut.devise === 'CDF' ? 'CDF' : 'USD') as 'USD' | 'CDF')
+    const reprises: LigneForm[] = Array.isArray(brut.lignes)
+      ? brut.lignes.map((l: any) => ({
+          clientId: emptyLigne().clientId,
+          budget_poste_id: l?.budget_poste_id ? Number(l.budget_poste_id) : null,
+          description: String(l?.description || ''),
+          montant: String(toNumber(l?.montant_total ?? l?.montant) || ''),
+        }))
+      : []
+    // Un ordre sans répartition garde son montant sur une ligne unique, sinon
+    // le total retomberait à zéro et le formulaire refuserait de l'enregistrer.
+    setLignes(
+      reprises.length > 0
+        ? reprises
+        : [{ ...emptyLigne(), budget_poste_id: null, description: brut.motif || '', montant: String(toNumber(brut.montant) || '') }]
+    )
+    window.requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  }
+
+  const requestCorrection = (ordre: OrdreDecaissement) => {
+    if (ordreEnCorrection === String(ordre.id)) {
+      window.requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+      return
+    }
+    if (formIsDirty) {
+      setEditTarget(ordre)
+      return
+    }
+    corrigerOrdre(ordre)
+  }
+
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
+    setValidationAttempted(true)
     if (!serviceId) {
       notifyWarning('Service requis', 'Choisissez le service / la commission responsable.')
       return
@@ -135,8 +284,12 @@ export default function SortieDirecteProgrammee() {
       notifyWarning('Bénéficiaire requis', 'Saisissez le bénéficiaire.')
       return
     }
-    const lignesValides = lignes.filter((l) => l.budget_poste_id && parseFloat(l.montant) > 0)
-    if (lignesValides.length === 0) {
+    if (!motif.trim()) {
+      notifyWarning('Motif requis', 'Précisez le motif de cette dépense directe.')
+      return
+    }
+    const lignesValides = lignes.filter(isLigneValid)
+    if (lignesValides.length !== lignes.length) {
       notifyWarning('Lignes incomplètes', 'Chaque ligne doit avoir un poste budgétaire et un montant positif.')
       return
     }
@@ -149,11 +302,22 @@ export default function SortieDirecteProgrammee() {
       return
     }
 
+    setConfirmationOpen(true)
+  }
+
+  const confirmSubmit = async () => {
+    const lignesValides = lignes.filter(isLigneValid)
+    if (lignesValides.length !== lignes.length || lignesValides.length === 0) {
+      setConfirmationOpen(false)
+      notifyWarning('Lignes incomplètes', 'Vérifiez les lignes budgétaires avant de continuer.')
+      return
+    }
+    const submittedTotal = lignesValides.reduce((sum, ligne) => sum + parseFloat(ligne.montant), 0)
     setSubmitting(true)
     try {
-      await createOrdreDecaissement({
+      const corps = {
         beneficiaire: beneficiaire.trim(),
-        montant: total,
+        montant: submittedTotal,
         devise,
         motif: motif.trim() || null,
         service_id: Number(serviceId),
@@ -164,15 +328,31 @@ export default function SortieDirecteProgrammee() {
           montant_total: parseFloat(l.montant),
           devise,
         })),
-      })
-      notifySuccess(
-        'Sortie directe programmée',
-        `${fmtMontant(total, devise)} pour ${beneficiaire.trim()} — en attente de paiement par la caisse.`
-      )
+      }
+      if (ordreEnCorrection) {
+        await updateOrdreDecaissement(ordreEnCorrection, corps)
+        notifySuccess(
+          'Sortie directe corrigée',
+          `${fmtMontant(submittedTotal, devise)} pour ${beneficiaire.trim()} — toujours en attente de la caisse.`
+        )
+      } else {
+        await createOrdreDecaissement(corps)
+        notifySuccess(
+          'Sortie directe programmée',
+          `${fmtMontant(submittedTotal, devise)} pour ${beneficiaire.trim()} — en attente de paiement par la caisse.`
+        )
+      }
+      setConfirmationOpen(false)
       resetForm()
       await loadOrdres()
     } catch (err: any) {
-      notifyError('Erreur', err?.message || 'Impossible de programmer cette sortie directe.')
+      notifyError(
+        'Erreur',
+        err?.message ||
+          (ordreEnCorrection
+            ? 'Impossible de corriger cette sortie directe.'
+            : 'Impossible de programmer cette sortie directe.')
+      )
     } finally {
       setSubmitting(false)
     }
@@ -193,148 +373,374 @@ export default function SortieDirecteProgrammee() {
     }
   }
 
-  const handleCancel = async (ordre: OrdreDecaissement) => {
-    const raison = window.prompt(`Motif d'annulation de l'ordre ${ordre.numero_ordre} :`)
-    if (!raison || raison.trim().length < 3) return
+  const handleCancel = (ordre: OrdreDecaissement) => {
+    setCancelTarget(ordre)
+    setCancelReason('')
+  }
+
+  const confirmCancel = async () => {
+    if (!cancelTarget || cancelReason.trim().length < 3) return
+    setCancelling(true)
     try {
-      await annulerOrdreDecaissement(String(ordre.id), raison.trim())
-      notifySuccess('Ordre annulé', `L'ordre ${ordre.numero_ordre} a été annulé.`)
+      await annulerOrdreDecaissement(String(cancelTarget.id), cancelReason.trim())
+      notifySuccess('Ordre annulé', `L'ordre ${cancelTarget.numero_ordre} a été annulé.`)
+      setCancelTarget(null)
+      setCancelReason('')
       await loadOrdres()
     } catch (err: any) {
       notifyError('Erreur', err?.message || "Impossible d'annuler cet ordre.")
+    } finally {
+      setCancelling(false)
     }
   }
 
   const capDepasse = devise === 'USD' && total > LIMITE_USD
+  const limitProgress = devise === 'USD' ? Math.min((total / LIMITE_USD) * 100, 100) : 0
 
   return (
     <div className={styles.container}>
       <PageHeader
         title="Sortie directe programmée"
-        subtitle={`Dépense définie en amont (service + postes budgétaires), plafonnée à ${LIMITE_USD} $, payée directement par la caisse — sans passer par les sorties de fonds.`}
+        subtitle="Préparez une dépense de faible montant, envoyée directement à la caisse pour paiement, sans réquisition."
         actions={<BackButton fallback="/requisitions" />}
       />
 
-      <form className={styles.card} onSubmit={handleSubmit}>
-        <div className={styles.row}>
-          <div className={styles.field}>
-            <label>Service / commission *</label>
-            <select value={serviceId} onChange={(e) => setServiceId(e.target.value)} required>
-              <option value="">— Choisir —</option>
-              {services.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.code} — {s.libelle}
-                </option>
-              ))}
-            </select>
+      <section className={styles.contextPanel} aria-label="Fonctionnement de la sortie directe">
+        <div className={styles.contextIntro}>
+          <span className={styles.contextIcon}><WalletCards size={22} aria-hidden="true" /></span>
+          <div>
+            <span className={styles.eyebrow}>Circuit de paiement court</span>
+            <h2>De la programmation à la caisse, sans étape intermédiaire</h2>
+            <p>Préparez une dépense ponctuelle et transmettez un ordre complet, prêt à être payé.</p>
           </div>
-          <div className={styles.field}>
-            <label>Bénéficiaire *</label>
-            <input value={beneficiaire} onChange={(e) => setBeneficiaire(e.target.value)} placeholder="Nom du bénéficiaire" required />
-          </div>
-          <div className={styles.fieldSmall}>
-            <label>Devise</label>
-            <select value={devise} onChange={(e) => setDevise(e.target.value as 'USD' | 'CDF')}>
-              <option value="USD">USD</option>
-              <option value="CDF">CDF</option>
-            </select>
+        </div>
+        <div className={styles.flow} aria-label="Étapes du traitement">
+          <span><strong>1</strong> Programmer</span>
+          <ArrowRight size={15} aria-hidden="true" />
+          <span><strong>2</strong> Transmettre</span>
+          <ArrowRight size={15} aria-hidden="true" />
+          <span><strong>3</strong> Payer en caisse</span>
+        </div>
+        <div className={styles.limitCard}>
+          <CircleDollarSign size={20} aria-hidden="true" />
+          <div><span>Plafond en USD</span><strong>{LIMITE_USD} $</strong></div>
+        </div>
+      </section>
+
+      <form ref={formRef} className={styles.formCard} onSubmit={handleSubmit} noValidate>
+        <div className={styles.sectionHeader}>
+          <span className={styles.sectionIcon}><ReceiptText size={20} aria-hidden="true" /></span>
+          <div>
+            <span className={styles.eyebrow}>{ordreEnCorrection ? 'Correction' : 'Nouvel ordre'}</span>
+            <h2>{ordreEnCorrection ? 'Corriger une sortie directe' : 'Programmer une sortie directe'}</h2>
+            <p>
+              {ordreEnCorrection
+                ? "Ce bon n'est pas encore payé : le plafond et le contrôle anti-fractionnement sont rejoués à l'enregistrement."
+                : 'Les champs marqués d’un astérisque sont obligatoires.'}
+            </p>
           </div>
         </div>
 
-        <div className={styles.lignesHead}>
-          <span>Lignes budgétaires</span>
-          <button type="button" className={styles.addBtn} onClick={addLigne}>+ Ajouter une ligne</button>
-        </div>
-
-        {lignes.map((l, i) => (
-          <div key={i} className={styles.ligne}>
-            <div className={styles.ligneField} style={{ flex: '2 1 220px' }}>
-              <label>Poste budgétaire *</label>
-              <select value={l.budget_poste_id ?? ''} onChange={(e) => updateLigne(i, 'budget_poste_id', e.target.value)}>
-                <option value="">— Choisir —</option>
-                {postes.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.code} — {p.libelle} (disp. {fmtMontant(p.montant_disponible, 'USD')})
+        <div className={styles.formBody}>
+          {referencesError && (
+            <div className={styles.inlineError} role="alert">
+              <AlertCircle size={19} aria-hidden="true" />
+              <div><strong>Référentiels indisponibles</strong><span>{referencesError}</span></div>
+              <button type="button" onClick={() => void loadReferences()}>
+                <RefreshCw size={15} aria-hidden="true" /> Réessayer
+              </button>
+            </div>
+          )}
+          <div className={styles.identityGrid}>
+            <div className={styles.field}>
+              <label htmlFor="direct-service">Service / commission <span aria-hidden="true">*</span></label>
+              <select id="direct-service" value={serviceId} onChange={(e) => setServiceId(e.target.value)} disabled={referencesLoading || Boolean(referencesError)} required aria-required="true">
+                <option value="">{referencesLoading ? 'Chargement des services…' : 'Choisir le service responsable'}</option>
+                {services.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.code} — {s.libelle}
                   </option>
                 ))}
               </select>
             </div>
-            <div className={styles.ligneField} style={{ flex: '3 1 240px' }}>
-              <label>Description</label>
-              <input value={l.description} onChange={(e) => updateLigne(i, 'description', e.target.value)} placeholder="Détail de la dépense" />
+            <div className={styles.field}>
+              <label htmlFor="direct-beneficiary">Bénéficiaire <span aria-hidden="true">*</span></label>
+              <input id="direct-beneficiary" value={beneficiaire} onChange={(e) => setBeneficiaire(e.target.value)} placeholder="Nom complet ou raison sociale" required aria-required="true" />
             </div>
-            <div className={styles.ligneField} style={{ flex: '0 1 130px' }}>
-              <label>Montant ({devise}) *</label>
-              <input type="number" min="0.01" step="0.01" value={l.montant} onChange={(e) => updateLigne(i, 'montant', e.target.value)} placeholder="0.00" />
+            <div className={`${styles.field} ${styles.currencyField}`}>
+              <label htmlFor="direct-currency">Devise</label>
+              <select id="direct-currency" value={devise} onChange={(e) => setDevise(e.target.value as 'USD' | 'CDF')}>
+                <option value="USD">USD — Dollar</option>
+                <option value="CDF">CDF — Franc congolais</option>
+              </select>
             </div>
-            <button type="button" className={styles.removeBtn} onClick={() => removeLigne(i)} disabled={lignes.length === 1} aria-label="Retirer la ligne">✕</button>
           </div>
-        ))}
 
-        <div className={styles.field} style={{ marginTop: 12 }}>
-          <label>Motif</label>
-          <input value={motif} onChange={(e) => setMotif(e.target.value)} placeholder="Ex : achat urgent de fournitures" />
+          <div className={styles.linesSection}>
+            <div className={styles.linesHeader}>
+              <div>
+                <h3>Lignes budgétaires <span className={styles.countBadge}>{lignes.length}</span></h3>
+                <p>Ventilez précisément la dépense sur les postes concernés.</p>
+              </div>
+              <button type="button" className={styles.addBtn} onClick={addLigne}>
+                <Plus size={16} aria-hidden="true" /> Ajouter une ligne
+              </button>
+            </div>
+
+            <div className={styles.linesList}>
+              {lignes.map((ligne, index) => (
+                <div key={ligne.clientId} className={`${styles.lineItem} ${validationAttempted && !isLigneValid(ligne) ? styles.lineInvalid : ''}`}>
+                  <span className={styles.lineNumber} aria-label={`Ligne ${index + 1}`}>{index + 1}</span>
+                  <div className={`${styles.lineField} ${styles.budgetField}`}>
+                    <label htmlFor={`direct-budget-${index}`}>Poste budgétaire <span aria-hidden="true">*</span></label>
+                    <select
+                      id={`direct-budget-${index}`}
+                      value={ligne.budget_poste_id ?? ''}
+                      onChange={(e) => updateLigne(index, 'budget_poste_id', e.target.value)}
+                      disabled={referencesLoading || Boolean(referencesError)}
+                      aria-invalid={validationAttempted && !ligne.budget_poste_id}
+                      aria-describedby={validationAttempted && !ligne.budget_poste_id ? `direct-budget-error-${index}` : undefined}
+                      aria-required="true"
+                      required
+                    >
+                      <option value="">{referencesLoading ? 'Chargement des postes…' : 'Choisir un poste'}</option>
+                      {postes.map((poste) => (
+                        <option key={poste.id} value={poste.id}>
+                          {poste.code} — {poste.libelle} (disp. {fmtMontant(poste.montant_disponible, 'USD')})
+                        </option>
+                      ))}
+                    </select>
+                    {validationAttempted && !ligne.budget_poste_id && <small id={`direct-budget-error-${index}`} className={styles.fieldError}>Sélectionnez un poste.</small>}
+                  </div>
+                  <div className={`${styles.lineField} ${styles.descriptionField}`}>
+                    <label htmlFor={`direct-description-${index}`}>Description</label>
+                    <input
+                      id={`direct-description-${index}`}
+                      value={ligne.description}
+                      onChange={(e) => updateLigne(index, 'description', e.target.value)}
+                      placeholder="Détail de la dépense"
+                    />
+                  </div>
+                  <div className={`${styles.lineField} ${styles.amountField}`}>
+                    <label htmlFor={`direct-amount-${index}`}>Montant ({devise}) <span aria-hidden="true">*</span></label>
+                    <input
+                      id={`direct-amount-${index}`}
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={ligne.montant}
+                      onChange={(e) => updateLigne(index, 'montant', e.target.value)}
+                      placeholder="0,00"
+                      aria-invalid={validationAttempted && !(parseFloat(ligne.montant) > 0)}
+                      aria-describedby={validationAttempted && !(parseFloat(ligne.montant) > 0) ? `direct-amount-error-${index}` : undefined}
+                      aria-required="true"
+                      required
+                    />
+                    {validationAttempted && !(parseFloat(ligne.montant) > 0) && <small id={`direct-amount-error-${index}`} className={styles.fieldError}>Saisissez un montant positif.</small>}
+                  </div>
+                  <button
+                    type="button"
+                    className={styles.removeBtn}
+                    onClick={() => removeLigne(index)}
+                    disabled={lignes.length === 1}
+                    title="Retirer cette ligne"
+                    aria-label={`Retirer la ligne ${index + 1}`}
+                  >
+                    <Trash2 size={16} aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className={styles.field}>
+            <label htmlFor="direct-reason">Motif de la dépense <span aria-hidden="true">*</span></label>
+            <textarea
+              id="direct-reason"
+              rows={2}
+              value={motif}
+              onChange={(e) => setMotif(e.target.value)}
+              placeholder="Ex. : achat urgent de fournitures pour la commission…"
+              required
+              aria-required="true"
+            />
+          </div>
         </div>
 
-        <div className={styles.footer}>
-          <div className={`${styles.total} ${capDepasse ? styles.totalOver : ''}`}>
-            Total : <strong>{fmtMontant(total, devise)}</strong>
-            {capDepasse && <span className={styles.capWarn}> — dépasse le plafond de {LIMITE_USD} $</span>}
+        <div className={styles.formFooter}>
+          <div className={styles.controlSummary}>
+            {devise === 'USD' ? (
+              <div className={styles.limitProgress}>
+                <div className={styles.progressLabels}>
+                  <span>{capDepasse ? 'Plafond dépassé' : 'Plafond disponible'}</span>
+                  <strong>{Math.max(LIMITE_USD - total, 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} $ restant</strong>
+                </div>
+                <div
+                  className={styles.progressTrack}
+                  role="progressbar"
+                  aria-label="Utilisation du plafond de sortie directe"
+                  aria-valuemin={0}
+                  aria-valuemax={LIMITE_USD}
+                  aria-valuenow={Math.min(total, LIMITE_USD)}
+                >
+                  <span
+                    className={`${styles.progressFill} ${capDepasse ? styles.progressOver : ''}`}
+                    style={{ width: `${limitProgress}%` }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className={styles.cdfNotice}>
+                <CircleDollarSign size={18} aria-hidden="true" />
+                <span>L’équivalent de 100 USD sera contrôlé au taux de change actif lors de la transmission.</span>
+              </div>
+            )}
+            <div className={styles.securityNote}>
+              <ShieldCheck size={17} aria-hidden="true" />
+              <span>L’ordre part directement à la caisse et reste corrigeable uniquement avant son paiement.</span>
+            </div>
           </div>
-          <button type="submit" className={styles.submitBtn} disabled={submitting || capDepasse}>
-            {submitting ? 'Programmation…' : 'Programmer la sortie'}
-          </button>
+
+          <div className={`${styles.totalPanel} ${capDepasse ? styles.totalOver : ''}`} aria-live="polite">
+            <span>Total de l’ordre</span>
+            <strong>{fmtMontant(total, devise)}</strong>
+            {capDepasse && <small>Dépasse le plafond autorisé de {LIMITE_USD} $</small>}
+            <button type="submit" className={styles.submitBtn} disabled={submitting || capDepasse || referencesLoading || Boolean(referencesError)}>
+              {submitting ? <Loader2 className={styles.spin} size={18} aria-hidden="true" /> : <Banknote size={18} aria-hidden="true" />}
+              {submitting
+                ? ordreEnCorrection ? 'Enregistrement…' : 'Programmation…'
+                : ordreEnCorrection ? 'Enregistrer les corrections' : 'Programmer et transmettre'}
+            </button>
+            {ordreEnCorrection && (
+              <button type="button" className={styles.ghostBtn} onClick={resetForm} disabled={submitting}>
+                Abandonner la correction
+              </button>
+            )}
+          </div>
         </div>
-        <p className={styles.note}>
-          Une fois programmée, la sortie part directement à la caisse : montant et bénéficiaire sont verrouillés, aucune validation supplémentaire.
-        </p>
       </form>
 
-      <div className={styles.card}>
-        <h3 className={styles.listTitle}>Sorties directes programmées {loading && <span className={styles.muted}>— chargement…</span>}</h3>
-        {ordres.length === 0 ? (
-          <p className={styles.muted}>Aucune sortie directe pour le moment.</p>
+      <section className={styles.historyCard}>
+        <div className={styles.historyHeader}>
+          <div className={styles.sectionHeaderCompact}>
+            <span className={styles.sectionIcon}><FileText size={20} aria-hidden="true" /></span>
+            <div>
+              <span className={styles.eyebrow}>Suivi</span>
+              <h2>Ordres récents</h2>
+              <p className={styles.historyScope}>
+                {ordersTotal > ordres.length
+                  ? `${ordres.length} derniers ordres affichés sur ${ordersTotal}`
+                  : `${ordres.length} ordre${ordres.length === 1 ? '' : 's'} chargé${ordres.length === 1 ? '' : 's'}`}
+                {' '}— compteurs et recherche sur les éléments affichés
+              </p>
+            </div>
+          </div>
+          <div className={styles.statusSummary} aria-label="Résumé des statuts">
+            <span className={styles.summaryPending}><Clock3 size={14} /> {ordreStats.pending} en attente</span>
+            <span className={styles.summaryPaid}><CheckCircle2 size={14} /> {ordreStats.paid} payée{ordreStats.paid > 1 ? 's' : ''}</span>
+            <span className={styles.summaryCancelled}><XCircle size={14} /> {ordreStats.cancelled} annulée{ordreStats.cancelled > 1 ? 's' : ''}</span>
+          </div>
+        </div>
+
+        <div className={styles.historyToolbar}>
+          <div className={styles.searchField}>
+            <Search size={17} aria-hidden="true" />
+            <label htmlFor="direct-search" className={styles.srOnly}>Rechercher une sortie directe</label>
+            <input
+              id="direct-search"
+              type="search"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Rechercher dans les ordres affichés…"
+            />
+          </div>
+          <label className={styles.filterField}>
+            <span>Statut</span>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
+              <option value="TOUS">Tous les statuts</option>
+              <option value="AUTORISE">En attente caisse</option>
+              <option value="PAYE">Payé</option>
+              <option value="ANNULE">Annulé</option>
+            </select>
+          </label>
+        </div>
+
+        {ordersError ? (
+          <div className={styles.errorState} role="alert">
+            <AlertCircle size={24} aria-hidden="true" />
+            <h3>Historique indisponible</h3>
+            <p>{ordersError}</p>
+            <button type="button" onClick={() => void loadOrdres()}>
+              <RefreshCw size={15} aria-hidden="true" /> Réessayer
+            </button>
+          </div>
+        ) : loading && ordres.length === 0 ? (
+          <div className={styles.loadingState}><Loader2 className={styles.spin} size={22} /> Chargement des ordres…</div>
+        ) : filteredOrdres.length === 0 ? (
+          <div className={styles.emptyState}>
+            <span><ReceiptText size={24} aria-hidden="true" /></span>
+            <h3>{ordres.length === 0 ? 'Aucune sortie directe programmée' : 'Aucun résultat'}</h3>
+            <p>{ordres.length === 0 ? 'Les ordres créés apparaîtront ici pour leur suivi et leur impression.' : 'Modifiez votre recherche ou le filtre de statut.'}</p>
+            {ordres.length > 0 && (
+              <button type="button" onClick={() => { setSearchTerm(''); setStatusFilter('TOUS') }}>Réinitialiser les filtres</button>
+            )}
+          </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div className={styles.tableWrap}>
             <table className={styles.table}>
+              <caption className={styles.srOnly}>Historique des sorties directes programmées</caption>
               <thead>
                 <tr>
-                  <th>N° ordre</th>
-                  <th>Bénéficiaire</th>
-                  <th>Programmé par</th>
-                  <th>Montant</th>
-                  <th>Statut</th>
-                  <th>Programmé le</th>
-                  <th />
+                  <th scope="col">N° ordre</th>
+                  <th scope="col">Bénéficiaire</th>
+                  <th scope="col">Programmé par</th>
+                  <th scope="col">Montant</th>
+                  <th scope="col">Statut</th>
+                  <th scope="col">Programmé le</th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {ordres.map((o) => (
+                {filteredOrdres.map((o) => (
                   <tr key={o.id}>
-                    <td style={{ fontWeight: 600 }}>{o.numero_ordre}</td>
-                    <td>
-                      {o.beneficiaire}
+                    <td data-label="N° ordre"><strong className={styles.orderNumber}>{o.numero_ordre}</strong></td>
+                    <td data-label="Bénéficiaire">
+                      <strong className={styles.beneficiary}>{o.beneficiaire}</strong>
                       {o.motif && <div className={styles.subtle}>{o.motif}</div>}
                     </td>
-                    <td>{personName((o as any).autorise_par_user)}</td>
-                    <td style={{ fontWeight: 600 }}>{fmtMontant(o.montant, String(o.devise))}</td>
-                    <td>
+                    <td data-label="Programmé par">{personName(o.autorise_par_user)}</td>
+                    <td data-label="Montant"><strong className={styles.amount}>{fmtMontant(o.montant, String(o.devise))}</strong></td>
+                    <td data-label="Statut">
                       <span className={`${styles.badge} ${styles['b_' + String(o.statut)] || ''}`}>{statutLabel(String(o.statut))}</span>
                     </td>
-                    <td>{o.autorise_le ? format(new Date(o.autorise_le), 'dd/MM/yyyy HH:mm') : '—'}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className={styles.printBtn}
-                        onClick={() => handlePrint(o)}
-                        title="Imprimer le bon de sortie directe pour signature"
-                        aria-label="Imprimer le bon de sortie directe"
-                      >
-                        🖨️ Imprimer
-                      </button>
-                      {o.statut === 'AUTORISE' && (
-                        <button type="button" className={styles.cancelBtn} onClick={() => handleCancel(o)}>Annuler</button>
-                      )}
+                    <td data-label="Programmé le" className={styles.dateCell}>{o.autorise_le ? format(new Date(o.autorise_le), 'dd/MM/yyyy HH:mm') : '—'}</td>
+                    <td data-label="Actions">
+                      <div className={styles.rowActions}>
+                        <button
+                          type="button"
+                          className={styles.printBtn}
+                          onClick={() => handlePrint(o)}
+                          title="Imprimer le bon de sortie directe pour signature"
+                          aria-label={`Imprimer l'ordre ${o.numero_ordre}`}
+                        >
+                          <Printer size={15} aria-hidden="true" /> Imprimer
+                        </button>
+                        {o.statut === 'AUTORISE' && (
+                          <button
+                            type="button"
+                            className={styles.editBtn}
+                            onClick={() => requestCorrection(o)}
+                            title="Corriger ce bon : la caisse ne l'a pas encore payé"
+                          >
+                            <Pencil size={15} aria-hidden="true" /> Modifier
+                          </button>
+                        )}
+                        {o.statut === 'AUTORISE' && (
+                          <button type="button" className={styles.cancelBtn} onClick={() => handleCancel(o)}>
+                            <XCircle size={15} aria-hidden="true" /> Annuler
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -342,7 +748,120 @@ export default function SortieDirecteProgrammee() {
             </table>
           </div>
         )}
-      </div>
+      </section>
+
+      <ResponsiveModal
+        isOpen={confirmationOpen}
+        onClose={() => { if (!submitting) setConfirmationOpen(false) }}
+        title={ordreEnCorrection ? 'Confirmer les corrections' : 'Confirmer la programmation'}
+        size="sm"
+        footer={
+          <div className={styles.modalActions}>
+            <button type="button" className={styles.modalSecondaryBtn} onClick={() => setConfirmationOpen(false)} disabled={submitting}>
+              Revenir au formulaire
+            </button>
+            <button type="button" className={styles.modalPrimaryBtn} onClick={confirmSubmit} disabled={submitting}>
+              {submitting ? <Loader2 className={styles.spin} size={17} aria-hidden="true" /> : <Banknote size={17} aria-hidden="true" />}
+              {submitting ? 'Transmission…' : ordreEnCorrection ? 'Enregistrer' : 'Confirmer et transmettre'}
+            </button>
+          </div>
+        }
+      >
+        <div className={styles.confirmContent}>
+          <div className={styles.confirmNotice}>
+            <ShieldCheck size={19} aria-hidden="true" />
+            <p>
+              {ordreEnCorrection
+                ? 'Vérifiez les informations corrigées avant de les renvoyer à la caisse.'
+                : 'Cet ordre sera immédiatement disponible à la caisse. Il restera corrigeable uniquement tant qu’il n’est pas payé.'}
+            </p>
+          </div>
+          <dl className={styles.confirmList}>
+            <div><dt>Service</dt><dd>{selectedService ? `${selectedService.code} — ${selectedService.libelle}` : '—'}</dd></div>
+            <div><dt>Bénéficiaire</dt><dd>{beneficiaire || '—'}</dd></div>
+            <div><dt>Imputations</dt><dd>{lignes.length} ligne{lignes.length > 1 ? 's' : ''} budgétaire{lignes.length > 1 ? 's' : ''}</dd></div>
+            <div className={styles.confirmTotal}><dt>Total à transmettre</dt><dd>{fmtMontant(total, devise)}</dd></div>
+          </dl>
+          <div className={styles.confirmLines}>
+            <h3>Détail des imputations</h3>
+            {lignes.map((ligne) => {
+              const poste = ligne.budget_poste_id ? postesById.get(ligne.budget_poste_id) : undefined
+              return (
+                <div key={ligne.clientId}>
+                  <span>
+                    <strong>{poste ? `${poste.code} — ${poste.libelle}` : 'Poste non renseigné'}</strong>
+                    {ligne.description && <small>{ligne.description}</small>}
+                  </span>
+                  <b>{fmtMontant(ligne.montant, devise)}</b>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </ResponsiveModal>
+
+      <ResponsiveModal
+        isOpen={Boolean(editTarget)}
+        onClose={() => setEditTarget(null)}
+        title="Remplacer la saisie en cours ?"
+        size="sm"
+        footer={
+          <div className={styles.modalActions}>
+            <button type="button" className={styles.modalSecondaryBtn} onClick={() => setEditTarget(null)}>
+              Garder mon brouillon
+            </button>
+            <button
+              type="button"
+              className={styles.modalDangerBtn}
+              onClick={() => {
+                if (editTarget) corrigerOrdre(editTarget)
+                setEditTarget(null)
+              }}
+            >
+              Remplacer et modifier
+            </button>
+          </div>
+        }
+      >
+        <div className={styles.replaceWarning}>
+          <AlertCircle size={20} aria-hidden="true" />
+          <p>Les informations déjà saisies seront remplacées par celles de l’ordre <strong>{editTarget?.numero_ordre}</strong>.</p>
+        </div>
+      </ResponsiveModal>
+
+      <ResponsiveModal
+        isOpen={Boolean(cancelTarget)}
+        onClose={() => { if (!cancelling) setCancelTarget(null) }}
+        title={`Annuler ${cancelTarget?.numero_ordre || "l'ordre"}`}
+        size="sm"
+        footer={
+          <div className={styles.modalActions}>
+            <button type="button" className={styles.modalSecondaryBtn} onClick={() => setCancelTarget(null)} disabled={cancelling}>
+              Conserver l’ordre
+            </button>
+            <button type="button" className={styles.modalDangerBtn} onClick={confirmCancel} disabled={cancelling || cancelReason.trim().length < 3}>
+              {cancelling ? <Loader2 className={styles.spin} size={17} aria-hidden="true" /> : <XCircle size={17} aria-hidden="true" />}
+              {cancelling ? 'Annulation…' : 'Confirmer l’annulation'}
+            </button>
+          </div>
+        }
+      >
+        <div className={styles.cancelContent}>
+          <p>Indiquez pourquoi cet ordre ne doit plus être présenté à la caisse.</p>
+          <label htmlFor="direct-cancel-reason">Motif d’annulation <span aria-hidden="true">*</span></label>
+          <textarea
+            id="direct-cancel-reason"
+            rows={4}
+            value={cancelReason}
+            onChange={(event) => setCancelReason(event.target.value)}
+            placeholder="Saisissez un motif précis (3 caractères minimum)…"
+            aria-describedby="direct-cancel-help"
+            aria-required="true"
+            required
+          />
+          <small id="direct-cancel-help">{cancelReason.trim().length}/3 caractères minimum</small>
+        </div>
+      </ResponsiveModal>
     </div>
   )
 }
