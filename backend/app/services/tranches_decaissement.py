@@ -22,6 +22,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.ordre_decaissement import OrdreDecaissement
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 
@@ -39,6 +40,10 @@ class TrancheDecaissement:
     #: Ce qu'il restait à payer une fois cette tranche réglée.
     reste: Decimal
     devise: str
+    #: Objet de la tranche : le motif de l'ordre de décaissement qui l'a
+    #: autorisée. L'objet de la réquisition couvre le dossier entier et ne dit
+    #: pas ce que cette tranche-ci paie ; nulle part ailleurs il ne se lit.
+    objet: str | None = None
 
 
 async def tranches_par_sortie(
@@ -80,6 +85,21 @@ async def tranches_par_sortie(
         )
     ).all()
 
+    # Objet de chaque tranche : le motif de l'ordre qui l'a autorisée. Le lien
+    # est porté par l'ordre (`sortie_fonds_id`), posé au paiement.
+    objets: dict[uuid.UUID, str | None] = {}
+    if rows:
+        objets = dict(
+            (
+                await db.execute(
+                    select(OrdreDecaissement.sortie_fonds_id, OrdreDecaissement.motif).where(
+                        OrdreDecaissement.organisation_id == organisation_id,
+                        OrdreDecaissement.sortie_fonds_id.in_([row.id for row in rows]),
+                    )
+                )
+            ).all()
+        )
+
     par_requisition: dict[uuid.UUID, list] = {}
     for row in rows:
         par_requisition.setdefault(row.requisition_id, []).append(row)
@@ -100,6 +120,7 @@ async def tranches_par_sortie(
                 montant_total=total,
                 reste=max(total - cumul, Decimal("0")),
                 devise=devise,
+                objet=(objets.get(paiement.id) or "").strip() or None,
             )
     return tranches
 
@@ -109,9 +130,17 @@ def _montant(valeur: Decimal) -> str:
 
 
 def libelle_tranche(tranche: TrancheDecaissement) -> str:
-    """« Tranche 2 — payé 650,00 / 2 470,00 USD, reste 1 820,00 »."""
+    """« Tranche 2 (Achat de carburant) — payé 650,00 / 2 470,00 USD, reste 1 820,00 ».
+
+    L'objet vient avec le rang : les montants disent où en est le dossier,
+    l'objet dit ce que cette tranche-ci a payé, et il ne se lit nulle part
+    ailleurs.
+    """
+    rang = f"Tranche {tranche.numero}"
+    if tranche.objet:
+        rang = f"{rang} ({tranche.objet})"
     base = (
-        f"Tranche {tranche.numero} — payé {_montant(tranche.cumul_paye)}"
+        f"{rang} — payé {_montant(tranche.cumul_paye)}"
         f" / {_montant(tranche.montant_total)} {tranche.devise}"
     )
     if tranche.reste > 0:

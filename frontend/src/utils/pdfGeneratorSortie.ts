@@ -457,12 +457,43 @@ export const generateSortieFondsPDF = async (
   doc.setFontSize(12)
   setText(INK)
   doc.text(String(sortie?.beneficiaire || '-').toUpperCase().slice(0, 42), leftX, infoY + 14)
+  // Sur un paiement fractionné, `motif` descend de l'ordre de décaissement :
+  // c'est l'objet de la tranche, pas celui du dossier. Le bon dirait alors deux
+  // fois la même chose et l'objet de la réquisition n'y figurerait nulle part.
+  // Le motif porte donc le dossier, et la tranche a sa propre ligne dessous.
+  const tranche: any = (sortie as any)?.tranche
+  const motifTexte = String(
+    (tranche ? sortie?.requisition?.objet : '') || sortie?.motif || '-'
+  )
   drawLabel('Motif', leftX, infoY + 22)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   setText(INK)
-  const motifLines = doc.splitTextToSize(String(sortie?.motif || '-'), splitX - leftX - 6)
-  doc.text(motifLines.slice(0, 2), leftX, infoY + 28)
+  const motifLines = doc.splitTextToSize(motifTexte, splitX - leftX - 6).slice(0, 2)
+  doc.text(motifLines, leftX, infoY + 28)
+
+  // Objet de la tranche : ce que CETTE sortie règle du dossier. Celui qui
+  // décharge le bon a besoin de le lire sur la pièce qu'il signe, et il ne se
+  // lit nulle part ailleurs sur le bon.
+  if (tranche) {
+    const objetTranche = String(tranche.objet || '').trim()
+    // Sans motif saisi sur l'ordre, il reste le rang : le bon dit au moins
+    // qu'il ne solde pas le dossier à lui seul.
+    drawLabel(objetTranche ? 'Objet de la tranche' : 'Tranche', leftX, infoY + 33)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    setText(INK)
+    doc.text(
+      doc
+        .splitTextToSize(
+          `Tranche ${tranche.numero}${objetTranche ? ` — ${objetTranche}` : ''}`,
+          splitX - leftX - 6
+        )
+        .slice(0, 1),
+      leftX,
+      infoY + 38,
+    )
+  }
 
   // Colonne droite : date, mode, source, poste
   drawLabel('Date', rightX, infoY + 7)

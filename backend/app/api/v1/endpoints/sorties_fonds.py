@@ -2670,6 +2670,10 @@ async def create_sortie_fonds(
         solde_apres=solde_apres_operation,
     )
 
+    # La tranche est rendue dès la création : c'est cette réponse qui alimente
+    # le bon imprimé dans la foulée du paiement, et l'objet de la tranche ne
+    # doit pas y manquer.
+    tranches = await tranches_par_sortie(db, tenant_id, [sortie.requisition_id])
     return _sortie_out(
         sortie,
         requisition,
@@ -2677,6 +2681,7 @@ async def create_sortie_fonds(
         validateur=validateur,
         approbateur=approbateur,
         remboursement_transport=remboursement_transport,
+        tranche=tranches.get(sortie.id),
     )
 
 
@@ -3420,4 +3425,8 @@ async def update_sortie_statut(
                 validateur = u_map.get(requisition.validee_par)
                 approbateur = u_map.get(requisition.approuvee_par)
 
-    return _sortie_out(sortie, requisition, validateur=validateur, approbateur=approbateur)
+    tranches = await tranches_par_sortie(db, tenant_id, [sortie.requisition_id])
+    return _sortie_out(
+        sortie, requisition, validateur=validateur, approbateur=approbateur,
+        tranche=tranches.get(sortie.id),
+    )

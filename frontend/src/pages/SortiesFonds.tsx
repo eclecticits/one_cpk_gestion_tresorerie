@@ -1133,6 +1133,16 @@ export default function SortiesFonds() {
     )
   }
 
+  /** Objet du dossier, suivi de l'objet de la tranche quand il y en a une.
+   *  L'objet de la réquisition couvre le dossier entier : sur un paiement
+   *  fractionné, il ne dit pas ce que CETTE sortie a payé. */
+  const objetAvecTranche = (sortie: any): string => {
+    const objet = String(sortie?.requisition?.objet || '').trim()
+    const objetTranche = String(sortie?.tranche?.objet || '').trim()
+    if (!objet) return objetTranche || '—'
+    return objetTranche ? `${objet} (${objetTranche})` : objet
+  }
+
   const budgetLineMap = useMemo(() => {
     return new Map(budgetLinesList.map((line: any) => [String(line.id), line]))
   }, [budgetLinesList])
@@ -3492,7 +3502,7 @@ export default function SortiesFonds() {
                       <div className={styles.cellStack}>
                         <span className={styles.cellPrimary}>
                           {typeSortie === 'requisition'
-                            ? sortie.requisition?.objet || '—'
+                            ? objetAvecTranche(sortie)
                             : sortieWithType.beneficiaire || '—'}
                         </span>
                         {typeSortie === 'requisition' && sortieWithType.beneficiaire && (
@@ -3643,7 +3653,7 @@ export default function SortiesFonds() {
               : sortieWithType.motif || '-'
 
             const beneficiaire = typeSortie === 'requisition'
-              ? sortie.requisition?.objet
+              ? objetAvecTranche(sortie)
               : sortieWithType.beneficiaire || '-'
 
             return (

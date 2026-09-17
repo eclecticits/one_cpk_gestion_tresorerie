@@ -66,6 +66,8 @@ class TrancheDecaissementOut(DecimalBaseModel):
     montant_total: Decimal
     reste: Decimal
     devise: str
+    #: Motif de l'ordre de décaissement : ce que cette tranche paie.
+    objet: str | None = None
 
 
 class SortieFondsOut(DecimalBaseModel):

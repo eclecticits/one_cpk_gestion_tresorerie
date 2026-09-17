@@ -405,6 +405,8 @@ export interface TrancheDecaissement {
   montant_total: number | string
   reste: number | string
   devise: string
+  /** Motif de l'ordre de décaissement : ce que cette tranche paie. */
+  objet?: string | null
 }
 
 export interface SortieFonds {

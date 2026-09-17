@@ -417,7 +417,9 @@ const usd = (value: any) => `${formatAmount(value)} $`
  *  que la colonne « Tranche » de l'export Excel. */
 const trancheLabel = (tranche: any): string => {
   if (!tranche) return ''
-  const base = `Tranche ${tranche.numero} — payé ${formatAmount(tranche.cumul_paye)} / ${formatAmount(tranche.montant_total)} ${tranche.devise || 'USD'}`
+  const objet = String(tranche.objet || '').trim()
+  const rang = objet ? `Tranche ${tranche.numero} (${objet})` : `Tranche ${tranche.numero}`
+  const base = `${rang} — payé ${formatAmount(tranche.cumul_paye)} / ${formatAmount(tranche.montant_total)} ${tranche.devise || 'USD'}`
   return toNumber(tranche.reste) > 0 ? `${base}, reste ${formatAmount(tranche.reste)}` : `${base}, soldé`
 }
 

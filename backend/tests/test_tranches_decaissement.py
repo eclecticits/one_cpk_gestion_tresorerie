@@ -194,10 +194,11 @@ async def _dossier_paye_par_tranches(db, monkeypatch, montants, total=None):
     await resynchroniser_engagement_requisition(db, req)
     await db.commit()
 
-    async def payer(montant):
+    async def payer(montant, motif="Achat de carburant"):
         await create_ordre_decaissement(
             payload=OrdreDecaissementCreate(
                 requisition_id=req.id, beneficiaire="Bénéficiaire", montant=montant, devise="USD",
+                motif=motif,
                 lignes=[{"budget_poste_id": poste.id, "montant": montant}],
             ),
             request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
@@ -254,7 +255,12 @@ async def test_le_dossier_solde_ne_compte_ni_son_budget_ni_ses_lignes_deux_fois(
     assert sorted(row[i_montant] for row in paiements) == [150.0, 500.0, 1820.0]
     total = next(row for row in lignes if row[0] == "TOTAL")
     assert total[i_montant] == 2470.0  # trois tranches, pas un quatrième montant
-    assert "Tranche 3 — payé 2 470,00 / 2 470,00 USD, soldé" in {row[i_tranche] for row in paiements}
+    # L'objet de la tranche accompagne son rang : le motif de l'ordre qui l'a
+    # autorisée, qui ne se lit nulle part ailleurs.
+    assert (
+        "Tranche 3 (Achat de carburant) — payé 2 470,00 / 2 470,00 USD, soldé"
+        in {row[i_tranche] for row in paiements}
+    )
 
 
 @pytest.mark.asyncio
