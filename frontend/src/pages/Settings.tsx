@@ -5,8 +5,6 @@ import {
   Users,
   ChevronRight,
   ArrowLeft,
-  ArrowUp,
-  ArrowDown,
   Search,
   UserPlus,
   MoreHorizontal,
@@ -69,6 +67,7 @@ import { useNotification } from '../contexts/NotificationContext'
 import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 import { apiRequest } from '../lib/apiClient'
 import { User, Service } from '../types'
+import EncaissementTarifsSettings from '../components/settings/EncaissementTarifsSettings'
 import styles from './Settings.module.css'
 import ConfirmModal from '../components/ConfirmModal'
 import RolePermissionsEditor from '../components/admin/RolePermissionsEditor'
@@ -131,6 +130,8 @@ export default function Settings() {
   const confirmWithInput = useConfirmWithInput()
   const { user, loading: authLoading } = useAuth()
   const isSuperAdmin = user?.role === 'super_admin'
+  // Les tarifs sont un réglage : qui peut régler le reste peut les régler.
+  const canEditSettings = isSuperAdmin || ['admin', 'administrateur'].includes(String(user?.role || '').toLowerCase())
   const { showSuccess, showError, showWarning } = useNotification()
   const [users, setUsers] = useState<User[]>([])
   const [serviceUsers, setServiceUsers] = useState<User[]>([])
@@ -233,7 +234,6 @@ export default function Settings() {
   const [uploadingAsset, setUploadingAsset] = useState<'logo' | 'stamp' | null>(null)
   const [budgetExercises, setBudgetExercises] = useState<{ annee: number; statut?: string | null }[]>([])
   // Billing moved to Organisation Settings.
-  const [encaissementLibelles, setEncaissementLibelles] = useState<string[]>([])
 
   const systemRoles = Array.from(
     new Set(
@@ -241,16 +241,6 @@ export default function Settings() {
         .filter(Boolean)
     )
   )
-
-  useEffect(() => {
-    if (!printSettings) return
-    const raw = String(printSettings.encaissement_libelle_presets || '')
-    const parsed = raw
-      .split(/\r?\n+/)
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0)
-    setEncaissementLibelles(parsed.length ? parsed : [''])
-  }, [printSettings?.encaissement_libelle_presets])
 
   const totalUserPages = Math.max(1, Math.ceil(usersTotal / usersPerPage))
   const safeUserPage = Math.min(userPage, totalUserPages)
@@ -2620,114 +2610,16 @@ export default function Settings() {
       </div>
       )}
 
-      {generalSubTab === 'encaissements' && printSettings && (
+      {generalSubTab === 'encaissements' && (
         <div className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <h2>Encaissements</h2>
-          <span className={styles.mutedText}>Pré‑liste des libellés</span>
-        </div>
-        <div className={styles.formCard}>
-          <div className={styles.formGrid}>
-            <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
-              <label>Libellés suggérés</label>
-              <div className={styles.presetList}>
-                {encaissementLibelles.map((value, index) => (
-                  <div key={`libelle-${index}`} className={styles.presetRow}>
-                    <div className={styles.presetIndex}>{index + 1}</div>
-                    <input
-                      type="text"
-                      value={value}
-                      onChange={(e) => {
-                        const next = [...encaissementLibelles]
-                        next[index] = e.target.value
-                        setEncaissementLibelles(next)
-                      }}
-                      placeholder="Ex: Cotisation annuelle 2026"
-                      maxLength={255}
-                    />
-                    <div className={styles.presetActions}>
-                      <button
-                        type="button"
-                        className={styles.actionBtn}
-                        onClick={() => {
-                          if (index === 0) return
-                          setEncaissementLibelles((prev) => {
-                            const next = [...prev]
-                            const tmp = next[index - 1]
-                            next[index - 1] = next[index]
-                            next[index] = tmp
-                            return next
-                          })
-                        }}
-                        disabled={index === 0}
-                        title="Monter"
-                      >
-                        <ArrowUp size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.actionBtn}
-                        onClick={() => {
-                          if (index >= encaissementLibelles.length - 1) return
-                          setEncaissementLibelles((prev) => {
-                            const next = [...prev]
-                            const tmp = next[index + 1]
-                            next[index + 1] = next[index]
-                            next[index] = tmp
-                            return next
-                          })
-                        }}
-                        disabled={index >= encaissementLibelles.length - 1}
-                        title="Descendre"
-                      >
-                        <ArrowDown size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.actionBtn}
-                        onClick={() => {
-                          setEncaissementLibelles((prev) => prev.filter((_, i) => i !== index))
-                        }}
-                        disabled={encaissementLibelles.length <= 1}
-                      >
-                        Retirer
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button
-                type="button"
-                className={styles.secondaryBtn}
-                onClick={() => setEncaissementLibelles((prev) => [...prev, ''])}
-                style={{ marginTop: '10px', alignSelf: 'flex-start' }}
-              >
-                + Ajouter une ligne
-              </button>
-              <div className={styles.fieldHint}>
-                Ces libellés apparaîtront en auto‑complétion dans le formulaire d'encaissement.
-              </div>
-            </div>
+          <div className={styles.sectionHeader}>
+            <h2>Encaissements</h2>
+            <span className={styles.mutedText}>Tarifs : libellé, montant, poste</span>
           </div>
-          <div className={styles.formActions}>
-            <button
-              type="button"
-              className={styles.primaryBtn}
-              disabled={savingPrintSettings}
-              onClick={() =>
-                saveSettingsSection('Encaissements', {
-                  encaissement_libelle_presets: encaissementLibelles
-                    .map((item) => item.trim())
-                    .filter((item) => item.length > 0)
-                    .join('\n'),
-                })
-              }
-            >
-              {savingPrintSettings ? 'Sauvegarde...' : 'Enregistrer'}
-            </button>
+          <div className={styles.formCard}>
+            <EncaissementTarifsSettings canEdit={canEditSettings} />
           </div>
         </div>
-      </div>
       )}
 
       {generalSubTab === 'devise' && printSettings && (

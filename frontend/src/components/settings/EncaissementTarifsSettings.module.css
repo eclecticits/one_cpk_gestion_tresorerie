@@ -1,0 +1,192 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.chargement {
+  color: var(--color-text-muted, #64748b);
+  font-size: 14px;
+  padding: 12px 0;
+}
+
+.intro {
+  margin: 0;
+  color: var(--color-text-muted, #64748b);
+  font-size: 13.5px;
+  max-width: 90ch;
+  line-height: 1.55;
+}
+
+.alerte {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--color-warning-bg, #fff4dd);
+  color: var(--color-warning-text, #9a3412);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 12px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  min-width: 860px;
+}
+
+.table thead th {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--color-surface-muted, #f7f9fc);
+  border-bottom: 1px solid var(--color-border, #dbe3ee);
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.table tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-soft, #eef2f7);
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table input[type='text'],
+.table input[type='number'],
+.table select {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13.5px;
+  color: #1f2937;
+}
+
+.table input:disabled,
+.table select:disabled {
+  background: var(--color-surface-muted, #f7f9fc);
+  color: #64748b;
+}
+
+/* Une ligne inactive reste lisible, mais se distingue au premier coup d'œil. */
+.inactif td {
+  opacity: 0.55;
+}
+
+.montantCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Le cadenas n'apparaît que quand un montant est fixé : il annonce ce que la
+   caisse verra verrouillé. */
+.cadenas {
+  flex: 0 0 auto;
+  color: var(--tenant-primary, #1f6b5c);
+}
+
+.champAlerte {
+  border-color: var(--color-warning-text, #9a3412);
+  background: var(--color-warning-bg, #fff4dd);
+}
+
+.colRang {
+  width: 44px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+
+.colMontant {
+  width: 150px;
+}
+
+.colDevise {
+  width: 90px;
+}
+
+.colPoste {
+  width: 280px;
+}
+
+.colActif {
+  width: 64px;
+  text-align: center;
+}
+
+.colActions {
+  width: 170px;
+  white-space: nowrap;
+}
+
+.actionBtn {
+  min-height: 30px;
+  padding: 0 8px;
+  margin-right: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  background: #fff;
+  font-size: 12.5px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.actionBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.primaryBtn {
+  min-height: 38px;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: none;
+  background: var(--tenant-primary, #1f6b5c);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.primaryBtn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.secondaryBtn {
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  background: #fff;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: #334155;
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
