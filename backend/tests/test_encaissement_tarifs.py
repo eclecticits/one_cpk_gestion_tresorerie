@@ -188,3 +188,124 @@ async def test_un_tarif_inactif_ne_se_propose_plus(db_session):
 
     assert await list_encaissement_tarifs(actifs=True, _user=user, tenant_id=org.id, db=db_session) == []
     assert len(await list_encaissement_tarifs(actifs=False, _user=user, tenant_id=org.id, db=db_session)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Le verrou vit au serveur, pas dans l'écran
+# ---------------------------------------------------------------------------
+
+
+async def _articles(db, org, *, libelle, prix, quantite=1, poste_id=None, forcer=False):
+    """Passe des articles par la règle des tarifs, comme le fait la création."""
+    from app.services.encaissement_tarifs import appliquer_tarifs
+
+    articles = [
+        {
+            "libelle": libelle,
+            "description": None,
+            "quantite": Decimal(str(quantite)),
+            "prix_unitaire": Decimal(str(prix)),
+            "montant": Decimal(str(prix)) * Decimal(str(quantite)),
+            "budget_poste_id": poste_id,
+            "sort_order": 0,
+        }
+    ]
+    ecarts = await appliquer_tarifs(db, org.id, articles, peut_forcer=forcer)
+    return articles[0], ecarts
+
+
+@pytest.mark.asyncio
+async def test_le_tarif_impose_son_poste_a_une_ligne_muette(db_session):
+    org, user, _exercice, poste = await _contexte(db_session)
+    await _creer(db_session, org, user, libelle="Cotisation cabinet",
+                 montant=Decimal("300"), budget_poste_code=poste.code)
+
+    article, ecarts = await _articles(db_session, org, libelle="cotisation   CABINET", prix="300")
+
+    assert article["budget_poste_id"] == poste.id  # reconnu malgré casse et espaces
+    assert ecarts == []
+
+
+@pytest.mark.asyncio
+async def test_un_montant_hors_tarif_est_refuse_sans_le_droit_de_forcer(db_session):
+    """Sans ce refus côté serveur, contourner l'écran suffirait à contourner
+    le tarif, et deux encaissements du même libellé se remettraient à différer."""
+    org, user, _exercice, _poste = await _contexte(db_session)
+    await _creer(db_session, org, user, libelle="Cotisation stagiaire", montant=Decimal("50"))
+
+    with pytest.raises(HTTPException) as refus:
+        await _articles(db_session, org, libelle="Cotisation stagiaire", prix="40")
+    assert refus.value.status_code == 400
+    assert "tarifé à 50" in str(refus.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_forcer_un_montant_est_permis_et_rendu_a_l_appelant(db_session):
+    """Un tarif mal réglé ne doit pas bloquer une recette réelle ; l'écart se
+    consigne au lieu de se perdre."""
+    org, user, _exercice, _poste = await _contexte(db_session)
+    await _creer(db_session, org, user, libelle="Cotisation stagiaire", montant=Decimal("50"))
+
+    article, ecarts = await _articles(db_session, org, libelle="Cotisation stagiaire", prix="40", forcer=True)
+
+    assert article["prix_unitaire"] == Decimal("40")
+    assert ecarts == [
+        {"libelle": "Cotisation stagiaire", "champ": "prix_unitaire", "tarif": "50.00", "saisi": "40"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_le_prix_est_ferme_mais_la_quantite_reste_libre(db_session):
+    """Trois cotisations d'un coup : 3 × 50. Figer le total l'interdirait."""
+    org, user, _exercice, _poste = await _contexte(db_session)
+    await _creer(db_session, org, user, libelle="Cotisation stagiaire", montant=Decimal("50"))
+
+    article, ecarts = await _articles(db_session, org, libelle="Cotisation stagiaire", prix="50", quantite=3)
+
+    assert (article["quantite"], article["montant"]) == (Decimal("3"), Decimal("150"))
+    assert ecarts == []
+
+
+@pytest.mark.asyncio
+async def test_une_remise_glissee_dans_le_total_est_refusee(db_session):
+    """Le prix tarifé accompagné d'un total réduit serait une remise que
+    personne n'a décidée."""
+    org, user, _exercice, _poste = await _contexte(db_session)
+    await _creer(db_session, org, user, libelle="Cotisation stagiaire", montant=Decimal("50"))
+    from app.services.encaissement_tarifs import appliquer_tarifs
+
+    articles = [{
+        "libelle": "Cotisation stagiaire", "description": None, "quantite": Decimal("2"),
+        "prix_unitaire": Decimal("50"), "montant": Decimal("60"), "budget_poste_id": None, "sort_order": 0,
+    }]
+    with pytest.raises(HTTPException) as refus:
+        await appliquer_tarifs(db_session, org.id, articles, peut_forcer=False)
+    assert "vaut 100" in str(refus.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_un_tarif_sans_montant_laisse_le_prix_libre(db_session):
+    """Poste seul : l'imputation est ferme, le montant varie — c'est le cas des
+    arriérés, dont personne ne connaît le montant d'avance."""
+    org, user, _exercice, poste = await _contexte(db_session)
+    await _creer(db_session, org, user, libelle="Arriérés de cotisation", budget_poste_code=poste.code)
+
+    article, ecarts = await _articles(db_session, org, libelle="Arriérés de cotisation", prix="137.50")
+
+    assert article["prix_unitaire"] == Decimal("137.50")
+    assert article["budget_poste_id"] == poste.id
+    assert ecarts == []
+
+
+@pytest.mark.asyncio
+async def test_un_tarif_inactif_ne_verrouille_plus_rien(db_session):
+    org, user, _exercice, _poste = await _contexte(db_session)
+    tarif = await _creer(db_session, org, user, libelle="Cotisation 2025", montant=Decimal("40"))
+    await update_encaissement_tarif(
+        tarif_id=tarif.id, payload=EncaissementTarifUpdate(is_active=False), tenant_id=org.id, db=db_session
+    )
+
+    article, ecarts = await _articles(db_session, org, libelle="Cotisation 2025", prix="55")
+
+    assert article["prix_unitaire"] == Decimal("55")
+    assert ecarts == []

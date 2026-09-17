@@ -12,11 +12,15 @@ que d'imputer au hasard.
 
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Any
+
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
-from app.models.encaissement_tarif import EncaissementTarif
+from app.models.encaissement_tarif import EncaissementTarif, normaliser_libelle
 from app.models.print_settings import PrintSettings
 
 
@@ -115,3 +119,111 @@ async def tarifs_resolus(
         (tarif, postes.get((tarif.budget_poste_code or "").strip().upper()) if tarif.budget_poste_code else None)
         for tarif in tarifs
     ]
+
+
+async def appliquer_tarifs(
+    db: AsyncSession,
+    organisation_id: int,
+    articles: list[dict[str, Any]],
+    *,
+    peut_forcer: bool,
+) -> list[dict[str, Any]]:
+    """Impose aux articles ce que leur tarif définit, et rend les écarts.
+
+    Le verrou vit ici et non dans l'écran : une saisie qui contournerait le
+    formulaire contournerait aussi le tarif, et deux encaissements du même
+    libellé se remettraient à différer.
+
+    Ce qui est défini s'impose, champ par champ — un tarif peut ne fixer que le
+    prix, ne fixer que le poste, ou les deux. Ce qui n'est pas défini reste tel
+    que la caisse l'a saisi.
+
+    Forcer est possible, mais se sait : sans le droit d'y toucher, un écart au
+    prix tarifé est refusé ; avec ce droit, il est appliqué et rendu à
+    l'appelant, qui le consigne. Sans cette porte, un tarif mal réglé bloquerait
+    une recette réelle jusqu'à ce qu'un administrateur le corrige.
+    """
+    if not articles:
+        return []
+
+    resolus = await tarifs_resolus(db, organisation_id, actifs_seulement=True)
+    par_libelle = {tarif.libelle_normalise: (tarif, poste) for tarif, poste in resolus}
+    if not par_libelle:
+        return []
+
+    ecarts: list[dict[str, Any]] = []
+    for article in articles:
+        trouve = par_libelle.get(normaliser_libelle(article.get("libelle")))
+        if trouve is None:
+            continue
+        tarif, poste = trouve
+
+        if tarif.montant is not None:
+            tarife = Decimal(str(tarif.montant))
+            saisi = Decimal(str(article.get("prix_unitaire") or 0))
+            if saisi != tarife:
+                if not peut_forcer:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"« {tarif.libelle} » est tarifé à {tarife} {tarif.devise} : "
+                            f"montant {saisi} refusé. Corrigez le tarif dans les réglages, ou "
+                            f"faites forcer le montant par un administrateur."
+                        ),
+                    )
+                ecarts.append(
+                    {
+                        "libelle": tarif.libelle,
+                        "champ": "prix_unitaire",
+                        "tarif": str(tarife),
+                        "saisi": str(saisi),
+                    }
+                )
+            else:
+                # Le prix est ferme, donc le total de la ligne l'est aussi : sans
+                # ce contrôle, un prix tarifé accompagné d'un total réduit
+                # laisserait passer une remise que personne n'a décidée.
+                quantite = Decimal(str(article.get("quantite") or 1))
+                attendu = (tarife * quantite).quantize(Decimal("0.01"))
+                montant_ligne = Decimal(str(article.get("montant") or 0))
+                if montant_ligne != attendu:
+                    if not peut_forcer:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"« {tarif.libelle} » : {quantite} × {tarife} vaut {attendu}, "
+                                f"total {montant_ligne} refusé."
+                            ),
+                        )
+                    ecarts.append(
+                        {
+                            "libelle": tarif.libelle,
+                            "champ": "montant",
+                            "tarif": str(attendu),
+                            "saisi": str(montant_ligne),
+                        }
+                    )
+
+        if poste is not None:
+            actuel = article.get("budget_poste_id")
+            if actuel is None:
+                article["budget_poste_id"] = poste.id
+            elif int(actuel) != poste.id:
+                if not peut_forcer:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"« {tarif.libelle} » s'impute sur {poste.code} : "
+                            f"un autre poste ne peut être choisi ici."
+                        ),
+                    )
+                ecarts.append(
+                    {
+                        "libelle": tarif.libelle,
+                        "champ": "budget_poste_id",
+                        "tarif": poste.code,
+                        "saisi": str(actuel),
+                    }
+                )
+
+    return ecarts

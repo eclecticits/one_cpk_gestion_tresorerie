@@ -55,6 +55,7 @@ from app.utils.upload_validation import (
 )
 from app.services.client_receipt_email import schedule_client_payment_email
 from app.services.encaissement_payments import record_encaissement_payment, cancel_encaissement_payment
+from app.services.encaissement_tarifs import appliquer_tarifs
 from app.services.fonds_tiers import (
     assert_fonds_tiers_origin_can_be_cancelled,
     create_fonds_tiers_operation,
@@ -2144,6 +2145,15 @@ async def create_encaissement(
         if allowed_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail="Rubrique non autorisée pour ce service")
 
+    # Les tarifs d'abord : ils imposent aux lignes ce qu'ils définissent (prix,
+    # poste, ou les deux) avant que ces postes ne soient contrôlés.
+    ecarts_tarifaires = await appliquer_tarifs(
+        db,
+        tenant_id,
+        article_payloads,
+        peut_forcer=await _user_has_permission(db, user, "can_edit_settings"),
+    )
+
     await _valider_postes_articles(
         db,
         tenant_id=tenant_id,
@@ -2254,6 +2264,17 @@ async def create_encaissement(
                     created_by=current_user_id,
                 )
             _add_encaissement_articles(db, encaissement, tenant_id, article_payloads)
+            # Forcer un tarif est permis, mais jamais silencieux : l'écart au
+            # prix réglé est ce qu'un contrôleur cherchera plus tard.
+            if ecarts_tarifaires:
+                await log_action(
+                    db,
+                    user_id=current_user_id,
+                    action="ENCAISSEMENT_TARIF_FORCE",
+                    target_table="encaissements",
+                    target_id=str(encaissement.id),
+                    new_value={"ecarts": ecarts_tarifaires},
+                )
             if initial_montant_paye > 0:
                 notes_paiement = None
                 if payload.notes_paiement and payload.notes_paiement.strip():
