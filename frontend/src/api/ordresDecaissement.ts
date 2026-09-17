@@ -57,6 +57,29 @@ export async function createOrdreDecaissement(input: {
   return apiRequest('POST', '/ordres-decaissement', input)
 }
 
+/**
+ * Corrige un ordre de sortie directe que la caisse n'a pas encore payé.
+ *
+ * Le serveur rejoue tous les contrôles de la création — habilitation, plafond
+ * des 100 USD, cumul anti-fractionnement sur 24 h — et refuse un ordre payé,
+ * annulé, ou rattaché à une réquisition.
+ */
+export async function updateOrdreDecaissement(
+  ordreId: string,
+  input: {
+    beneficiaire: string
+    montant: number
+    devise?: 'USD' | 'CDF'
+    motif?: string | null
+    service_id?: number | null
+    lignes?: Array<OrdreDirectLigne | OrdreRepartitionLigne> | null
+    mode_paiement?: string | null
+    compte_bancaire_id?: number | null
+  }
+): Promise<OrdreDecaissement> {
+  return apiRequest('PUT', `/ordres-decaissement/${ordreId}`, input)
+}
+
 export async function annulerOrdreDecaissement(
   ordreId: string,
   motif_annulation: string

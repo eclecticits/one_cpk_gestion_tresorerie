@@ -144,17 +144,30 @@ def test_sortie_schema_rejette_montant_nul():
 # H2 — immuabilité des ordres de décaissement (surface d'API)
 # ---------------------------------------------------------------------------
 
-def test_ordres_decaissement_pas_de_route_de_modification():
-    """Un ordre AUTORISE ne doit pas pouvoir être modifié (montant/bénéficiaire)
-    après création : aucune route PUT/PATCH ne doit exister sur la ressource."""
+def test_ordres_decaissement_surface_de_modification_etroite():
+    """La correction d'un ordre existe, et elle est seule.
+
+    L'immuabilité d'origine — aucune route d'écriture après création — a été
+    levée pour le seul cas du bon direct que la caisse n'a pas encore payé :
+    corriger valait mieux qu'annuler et ressaisir, qui laissait deux pièces au
+    journal pour une dépense. Ce test tient la surface : un PUT, et rien
+    d'autre. Ce que ce PUT refuse (ordre payé, ordre annulé, tranche de
+    réquisition) et ce qu'il rejoue (plafond, anti-fractionnement) se vérifient
+    dans `test_ordre_direct_non_paye_se_corrige_sans_relacher_les_controles`.
+    """
     from app.api.v1.endpoints import ordres_decaissement as od
 
     methods = set()
     for route in od.router.routes:
         for m in getattr(route, "methods", set()) or set():
             methods.add(m.upper())
-    assert "PUT" not in methods
     assert "PATCH" not in methods
+    chemins_put = sorted(
+        getattr(route, "path", "")
+        for route in od.router.routes
+        if "PUT" in (getattr(route, "methods", set()) or set())
+    )
+    assert chemins_put == ["/{ordre_id}"]
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +268,265 @@ async def test_sortie_debite_caisse_et_annulation_recredite(db_session, monkeypa
     )
     await db.refresh(caisse)
     assert Decimal(str(caisse.solde_usd)) == Decimal("500")
+
+
+@pytest.mark.asyncio
+async def test_ordre_direct_non_paye_se_corrige_sans_relacher_les_controles(db_session, monkeypatch):
+    """Le bon direct en attente de caisse se corrige, plafonds rejoués.
+
+    Il n'a rien déplacé : ni trésorerie, ni budget. Mais la correction n'est pas
+    une porte dérobée — elle repasse par le plafond des 100 USD et par le cumul
+    anti-fractionnement sur 24 h, en excluant l'ordre de son propre cumul.
+    """
+    db = db_session
+    org = await _org(db)
+    service = await _service(db, org)
+    await db.commit()
+    user = await _admin(db, org)
+
+    async def fake_num(*a, **k):
+        return f"OD-{uuid.uuid4().hex[:8]}"
+
+    async def fake_perm(*a, **k):
+        return True
+
+    monkeypatch.setattr("app.api.v1.endpoints.ordres_decaissement.generate_document_number", fake_num)
+    monkeypatch.setattr("app.api.v1.endpoints.ordres_decaissement._user_has_permission", fake_perm)
+
+    from app.api.v1.endpoints.ordres_decaissement import (
+        create_ordre_decaissement,
+        update_ordre_decaissement,
+    )
+    from app.models.ordre_decaissement import OrdreDecaissement
+    from app.schemas.ordre_decaissement import OrdreDecaissementCreate
+
+    cree = await create_ordre_decaissement(
+        payload=OrdreDecaissementCreate(
+            beneficiaire="Moto taxi",
+            montant=Decimal("60"),
+            devise="USD",
+            motif="Course urgente",
+            service_id=service.id,
+        ),
+        request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
+    )
+
+    corrige = await update_ordre_decaissement(
+        ordre_id=str(cree["id"]),
+        payload=OrdreDecaissementCreate(
+            beneficiaire="Kabeya Transport",
+            montant=Decimal("75"),
+            devise="USD",
+            motif="Course urgente — facture reçue",
+            service_id=service.id,
+        ),
+        request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
+    )
+    assert corrige["beneficiaire"] == "Kabeya Transport"
+    assert Decimal(str(corrige["montant"])) == Decimal("75")
+    assert corrige["statut"] == "AUTORISE"
+    stocke = await db.get(OrdreDecaissement, uuid.UUID(str(cree["id"])))
+    # La clé du plafond suit le nom retenu, sinon le cumul chercherait l'ancien.
+    assert stocke.beneficiaire_normalise == "kabeya transport"
+
+    # Le plafond des 100 USD tient toujours.
+    with pytest.raises(HTTPException) as exc:
+        await update_ordre_decaissement(
+            ordre_id=str(cree["id"]),
+            payload=OrdreDecaissementCreate(
+                beneficiaire="Kabeya Transport",
+                montant=Decimal("500"),
+                devise="USD",
+                motif="Course urgente",
+                service_id=service.id,
+            ),
+            request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
+        )
+    assert exc.value.status_code == 400
+    assert "100 USD" in str(exc.value.detail)
+
+    # Le cumul anti-fractionnement aussi : un second ordre au même nom passe à
+    # 30 (75 + 30 > 100 seulement si le premier compte), et la correction du
+    # second vers 40 se heurte au cumul.
+    await update_ordre_decaissement(
+        ordre_id=str(cree["id"]),
+        payload=OrdreDecaissementCreate(
+            beneficiaire="Kabeya Transport",
+            montant=Decimal("70"),
+            devise="USD",
+            motif="Course urgente",
+            service_id=service.id,
+        ),
+        request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
+    )
+    second = await create_ordre_decaissement(
+        payload=OrdreDecaissementCreate(
+            beneficiaire="Kabeya Transport",
+            montant=Decimal("20"),
+            devise="USD",
+            motif="Seconde course",
+            service_id=service.id,
+        ),
+        request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
+    )
+    with pytest.raises(HTTPException) as exc:
+        await update_ordre_decaissement(
+            ordre_id=str(second["id"]),
+            payload=OrdreDecaissementCreate(
+                beneficiaire="Kabeya Transport",
+                montant=Decimal("40"),
+                devise="USD",
+                motif="Seconde course",
+                service_id=service.id,
+            ),
+            request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
+        )
+    assert exc.value.status_code == 400
+    assert "Fractionnement" in str(exc.value.detail)
+
+    # Un ordre payé sort du champ.
+    stocke = await db.get(OrdreDecaissement, uuid.UUID(str(cree["id"])))
+    stocke.statut = "PAYE"
+    await db.commit()
+    with pytest.raises(HTTPException) as exc:
+        await update_ordre_decaissement(
+            ordre_id=str(cree["id"]),
+            payload=OrdreDecaissementCreate(
+                beneficiaire="Quelqu'un d'autre",
+                montant=Decimal("10"),
+                devise="USD",
+                motif="Course urgente",
+                service_id=service.id,
+            ),
+            request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
+        )
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_bon_en_brouillon_se_corrige_et_recoit_son_beneficiaire(db_session, monkeypatch):
+    """Un bon non payé se reprend ; une sortie qui a touché l'argent, non.
+
+    Le brouillon n'a débité aucune caisse et n'a imputé aucun poste : le
+    corriger ne défait rien. Le bénéficiaire, en particulier, n'est pas
+    toujours connu quand le bon s'établit — l'exiger d'emblée obligeait à
+    jeter le bon et à le ressaisir.
+    """
+    db = db_session
+    org = await _org(db)
+    poste = await _depense_poste(db, org)
+    service = await _service(db, org)
+    caisse = await _caisse(db, org, usd=Decimal("500"))
+    await db.commit()
+    user = await _admin(db, org)
+
+    async def fake_num(*a, **k):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    async def accounting_disabled(*args, **kwargs):
+        return "disabled"
+
+    async def noop_notify(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sorties_fonds.get_accounting_integration_mode", accounting_disabled
+    )
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", noop_notify
+    )
+
+    from app.api.v1.endpoints.sorties_fonds import (
+        create_sortie_fonds,
+        create_sortie_fonds_draft,
+        update_sortie_fonds_draft,
+    )
+    from app.schemas.sortie_fonds import SortieFondsDraftCreate
+
+    brouillon = await create_sortie_fonds_draft(
+        payload=SortieFondsDraftCreate(
+            type_sortie="sortie_directe",
+            montant_paye=Decimal("90"),
+            mode_paiement="cash",
+            devise="USD",
+            canal="CAISSE",
+            motif="Fournitures de bureau",
+            service_id=service.id,
+            budget_poste_id=poste.id,
+        ),
+        request=_FakeRequest(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    assert brouillon.statut == "BROUILLON"
+    assert (brouillon.beneficiaire or "") == ""
+    await db.refresh(caisse)
+    assert Decimal(str(caisse.solde_usd)) == Decimal("500"), "un brouillon ne débite rien"
+
+    corrige = await update_sortie_fonds_draft(
+        sortie_id=str(brouillon.id),
+        payload=SortieFondsDraftCreate(
+            type_sortie="sortie_directe",
+            montant_paye=Decimal("110"),
+            mode_paiement="cash",
+            devise="USD",
+            canal="CAISSE",
+            motif="Fournitures de bureau et papeterie",
+            beneficiaire="Papeterie du Fleuve",
+            service_id=service.id,
+            budget_poste_id=poste.id,
+        ),
+        request=_FakeRequest(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    assert corrige.beneficiaire == "Papeterie du Fleuve"
+    assert Decimal(str(corrige.montant_paye)) == Decimal("110")
+    assert corrige.statut == "BROUILLON"
+    await db.refresh(caisse)
+    assert Decimal(str(caisse.solde_usd)) == Decimal("500")
+
+    # Une sortie payée sort du champ de cette route.
+    req = await _requisition_source(db, org, poste=poste, service=service, montant=Decimal("120"))
+    payee = await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="autre",
+            requisition_id=req.id,
+            montant_paye=Decimal("120"),
+            mode_paiement="cash",
+            devise="USD",
+            canal="CAISSE",
+            motif="Paiement",
+            beneficiaire="Fournisseur",
+            service_id=service.id,
+            budget_poste_id=poste.id,
+        ),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    with pytest.raises(HTTPException) as exc:
+        await update_sortie_fonds_draft(
+            sortie_id=str(payee.id),
+            payload=SortieFondsDraftCreate(
+                type_sortie="autre",
+                montant_paye=Decimal("1"),
+                motif="Réécriture",
+                beneficiaire="Quelqu'un d'autre",
+                service_id=service.id,
+                budget_poste_id=poste.id,
+            ),
+            request=_FakeRequest(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -1218,6 +1490,15 @@ async def test_annulation_versement_refusee_si_banque_destination_insuffisante(d
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.get_accounting_integration_mode", accounting_disabled)
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", noop_notify)
+    # Ce test porte sur le chemin classique, celui qui écrit une ligne dans
+    # `sorties_fonds`. La bascule vers le moteur dédié se décide par
+    # `TRANSFERTS_ENGINE_TENANTS`, une liste d'identifiants d'organisations :
+    # sans ce verrou, le test dépendait de l'id que la séquence lui attribuait,
+    # et un test ajouté plus haut dans le fichier suffisait à le faire basculer
+    # — le moteur n'écrit alors aucune ligne, et la relecture ne trouvait rien.
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sorties_fonds.delegue_au_moteur", lambda *a, **k: False
+    )
 
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds, update_sortie_statut
     from app.schemas.sortie_fonds import SortieFondsStatusUpdate

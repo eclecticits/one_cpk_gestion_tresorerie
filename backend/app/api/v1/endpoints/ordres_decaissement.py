@@ -117,7 +117,15 @@ async def _assert_pas_fractionnement_direct(
     beneficiaire: str,
     service_id: int,
     montant_usd: Decimal,
+    exclure_ordre_id: uuid.UUID | None = None,
 ) -> None:
+    """Le cumul 24 h par (organisation, service, bénéficiaire) tient-il sous le plafond ?
+
+    `exclure_ordre_id` sert la correction d'un ordre existant : son montant
+    actuel est déjà dans le cumul, et l'y laisser le ferait se heurter à
+    lui-même — un ordre de 90 USD corrigé en 80 serait refusé pour un cumul
+    de 170.
+    """
     depuis = _utcnow() - timedelta(hours=24)
     cle_beneficiaire = normaliser_cle_beneficiaire(beneficiaire)
     # Le contrôle doit être atomique, sinon il ne contrôle rien : deux ordres
@@ -153,6 +161,11 @@ async def _assert_pas_fractionnement_direct(
             # qui rend le filtre indexable (ix_ordres_direct_fractionnement) et
             # ce qui rend l'écart de normalisation impossible par construction.
             OrdreDecaissement.beneficiaire_normalise == cle_beneficiaire,
+            *(
+                (OrdreDecaissement.id != exclure_ordre_id,)
+                if exclure_ordre_id is not None
+                else ()
+            ),
         )
     )
     cumul = Decimal(montant_usd or 0) + Decimal(str(cumul_anterieur or 0))
@@ -751,6 +764,172 @@ async def list_ordres_decaissement(
         "total_autorise_non_paye": total_autorise,
         "reliquat": reliquat,
     }
+
+
+@router.put("/{ordre_id}", response_model=OrdreDecaissementOut)
+async def update_ordre_decaissement(
+    ordre_id: str,
+    payload: OrdreDecaissementCreate,
+    request: Request,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Corrige un ordre de sortie directe tant que la caisse ne l'a pas payé.
+
+    Un bon en attente de caisse n'a encore rien déplacé : ni trésorerie, ni
+    budget. Le corriger vaut mieux que l'annuler et le ressaisir, qui laissait
+    deux pièces au journal pour une seule dépense.
+
+    Ce que la correction ne relâche pas : elle rejoue TOUS les contrôles de la
+    création — habilitation, service et motif exigés, plafond des 100 USD,
+    cumul anti-fractionnement sur 24 h avec le nom retenu. Un ordre de 90 USD
+    ne devient donc pas 500 par ce chemin, et le renommer ne fait pas échapper
+    au cumul : le contrôle est simplement rejoué sur les nouvelles valeurs, en
+    excluant l'ordre lui-même du cumul antérieur.
+
+    Hors de portée : un ordre déjà payé ou annulé (la pièce a produit ses
+    effets), et une tranche de réquisition à décaissement progressif, dont le
+    plafond et la séparation des pouvoirs relèvent de la réquisition.
+    """
+    try:
+        oid = uuid.UUID(ordre_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid ordre_id UUID")
+
+    res = await db.execute(
+        select(OrdreDecaissement)
+        .where(OrdreDecaissement.id == oid, OrdreDecaissement.organisation_id == tenant_id)
+        .with_for_update()
+    )
+    ordre = res.scalar_one_or_none()
+    if ordre is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordre de décaissement introuvable")
+
+    statut = (ordre.statut or "").upper()
+    if statut != "AUTORISE":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cet ordre a déjà été payé par la caisse."
+                if statut == "PAYE"
+                else "Cet ordre est annulé : il ne se corrige plus."
+            ),
+        )
+    if ordre.requisition_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cet ordre est une tranche de réquisition : son montant tient au plafond "
+                "de la réquisition. Annulez la tranche et autorisez-en une autre."
+            ),
+        )
+    if not await _user_has_permission(db, user, "can_direct_disbursement"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Privilèges insuffisants : corriger une sortie directe requiert "
+                "can_direct_disbursement (administrateur ou utilisateur habilité)"
+            ),
+        )
+    if payload.requisition_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Un ordre direct ne se rattache pas à une réquisition par correction",
+        )
+    if payload.service_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="service_id requis pour un ordre direct d'urgence",
+        )
+    if not (payload.motif or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="motif requis pour un ordre direct d'urgence",
+        )
+
+    montant_usd_snapshot = await _montant_direct_usd(
+        db,
+        tenant_id=tenant_id,
+        montant=Decimal(payload.montant or 0),
+        devise=payload.devise,
+    )
+    if montant_usd_snapshot > LIMITE_SORTIE_DIRECTE_USD:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sortie directe limitée à 100 USD : au-delà, créez une réquisition",
+        )
+    # Même ordre qu'à la création : le nom est arrêté avant le contrôle, et
+    # c'est de lui que la clé de regroupement est tirée.
+    beneficiaire_direct = payload.beneficiaire.strip()
+    await _assert_pas_fractionnement_direct(
+        db,
+        tenant_id=tenant_id,
+        beneficiaire=beneficiaire_direct,
+        service_id=payload.service_id,
+        montant_usd=montant_usd_snapshot,
+        exclure_ordre_id=ordre.id,
+    )
+
+    mode_direct = normaliser_mode(payload.mode_paiement) or "cash"
+    compte_direct = await resoudre_compte_bancaire(
+        payload.compte_bancaire_id,
+        mode_paiement=mode_direct,
+        tenant_id=tenant_id,
+        db=db,
+    )
+    canal_direct = canal_pour_mode(mode_direct)
+    if canal_direct == CANAL_BANQUE and compte_direct is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="compte_bancaire_id requis pour un volet bancaire",
+        )
+
+    avant = {
+        "beneficiaire": ordre.beneficiaire,
+        "montant": float(ordre.montant or 0),
+        "devise": ordre.devise,
+        "motif": ordre.motif,
+        "service_id": ordre.service_id,
+        "lignes": ordre.lignes,
+    }
+
+    ordre.beneficiaire = beneficiaire_direct
+    ordre.beneficiaire_normalise = normaliser_cle_beneficiaire(beneficiaire_direct)
+    ordre.montant = payload.montant
+    ordre.montant_usd_snapshot = montant_usd_snapshot
+    ordre.devise = payload.devise
+    ordre.motif = payload.motif
+    ordre.service_id = payload.service_id
+    ordre.lignes = payload.lignes
+    ordre.mode_paiement = mode_direct
+    ordre.canal = canal_direct
+    ordre.compte_bancaire_id = compte_direct
+    ordre.updated_at = _utcnow()
+    # `autorise_par` ne bouge pas : l'autorisation reste celle qui a été donnée.
+    # Qui a corrigé, et quoi, se lit au journal.
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="ORDRE_SORTIE_DIRECTE_CORRIGE",
+        target_table="ordres_decaissement",
+        target_id=str(ordre.id),
+        old_value=avant,
+        new_value={
+            "numero_ordre": ordre.numero_ordre,
+            "beneficiaire": ordre.beneficiaire,
+            "montant": float(ordre.montant or 0),
+            "devise": ordre.devise,
+            "motif": ordre.motif,
+            "service_id": ordre.service_id,
+            "lignes": ordre.lignes,
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(ordre)
+    return _ordre_out(ordre, users_map={user.id: user})
 
 
 @router.post("/{ordre_id}/annuler", response_model=OrdreDecaissementOut)

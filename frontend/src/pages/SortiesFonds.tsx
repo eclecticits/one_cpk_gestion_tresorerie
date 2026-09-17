@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Search, Printer, Undo2, Ban, Lock, Paperclip, Target } from 'lucide-react'
+import { Search, Printer, Undo2, Ban, Lock, Paperclip, Pencil, Target } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
@@ -82,6 +82,9 @@ export default function SortiesFonds() {
   const fondsTiersOperationParam = searchParams.get('fonds_tiers_operation_id')
   const queryClient = useQueryClient()
   const [showForm, setShowForm] = useState(false)
+  // Bon non payé qu'on reprend : son identifiant tant que le formulaire sert à
+  // le corriger, `null` quand il sert à créer une sortie.
+  const [brouillonEnEdition, setBrouillonEnEdition] = useState<string | null>(null)
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
   const [submitting, setSubmitting] = useState(false)
   const idempotencyAttempt = useRef<{ key: string; fingerprint: string } | null>(null)
@@ -642,11 +645,51 @@ export default function SortiesFonds() {
   }, [defaultServiceId])
   const closeCreationForm = useCallback(() => {
     setShowForm(false)
+    setBrouillonEnEdition(null)
     setJustificatifFiles([])
     if (isCreatePage) {
       navigate('/sorties-fonds')
     }
   }, [isCreatePage, navigate])
+
+  /**
+   * Rouvre un bon encore en brouillon.
+   *
+   * Il n'a débité aucune caisse ni imputé aucun poste : le corriger ne défait
+   * rien, c'est la même pièce qu'on finit d'écrire. Le bénéficiaire, souvent
+   * inconnu au moment où le bon s'établit, s'y renseigne sans qu'il faille
+   * jeter le bon et le ressaisir.
+   */
+  const ouvrirBrouillon = useCallback((sortie: SortieFonds) => {
+    const brut = sortie as any
+    setBrouillonEnEdition(String(sortie.id))
+    setFormData({
+      type_sortie: (sortie.type_sortie || 'requisition') as TypeSortieFonds,
+      requisition_id: brut.requisition_id ? String(brut.requisition_id) : '',
+      ordre_decaissement_id: brut.ordre_decaissement_id ? String(brut.ordre_decaissement_id) : '',
+      montant_paye: brut.montant_paye != null ? String(brut.montant_paye) : '',
+      date_paiement: brut.date_paiement
+        ? format(new Date(brut.date_paiement), 'yyyy-MM-dd')
+        : format(new Date(), 'yyyy-MM-dd'),
+      mode_paiement: (brut.mode_paiement || 'cash') as ModePaiement,
+      reference: brut.reference || '',
+      devise: brut.devise || 'USD',
+      canal: brut.canal || 'CAISSE',
+      compte_bancaire_id: brut.compte_bancaire_id ? String(brut.compte_bancaire_id) : '',
+      commentaire: brut.commentaire || '',
+      motif: brut.motif || '',
+      rubrique_code: brut.rubrique_code || '',
+      budget_poste_id: brut.budget_poste_id ? String(brut.budget_poste_id) : '',
+      service_id: brut.service_id ? String(brut.service_id) : '',
+      beneficiaire: brut.beneficiaire || '',
+      piece_justificative: brut.piece_justificative || '',
+      fonds_tiers_operation_id: brut.fonds_tiers_operation_id
+        ? String(brut.fonds_tiers_operation_id)
+        : '',
+    })
+    setJustificatifFiles([])
+    setShowForm(true)
+  }, [])
   const isRequisitionBound =
     requiresApprovedRequisition &&
     !!formData.requisition_id
@@ -1778,7 +1821,7 @@ export default function SortiesFonds() {
     if (submitting) return
     setSubmitting(true)
     try {
-      await apiRequest('POST', '/sorties-fonds/drafts', {
+      const corps = {
         type_sortie: formData.type_sortie,
         requisition_id: formData.requisition_id || null,
         ordre_decaissement_id: formData.ordre_decaissement_id || null,
@@ -1796,8 +1839,14 @@ export default function SortiesFonds() {
         beneficiaire: formData.beneficiaire || null,
         piece_justificative: formData.piece_justificative || null,
         commentaire: formData.commentaire || null,
-      })
-      notifySuccess('Brouillon enregistré', 'La sortie de fonds a été enregistrée en brouillon.')
+      }
+      if (brouillonEnEdition) {
+        await apiRequest('PUT', `/sorties-fonds/${brouillonEnEdition}/brouillon`, corps)
+        notifySuccess('Brouillon corrigé', "Le bon a été mis à jour ; il n'est toujours pas payé.")
+      } else {
+        await apiRequest('POST', '/sorties-fonds/drafts', corps)
+        notifySuccess('Brouillon enregistré', 'La sortie de fonds a été enregistrée en brouillon.')
+      }
       invalidateSortiesFonds()
       setFilterStatut('BROUILLON')
       setPage(1)
@@ -1806,6 +1855,7 @@ export default function SortiesFonds() {
       } else {
         setShowForm(false)
       }
+      setBrouillonEnEdition(null)
       resetSortieForm()
     } catch (error: any) {
       notifyError("Erreur d'enregistrement", error?.message || "Impossible d'enregistrer le brouillon.")
@@ -2312,7 +2362,7 @@ export default function SortiesFonds() {
           <div className={isCreatePage ? styles.createPageContent : styles.modalContent}>
             {!isCreatePage && (
               <div className={styles.modalHeader}>
-                <h2>Nouvelle sortie de fonds</h2>
+                <h2>{brouillonEnEdition ? 'Corriger le bon (brouillon)' : 'Nouvelle sortie de fonds'}</h2>
                 <button onClick={closeCreationForm} className={styles.closeBtn}>×</button>
               </div>
             )}
@@ -3312,7 +3362,7 @@ export default function SortiesFonds() {
                 >
                   Annuler
                 </button>
-                {isCreatePage && (
+                {isCreatePage && !brouillonEnEdition && (
                   <>
                     <button
                       type="button"
@@ -3332,13 +3382,28 @@ export default function SortiesFonds() {
                     </button>
                   </>
                 )}
-                <button
-                  type="submit"
-                  className={styles.primaryBtn}
-                  disabled={submitting || noApprovedRequisitionAvailable || amountExceedsRemaining || (isCashClosed && formData.mode_paiement === 'cash')}
-                >
-                  {submitting ? 'Enregistrement en cours...' : isCreatePage ? 'Enregistrer et valider' : 'Enregistrer le paiement'}
-                </button>
+                {/* Correction d'un bon : le seul bouton enregistre le brouillon.
+                    Le paiement créerait une seconde sortie et laisserait le bon
+                    derrière lui — il se déclenche depuis la liste, une fois le
+                    bon juste. */}
+                {brouillonEnEdition ? (
+                  <button
+                    type="button"
+                    className={styles.primaryBtn}
+                    disabled={submitting}
+                    onClick={handleSaveDraft}
+                  >
+                    {submitting ? 'Enregistrement...' : 'Enregistrer les corrections'}
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    className={styles.primaryBtn}
+                    disabled={submitting || noApprovedRequisitionAvailable || amountExceedsRemaining || (isCashClosed && formData.mode_paiement === 'cash')}
+                  >
+                    {submitting ? 'Enregistrement en cours...' : isCreatePage ? 'Enregistrer et valider' : 'Enregistrer le paiement'}
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -3511,6 +3576,17 @@ export default function SortiesFonds() {
                             aria-label="Retour en trésorerie"
                           >
                             <Undo2 size={16} /><span className={styles.printLabel}>Retour</span>
+                          </button>
+                        )}
+                        {String((sortie as any)?.statut || '').toUpperCase() === 'BROUILLON' && canCreate && (
+                          <button
+                            type="button"
+                            className={`${styles.actionBtn} ${styles.actionIconBtn}`}
+                            onClick={() => ouvrirBrouillon(sortie as SortieFonds)}
+                            title="Corriger ce bon : il n'est pas payé"
+                            aria-label="Corriger le bon"
+                          >
+                            <Pencil size={16} /><span className={styles.printLabel}>Corriger</span>
                           </button>
                         )}
                         {canUpdateStatut && (

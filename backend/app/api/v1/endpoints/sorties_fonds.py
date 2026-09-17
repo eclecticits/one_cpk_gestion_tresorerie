@@ -1232,14 +1232,22 @@ async def _ligne_unique_de_requisition(
     return lignes[0] if len(lignes) == 1 else None
 
 
-@router.post("/drafts", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
-async def create_sortie_fonds_draft(
+async def _controler_brouillon(
+    db: AsyncSession,
+    *,
     payload: SortieFondsDraftCreate,
-    request: Request,
-    user: User = Depends(has_permission("can_execute_payment")),
-    tenant_id: int = Depends(get_current_tenant_id),
-    db: AsyncSession = Depends(get_db),
-) -> SortieFondsOut:
+    tenant_id: int,
+    user: User,
+) -> tuple[str, str, uuid.UUID | None, datetime | None]:
+    """Contrôles d'un bon non payé, à la création comme à la correction.
+
+    Un brouillon ne débite rien et n'impute rien : il n'écrit que la pièce. Ce
+    qu'on vérifie ici, ce sont donc les cohérences qui rendraient le paiement
+    impossible plus tard — canal, devise, compte compatible, service de la
+    réquisition — plutôt qu'un quelconque effet sur la trésorerie.
+
+    Renvoie les valeurs normalisées : canal, devise, réquisition et date.
+    """
     canal = (payload.canal or "CAISSE").upper()
     if canal not in CANAL_PAIEMENT:
         raise HTTPException(status_code=400, detail="canal invalide")
@@ -1300,6 +1308,20 @@ async def create_sortie_fonds_draft(
     date_paiement = resoudre_date_operation(
         date_paiement, user=user, champ="date_paiement"
     )
+    return canal, devise, requisition_uid, date_paiement
+
+
+@router.post("/drafts", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
+async def create_sortie_fonds_draft(
+    payload: SortieFondsDraftCreate,
+    request: Request,
+    user: User = Depends(has_permission("can_execute_payment")),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> SortieFondsOut:
+    canal, devise, requisition_uid, date_paiement = await _controler_brouillon(
+        db, payload=payload, tenant_id=tenant_id, user=user
+    )
 
     sortie = SortieFonds(
         type_sortie=(payload.type_sortie or "requisition"),
@@ -1343,6 +1365,112 @@ async def create_sortie_fonds_draft(
     await db.commit()
     await db.refresh(sortie)
     return _sortie_out(sortie, creator=user)
+
+
+@router.put("/{sortie_id}/brouillon", response_model=SortieFondsOut)
+async def update_sortie_fonds_draft(
+    sortie_id: str,
+    payload: SortieFondsDraftCreate,
+    request: Request,
+    user: User = Depends(has_permission("can_execute_payment")),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> SortieFondsOut:
+    """Corrige un bon tant qu'il n'est pas payé.
+
+    Un brouillon n'a débité aucune caisse et n'a imputé aucun poste : le
+    reprendre ne défait rien, c'est la même pièce qu'on finit d'écrire. Le
+    bénéficiaire, en particulier, n'est pas toujours connu quand le bon
+    s'établit — il se renseigne ici sans qu'il faille jeter le bon et le
+    ressaisir.
+
+    Payée, annulée ou contre-passée, la sortie ne relève plus de cette route :
+    elle a touché l'argent, et sa correction passe par une annulation ou un
+    retour en trésorerie, qui eux laissent trace.
+    """
+    try:
+        sortie_uid = uuid.UUID(sortie_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sortie_id UUID")
+
+    res = await db.execute(
+        select(SortieFonds)
+        .where(SortieFonds.id == sortie_uid, SortieFonds.organisation_id == tenant_id)
+        .with_for_update()
+    )
+    sortie = res.scalar_one_or_none()
+    if sortie is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+    statut = (sortie.statut or "").strip().upper()
+    if statut != "BROUILLON":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cette sortie n'est plus un brouillon : elle a touché la trésorerie. "
+                "Passez par l'annulation ou le retour en trésorerie."
+            ),
+        )
+
+    canal, devise, requisition_uid, date_paiement = await _controler_brouillon(
+        db, payload=payload, tenant_id=tenant_id, user=user
+    )
+
+    avant = {
+        "montant_paye": float(sortie.montant_paye or 0),
+        "beneficiaire": sortie.beneficiaire,
+        "motif": sortie.motif,
+        "budget_poste_id": sortie.budget_poste_id,
+        "service_id": sortie.service_id,
+        "devise": sortie.devise,
+        "canal": sortie.canal,
+    }
+
+    sortie.type_sortie = payload.type_sortie or sortie.type_sortie
+    sortie.requisition_id = requisition_uid
+    sortie.ligne_requisition_id = await _ligne_unique_de_requisition(db, requisition_uid)
+    sortie.rubrique_code = payload.rubrique_code
+    sortie.budget_poste_id = payload.budget_poste_id
+    sortie.service_id = payload.service_id
+    sortie.montant_paye = payload.montant_paye or Decimal("0")
+    sortie.date_paiement = date_paiement
+    sortie.mode_paiement = payload.mode_paiement or "cash"
+    sortie.reference = payload.reference
+    sortie.devise = devise
+    sortie.canal = canal
+    sortie.compte_bancaire_id = payload.compte_bancaire_id
+    sortie.motif = (payload.motif or "").strip()
+    sortie.beneficiaire = (payload.beneficiaire or "").strip()
+    sortie.piece_justificative = payload.piece_justificative
+    sortie.commentaire = payload.commentaire
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="SORTIE_DRAFT_UPDATED",
+        target_table="sorties_fonds",
+        target_id=str(sortie.id),
+        old_value=avant,
+        new_value={
+            "montant_paye": float(sortie.montant_paye or 0),
+            "beneficiaire": sortie.beneficiaire,
+            "motif": sortie.motif,
+            "budget_poste_id": sortie.budget_poste_id,
+            "service_id": sortie.service_id,
+            "devise": sortie.devise,
+            "canal": sortie.canal,
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(sortie)
+    # Le créateur reste celui qui a établi le bon : celui qui le corrige n'en
+    # prend pas la paternité, et la liste doit continuer d'afficher le premier.
+    createur = None
+    if sortie.created_by is not None:
+        createur = (
+            await db.execute(select(User).where(User.id == sortie.created_by))
+        ).scalar_one_or_none()
+    return _sortie_out(sortie, creator=createur)
 
 
 async def _deleguer_transfert_interne(
