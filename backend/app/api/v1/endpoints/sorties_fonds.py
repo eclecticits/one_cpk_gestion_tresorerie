@@ -65,8 +65,10 @@ from app.schemas.sortie_fonds import (
     SortiesFondsListResponse,
     SortieFondsStatusUpdate,
     SortieFondsPaymentRejectPayload,
+    TrancheDecaissementOut,
 )
 from app.services.document_sequences import generate_document_number
+from app.services.tranches_decaissement import TrancheDecaissement, tranches_par_sortie
 from app.services import transferts_delegues
 from app.services.transferts_internes_service import (
     contrepasser_transfer,
@@ -573,6 +575,7 @@ def _sortie_out(
     approbateur: User | None = None,
     remboursement_transport: dict[str, Any] | None = None,
     montant_affecte_budget: Decimal | None = None,
+    tranche: TrancheDecaissement | None = None,
 ) -> SortieFondsOut:
     return SortieFondsOut(
         id=str(sortie.id),
@@ -628,6 +631,7 @@ def _sortie_out(
             approbateur=approbateur,
             remboursement_transport=remboursement_transport,
         ) if requisition else None,
+        tranche=TrancheDecaissementOut(**vars(tranche)) if tranche else None,
     )
 
 
@@ -882,6 +886,9 @@ async def list_sorties_fonds(
         organisation_id=tenant_id,
         sortie_ids=[s.id for s in sorties_page if _est_sortie_hors_budget(s)],
     )
+    tranches = await tranches_par_sortie(
+        db, tenant_id, [s.requisition_id for s in sorties_page]
+    )
     if include_requisition:
         items = [
             _sortie_out(
@@ -894,6 +901,7 @@ async def list_sorties_fonds(
                 approbateur=users_map.get(req.approuvee_par) if req and req.approuvee_par else None,
                 remboursement_transport=remboursements_map.get(req.id) if req else None,
                 montant_affecte_budget=affectations.get(sortie.id) if sortie else None,
+                tranche=tranches.get(sortie.id) if sortie else None,
             ) 
             for sortie, req in rows
         ]
@@ -905,6 +913,7 @@ async def list_sorties_fonds(
                 canceller=users_map.get(sortie.annulee_par_id) if sortie.annulee_par_id else None,
                 programme_par=users_map.get(sortie.programme_par_id) if sortie.programme_par_id else None,
                 montant_affecte_budget=affectations.get(sortie.id),
+                tranche=tranches.get(sortie.id),
             )
             for sortie in rows
         ]

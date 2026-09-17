@@ -59,7 +59,9 @@ REQUISITION_STATUT_EN_ATTENTE = (
     "APPROUVEE",
     "PENDING_VALIDATION_IMPORT",
 )
-REQUISITION_STATUT_APPROUVEE = ("APPROUVEE", "PAYEE")
+# Approuvée et au-delà : une réquisition en cours de paiement par tranches
+# (EN_DECAISSEMENT) a été approuvée comme les autres.
+REQUISITION_STATUT_APPROUVEE = ("APPROUVEE", "EN_DECAISSEMENT", "PAYEE")
 
 
 def _parse_date_value(value: str | None) -> date | None:

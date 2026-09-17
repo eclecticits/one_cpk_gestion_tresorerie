@@ -57,6 +57,17 @@ class SortieFondsDraftCreate(DecimalBaseModel):
     commentaire: str | None = None
 
 
+class TrancheDecaissementOut(DecimalBaseModel):
+    """Place d'une sortie dans une réquisition payée en plusieurs fois."""
+
+    numero: int
+    nombre: int
+    cumul_paye: Decimal
+    montant_total: Decimal
+    reste: Decimal
+    devise: str
+
+
 class SortieFondsOut(DecimalBaseModel):
     id: UUID
     type_sortie: str
@@ -109,6 +120,8 @@ class SortieFondsOut(DecimalBaseModel):
     annulee_par_user: UserInfo | None = None
     created_at: datetime
     requisition: RequisitionWithUserOut | RequisitionOut | None = None
+    #: Renseignée seulement pour une réquisition payée en plusieurs fois.
+    tranche: TrancheDecaissementOut | None = None
     is_reconciled: bool = False
     reconciled_at: datetime | None = None
     reconciled_by_id: UUID | None = None

@@ -45,6 +45,7 @@ from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.services.entrees_caisse import list_entrees_internes_caisse, list_entrees_internes_banque
 from app.services.tenant_identity import tenant_display_name
+from app.services.tranches_decaissement import libelle_tranche, tranches_par_sortie
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.budget_commentaire import BudgetPosteCommentaire
 from app.models.compte_bancaire import CompteBancaire
@@ -83,7 +84,10 @@ async def require_expert_admin(
         detail="Action réservée au Conseil National (CN).",
     )
 
-REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "PAYEE")
+# Mêmes statuts que la liste `GET /sorties-fonds`, que ce classeur exporte.
+# EN_DECAISSEMENT : une réquisition payée par tranches y reste jusqu'à la
+# dernière ; l'omettre retirait du classeur toutes ses tranches déjà payées.
+REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "EN_DECAISSEMENT", "PAYEE")
 
 
 def _requisition_status_values_for_filter(value: str) -> list[str]:
@@ -2417,6 +2421,7 @@ async def construire_classeur_sorties_fonds(
         fonds_tiers_par_operation = {op.id: noms[op.id][0] for op in operations}
 
     req_ids = [req.id for _, req, _, _ in rows if req is not None]
+    tranches = await tranches_par_sortie(db, organisation_id, req_ids)
     rubriques_map: dict[str, str] = {}
     if req_ids:
         lignes = []
@@ -2431,7 +2436,13 @@ async def construire_classeur_sorties_fonds(
         grouped: dict[str, set[str]] = {}
         for ligne in lignes:
             key = str(ligne.requisition_id)
-            grouped.setdefault(key, set()).add(ligne.rubrique)
+            # Le poste où la ligne est imputée, pas le texte signé : une
+            # ré-imputation déplace le poste et ses empreintes, mais laisse
+            # `rubrique` tel que le validateur l'a lu (le verrou l'impose).
+            code = ligne.budget_poste_code_snapshot
+            libelle = ligne.budget_poste_libelle_snapshot
+            poste = f"{code} - {libelle}" if code and libelle else (code or ligne.rubrique)
+            grouped.setdefault(key, set()).add(poste)
         rubriques_map = {k: ", ".join(sorted(v)) for k, v in grouped.items()}
 
     # Retours en caisse de la période : préchargés ici (avant la construction,
@@ -2512,6 +2523,10 @@ async def construire_classeur_sorties_fonds(
             "Bénéficiaire",
             "Motif",
             "Montant payé (USD)",
+            # Place du paiement dans un dossier réglé en plusieurs fois : sans
+            # elle, deux tranches du même dossier se lisent comme deux
+            # paiements sans lien.
+            "Tranche",
             "Mode de paiement",
             "Référence",
             "Statut",
@@ -2530,7 +2545,13 @@ async def construire_classeur_sorties_fonds(
         for sortie, req, creator, programmeur in rows:
             montant = Decimal(sortie.montant_paye or 0)
             total_paye += montant
-            rubrique_value = rubriques_map.get(str(req.id), "") if req else ""
+            # Poste de la sortie d'abord : la ré-imputation le tient à jour, et
+            # il ne cite que le poste réellement payé. Les lignes ne servent
+            # que pour une sortie répartie, qui n'en porte pas.
+            if getattr(sortie, "budget_poste_code", None) and getattr(sortie, "budget_poste_libelle", None):
+                rubrique_value = f"{sortie.budget_poste_code} - {sortie.budget_poste_libelle}"
+            else:
+                rubrique_value = rubriques_map.get(str(req.id), "") if req else ""
 
             author_name = _person_name(creator)
             programmeur_name = _person_name(programmeur)
@@ -2570,6 +2591,7 @@ async def construire_classeur_sorties_fonds(
                     sortie.beneficiaire or "",
                     sortie.motif or "",
                     float(sortie.montant_paye or 0),
+                    libelle_tranche(tranches[sortie.id]) if sortie.id in tranches else "",
                     mode_label,
                     sortie.reference or "",
                     (sortie.statut or "VALIDE"),
@@ -2607,6 +2629,7 @@ async def construire_classeur_sorties_fonds(
                     ligne["beneficiaire"],
                     ligne["motif"],
                     float(montant),
+                    "",
                     mode_label,
                     ligne["reference"],
                     ligne["statut"],
@@ -2649,6 +2672,7 @@ async def construire_classeur_sorties_fonds(
                     sortie_orig.beneficiaire or "",
                     retour.motif or f"Reliquat rendu ({retour.type_retour})",
                     float(montant_neg),
+                    "",
                     mode_label,
                     retour.reference_numero or "",
                     retour.statut or "VALIDE",

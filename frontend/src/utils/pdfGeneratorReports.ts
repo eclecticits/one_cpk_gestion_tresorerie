@@ -413,6 +413,14 @@ export const buildListReport = async ({
 
 const usd = (value: any) => `${formatAmount(value)} $`
 
+/** « Tranche 2 — payé 650,00 / 2 470,00 USD, reste 1 820,00 » : même libellé
+ *  que la colonne « Tranche » de l'export Excel. */
+const trancheLabel = (tranche: any): string => {
+  if (!tranche) return ''
+  const base = `Tranche ${tranche.numero} — payé ${formatAmount(tranche.cumul_paye)} / ${formatAmount(tranche.montant_total)} ${tranche.devise || 'USD'}`
+  return toNumber(tranche.reste) > 0 ? `${base}, reste ${formatAmount(tranche.reste)}` : `${base}, soldé`
+}
+
 const buildFileSuffix = (options: ReportOptions) => {
   const debut = options.dateDebut ? String(options.dateDebut).slice(0, 10) : 'debut'
   const fin = options.dateFin ? String(options.dateFin).slice(0, 10) : 'fin'
@@ -490,7 +498,11 @@ export const generateSortiesReportPDF = async (
       ? s?.requisition?.numero_requisition || s?.reference_numero || s?.reference || '—'
       : s?.reference_numero || s?.reference || '—'
     const beneficiaire = s?.beneficiaire || (isReq ? s?.requisition?.objet : '') || '—'
-    const motif = isReq ? s?.requisition?.objet || s?.motif || '—' : s?.motif || '—'
+    const objet = isReq ? s?.requisition?.objet || s?.motif || '—' : s?.motif || '—'
+    // Une tranche se lit sous l'objet : sans elle, deux paiements du même
+    // dossier ont la même référence et rien ne dit qu'ils se suivent.
+    const tranche = trancheLabel(s?.tranche)
+    const motif = tranche ? `${objet}\n${tranche}` : objet
     return {
       key: new Date(s?.date_paiement || s?.created_at || 0).getTime(),
       montant: toNumber(s?.montant_paye || 0),

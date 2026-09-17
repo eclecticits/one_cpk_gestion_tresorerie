@@ -398,11 +398,22 @@ export type TypeSortieFonds =
   /** Dépense payée sans imputation décidée : à régulariser sur un poste. */
   | 'depense_hors_budget'
 
+export interface TrancheDecaissement {
+  numero: number
+  nombre: number
+  cumul_paye: number | string
+  montant_total: number | string
+  reste: number | string
+  devise: string
+}
+
 export interface SortieFonds {
   id: string
   type_sortie: TypeSortieFonds
   requisition_id?: string
   requisition?: Requisition
+  /** Renseignée seulement pour une réquisition payée en plusieurs fois. */
+  tranche?: TrancheDecaissement | null
   montant_paye: Money
   date_paiement: string
   mode_paiement: ModePaiement
