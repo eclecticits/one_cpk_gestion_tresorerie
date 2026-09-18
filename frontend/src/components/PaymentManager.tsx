@@ -318,6 +318,41 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                       : `Reste à payer : ${formatCurrency(montantRestant)} sur ${formatCurrency(montantTotal)}`
                     }
                   </div>
+                  {/* Un client qui n'avance qu'une partie reste sur SA note : la
+                      dette diminue d'autant. Sans le dire ici, on laisse croire
+                      qu'il faut solder ou repartir sur une nouvelle note — et
+                      alors il devrait deux fois. Solder, lui, ne vaut pas une
+                      frappe de plus qu'un clic. */}
+                  <div style={{
+                    fontSize: '12px',
+                    color: '#6b7280',
+                    marginTop: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    flexWrap: 'wrap'
+                  }}>
+                    <span>Un acompte suffit : saisissez ce que le client avance.</span>
+                    <button
+                      type="button"
+                      // `formatAmount` écrit à la française (virgule) : un champ
+                      // numérique la refuserait. Le point décimal est ici une
+                      // valeur, pas un affichage.
+                      onClick={() => setPaymentData({ ...paymentData, montant: montantRestant.toFixed(2) })}
+                      style={{
+                        padding: 0,
+                        border: 'none',
+                        background: 'none',
+                        color: '#1d4ed8',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        textDecoration: 'underline',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Ou solder ({formatCurrency(montantRestant)})
+                    </button>
+                  </div>
                 </div>
                 <div className={styles.field}>
                   <label>Mode de paiement *</label>

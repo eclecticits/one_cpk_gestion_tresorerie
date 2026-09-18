@@ -496,12 +496,17 @@ export default function EncaissementForm({
     setShowClientDropdown(false)
   }
 
-  /** Ce que ce payeur doit encore, et le chemin pour le solder.
+  /** Ce que ce payeur doit encore, et le chemin pour y verser.
    *
-   *  Encaisser son solde ici crée une SECONDE note de débit : l'argent rentre,
-   *  la première reste ouverte, et il garde une dette qu'il a pourtant payée.
-   *  Le bouton mène à ses notes — le seul geste qui solde réellement. C'est
-   *  pourquoi il est plus visible que le chemin qui ne solde rien. */
+   *  Encaisser son règlement ici crée une SECONDE note de débit : l'argent
+   *  rentre, la première reste ouverte, et il garde une dette qu'il a pourtant
+   *  payée. Le bouton mène à ses notes — le seul geste qui diminue ce qu'il
+   *  doit. C'est pourquoi il est plus visible que le chemin qui ne solde rien.
+   *
+   *  Solder n'est pas la seule issue : un acompte se verse sur la même note, et
+   *  la bannière le dit. Ne parler que du solde laisserait croire qu'un client
+   *  qui n'avance qu'une partie n'a pas d'autre choix que la nouvelle note —
+   *  et sa dette doublerait pour de bon. */
   const banniereCreance = (
     creance: { reste: number; notes: number } | null,
     sujet: string,
@@ -516,7 +521,8 @@ export default function EncaissementForm({
           <span className={styles.creanceMontant}>{formatCurrency(creance.reste)}</span>
           {' '}sur {creance.notes} note{creance.notes > 1 ? 's' : ''} de débit.
           <span className={styles.creanceReserve}>
-            Encaisser ici crée une nouvelle note : la sienne resterait ouverte.
+            Tout versement, même partiel, se porte sur sa note : encaisser ici en ouvrirait
+            une seconde, et la sienne resterait due.
           </span>
         </span>
         <button
