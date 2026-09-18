@@ -3,6 +3,7 @@ import { getPaymentHistory, createPayment, PaymentHistoryItem } from '../api/pay
 import { apiRequest } from '../lib/apiClient'
 import { Encaissement, ModePaiement } from '../types'
 import { format } from 'date-fns'
+import { Banknote, Check, CreditCard, Inbox, Mail, Plus } from 'lucide-react'
 import { formatAmount, toNumber } from '../utils/amount'
 import styles from './PaymentManager.module.css'
 import { useToast } from '../hooks/useToast'
@@ -199,9 +200,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                 gap: '10px'
               }}
             >
-              <span style={{fontSize: '20px'}}>
-                {history.length === 0 ? '💰' : '➕'}
-              </span>
+              {history.length === 0 ? <Banknote size={20} aria-hidden="true" /> : <Plus size={20} aria-hidden="true" />}
               {history.length === 0 ? 'Enregistrer le premier paiement' : 'Ajouter un paiement supplémentaire'}
             </button>
             <button
@@ -225,7 +224,8 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                 gap: '8px',
               }}
             >
-              ✉️ {sendingRelance
+              <Mail size={16} aria-hidden="true" />
+              {sendingRelance
                 ? 'Envoi de la relance…'
                 : relanceLimiteAtteinte
                   ? `Limite de relances atteinte (${relanceCount}/${MAX_RELANCES})`
@@ -271,9 +271,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                 gap: '12px',
                 marginBottom: '8px'
               }}>
-                <span style={{fontSize: '24px'}}>
-                  {history.length === 0 ? '💳' : '➕'}
-                </span>
+                {history.length === 0 ? <CreditCard size={24} aria-hidden="true" /> : <Plus size={24} aria-hidden="true" />}
                 <h3 style={{
                   margin: 0,
                   color: history.length === 0 ? '#1e40af' : '#92400e',
@@ -413,7 +411,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                   alignItems: 'center',
                   gap: '8px'
                 }}>
-                  <span>✓</span>
+                  <Check size={16} aria-hidden="true" />
                   {history.length === 0 ? 'Enregistrer le premier paiement' : 'Enregistrer ce paiement'}
                 </button>
               </div>
@@ -435,7 +433,9 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
               borderRadius: '8px',
               border: '2px dashed #d1d5db'
             }}>
-              <div style={{fontSize: '48px', marginBottom: '12px'}}>📭</div>
+              <div style={{marginBottom: '12px', color: '#9ca3af'}}>
+                <Inbox size={44} aria-hidden="true" />
+              </div>
               <div style={{fontSize: '16px', fontWeight: 600, color: '#374151', marginBottom: '6px'}}>
                 Aucun paiement enregistré
               </div>
