@@ -61,6 +61,10 @@ export type OrganisationSettings = {
   theme_text_color: string
   theme_button_text_color: string
   accounting_integration_mode: 'disabled' | 'manual' | 'automatic'
+  /** Bornes d'une collation de réunion en sortie directe. Le prix par tête dit
+   *  que c'en est bien une ; le total dit qu'elle reste une sortie directe. */
+  collation_plafond_par_personne_usd: number | string
+  collation_plafond_total_usd: number | string
   modules_config: Record<string, { enabled?: boolean }> | null
   workflow_config: WorkflowConfig | null
 }
@@ -125,6 +129,8 @@ export async function updateOrganisationSettings(
       | 'theme_text_color'
       | 'theme_button_text_color'
       | 'accounting_integration_mode'
+      | 'collation_plafond_par_personne_usd'
+      | 'collation_plafond_total_usd'
     >
   > & { accounting_integration_change_motif?: string | null }
 ): Promise<OrganisationSettings> {

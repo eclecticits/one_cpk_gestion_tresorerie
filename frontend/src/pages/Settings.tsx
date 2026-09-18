@@ -172,6 +172,12 @@ export default function Settings() {
   const [showUserForm, setShowUserForm] = useState(false)
   const [savingPrintSettings, setSavingPrintSettings] = useState(false)
   const [savingTenantSettings, setSavingTenantSettings] = useState(false)
+  // Les bornes d'une collation de réunion en sortie directe. Saisies à part du
+  // reste : elles vivent sur les réglages de l'organisation, non sur ceux
+  // d'impression avec lesquels la section partage son écran.
+  const [collationParPersonne, setCollationParPersonne] = useState('')
+  const [collationTotal, setCollationTotal] = useState('')
+  const [savingCollation, setSavingCollation] = useState(false)
   const [savingNotificationSettings, setSavingNotificationSettings] = useState(false)
   const [testingNotificationSettings, setTestingNotificationSettings] = useState(false)
   const [weeklyStatus, setWeeklyStatus] = useState<WeeklyReportStatus | null>(null)
@@ -542,6 +548,10 @@ export default function Settings() {
 
       setPrintSettings(printSettingsRes.data)
       setTenantSettings(tenantSettingsRes)
+      if (tenantSettingsRes) {
+        setCollationParPersonne(String(tenantSettingsRes.collation_plafond_par_personne_usd ?? ''))
+        setCollationTotal(String(tenantSettingsRes.collation_plafond_total_usd ?? ''))
+      }
       setAccountingUnmappedCount(mappingsNonMappes)
       setNotificationSettings(notificationSettingsRes.data)
       setWeeklyStatus(weeklyStatusRes)
@@ -995,6 +1005,33 @@ export default function Settings() {
       showError('Erreur de sauvegarde', error?.message || 'Impossible de mettre à jour le mode comptable.')
     } finally {
       setSavingTenantSettings(false)
+    }
+  }
+
+  /** Les deux bornes d'une collation. Le prix par tête dit que c'en est bien
+   *  une, le total dit qu'elle reste une sortie directe. Le serveur refuse un
+   *  par-tête supérieur au total : la règle serait alors impossible à
+   *  satisfaire, et le refus incompréhensible à la caisse. */
+  const handleSaveCollation = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const parPersonne = Number(collationParPersonne)
+    const total = Number(collationTotal)
+    if (!(parPersonne > 0) || !(total > 0)) {
+      showError('Plafond invalide', 'Les deux plafonds doivent être supérieurs à 0.')
+      return
+    }
+    setSavingCollation(true)
+    try {
+      const updated = await updateOrganisationSettings({
+        collation_plafond_par_personne_usd: parPersonne,
+        collation_plafond_total_usd: total,
+      })
+      setTenantSettings(updated)
+      showSuccess('Plafonds enregistrés', 'Ils s’appliqueront aux prochaines sorties directes.')
+    } catch (error: any) {
+      showError('Erreur de sauvegarde', error?.message || 'Impossible d’enregistrer les plafonds.')
+    } finally {
+      setSavingCollation(false)
     }
   }
 
@@ -2133,6 +2170,52 @@ export default function Settings() {
                           {savingPrintSettings ? 'Sauvegarde...' : 'Enregistrer le workflow'}
                         </button>
                       </div>
+                    </form>
+                  </div>
+
+                  {/* Une collation de réunion ne se mesure pas au montant mais
+                      au prix par tête : quarante participants à cinq dollars
+                      restent une collation, que le plafond de la sortie directe
+                      simple refuserait pourtant. */}
+                  <div className={styles.formCard}>
+                    <h3>Collation de réunion (sortie directe)</h3>
+                    <p className={styles.mutedText}>
+                      Le plafond de {' '}100 $ de la sortie directe simple ne s’applique pas à une collation :
+                      c’est le prix par personne qui dit que c’en est bien une. Le plafond total borne l’ampleur —
+                      au-delà, la dépense passe par une réquisition.
+                    </p>
+                    <form onSubmit={handleSaveCollation} className={styles.form}>
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Plafond par personne (USD)</label>
+                          <input
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={collationParPersonne}
+                            onChange={(e) => setCollationParPersonne(e.target.value)}
+                            disabled={!canEditSettings}
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>Plafond total par réunion (USD)</label>
+                          <input
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={collationTotal}
+                            onChange={(e) => setCollationTotal(e.target.value)}
+                            disabled={!canEditSettings}
+                          />
+                        </div>
+                      </div>
+                      {canEditSettings && (
+                        <div className={styles.formActions}>
+                          <button type="submit" className={styles.primaryBtn} disabled={savingCollation}>
+                            {savingCollation ? 'Sauvegarde...' : 'Enregistrer les plafonds'}
+                          </button>
+                        </div>
+                      )}
                     </form>
                   </div>
                 </div>

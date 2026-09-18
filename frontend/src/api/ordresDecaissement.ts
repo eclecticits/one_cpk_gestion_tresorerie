@@ -39,9 +39,19 @@ export async function createOrdreDecaissement(input: {
   /** Omis = ordre de sortie directe (sans réquisition, plafond 100 USD) */
   requisition_id?: string | null
   beneficiaire: string
+  /** Pour une collation, le total est DÉRIVÉ côté serveur du nombre de
+   *  participants et du prix par tête : ce qui est envoyé ici sert l'affichage. */
   montant: number
   devise?: 'USD' | 'CDF'
   motif?: string | null
+  /** 'COLLATION' déplace le plafond du montant vers le prix par personne. */
+  type_sortie?: 'SIMPLE' | 'COLLATION'
+  reunion_intitule?: string | null
+  /** Format ISO (yyyy-MM-dd) : la réunion et sa date forment la clé qui
+   *  empêche de découper une même assemblée en plusieurs ordres. */
+  reunion_date?: string | null
+  participants?: number | null
+  montant_par_personne?: number | null
   /** Sortie directe « type réquisition » : service + lignes budgétaires. */
   service_id?: number | null
   /** Répartition de la tranche par poste (progressif) ou lignes directes. */
@@ -71,6 +81,14 @@ export async function updateOrdreDecaissement(
     montant: number
     devise?: 'USD' | 'CDF'
     motif?: string | null
+    // La correction rejoue TOUS les contrôles de la création : le type et ses
+    // champs voyagent donc aussi, sinon corriger une collation en ferait une
+    // sortie simple de 200 USD, aussitôt refusée.
+    type_sortie?: 'SIMPLE' | 'COLLATION'
+    reunion_intitule?: string | null
+    reunion_date?: string | null
+    participants?: number | null
+    montant_par_personne?: number | null
     service_id?: number | null
     lignes?: Array<OrdreDirectLigne | OrdreRepartitionLigne> | null
     mode_paiement?: string | null

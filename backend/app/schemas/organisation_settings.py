@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from typing import Literal
@@ -24,6 +25,11 @@ class OrganisationSettingsPublicOut(BaseModel):
     theme_text_color: str
     theme_button_text_color: str
     accounting_integration_mode: Literal["disabled", "manual", "automatic"] = "manual"
+    #: Bornes d'une collation de réunion en sortie directe. Le prix par tête dit
+    #: que c'en est bien une ; le total dit qu'elle reste une sortie directe.
+    #: Lisibles par tous : l'écran de saisie les annonce avant le refus.
+    collation_plafond_par_personne_usd: Decimal = Decimal("10")
+    collation_plafond_total_usd: Decimal = Decimal("500")
     modules_config: dict[str, Any] | None = None
     workflow_config: dict[str, Any] | None = None
 
@@ -45,3 +51,5 @@ class OrganisationSettingsUpdate(BaseModel):
     theme_button_text_color: str | None = None
     accounting_integration_mode: Literal["disabled", "manual", "automatic"] | None = None
     accounting_integration_change_motif: str | None = Field(default=None, max_length=500)
+    collation_plafond_par_personne_usd: Decimal | None = Field(default=None, gt=0)
+    collation_plafond_total_usd: Decimal | None = Field(default=None, gt=0)

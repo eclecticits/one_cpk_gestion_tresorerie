@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,6 +31,18 @@ def normaliser_cle_beneficiaire(value: str | None) -> str:
     l'insécable sous glibc. L'écart suffisait à faire passer deux ordres
     identiques pour étrangers l'un à l'autre, donc à contourner le plafond en
     collant un nom porteur d'une insécable.
+    """
+    return re.sub(r"\s+", " ", (value or "").lower()).strip()
+
+
+def normaliser_cle_reunion(value: str | None) -> str:
+    """Clé de regroupement du plafond d'une collation : l'intitulé de la réunion.
+
+    Même règle et mêmes raisons que `normaliser_cle_beneficiaire` — une seule
+    normalisation, en Python, auprès de la colonne qui la stocke. Une collation
+    se regroupe par réunion et non par bénéficiaire : deux réunions du même jour
+    pour le même responsable sont deux dépenses, et une même réunion découpée en
+    trois ordres n'en est qu'une.
     """
     return re.sub(r"\s+", " ", (value or "").lower()).strip()
 
@@ -63,7 +75,33 @@ class OrdreDecaissement(Base):
             "created_at",
             postgresql_where=text("requisition_id IS NULL"),
         ),
+        # Sert le cumul anti-fractionnement des collations : une même réunion,
+        # à une même date, quel que soit celui qui prend l'argent.
+        Index(
+            "ix_ordres_collation_fractionnement",
+            "organisation_id",
+            "reunion_normalisee",
+            "reunion_date",
+            postgresql_where=text("requisition_id IS NULL AND type_sortie = 'COLLATION'"),
+        ),
         CheckConstraint("montant > 0", name="ck_ordres_decaissement_montant_positif"),
+        CheckConstraint(
+            "type_sortie IN ('SIMPLE','COLLATION')", name="ck_ordres_decaissement_type_sortie"
+        ),
+        # Une collation sans nombre de têtes ni prix unitaire n'est qu'un
+        # montant qui se réclame d'un nom : ce qui la distingue doit être là.
+        CheckConstraint(
+            """
+            type_sortie <> 'COLLATION' OR (
+                participants IS NOT NULL AND participants > 0
+                AND montant_par_personne IS NOT NULL AND montant_par_personne > 0
+                AND reunion_intitule IS NOT NULL
+                AND reunion_date IS NOT NULL
+                AND reunion_normalisee IS NOT NULL
+            )
+            """,
+            name="ck_ordres_decaissement_collation_complete",
+        ),
         CheckConstraint(
             "statut IN ('AUTORISE','PAYE','ANNULE')",
             name="ck_ordres_decaissement_statut",
@@ -108,6 +146,23 @@ class OrdreDecaissement(Base):
     montant_usd_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     motif: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: 'SIMPLE' = sortie directe ordinaire, bornée par un plafond de montant.
+    #: 'COLLATION' = collation de réunion, bornée PAR TÊTE : quarante
+    #: participants à cinq dollars restent une collation, que le plafond de
+    #: montant refuserait pourtant. Le type ne dispense de rien, il change
+    #: l'unité de ce qui est mesuré.
+    type_sortie: Mapped[str] = mapped_column(String(20), nullable=False, default="SIMPLE")
+    reunion_intitule: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    reunion_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: Clé de regroupement du plafond, calculée par `normaliser_cle_reunion` et
+    #: stockée : colonne nue, donc indexable, et une seule normalisation.
+    reunion_normalisee: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    #: Ce qui rend le total vérifiable : le nombre de têtes et le prix de
+    #: chacune, au lieu d'un montant tapé à la main que la description
+    #: expliquerait.
+    participants: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    montant_par_personne: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
 
     # Volet de règlement : décision ferme posée à l'autorisation, exécutée telle
     # quelle par la caisse. Un ordre est mono-(mode, compte) — c'est ce qui le

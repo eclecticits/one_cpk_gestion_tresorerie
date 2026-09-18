@@ -16,7 +16,12 @@ from app.api.deps import (
 )
 from app.db.session import get_db
 from app.models.ligne_requisition import LigneRequisition
-from app.models.ordre_decaissement import OrdreDecaissement, normaliser_cle_beneficiaire
+from app.models.ordre_decaissement import (
+    OrdreDecaissement,
+    normaliser_cle_beneficiaire,
+    normaliser_cle_reunion,
+)
+from app.models.organisation_settings import OrganisationSettings
 from app.models.print_settings import PrintSettings
 from app.models.rbac import Permission, role_permissions
 from app.models.requisition import Requisition
@@ -54,6 +59,14 @@ def _is_admin(user: User) -> bool:
 
 
 LIMITE_SORTIE_DIRECTE_USD = Decimal("100")
+
+# Bornes d'une collation de réunion quand l'organisation n'en a réglé aucune.
+# Le plafond de montant n'a pas de sens ici : quarante participants à cinq
+# dollars font deux cents dollars et restent une collation. C'est le prix PAR
+# TÊTE qui dit ce qu'est la dépense ; le total dit seulement jusqu'où elle peut
+# aller sans passer par une réquisition.
+DEFAUT_COLLATION_PAR_PERSONNE_USD = Decimal("10")
+DEFAUT_COLLATION_TOTAL_USD = Decimal("500")
 
 
 def _beneficiaire_requisition(req: Requisition, fallback: str | None = None) -> str:
@@ -156,6 +169,11 @@ async def _assert_pas_fractionnement_direct(
             OrdreDecaissement.statut.in_(("AUTORISE", "PAYE")),
             OrdreDecaissement.created_at >= depuis,
             OrdreDecaissement.service_id == service_id,
+            # Une collation n'entre pas dans ce cumul : elle a son propre
+            # plafond et sa propre clé. L'y laisser ferait qu'une collation de
+            # 300 USD bloquerait pour 24 h toute sortie directe du même
+            # responsable, au nom d'un fractionnement qui n'existe pas.
+            OrdreDecaissement.type_sortie != "COLLATION",
             # Colonne nue : la clé a été normalisée à l'écriture, une seule
             # fois et par le même code que celui qui la cherche ici. C'est ce
             # qui rend le filtre indexable (ix_ordres_direct_fractionnement) et
@@ -177,6 +195,225 @@ async def _assert_pas_fractionnement_direct(
                 "sur 24h dépasse 100 USD. Créez une réquisition."
             ),
         )
+
+
+async def _plafonds_collation(db: AsyncSession, tenant_id: int) -> tuple[Decimal, Decimal]:
+    """Les deux bornes d'une collation : par tête, et au total.
+
+    Le prix par tête dit que c'en est bien une — deux cents dollars pour deux
+    personnes n'est pas une collation, quel que soit le nom qu'on lui donne. Le
+    total dit qu'elle reste une sortie directe : à neuf cents dollars, la
+    dépense mérite une approbation même à cinq dollars la tête.
+    """
+    res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == tenant_id).limit(1)
+    )
+    settings = res.scalar_one_or_none()
+    par_personne = getattr(settings, "collation_plafond_par_personne_usd", None)
+    total = getattr(settings, "collation_plafond_total_usd", None)
+    return (
+        Decimal(str(par_personne)) if par_personne is not None else DEFAUT_COLLATION_PAR_PERSONNE_USD,
+        Decimal(str(total)) if total is not None else DEFAUT_COLLATION_TOTAL_USD,
+    )
+
+
+def _cle_advisory_collation(tenant_id: int, cle_reunion: str, jour: date) -> int:
+    digest = hashlib.sha256(
+        f"od-collation:{tenant_id}:{cle_reunion}:{jour.isoformat()}".encode("utf-8")
+    ).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+async def _assert_pas_fractionnement_collation(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    cle_reunion: str,
+    jour: date,
+    montant_usd: Decimal,
+    plafond_total: Decimal,
+    exclure_ordre_id: uuid.UUID | None = None,
+) -> None:
+    """Le cumul des collations d'UNE MÊME RÉUNION tient-il sous le plafond ?
+
+    La clé est la réunion et sa date, non le bénéficiaire : deux réunions du
+    même jour pour un même responsable sont deux dépenses, et une assemblée de
+    quarante-cinq personnes découpée en trois ordres de quinze n'en est qu'une.
+    Sans ce regroupement, le plafond total ne protégerait rien — il suffirait de
+    servir la même salle en plusieurs fois.
+
+    Pas de fenêtre de 24 h ici : la réunion EST la borne. Une collation saisie
+    le lendemain pour la réunion de la veille appartient encore à cette réunion.
+    """
+    await db.execute(select(func.pg_advisory_xact_lock(
+        _cle_advisory_collation(tenant_id, cle_reunion, jour)
+    )))
+    montant_usd_existant = func.coalesce(
+        OrdreDecaissement.montant_usd_snapshot,
+        case(
+            (func.upper(OrdreDecaissement.devise) == "USD", OrdreDecaissement.montant),
+            else_=None,
+        ),
+        0,
+    )
+    cumul_anterieur = await db.scalar(
+        select(func.coalesce(func.sum(montant_usd_existant), 0)).where(
+            OrdreDecaissement.organisation_id == tenant_id,
+            OrdreDecaissement.requisition_id.is_(None),
+            OrdreDecaissement.type_sortie == "COLLATION",
+            OrdreDecaissement.statut.in_(("AUTORISE", "PAYE")),
+            OrdreDecaissement.reunion_normalisee == cle_reunion,
+            OrdreDecaissement.reunion_date == jour,
+            *(
+                (OrdreDecaissement.id != exclure_ordre_id,)
+                if exclure_ordre_id is not None
+                else ()
+            ),
+        )
+    )
+    cumul = Decimal(montant_usd or 0) + Decimal(str(cumul_anterieur or 0))
+    if cumul > plafond_total:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Fractionnement détecté : les collations de cette réunion cumulent "
+                f"{cumul} USD, au-delà du plafond de {plafond_total} USD. "
+                f"Créez une réquisition."
+            ),
+        )
+
+
+async def _controler_sortie_directe(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    payload: Any,
+    exclure_ordre_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Les contrôles d'une sortie directe, et les champs qu'ils arrêtent.
+
+    Création et correction passent par ici : deux copies de ces règles
+    finiraient par diverger, et c'est le chemin le plus faible qui ferait loi.
+
+    Le nom du bénéficiaire — et, pour une collation, celui de la réunion — est
+    arrêté AVANT le contrôle : c'est de lui que la clé de regroupement est
+    tirée, et chercher sur une valeur pour en enregistrer une autre rouvrirait
+    l'écart que la clé stockée est censée fermer.
+    """
+    beneficiaire = payload.beneficiaire.strip()
+    est_collation = str(getattr(payload, "type_sortie", "SIMPLE") or "SIMPLE").upper() == "COLLATION"
+
+    if not est_collation:
+        montant = Decimal(payload.montant or 0)
+        montant_usd = await _montant_direct_usd(
+            db, tenant_id=tenant_id, montant=montant, devise=payload.devise
+        )
+        if montant_usd > LIMITE_SORTIE_DIRECTE_USD:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sortie directe limitée à 100 USD : au-delà, créez une réquisition",
+            )
+        await _assert_pas_fractionnement_direct(
+            db,
+            tenant_id=tenant_id,
+            beneficiaire=beneficiaire,
+            service_id=payload.service_id,
+            montant_usd=montant_usd,
+            exclure_ordre_id=exclure_ordre_id,
+        )
+        return {
+            "type_sortie": "SIMPLE",
+            "beneficiaire": beneficiaire,
+            "beneficiaire_normalise": normaliser_cle_beneficiaire(beneficiaire),
+            "montant": montant,
+            "montant_usd_snapshot": montant_usd,
+            "reunion_intitule": None,
+            "reunion_date": None,
+            "reunion_normalisee": None,
+            "participants": None,
+            "montant_par_personne": None,
+            "motif": payload.motif,
+        }
+
+    intitule = (getattr(payload, "reunion_intitule", None) or "").strip()
+    jour = getattr(payload, "reunion_date", None)
+    participants = int(getattr(payload, "participants", None) or 0)
+    par_personne = Decimal(getattr(payload, "montant_par_personne", None) or 0)
+    if not intitule:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Intitulé de la réunion requis pour une collation",
+        )
+    if jour is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Date de la réunion requise pour une collation",
+        )
+    if participants < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nombre de participants requis pour une collation",
+        )
+    if par_personne <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Montant par personne requis pour une collation",
+        )
+
+    # Le total est DÉRIVÉ, jamais déclaré : entre ce que le serveur contrôle et
+    # ce que la caisse paiera, un écart n'aurait aucune raison d'exister.
+    montant = (Decimal(participants) * par_personne).quantize(Decimal("0.01"))
+    montant_usd = await _montant_direct_usd(
+        db, tenant_id=tenant_id, montant=montant, devise=payload.devise
+    )
+    par_personne_usd = await _montant_direct_usd(
+        db, tenant_id=tenant_id, montant=par_personne, devise=payload.devise
+    )
+    plafond_tete, plafond_total = await _plafonds_collation(db, tenant_id)
+    if par_personne_usd > plafond_tete:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Collation limitée à {plafond_tete} USD par personne : "
+                f"{par_personne_usd} USD par tête refusé. Au-delà, créez une réquisition."
+            ),
+        )
+    if montant_usd > plafond_total:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Collation limitée à {plafond_total} USD au total : "
+                f"{participants} × {par_personne_usd} font {montant_usd} USD. "
+                f"Au-delà, créez une réquisition."
+            ),
+        )
+
+    cle_reunion = normaliser_cle_reunion(intitule)
+    await _assert_pas_fractionnement_collation(
+        db,
+        tenant_id=tenant_id,
+        cle_reunion=cle_reunion,
+        jour=jour,
+        montant_usd=montant_usd,
+        plafond_total=plafond_total,
+        exclure_ordre_id=exclure_ordre_id,
+    )
+
+    return {
+        "type_sortie": "COLLATION",
+        "beneficiaire": beneficiaire,
+        "beneficiaire_normalise": normaliser_cle_beneficiaire(beneficiaire),
+        "montant": montant,
+        "montant_usd_snapshot": montant_usd,
+        "reunion_intitule": intitule,
+        "reunion_date": jour,
+        "reunion_normalisee": cle_reunion,
+        "participants": participants,
+        "montant_par_personne": par_personne,
+        # Le motif reste exigé, mais la réunion le dit déjà : le réclamer deux
+        # fois ne ferait que recopier la même phrase.
+        "motif": (payload.motif or "").strip() or f"Collation — {intitule} du {jour.isoformat()}",
+    }
 
 
 async def _user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:
@@ -217,6 +454,12 @@ def _ordre_out(
         "montant": ordre.montant or 0,
         "devise": ordre.devise,
         "motif": ordre.motif,
+        "type_sortie": getattr(ordre, "type_sortie", None) or "SIMPLE",
+        # Ce qui rend le total d'une collation vérifiable : d'où il sort.
+        "reunion_intitule": getattr(ordre, "reunion_intitule", None),
+        "reunion_date": getattr(ordre, "reunion_date", None),
+        "participants": getattr(ordre, "participants", None),
+        "montant_par_personne": getattr(ordre, "montant_par_personne", None),
         "service_id": ordre.service_id,
         "lignes": ordre.lignes,
         "montant_usd_snapshot": getattr(ordre, "montant_usd_snapshot", None),
@@ -368,30 +611,7 @@ async def create_ordre_decaissement(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="motif requis pour un ordre direct d'urgence",
             )
-        montant_demande = Decimal(payload.montant or 0)
-        montant_usd_snapshot = await _montant_direct_usd(
-            db,
-            tenant_id=tenant_id,
-            montant=montant_demande,
-            devise=payload.devise,
-        )
-        if montant_usd_snapshot > LIMITE_SORTIE_DIRECTE_USD:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Sortie directe limitée à 100 USD : au-delà, créez une réquisition",
-            )
-        # Le nom retenu est arrêté ICI, avant le contrôle : c'est lui qui sera
-        # stocké, et c'est de lui que la clé de regroupement est tirée. Chercher
-        # sur une valeur et enregistrer une autre rouvrirait l'écart que la clé
-        # stockée est censée fermer.
-        beneficiaire_direct = payload.beneficiaire.strip()
-        await _assert_pas_fractionnement_direct(
-            db,
-            tenant_id=tenant_id,
-            beneficiaire=beneficiaire_direct,
-            service_id=payload.service_id,
-            montant_usd=montant_usd_snapshot,
-        )
+        arrete = await _controler_sortie_directe(db, tenant_id=tenant_id, payload=payload)
 
         numero_ordre = await generate_document_number(db, "OD", tenant_id, service_id=None)
         # Sortie directe : réglée par la caisse sauf mention contraire.
@@ -412,13 +632,9 @@ async def create_ordre_decaissement(
             organisation_id=tenant_id,
             requisition_id=None,
             numero_ordre=numero_ordre,
-            beneficiaire=beneficiaire_direct,
-            beneficiaire_normalise=normaliser_cle_beneficiaire(beneficiaire_direct),
-            montant=payload.montant,
-            montant_usd_snapshot=montant_usd_snapshot,
             devise=payload.devise,
-            motif=payload.motif,
             service_id=payload.service_id,
+            **arrete,
             lignes=payload.lignes,
             mode_paiement=mode_direct,
             canal=canal_direct,
@@ -444,6 +660,12 @@ async def create_ordre_decaissement(
                 "montant": float(ordre.montant or 0),
                 "devise": ordre.devise,
                 "motif": ordre.motif,
+                "type_sortie": ordre.type_sortie,
+                # Ce qu'un contrôleur cherchera : d'où sort le total.
+                "reunion": ordre.reunion_intitule,
+                "reunion_date": ordre.reunion_date.isoformat() if ordre.reunion_date else None,
+                "participants": ordre.participants,
+                "montant_par_personne": float(ordre.montant_par_personne or 0) or None,
             },
             ip_address=get_request_ip(request),
         )
@@ -848,27 +1070,11 @@ async def update_ordre_decaissement(
             detail="motif requis pour un ordre direct d'urgence",
         )
 
-    montant_usd_snapshot = await _montant_direct_usd(
-        db,
-        tenant_id=tenant_id,
-        montant=Decimal(payload.montant or 0),
-        devise=payload.devise,
-    )
-    if montant_usd_snapshot > LIMITE_SORTIE_DIRECTE_USD:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Sortie directe limitée à 100 USD : au-delà, créez une réquisition",
-        )
-    # Même ordre qu'à la création : le nom est arrêté avant le contrôle, et
-    # c'est de lui que la clé de regroupement est tirée.
-    beneficiaire_direct = payload.beneficiaire.strip()
-    await _assert_pas_fractionnement_direct(
-        db,
-        tenant_id=tenant_id,
-        beneficiaire=beneficiaire_direct,
-        service_id=payload.service_id,
-        montant_usd=montant_usd_snapshot,
-        exclure_ordre_id=ordre.id,
+    # Mêmes contrôles qu'à la création, par le même code : deux copies de ces
+    # règles finiraient par diverger, et c'est le chemin le plus faible qui
+    # ferait loi.
+    arrete = await _controler_sortie_directe(
+        db, tenant_id=tenant_id, payload=payload, exclure_ordre_id=ordre.id
     )
 
     mode_direct = normaliser_mode(payload.mode_paiement) or "cash"
@@ -892,14 +1098,13 @@ async def update_ordre_decaissement(
         "motif": ordre.motif,
         "service_id": ordre.service_id,
         "lignes": ordre.lignes,
+        "type_sortie": ordre.type_sortie,
+        "participants": ordre.participants,
     }
 
-    ordre.beneficiaire = beneficiaire_direct
-    ordre.beneficiaire_normalise = normaliser_cle_beneficiaire(beneficiaire_direct)
-    ordre.montant = payload.montant
-    ordre.montant_usd_snapshot = montant_usd_snapshot
+    for champ, valeur in arrete.items():
+        setattr(ordre, champ, valeur)
     ordre.devise = payload.devise
-    ordre.motif = payload.motif
     ordre.service_id = payload.service_id
     ordre.lignes = payload.lignes
     ordre.mode_paiement = mode_direct

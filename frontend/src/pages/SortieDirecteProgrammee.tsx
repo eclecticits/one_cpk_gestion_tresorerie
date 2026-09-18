@@ -44,6 +44,7 @@ const generateOrdreDirectPDF: PdfGeneratorOrdreDirectModule['generateOrdreDirect
   return mod.generateOrdreDirectPDF(...args)
 }
 import { useToast } from '../hooks/useToast'
+import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import PageHeader from '../components/PageHeader'
 import BackButton from '../components/BackButton'
 import ResponsiveModal from '../components/ResponsiveModal'
@@ -85,6 +86,12 @@ const personName = (u?: { prenom?: string | null; nom?: string | null; email?: s
 
 export default function SortieDirecteProgrammee() {
   const { notifySuccess, notifyError, notifyWarning } = useToast()
+  // Les bornes d'une collation sont réglées par l'organisation : l'écran les
+  // annonce avant que le serveur ne refuse. Un plafond qu'on découvre au refus
+  // n'est pas un garde-fou, c'est une porte fermée sans écriteau.
+  const { settings } = useOrganisationSettings()
+  const plafondParPersonne = toNumber(settings?.collation_plafond_par_personne_usd ?? 10)
+  const plafondCollationTotal = toNumber(settings?.collation_plafond_total_usd ?? 500)
 
   const [services, setServices] = useState<Service[]>([])
   const [postes, setPostes] = useState<BudgetPosteSummary[]>([])
@@ -107,6 +114,13 @@ export default function SortieDirecteProgrammee() {
   const [ordreEnCorrection, setOrdreEnCorrection] = useState<string | null>(null)
   const [serviceId, setServiceId] = useState<string>('')
   const [beneficiaire, setBeneficiaire] = useState('')
+  // Une collation ne se mesure pas au montant mais au prix par tête : le mode
+  // ne dispense d'aucun contrôle, il change l'unité de ce qui est mesuré.
+  const [typeSortie, setTypeSortie] = useState<'SIMPLE' | 'COLLATION'>('SIMPLE')
+  const [reunionIntitule, setReunionIntitule] = useState('')
+  const [reunionDate, setReunionDate] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [participants, setParticipants] = useState('')
+  const [montantParPersonne, setMontantParPersonne] = useState('')
   const [devise, setDevise] = useState<'USD' | 'CDF'>('USD')
   const [motif, setMotif] = useState('')
   const [lignes, setLignes] = useState<LigneForm[]>([emptyLigne()])
@@ -123,10 +137,25 @@ export default function SortieDirecteProgrammee() {
     [serviceId, services]
   )
 
+  const estCollation = typeSortie === 'COLLATION'
+  const nbParticipants = Number.isFinite(parseInt(participants, 10)) ? parseInt(participants, 10) : 0
+  const prixParTete = Number.isFinite(parseFloat(montantParPersonne)) ? parseFloat(montantParPersonne) : 0
+
+  /** Le total d'une collation est DÉRIVÉ, jamais tapé : c'est ce qui le rend
+   *  vérifiable, et c'est aussi ce que le serveur recalcule de son côté. */
   const total = useMemo(
-    () => lignes.reduce((sum, l) => sum + (Number.isFinite(parseFloat(l.montant)) ? parseFloat(l.montant) : 0), 0),
-    [lignes]
+    () =>
+      estCollation
+        ? Math.round(nbParticipants * prixParTete * 100) / 100
+        : lignes.reduce((sum, l) => sum + (Number.isFinite(parseFloat(l.montant)) ? parseFloat(l.montant) : 0), 0),
+    [estCollation, nbParticipants, prixParTete, lignes]
   )
+
+  /** Le plafond qui s'applique, et ce qui le fait dépasser. Deux bornes pour
+   *  une collation : le prix par tête dit que c'en est bien une, le total dit
+   *  qu'elle reste une sortie directe. */
+  const plafondActif = estCollation ? plafondCollationTotal : LIMITE_USD
+  const prixParTeteDepasse = estCollation && devise === 'USD' && prixParTete > plafondParPersonne
 
   const formIsDirty = useMemo(
     () => Boolean(
@@ -225,6 +254,11 @@ export default function SortieDirecteProgrammee() {
     setMotif('')
     setDevise('USD')
     setLignes([emptyLigne()])
+    setTypeSortie('SIMPLE')
+    setReunionIntitule('')
+    setReunionDate(format(new Date(), 'yyyy-MM-dd'))
+    setParticipants('')
+    setMontantParPersonne('')
     setValidationAttempted(false)
   }
 
@@ -243,6 +277,14 @@ export default function SortieDirecteProgrammee() {
     setBeneficiaire(brut.beneficiaire || '')
     setMotif(brut.motif || '')
     setDevise((brut.devise === 'CDF' ? 'CDF' : 'USD') as 'USD' | 'CDF')
+    // La correction rejoue tous les contrôles : reprendre une collation sans
+    // son type en ferait une sortie simple de 200 USD, aussitôt refusée.
+    const collation = String(brut.type_sortie || 'SIMPLE').toUpperCase() === 'COLLATION'
+    setTypeSortie(collation ? 'COLLATION' : 'SIMPLE')
+    setReunionIntitule(collation ? String(brut.reunion_intitule || '') : '')
+    setReunionDate(collation && brut.reunion_date ? String(brut.reunion_date).slice(0, 10) : format(new Date(), 'yyyy-MM-dd'))
+    setParticipants(collation && brut.participants ? String(brut.participants) : '')
+    setMontantParPersonne(collation ? String(toNumber(brut.montant_par_personne) || '') : '')
     const reprises: LigneForm[] = Array.isArray(brut.lignes)
       ? brut.lignes.map((l: any) => ({
           clientId: emptyLigne().clientId,
@@ -288,17 +330,52 @@ export default function SortieDirecteProgrammee() {
       notifyWarning('Motif requis', 'Précisez le motif de cette dépense directe.')
       return
     }
-    const lignesValides = lignes.filter(isLigneValid)
-    if (lignesValides.length !== lignes.length) {
-      notifyWarning('Lignes incomplètes', 'Chaque ligne doit avoir un poste budgétaire et un montant positif.')
-      return
+    if (estCollation) {
+      if (!reunionIntitule.trim()) {
+        notifyWarning('Réunion requise', "Nommez la réunion : c'est elle qui justifie le nombre de têtes.")
+        return
+      }
+      if (!reunionDate) {
+        notifyWarning('Date requise', 'Indiquez la date de la réunion.')
+        return
+      }
+      if (nbParticipants < 1) {
+        notifyWarning('Participants requis', 'Indiquez le nombre de participants.')
+        return
+      }
+      if (prixParTete <= 0) {
+        notifyWarning('Montant par personne requis', 'Indiquez ce que coûte une collation par personne.')
+        return
+      }
+      if (!lignes[0]?.budget_poste_id) {
+        notifyWarning('Poste requis', 'Choisissez le poste budgétaire de la collation.')
+        return
+      }
+    } else {
+      const lignesValides = lignes.filter(isLigneValid)
+      if (lignesValides.length !== lignes.length) {
+        notifyWarning('Lignes incomplètes', 'Chaque ligne doit avoir un poste budgétaire et un montant positif.')
+        return
+      }
     }
     if (total <= 0) {
       notifyWarning('Montant invalide', 'Le total doit être supérieur à 0.')
       return
     }
-    if (devise === 'USD' && total > LIMITE_USD) {
-      notifyWarning('Plafond dépassé', `Sortie directe limitée à ${LIMITE_USD} $. Au-delà, créez une réquisition.`)
+    if (devise === 'USD' && prixParTeteDepasse) {
+      notifyWarning(
+        'Prix par personne trop élevé',
+        `Une collation est limitée à ${plafondParPersonne} $ par personne. Au-delà, créez une réquisition.`,
+      )
+      return
+    }
+    if (devise === 'USD' && total > plafondActif) {
+      notifyWarning(
+        'Plafond dépassé',
+        estCollation
+          ? `Collation limitée à ${plafondCollationTotal} $ au total. Au-delà, créez une réquisition.`
+          : `Sortie directe limitée à ${LIMITE_USD} $. Au-delà, créez une réquisition.`,
+      )
       return
     }
 
@@ -306,13 +383,20 @@ export default function SortieDirecteProgrammee() {
   }
 
   const confirmSubmit = async () => {
-    const lignesValides = lignes.filter(isLigneValid)
-    if (lignesValides.length !== lignes.length || lignesValides.length === 0) {
+    // Une collation tient sur une ligne : le poste, et le total que les têtes
+    // produisent. Répartir une collation sur plusieurs postes reviendrait à
+    // servir deux salles sous un seul ordre.
+    const lignesValides = estCollation
+      ? lignes.slice(0, 1).filter((l) => Boolean(l.budget_poste_id))
+      : lignes.filter(isLigneValid)
+    if ((!estCollation && lignesValides.length !== lignes.length) || lignesValides.length === 0) {
       setConfirmationOpen(false)
       notifyWarning('Lignes incomplètes', 'Vérifiez les lignes budgétaires avant de continuer.')
       return
     }
-    const submittedTotal = lignesValides.reduce((sum, ligne) => sum + parseFloat(ligne.montant), 0)
+    const submittedTotal = estCollation
+      ? total
+      : lignesValides.reduce((sum, ligne) => sum + parseFloat(ligne.montant), 0)
     setSubmitting(true)
     try {
       const corps = {
@@ -320,12 +404,19 @@ export default function SortieDirecteProgrammee() {
         montant: submittedTotal,
         devise,
         motif: motif.trim() || null,
+        type_sortie: typeSortie,
+        reunion_intitule: estCollation ? reunionIntitule.trim() : null,
+        reunion_date: estCollation ? reunionDate : null,
+        participants: estCollation ? nbParticipants : null,
+        montant_par_personne: estCollation ? prixParTete : null,
         service_id: Number(serviceId),
         lignes: lignesValides.map((l) => ({
           budget_poste_id: l.budget_poste_id,
           rubrique: l.budget_poste_id ? postesById.get(l.budget_poste_id)?.code || '' : '',
-          description: l.description.trim(),
-          montant_total: parseFloat(l.montant),
+          description: estCollation
+            ? `Collation — ${reunionIntitule.trim()} (${nbParticipants} × ${prixParTete})`
+            : l.description.trim(),
+          montant_total: estCollation ? submittedTotal : parseFloat(l.montant),
           devise,
         })),
       }
@@ -394,8 +485,8 @@ export default function SortieDirecteProgrammee() {
     }
   }
 
-  const capDepasse = devise === 'USD' && total > LIMITE_USD
-  const limitProgress = devise === 'USD' ? Math.min((total / LIMITE_USD) * 100, 100) : 0
+  const capDepasse = devise === 'USD' && (total > plafondActif || prixParTeteDepasse)
+  const limitProgress = devise === 'USD' ? Math.min((total / plafondActif) * 100, 100) : 0
 
   return (
     <div className={styles.container}>
@@ -451,6 +542,31 @@ export default function SortieDirecteProgrammee() {
               </button>
             </div>
           )}
+          {/* Deux natures de sortie directe, deux unités de mesure. Le montant
+              borne la première ; le prix par tête borne la seconde, parce que
+              quarante participants à cinq dollars restent une collation que le
+              plafond de montant refuserait pourtant. */}
+          <div className={styles.modeSwitch} role="group" aria-label="Nature de la sortie directe">
+            <button
+              type="button"
+              className={!estCollation ? styles.modeActif : styles.modeInactif}
+              aria-pressed={!estCollation}
+              onClick={() => setTypeSortie('SIMPLE')}
+            >
+              Sortie directe simple
+              <small>Plafond {LIMITE_USD} $ par ordre</small>
+            </button>
+            <button
+              type="button"
+              className={estCollation ? styles.modeActif : styles.modeInactif}
+              aria-pressed={estCollation}
+              onClick={() => setTypeSortie('COLLATION')}
+            >
+              Collation de réunion
+              <small>{plafondParPersonne} $ par personne, {plafondCollationTotal} $ au total</small>
+            </button>
+          </div>
+
           <div className={styles.identityGrid}>
             <div className={styles.field}>
               <label htmlFor="direct-service">Service / commission <span aria-hidden="true">*</span></label>
@@ -476,20 +592,96 @@ export default function SortieDirecteProgrammee() {
             </div>
           </div>
 
+          {estCollation && (
+            <div className={styles.collationGrid}>
+              <div className={styles.field}>
+                <label htmlFor="direct-reunion">Réunion <span aria-hidden="true">*</span></label>
+                <input
+                  id="direct-reunion"
+                  value={reunionIntitule}
+                  onChange={(e) => setReunionIntitule(e.target.value)}
+                  placeholder="Ex. : Conseil d'administration"
+                  required
+                  aria-required="true"
+                />
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="direct-reunion-date">Date de la réunion <span aria-hidden="true">*</span></label>
+                <input
+                  id="direct-reunion-date"
+                  type="date"
+                  value={reunionDate}
+                  onChange={(e) => setReunionDate(e.target.value)}
+                  required
+                  aria-required="true"
+                />
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="direct-participants">Participants <span aria-hidden="true">*</span></label>
+                <input
+                  id="direct-participants"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={participants}
+                  onChange={(e) => setParticipants(e.target.value)}
+                  placeholder="0"
+                  required
+                  aria-required="true"
+                />
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="direct-par-personne">Montant par personne ({devise}) <span aria-hidden="true">*</span></label>
+                <input
+                  id="direct-par-personne"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={montantParPersonne}
+                  onChange={(e) => setMontantParPersonne(e.target.value)}
+                  placeholder="0,00"
+                  aria-invalid={prixParTeteDepasse}
+                  required
+                  aria-required="true"
+                />
+                {prixParTeteDepasse && (
+                  <small className={styles.fieldError}>
+                    Au-delà de {plafondParPersonne} $ par personne, ce n'est plus une collation : créez une réquisition.
+                  </small>
+                )}
+              </div>
+              {/* Le total ne se tape pas : il se lit. C'est ce qui le rend
+                  vérifiable, et c'est ce que le serveur recalcule de son côté. */}
+              <div className={styles.collationTotal} aria-live="polite">
+                <span>{nbParticipants || 0} × {fmtMontant(prixParTete, devise)}</span>
+                <strong>{fmtMontant(total, devise)}</strong>
+              </div>
+            </div>
+          )}
+
           <div className={styles.linesSection}>
             <div className={styles.linesHeader}>
               <div>
-                <h3>Lignes budgétaires <span className={styles.countBadge}>{lignes.length}</span></h3>
-                <p>Ventilez précisément la dépense sur les postes concernés.</p>
+                <h3>
+                  {estCollation ? 'Imputation budgétaire' : 'Lignes budgétaires'}
+                  {!estCollation && <span className={styles.countBadge}>{lignes.length}</span>}
+                </h3>
+                <p>
+                  {estCollation
+                    ? "Une collation tient sur une ligne : le poste, et le total que les têtes produisent."
+                    : 'Ventilez précisément la dépense sur les postes concernés.'}
+                </p>
               </div>
-              <button type="button" className={styles.addBtn} onClick={addLigne}>
-                <Plus size={16} aria-hidden="true" /> Ajouter une ligne
-              </button>
+              {!estCollation && (
+                <button type="button" className={styles.addBtn} onClick={addLigne}>
+                  <Plus size={16} aria-hidden="true" /> Ajouter une ligne
+                </button>
+              )}
             </div>
 
             <div className={styles.linesList}>
-              {lignes.map((ligne, index) => (
-                <div key={ligne.clientId} className={`${styles.lineItem} ${validationAttempted && !isLigneValid(ligne) ? styles.lineInvalid : ''}`}>
+              {(estCollation ? lignes.slice(0, 1) : lignes).map((ligne, index) => (
+                <div key={ligne.clientId} className={`${styles.lineItem} ${validationAttempted && !(estCollation ? Boolean(ligne.budget_poste_id) : isLigneValid(ligne)) ? styles.lineInvalid : ''}`}>
                   <span className={styles.lineNumber} aria-label={`Ligne ${index + 1}`}>{index + 1}</span>
                   <div className={`${styles.lineField} ${styles.budgetField}`}>
                     <label htmlFor={`direct-budget-${index}`}>Poste budgétaire <span aria-hidden="true">*</span></label>
@@ -528,16 +720,19 @@ export default function SortieDirecteProgrammee() {
                       type="number"
                       min="0.01"
                       step="0.01"
-                      value={ligne.montant}
+                      value={estCollation ? (total || '') : ligne.montant}
                       onChange={(e) => updateLigne(index, 'montant', e.target.value)}
                       placeholder="0,00"
-                      aria-invalid={validationAttempted && !(parseFloat(ligne.montant) > 0)}
-                      aria-describedby={validationAttempted && !(parseFloat(ligne.montant) > 0) ? `direct-amount-error-${index}` : undefined}
+                      disabled={estCollation}
+                      title={estCollation ? 'Produit du nombre de participants par le montant par personne' : undefined}
+                      aria-invalid={!estCollation && validationAttempted && !(parseFloat(ligne.montant) > 0)}
+                      aria-describedby={!estCollation && validationAttempted && !(parseFloat(ligne.montant) > 0) ? `direct-amount-error-${index}` : undefined}
                       aria-required="true"
-                      required
+                      required={!estCollation}
                     />
-                    {validationAttempted && !(parseFloat(ligne.montant) > 0) && <small id={`direct-amount-error-${index}`} className={styles.fieldError}>Saisissez un montant positif.</small>}
+                    {!estCollation && validationAttempted && !(parseFloat(ligne.montant) > 0) && <small id={`direct-amount-error-${index}`} className={styles.fieldError}>Saisissez un montant positif.</small>}
                   </div>
+                  {!estCollation && (
                   <button
                     type="button"
                     className={styles.removeBtn}
@@ -548,6 +743,7 @@ export default function SortieDirecteProgrammee() {
                   >
                     <Trash2 size={16} aria-hidden="true" />
                   </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -573,15 +769,15 @@ export default function SortieDirecteProgrammee() {
               <div className={styles.limitProgress}>
                 <div className={styles.progressLabels}>
                   <span>{capDepasse ? 'Plafond dépassé' : 'Plafond disponible'}</span>
-                  <strong>{Math.max(LIMITE_USD - total, 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} $ restant</strong>
+                  <strong>{Math.max(plafondActif - total, 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} $ restant</strong>
                 </div>
                 <div
                   className={styles.progressTrack}
                   role="progressbar"
                   aria-label="Utilisation du plafond de sortie directe"
                   aria-valuemin={0}
-                  aria-valuemax={LIMITE_USD}
-                  aria-valuenow={Math.min(total, LIMITE_USD)}
+                  aria-valuemax={plafondActif}
+                  aria-valuenow={Math.min(total, plafondActif)}
                 >
                   <span
                     className={`${styles.progressFill} ${capDepasse ? styles.progressOver : ''}`}
@@ -592,7 +788,7 @@ export default function SortieDirecteProgrammee() {
             ) : (
               <div className={styles.cdfNotice}>
                 <CircleDollarSign size={18} aria-hidden="true" />
-                <span>L’équivalent de 100 USD sera contrôlé au taux de change actif lors de la transmission.</span>
+                <span>L’équivalent de {plafondActif} USD sera contrôlé au taux de change actif lors de la transmission.</span>
               </div>
             )}
             <div className={styles.securityNote}>
@@ -604,7 +800,13 @@ export default function SortieDirecteProgrammee() {
           <div className={`${styles.totalPanel} ${capDepasse ? styles.totalOver : ''}`} aria-live="polite">
             <span>Total de l’ordre</span>
             <strong>{fmtMontant(total, devise)}</strong>
-            {capDepasse && <small>Dépasse le plafond autorisé de {LIMITE_USD} $</small>}
+            {capDepasse && (
+              <small>
+                {prixParTeteDepasse
+                  ? `Dépasse ${plafondParPersonne} $ par personne`
+                  : `Dépasse le plafond autorisé de ${plafondActif} $`}
+              </small>
+            )}
             <button type="submit" className={styles.submitBtn} disabled={submitting || capDepasse || referencesLoading || Boolean(referencesError)}>
               {submitting ? <Loader2 className={styles.spin} size={18} aria-hidden="true" /> : <Banknote size={18} aria-hidden="true" />}
               {submitting

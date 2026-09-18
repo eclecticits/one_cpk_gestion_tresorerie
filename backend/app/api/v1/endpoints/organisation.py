@@ -280,6 +280,22 @@ async def update_organisation_settings(
                 },
             )
 
+    # Le plafond par tête borne le prix, le plafond total borne l'ampleur : un
+    # par-tête supérieur au total ferait une règle qui ne peut jamais être
+    # satisfaite, et le refus serait incompréhensible à la caisse.
+    if "collation_plafond_par_personne_usd" in data and data["collation_plafond_par_personne_usd"] is not None:
+        settings.collation_plafond_par_personne_usd = data["collation_plafond_par_personne_usd"]
+    if "collation_plafond_total_usd" in data and data["collation_plafond_total_usd"] is not None:
+        settings.collation_plafond_total_usd = data["collation_plafond_total_usd"]
+    if settings.collation_plafond_par_personne_usd > settings.collation_plafond_total_usd:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Le plafond par personne ne peut dépasser le plafond total : "
+                "aucune collation ne pourrait alors être saisie."
+            ),
+        )
+
     await db.commit()
     await db.refresh(settings)
 
@@ -337,6 +353,8 @@ def _settings_out(settings: OrganisationSettings) -> OrganisationSettingsPublicO
         accounting_integration_mode=normalize_accounting_integration_mode(
             getattr(settings, "accounting_integration_mode", None)
         ),
+        collation_plafond_par_personne_usd=settings.collation_plafond_par_personne_usd,
+        collation_plafond_total_usd=settings.collation_plafond_total_usd,
         modules_config=settings.modules_config,
         workflow_config=wf.normalize_config(settings.workflow_config),
     )

@@ -231,6 +231,16 @@ export interface OrdreDecaissement {
   montant_usd_snapshot?: Money | null
   devise: 'USD' | 'CDF' | string
   motif?: string | null
+  /** 'SIMPLE' = sortie directe ordinaire, bornée par un plafond de montant.
+   *  'COLLATION' = collation de réunion, bornée PAR TÊTE : quarante
+   *  participants à cinq dollars restent une collation, que le plafond de
+   *  montant refuserait pourtant. */
+  type_sortie?: 'SIMPLE' | 'COLLATION' | string
+  reunion_intitule?: string | null
+  reunion_date?: string | null
+  /** Ce qui rend le total vérifiable : le nombre de têtes et le prix de chacune. */
+  participants?: number | null
+  montant_par_personne?: Money | null
   /** Répartition par poste budgétaire (décaissement progressif multi-postes). */
   lignes?: Array<{
     budget_poste_id?: number | null

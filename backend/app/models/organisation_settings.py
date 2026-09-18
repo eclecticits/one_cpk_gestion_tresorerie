@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String
+from decimal import Decimal
+
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +35,17 @@ class OrganisationSettings(Base):
     theme_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#2d3748")
     theme_button_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#ffffff")
     accounting_integration_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+
+    # Les deux bornes d'une collation de réunion en sortie directe. Le prix par
+    # tête dit que c'en est bien une ; le total dit qu'elle reste une sortie
+    # directe et non une dépense qui devrait passer par une réquisition.
+    # Réglables : un traiteur fait varier ce qu'un code figé ne suivrait pas.
+    collation_plafond_par_personne_usd: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), nullable=False, default=Decimal("10")
+    )
+    collation_plafond_total_usd: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("500")
+    )
 
     # Configuration détaillée par module métier (JSONB)
     modules_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

@@ -204,7 +204,18 @@ export const generateOrdreDirectPDF = async (
   doc.text('Motif', leftX, infoY + 20)
   doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
   doc.setFontSize(9)
-  const motifLines = doc.splitTextToSize(String(ordre?.motif || '-'), pageWidth / 2 - margin - 12)
+  // Pour une collation, le motif dit d'où sort le total : c'est ce qu'un
+  // contrôleur cherchera, et un montant muet ne le lui donnerait pas.
+  const estCollation = String((ordre as any)?.type_sortie || '').toUpperCase() === 'COLLATION'
+  const detailCollation = estCollation
+    ? `${String((ordre as any)?.reunion_intitule || 'Réunion')} du ${String((ordre as any)?.reunion_date || '')} — `
+      + `${toNumber((ordre as any)?.participants || 0)} participants x `
+      + `${formatAmount(toNumber((ordre as any)?.montant_par_personne || 0))} ${devise}`
+    : null
+  const motifLines = doc.splitTextToSize(
+    detailCollation || String(ordre?.motif || '-'),
+    pageWidth / 2 - margin - 12,
+  )
   doc.text(motifLines.slice(0, 2), leftX, infoY + 26)
 
   doc.setFont('helvetica', 'normal')

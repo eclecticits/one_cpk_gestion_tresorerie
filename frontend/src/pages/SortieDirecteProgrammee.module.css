@@ -187,6 +187,99 @@
   font-size: 12px;
 }
 
+/* --- Nature de la sortie ----------------------------------------------------
+   Deux natures, deux unités de mesure : le montant borne la première, le prix
+   par tête la seconde. La bascule annonce les deux bornes, pour qu'un refus ne
+   soit jamais une surprise. */
+.modeSwitch {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.modeActif,
+.modeInactif {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.modeActif {
+  border: 2px solid var(--tenant-primary, #1f6b5c);
+  background: rgba(31, 107, 92, 0.07);
+  color: #0f172a;
+}
+
+.modeInactif {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+}
+
+.modeInactif:hover {
+  border-color: #94a3b8;
+}
+
+.modeActif small,
+.modeInactif small {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+/* --- Collation : ce qui produit le total ------------------------------------
+   La réunion, sa date, le nombre de têtes et le prix de chacune. Le total ne
+   se tape pas, il se lit — c'est ce qui le rend vérifiable. */
+.collationGrid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(150px, 0.7fr) minmax(120px, 0.6fr) minmax(160px, 0.8fr) minmax(150px, 0.8fr);
+  gap: 14px;
+  align-items: start;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.collationTotal {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding-top: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.collationTotal span {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.collationTotal strong {
+  font-size: 19px;
+  color: #0f172a;
+}
+
+@media (max-width: 900px) {
+  .collationGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .collationTotal {
+    grid-column: 1 / -1;
+    padding-top: 0;
+  }
+}
+
 .identityGrid {
   display: grid;
   grid-template-columns: minmax(220px, 1.25fr) minmax(220px, 1fr) minmax(170px, 0.6fr);

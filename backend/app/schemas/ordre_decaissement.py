@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
@@ -16,7 +16,19 @@ class OrdreDecaissementCreate(DecimalBaseModel):
     # None = ordre de sortie directe (sans réquisition), plafonné à 100 USD
     requisition_id: UUID | None = None
     beneficiaire: str = Field(min_length=2, max_length=200)
+    #: Pour une collation, le total est DÉRIVÉ du nombre de participants et du
+    #: prix par tête : ce qui est envoyé ici sert l'affichage, le serveur
+    #: recalcule. Entre ce qu'il contrôle et ce qu'il paie, un écart n'aurait
+    #: aucune raison d'exister.
     montant: Decimal = Field(gt=0)
+    #: 'SIMPLE' = sortie directe ordinaire, bornée par un plafond de montant.
+    #: 'COLLATION' = collation de réunion, bornée PAR TÊTE. Le type ne dispense
+    #: d'aucun contrôle : il change l'unité de ce qui est mesuré.
+    type_sortie: Literal["SIMPLE", "COLLATION"] = "SIMPLE"
+    reunion_intitule: str | None = Field(default=None, max_length=200)
+    reunion_date: date | None = None
+    participants: int | None = Field(default=None, gt=0)
+    montant_par_personne: Decimal | None = Field(default=None, gt=0)
     devise: Literal["USD", "CDF"] = "USD"
     motif: str | None = None
     # Définition « en amont » (sorties directes programmées type réquisition).
@@ -54,6 +66,11 @@ class OrdreDecaissementOut(DecimalBaseModel):
     montant_usd_snapshot: Decimal | None = None
     devise: str
     motif: str | None = None
+    type_sortie: str = "SIMPLE"
+    reunion_intitule: str | None = None
+    reunion_date: date | None = None
+    participants: int | None = None
+    montant_par_personne: Decimal | None = None
     service_id: int | None = None
     lignes: list[dict[str, Any]] | None = None
     mode_paiement: str | None = None
