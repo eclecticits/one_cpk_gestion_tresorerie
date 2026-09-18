@@ -178,9 +178,13 @@ export default function EncaissementForm({
   const ftTiersLibre = formData.ft_tiers_selection === ORGANISATION_OTHER_VALUE
   // Largeurs de l'affectation comptable : le poste budgétaire disparaît hors
   // budget, les autres champs se redistribuent pour garder des lignes pleines.
-  const colAffectation = impacteLeBudget
-    ? { service: styles.col2, compte: styles.col3, centre: styles.col3, projet: styles.col3, total: styles.col3 }
-    : { service: styles.col3, compte: styles.col3, centre: styles.col2, projet: styles.col2, total: styles.col2 }
+  // L'affectation se lit en deux moments : ce qui CONDITIONNE l'imputation (le
+  // service borne les rubriques permises) se choisit avant les lignes ; ce que
+  // les lignes DÉTERMINENT se lit après elles.
+  const colAffectation = { service: styles.col2, centre: styles.col2, projet: styles.col2 }
+  const colImputation = impacteLeBudget
+    ? { poste: styles.col2, compte: styles.col2, total: styles.col2 }
+    : { poste: styles.col2, compte: styles.col3, total: styles.col3 }
   const natureToneClass = natureMouvement === 'FONDS_DE_TIERS'
     ? styles.natureFunds
     : natureMouvement === 'HORS_BUDGET_A_REGULARISER'
@@ -295,6 +299,14 @@ export default function EncaissementForm({
     }
     return gagnant
   }, [articles])
+
+  /** Nombre de postes distincts portés par les lignes. Un reçu peut mêler deux
+   *  natures — chaque ligne garde le sien —, mais l'en-tête de l'encaissement
+   *  n'en retient qu'un : mieux vaut le dire que de le choisir en silence. */
+  const postesDistinctsDesLignes = useMemo(
+    () => new Set(articles.map((a) => a.budget_poste_id).filter(Boolean)).size,
+    [articles],
+  )
 
   /** Nom du poste que les lignes imposent, pour que l'écran le dise au lieu de
    *  laisser un champ vide sous une étoile d'obligation. */
@@ -1402,48 +1414,6 @@ export default function EncaissementForm({
           <div className={styles.compactGrid}>
             {renderServiceField(colAffectation.service)}
 
-            {impacteLeBudget && (
-            <div className={`${styles.field} ${styles.col4}`}>
-              <label>
-                Poste budgétaire *
-                {!formData.budget_poste_id && postePrincipalDesLignes && (
-                  <span className={styles.tarifPoste}>
-                    {postePrincipalLibelle
-                      ? `Défini par les lignes : ${postePrincipalLibelle}`
-                      : 'Défini par les libellés tarifés'}
-                  </span>
-                )}
-              </label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type="text"
-                  value={budgetSearch}
-                  onChange={(e) => {
-                    setBudgetSearch(e.target.value)
-                    setFormData(prev => ({ ...prev, budget_poste_id: '' }))
-                    setShowBudgetDropdown(true)
-                  }}
-                  onFocus={() => setShowBudgetDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowBudgetDropdown(false), 120)}
-                  placeholder="Rechercher par code, libellé ou catégorie"
-                />
-                {showBudgetDropdown && filteredBudgetTree.length > 0 && (
-                  <div className={`${styles.dropdown} ${styles.dropdownWide}`} data-tree-scroll onMouseDown={e => e.preventDefault()}>
-                    {filteredBudgetTree.map(node => <BudgetDropdownNode key={node.id} node={node} depth={0} />)}
-                  </div>
-                )}
-              </div>
-            </div>
-            )}
-
-            <div className={`${styles.field} ${colAffectation.compte}`}>
-              <label>Compte comptable</label>
-              <input
-                type="text"
-                value={impacteLeBudget ? (budgetSearch || 'Déduit du poste budgétaire') : 'Sans imputation budgétaire'}
-                disabled
-              />
-            </div>
             <div className={`${styles.field} ${colAffectation.centre}`}>
               <label>Centre de coût</label>
               <input type="text" value={selectedServiceLabel} disabled />
@@ -1461,10 +1431,6 @@ export default function EncaissementForm({
                   </option>
                 ))}
               </select>
-            </div>
-            <div className={`${styles.field} ${colAffectation.total}`}>
-              <label>Total comptable (USD)</label>
-              <input type="text" value={formatCurrency(montantTotalArticles)} disabled />
             </div>
           </div>
           </div>
@@ -1602,6 +1568,74 @@ export default function EncaissementForm({
             </div>
           </div>
           </div>
+
+          {/* L'imputation se lit APRÈS les lignes : un libellé tarifé porte son
+              poste, si bien que les lignes répondent souvent d'elles-mêmes à la
+              question que cette section posait auparavant. */}
+          {!estFondsDeTiers && (
+          <div className={styles.formSection}>
+          <h4 className={styles.formSectionTitle}>Imputation budgétaire</h4>
+          <div className={styles.compactGrid}>
+            {impacteLeBudget && (
+            <div className={`${styles.field} ${colImputation.poste}`}>
+              <label>
+                Poste budgétaire *
+                {!formData.budget_poste_id && postePrincipalDesLignes && (
+                  <span className={styles.tarifPoste}>
+                    {postePrincipalLibelle
+                      ? `Défini par les lignes : ${postePrincipalLibelle}`
+                      : 'Défini par les libellés tarifés'}
+                  </span>
+                )}
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  value={budgetSearch}
+                  onChange={(e) => {
+                    setBudgetSearch(e.target.value)
+                    setFormData(prev => ({ ...prev, budget_poste_id: '' }))
+                    setShowBudgetDropdown(true)
+                  }}
+                  onFocus={() => setShowBudgetDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowBudgetDropdown(false), 120)}
+                  placeholder={
+                    postePrincipalLibelle && !formData.budget_poste_id
+                      ? `Déduit des lignes : ${postePrincipalLibelle}`
+                      : 'Rechercher par code, libellé ou catégorie'
+                  }
+                />
+                {showBudgetDropdown && filteredBudgetTree.length > 0 && (
+                  <div className={`${styles.dropdown} ${styles.dropdownWide}`} data-tree-scroll onMouseDown={e => e.preventDefault()}>
+                    {filteredBudgetTree.map(node => <BudgetDropdownNode key={node.id} node={node} depth={0} />)}
+                  </div>
+                )}
+              </div>
+            </div>
+            )}
+            <div className={`${styles.field} ${colImputation.compte}`}>
+              <label>Compte comptable</label>
+              <input
+                type="text"
+                value={impacteLeBudget ? (budgetSearch || 'Déduit du poste budgétaire') : 'Sans imputation budgétaire'}
+                disabled
+              />
+            </div>
+            <div className={`${styles.field} ${colImputation.total}`}>
+              <label>Total comptable (USD)</label>
+              <input type="text" value={formatCurrency(montantTotalArticles)} disabled />
+            </div>
+            {impacteLeBudget && postesDistinctsDesLignes > 1 && (
+              <div className={`${styles.field} ${styles.col6}`}>
+                <small className={styles.warningText}>
+                  Les lignes portent {postesDistinctsDesLignes} postes différents. Chacune garde le sien ;
+                  l'encaissement, lui, sera rattaché à {postePrincipalLibelle || 'celui qui porte le plus gros montant'}.
+                </small>
+              </div>
+            )}
+          </div>
+          </div>
+          )}
 
           <div className={styles.formSection}>
           <h4 className={styles.formSectionTitle}>Paiement</h4>
