@@ -187,6 +187,51 @@
   font-size: 12px;
 }
 
+/* --- Ouvrir la saisie -------------------------------------------------------
+   La page s'ouvre sur ses bons ; saisir est un geste qu'on demande. Le bouton
+   vit donc dans l'en-tête, à côté du retour. */
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.newBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 10px;
+  background: var(--tenant-primary, #1f6b5c);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.newBtn:hover {
+  filter: brightness(1.05);
+}
+
+.closeFormBtn {
+  margin-left: auto;
+  align-self: flex-start;
+  padding: 4px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.closeFormBtn:hover {
+  color: #475569;
+  background: #f1f5f9;
+}
+
 /* --- Nature de la sortie ----------------------------------------------------
    Deux natures, deux unités de mesure : le montant borne la première, le prix
    par tête la seconde. La bascule annonce les deux bornes, pour qu'un refus ne
@@ -688,10 +733,60 @@
   background: #ffffff;
 }
 
+/* --- Export ----------------------------------------------------------------
+   Emporte ce que la liste montre, filtres compris : exporter autre chose que ce
+   qu'on a sous les yeux ferait deux vérités pour une même page. */
+.exportGroup {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.exportBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.exportBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.exportBtn:not(:disabled):hover {
+  filter: brightness(0.97);
+}
+
+.exportExcel {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.exportPdf {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 .tableWrap {
   overflow: auto;
-  max-height: 540px;
+  /* La hauteur suit l'écran au lieu d'un 540 px arbitraire — même règle que la
+     liste des réquisitions. Les 320 px retranchés = en-tête de page, panneau
+     de contexte, en-tête et barre d'outils de la liste. */
+  max-height: clamp(360px, calc(100vh - 320px), 1000px);
   overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
 }
 
 .table {

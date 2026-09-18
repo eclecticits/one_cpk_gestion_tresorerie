@@ -154,6 +154,20 @@ export const generateOrdreDirectPDF = async (
   doc.setTextColor(15, 23, 42)
   doc.text('BON DE SORTIE DIRECTE', pageWidth / 2, 33, { align: 'center' })
 
+  // La nature du bon se lit au même endroit que son statut : la caisse doit
+  // savoir d'un coup d'œil si elle paie une dépense ponctuelle ou une collation,
+  // qui ne répond pas aux mêmes plafonds et ne se contrôle pas de la même façon.
+  const estCollation = String((ordre as any)?.type_sortie || '').toUpperCase() === 'COLLATION'
+  const natureLabel = estCollation ? 'COLLATION DE RÉUNION' : 'SORTIE DIRECTE SIMPLE'
+  const natureColor = estCollation ? [31, 107, 92] : [71, 85, 105]
+  const natureW = 52
+  doc.setFillColor(natureColor[0], natureColor[1], natureColor[2])
+  doc.roundedRect(margin, 31, natureW, 7, 2, 2, 'F')
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7)
+  doc.setTextColor(255, 255, 255)
+  doc.text(natureLabel, margin + natureW / 2, 36, { align: 'center' })
+
   const statusLabel =
     statutRaw === 'PAYE' ? 'PAYÉ PAR LA CAISSE' : statutRaw === 'ANNULE' ? 'ANNULÉ' : 'EN ATTENTE CAISSE'
   const statusColor =
@@ -172,14 +186,20 @@ export const generateOrdreDirectPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   doc.setTextColor(71, 85, 105)
+  // La mention des 100 USD serait fausse sur une collation : elle répond au
+  // prix par tête, au plafond de sa réunion et au cumul de la journée.
   doc.text(
-    'Dépense plafonnée (équivalent 100 USD) définie en amont — la caisse exécute sans modification.',
+    estCollation
+      ? `Collation de réunion : ${toNumber((ordre as any)?.participants || 0)} participants `
+        + `x ${formatAmount(toNumber((ordre as any)?.montant_par_personne || 0))} ${devise} — `
+        + `plafonds par personne, par réunion et sur 24 h contrôlés à la programmation.`
+      : 'Dépense plafonnée (équivalent 100 USD) définie en amont — la caisse exécute sans modification.',
     margin,
-    38
+    42
   )
 
   // --- BLOC INFOS ---
-  const infoY = 42
+  const infoY = 46
   const infoH = 34
   doc.setFillColor(248, 250, 252)
   doc.roundedRect(margin, infoY, pageWidth - margin * 2, infoH, 3, 3, 'F')
@@ -206,7 +226,6 @@ export const generateOrdreDirectPDF = async (
   doc.setFontSize(9)
   // Pour une collation, le motif dit d'où sort le total : c'est ce qu'un
   // contrôleur cherchera, et un montant muet ne le lui donnerait pas.
-  const estCollation = String((ordre as any)?.type_sortie || '').toUpperCase() === 'COLLATION'
   const detailCollation = estCollation
     ? `${String((ordre as any)?.reunion_intitule || 'Réunion')} du ${String((ordre as any)?.reunion_date || '')} — `
       + `${toNumber((ordre as any)?.participants || 0)} participants x `

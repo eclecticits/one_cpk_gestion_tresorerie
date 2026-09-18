@@ -45,6 +45,7 @@ const generateOrdreDirectPDF: PdfGeneratorOrdreDirectModule['generateOrdreDirect
 }
 import { useToast } from '../hooks/useToast'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
+import { useConfirm } from '../contexts/ConfirmContext'
 import PageHeader from '../components/PageHeader'
 import BackButton from '../components/BackButton'
 import ResponsiveModal from '../components/ResponsiveModal'
@@ -90,6 +91,7 @@ export default function SortieDirecteProgrammee() {
   // annonce avant que le serveur ne refuse. Un plafond qu'on découvre au refus
   // n'est pas un garde-fou, c'est une porte fermée sans écriteau.
   const { settings } = useOrganisationSettings()
+  const confirm = useConfirm()
   const plafondParPersonne = toNumber(settings?.collation_plafond_par_personne_usd ?? 5)
   const plafondCollationTotal = toNumber(settings?.collation_plafond_total_usd ?? 100)
   const plafondCollation24h = toNumber(settings?.collation_plafond_24h_usd ?? 400)
@@ -113,6 +115,10 @@ export default function SortieDirecteProgrammee() {
   // Bon en attente de caisse qu'on corrige : son identifiant tant que le
   // formulaire sert à le reprendre, `null` quand il sert à en programmer un.
   const [ordreEnCorrection, setOrdreEnCorrection] = useState<string | null>(null)
+  // La page s'ouvre sur ses bons, pas sur un formulaire vierge : qui revient
+  // ici cherche d'abord où en est ce qu'il a programmé. Saisir est un geste
+  // qu'on demande, pas un état par défaut.
+  const [formOuvert, setFormOuvert] = useState(false)
   const [serviceId, setServiceId] = useState<string>('')
   const [beneficiaire, setBeneficiaire] = useState('')
   // Une collation ne se mesure pas au montant mais au prix par tête : le mode
@@ -248,6 +254,25 @@ export default function SortieDirecteProgrammee() {
   const removeLigne = (index: number) =>
     setLignes((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev))
 
+  /** Referme le formulaire. Une saisie en cours ne se jette pas sans un mot :
+   *  la perdre d'un clic vaudrait la reprendre en entier. */
+  const fermerForm = async () => {
+    if (formIsDirty) {
+      const alle = await confirm({
+        title: 'Abandonner cette saisie ?',
+        description: ordreEnCorrection
+          ? 'Les corrections apportées à ce bon seront perdues.'
+          : 'Ce qui a été saisi sera perdu.',
+        confirmText: 'Abandonner',
+        cancelText: 'Continuer la saisie',
+        variant: 'danger',
+      })
+      if (!alle) return
+    }
+    resetForm()
+    setFormOuvert(false)
+  }
+
   const resetForm = () => {
     setOrdreEnCorrection(null)
     setServiceId('')
@@ -273,6 +298,7 @@ export default function SortieDirecteProgrammee() {
    */
   const corrigerOrdre = (ordre: OrdreDecaissement) => {
     const brut = ordre as any
+    setFormOuvert(true)
     setOrdreEnCorrection(String(ordre.id))
     setServiceId(brut.service_id ? String(brut.service_id) : '')
     setBeneficiaire(brut.beneficiaire || '')
@@ -314,6 +340,82 @@ export default function SortieDirecteProgrammee() {
       return
     }
     corrigerOrdre(ordre)
+  }
+
+  const [exportEnCours, setExportEnCours] = useState<'excel' | 'pdf' | null>(null)
+
+  /** Ce que la liste montre, dans l'ordre où elle le montre. L'export suit le
+   *  filtre affiché : exporter autre chose que ce qu'on a sous les yeux ferait
+   *  deux vérités pour une même page. */
+  const lignesExport = () =>
+    filteredOrdres.map((o) => ({
+      'N° ordre': o.numero_ordre,
+      Bénéficiaire: o.beneficiaire,
+      Nature: String(o.type_sortie || 'SIMPLE') === 'COLLATION' ? 'Collation de réunion' : 'Sortie simple',
+      Motif: o.motif || '',
+      Participants: o.participants ?? '',
+      'Montant par personne': o.montant_par_personne ? toNumber(o.montant_par_personne) : '',
+      Montant: toNumber(o.montant),
+      Devise: String(o.devise || 'USD'),
+      Statut: statutLabel(String(o.statut)),
+      'Programmé par': personName(o.autorise_par_user),
+      'Programmé le': o.autorise_le ? format(new Date(o.autorise_le), 'dd/MM/yyyy HH:mm') : '',
+      'Payé le': o.paye_le ? format(new Date(o.paye_le), 'dd/MM/yyyy HH:mm') : '',
+    }))
+
+  const suffixeFichier = () => `_${format(new Date(), 'yyyy-MM-dd')}`
+
+  const exporterExcel = async () => {
+    if (exportEnCours) return
+    setExportEnCours('excel')
+    try {
+      // `xlsx` pèse plus de 400 ko : chargé au moment de s'en servir, comme le
+      // générateur PDF de cette page.
+      const XLSX = await import('xlsx')
+      const feuille = XLSX.utils.json_to_sheet(lignesExport())
+      const classeur = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(classeur, feuille, 'Sorties directes')
+      XLSX.writeFile(classeur, `sorties_directes${suffixeFichier()}.xlsx`)
+    } catch (err: any) {
+      notifyError('Export impossible', err?.message || "Impossible de générer le fichier Excel.")
+    } finally {
+      setExportEnCours(null)
+    }
+  }
+
+  const exporterPdf = async () => {
+    if (exportEnCours) return
+    setExportEnCours('pdf')
+    try {
+      const [{ default: JsPDF }, { default: autoTable }] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+      ])
+      const doc = new JsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+      doc.setFontSize(13)
+      doc.text('Sorties directes programmées', 14, 14)
+      doc.setFontSize(9)
+      doc.setTextColor(100)
+      doc.text(
+        `${filteredOrdres.length} ordre(s) — édité le ${format(new Date(), 'dd/MM/yyyy HH:mm')}`,
+        14,
+        20,
+      )
+      const lignes = lignesExport()
+      autoTable(doc, {
+        startY: 25,
+        head: [Object.keys(lignes[0] || { Ordre: '' })],
+        body: lignes.map((l) => Object.values(l).map((v) => String(v ?? ''))),
+        styles: { fontSize: 7.5, cellPadding: 2 },
+        headStyles: { fillColor: [31, 107, 92], textColor: 255, fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [247, 249, 252] },
+      })
+      doc.save(`sorties_directes${suffixeFichier()}.pdf`)
+    } catch (err: any) {
+      notifyError('Export impossible', err?.message || "Impossible de générer le PDF.")
+    } finally {
+      setExportEnCours(null)
+    }
   }
 
   const handleSubmit = (e: FormEvent) => {
@@ -437,6 +539,9 @@ export default function SortieDirecteProgrammee() {
       }
       setConfirmationOpen(false)
       resetForm()
+      // L'ordre programmé se voit dans la liste : la refermer sur elle est la
+      // preuve du geste, là où un formulaire revenu à blanc ne dit rien.
+      setFormOuvert(false)
       await loadOrdres()
     } catch (err: any) {
       notifyError(
@@ -495,7 +600,30 @@ export default function SortieDirecteProgrammee() {
       <PageHeader
         title="Sortie directe programmée"
         subtitle="Préparez une dépense de faible montant, envoyée directement à la caisse pour paiement, sans réquisition."
-        actions={<BackButton fallback="/requisitions" />}
+        actions={
+          <div className={styles.headerActions}>
+            {/* Destination fixe : la sortie directe est une sous-page des
+                réquisitions. Un retour d'historique renvoyait là d'où l'on
+                venait — le tableau de bord, une recherche —, si bien que le
+                même bouton ne menait pas deux fois au même endroit. */}
+            <BackButton to="/requisitions" />
+            {!formOuvert && (
+              <button
+                type="button"
+                className={styles.newBtn}
+                onClick={() => {
+                  resetForm()
+                  setFormOuvert(true)
+                  window.requestAnimationFrame(() =>
+                    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+                  )
+                }}
+              >
+                <Plus size={16} aria-hidden="true" /> Nouvelle sortie directe
+              </button>
+            )}
+          </div>
+        }
       />
 
       <section className={styles.contextPanel} aria-label="Fonctionnement de la sortie directe">
@@ -520,6 +648,7 @@ export default function SortieDirecteProgrammee() {
         </div>
       </section>
 
+      {formOuvert && (
       <form ref={formRef} className={styles.formCard} onSubmit={handleSubmit} noValidate>
         <div className={styles.sectionHeader}>
           <span className={styles.sectionIcon}><ReceiptText size={20} aria-hidden="true" /></span>
@@ -532,6 +661,15 @@ export default function SortieDirecteProgrammee() {
                 : 'Les champs marqués d’un astérisque sont obligatoires.'}
             </p>
           </div>
+          <button
+            type="button"
+            className={styles.closeFormBtn}
+            onClick={() => void fermerForm()}
+            title="Fermer le formulaire"
+            aria-label="Fermer le formulaire"
+          >
+            <XCircle size={18} aria-hidden="true" />
+          </button>
         </div>
 
         <div className={styles.formBody}>
@@ -837,14 +975,13 @@ export default function SortieDirecteProgrammee() {
                 ? ordreEnCorrection ? 'Enregistrement…' : 'Programmation…'
                 : ordreEnCorrection ? 'Enregistrer les corrections' : 'Programmer et transmettre'}
             </button>
-            {ordreEnCorrection && (
-              <button type="button" className={styles.ghostBtn} onClick={resetForm} disabled={submitting}>
-                Abandonner la correction
-              </button>
-            )}
+            <button type="button" className={styles.ghostBtn} onClick={() => void fermerForm()} disabled={submitting}>
+              {ordreEnCorrection ? 'Abandonner la correction' : 'Annuler'}
+            </button>
           </div>
         </div>
       </form>
+      )}
 
       <section className={styles.historyCard}>
         <div className={styles.historyHeader}>
@@ -889,6 +1026,27 @@ export default function SortieDirecteProgrammee() {
               <option value="ANNULE">Annulé</option>
             </select>
           </label>
+          {/* L'export emporte ce que la liste montre, filtres compris. */}
+          <div className={styles.exportGroup}>
+            <button
+              type="button"
+              className={`${styles.exportBtn} ${styles.exportExcel}`}
+              onClick={() => void exporterExcel()}
+              disabled={exportEnCours !== null || filteredOrdres.length === 0}
+            >
+              {exportEnCours === 'excel' ? <Loader2 className={styles.spin} size={15} /> : <FileText size={15} />}
+              Excel
+            </button>
+            <button
+              type="button"
+              className={`${styles.exportBtn} ${styles.exportPdf}`}
+              onClick={() => void exporterPdf()}
+              disabled={exportEnCours !== null || filteredOrdres.length === 0}
+            >
+              {exportEnCours === 'pdf' ? <Loader2 className={styles.spin} size={15} /> : <Printer size={15} />}
+              PDF
+            </button>
+          </div>
         </div>
 
         {ordersError ? (
