@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { format } from 'date-fns'
-import { AlertTriangle, HandCoins, X } from 'lucide-react'
+import { AlertTriangle, Banknote, HandCoins, X } from 'lucide-react'
 import {
   listerDebiteurs,
   LIBELLE_TRANCHE,
@@ -8,6 +8,7 @@ import {
   type ListeDebiteurs,
 } from '../api/creances'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
+import NotesImpayeesPanel, { type CiblePayeur } from './NotesImpayeesPanel'
 import { ApiError } from '../lib/apiClient'
 import styles from './DebiteursPanel.module.css'
 
@@ -40,6 +41,10 @@ export default function DebiteursPanel() {
   const [chargement, setChargement] = useState(false)
   const [erreur, setErreur] = useState<string | null>(null)
   const rechercheDifferee = useDebouncedValue(recherche)
+  // Le débiteur qu'on règle sans quitter la liste. Savoir qui doit et pouvoir
+  // l'encaisser sont le même geste : la personne est devant le guichet au
+  // moment où on la retrouve ici.
+  const [payeur, setPayeur] = useState<{ cible: CiblePayeur; libelle: string } | null>(null)
 
   const charger = useCallback(async () => {
     setChargement(true)
@@ -69,6 +74,16 @@ export default function DebiteursPanel() {
     setDonnees(null)
     setErreur(null)
   }
+
+  /** Qui payer : l'identifiant du référentiel quand on l'a, le nom sinon.
+   *  Un débiteur « libre » n'est rapproché que sur son nom — le panneau le dit
+   *  à son tour, et le montant y reste un minimum. */
+  const cibleDe = (d: Debiteur): CiblePayeur =>
+    d.famille === 'expert'
+      ? { expert_comptable_id: d.cle }
+      : d.famille === 'client'
+        ? { client_id: d.cle }
+        : { nom: d.libelle }
 
   const ligne = (d: Debiteur) => (
     <div key={`${d.famille}:${d.cle}`} className={styles.ligne}>
@@ -103,6 +118,18 @@ export default function DebiteursPanel() {
       <span className={`${styles.age} ${styles[`age_${d.tranche}`]}`}>
         {LIBELLE_TRANCHE[d.tranche]}
       </span>
+      {/* Le règlement se fait sur SES notes, pas sur une nouvelle : c'est le
+          seul geste qui diminue ce qu'il doit. Le panneau des notes impayées
+          accepte un acompte comme un solde. */}
+      <button
+        type="button"
+        className={styles.encaisser}
+        onClick={() => setPayeur({ cible: cibleDe(d), libelle: d.libelle })}
+        title={`Encaisser sur les notes de ${d.libelle}`}
+      >
+        <Banknote size={14} aria-hidden="true" />
+        Encaisser
+      </button>
     </div>
   )
 
@@ -181,6 +208,20 @@ export default function DebiteursPanel() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Rendu par portail : il s'affiche au-dessus de ce panneau sans lui
+          disputer sa pile. En le refermant, la liste se recharge — le montant
+          qu'on vient d'encaisser ne doit pas y figurer encore dû. */}
+      {payeur && (
+        <NotesImpayeesPanel
+          cible={payeur.cible}
+          libelle={payeur.libelle}
+          onClose={() => {
+            setPayeur(null)
+            void charger()
+          }}
+        />
       )}
     </>
   )
