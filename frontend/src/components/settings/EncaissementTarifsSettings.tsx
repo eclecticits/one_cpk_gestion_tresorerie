@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Lock } from 'lucide-react'
+import { ArrowDown, ArrowUp, Lock, Search } from 'lucide-react'
 import {
   createEncaissementTarif,
   deleteEncaissementTarif,
@@ -47,6 +47,16 @@ const ligneVide = (): Ligne => ({
   poste_resolu: null,
 })
 
+/** Ce qui, dans une ligne, mérite d'être enregistré. Sert à reconnaître un
+ *  brouillon : l'écran peut alors dire qu'il reste des modifications en attente
+ *  plutôt que de laisser quitter la page sans un mot. */
+const empreinte = (lignes: Ligne[]) =>
+  JSON.stringify(
+    lignes.map((l) => [l.id ?? 0, l.libelle.trim(), l.montant.trim(), l.devise, l.budget_poste_code, l.is_active]),
+  )
+
+const pluriel = (nombre: number, singulier: string, pluriel_: string) => (nombre > 1 ? pluriel_ : singulier)
+
 interface Props {
   canEdit: boolean
 }
@@ -58,6 +68,7 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
   const [postes, setPostes] = useState<PosteOption[]>([])
   const [chargement, setChargement] = useState(true)
   const [enregistrement, setEnregistrement] = useState(false)
+  const [recherche, setRecherche] = useState('')
 
   const charger = useCallback(async () => {
     setChargement(true)
@@ -116,6 +127,38 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
 
   const alertes = useMemo(() => lignes.filter(codeInconnu).length, [lignes, codeInconnu])
 
+  const compte = useMemo(
+    () => ({
+      total: lignes.length,
+      actifs: lignes.filter((l) => l.is_active).length,
+      prixFixe: lignes.filter((l) => l.montant.trim() !== '').length,
+      imputes: lignes.filter((l) => l.budget_poste_code.trim() !== '').length,
+    }),
+    [lignes],
+  )
+
+  const modifiee = useMemo(
+    () => empreinte(lignes) !== empreinte(initiales.map(versLigne)),
+    [lignes, initiales],
+  )
+
+  /** Le filtre ne retire rien : il masque. Chaque ligne garde son rang réel,
+   *  sans quoi une modification tomberait sur la voisine. */
+  const filtre = recherche.trim().toLowerCase()
+  const visibles = useMemo(
+    () =>
+      lignes
+        .map((ligne, index) => ({ ligne, index }))
+        .filter(({ ligne }) =>
+          !filtre
+            ? true
+            : ligne.libelle.toLowerCase().includes(filtre) ||
+              ligne.budget_poste_code.toLowerCase().includes(filtre) ||
+              (ligne.poste_resolu || '').toLowerCase().includes(filtre),
+        ),
+    [lignes, filtre],
+  )
+
   const enregistrer = async () => {
     const nettoyees = lignes
       .map((l) => ({ ...l, libelle: l.libelle.trim() }))
@@ -159,6 +202,13 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
     }
   }
 
+  const ajouter = () => {
+    // Une ligne ajoutée alors qu'un filtre masque la table serait invisible :
+    // on rend d'abord la table entière, puis on ajoute.
+    setRecherche('')
+    setLignes((prev) => [...prev, ligneVide()])
+  }
+
   if (chargement) return <div className={styles.chargement}>Chargement des tarifs…</div>
 
   return (
@@ -177,12 +227,37 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
         </div>
       )}
 
+      <div className={styles.toolbar}>
+        <div className={styles.compteurs}>
+          <span className={styles.compteurFort}>
+            {compte.total} {pluriel(compte.total, 'tarif', 'tarifs')}
+          </span>
+          <span className={styles.compteurDetail}>
+            {compte.actifs} {pluriel(compte.actifs, 'actif', 'actifs')} · {compte.prixFixe} à prix fixé ·{' '}
+            {compte.imputes} {pluriel(compte.imputes, 'imputé', 'imputés')}
+          </span>
+        </div>
+        <div className={styles.outils}>
+          {modifiee && <span className={styles.brouillon}>Modifications non enregistrées</span>}
+          <div className={styles.rechercheWrap}>
+            <Search size={14} className={styles.rechercheIcone} />
+            <input
+              type="search"
+              className={styles.recherche}
+              value={recherche}
+              onChange={(e) => setRecherche(e.target.value)}
+              placeholder="Filtrer par libellé ou poste"
+            />
+          </div>
+        </div>
+      </div>
+
       <div className={styles.tableWrap}>
         <table className={styles.table}>
           <thead>
             <tr>
               <th className={styles.colRang}>#</th>
-              <th>Libellé</th>
+              <th className={styles.colLibelle}>Libellé</th>
               <th className={styles.colMontant}>Montant unitaire</th>
               <th className={styles.colDevise}>Devise</th>
               <th className={styles.colPoste}>Poste budgétaire (recette)</th>
@@ -191,15 +266,26 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
             </tr>
           </thead>
           <tbody>
-            {lignes.map((ligne, index) => (
+            {visibles.length === 0 && (
+              <tr>
+                <td colSpan={7} className={styles.vide}>
+                  {lignes.length === 0
+                    ? "Aucun tarif : tous les libellés restent libres à la caisse."
+                    : `Aucun tarif ne correspond à « ${recherche.trim()} ».`}
+                </td>
+              </tr>
+            )}
+            {visibles.map(({ ligne, index }) => (
               <tr key={ligne.id ?? `nouveau-${index}`} className={ligne.is_active ? '' : styles.inactif}>
                 <td className={styles.colRang}>{index + 1}</td>
-                <td>
+                <td className={styles.colLibelle}>
                   <input
                     type="text"
+                    className={styles.champLibelle}
                     value={ligne.libelle}
                     onChange={(e) => modifier(index, 'libelle', e.target.value)}
                     placeholder="Ex : Cotisation annuelle - Stagiaire (SEC)"
+                    title={ligne.libelle}
                     maxLength={255}
                     disabled={!canEdit}
                   />
@@ -262,8 +348,8 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
                     type="button"
                     className={styles.actionBtn}
                     onClick={() => deplacer(index, -1)}
-                    disabled={!canEdit || index === 0}
-                    title="Monter"
+                    disabled={!canEdit || index === 0 || !!filtre}
+                    title={filtre ? "Retirez le filtre pour réordonner" : 'Monter'}
                   >
                     <ArrowUp size={14} />
                   </button>
@@ -271,8 +357,8 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
                     type="button"
                     className={styles.actionBtn}
                     onClick={() => deplacer(index, 1)}
-                    disabled={!canEdit || index >= lignes.length - 1}
-                    title="Descendre"
+                    disabled={!canEdit || index >= lignes.length - 1 || !!filtre}
+                    title={filtre ? "Retirez le filtre pour réordonner" : 'Descendre'}
                   >
                     <ArrowDown size={14} />
                   </button>
@@ -294,13 +380,11 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
 
       {canEdit && (
         <div className={styles.actions}>
-          <button
-            type="button"
-            className={styles.secondaryBtn}
-            onClick={() => setLignes((prev) => [...prev, ligneVide()])}
-          >
+          <button type="button" className={styles.secondaryBtn} onClick={ajouter}>
             + Ajouter un tarif
           </button>
+          <span className={styles.actionsEspace} />
+          {modifiee && <span className={styles.brouillonPied}>Modifications non enregistrées</span>}
           <button type="button" className={styles.primaryBtn} onClick={enregistrer} disabled={enregistrement}>
             {enregistrement ? 'Enregistrement…' : 'Enregistrer les tarifs'}
           </button>
