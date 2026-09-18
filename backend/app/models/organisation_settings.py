@@ -41,10 +41,10 @@ class OrganisationSettings(Base):
     # directe et non une dépense qui devrait passer par une réquisition.
     # Réglables : un traiteur fait varier ce qu'un code figé ne suivrait pas.
     collation_plafond_par_personne_usd: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False, default=Decimal("10")
+        Numeric(10, 2), nullable=False, default=Decimal("5")
     )
     collation_plafond_total_usd: Mapped[Decimal] = mapped_column(
-        Numeric(14, 2), nullable=False, default=Decimal("200")
+        Numeric(14, 2), nullable=False, default=Decimal("100")
     )
     # Le plafond par réunion borne une dépense, pas une journée : sans cette
     # troisième borne, il suffirait d'aligner les réunions — une le matin, une

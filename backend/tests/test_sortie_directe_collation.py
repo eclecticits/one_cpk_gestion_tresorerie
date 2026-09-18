@@ -93,16 +93,24 @@ async def _simple(db, org, user, service, *, montant, beneficiaire="Secrétaire 
 
 
 @pytest.mark.asyncio
-async def test_une_collation_passe_au_dela_des_cent_dollars(db_session):
-    """Quarante têtes à cinq dollars : deux cents dollars, et pourtant une
-    collation. Le plafond de montant refusait ce qui n'a rien d'abusif."""
+async def test_une_collation_tient_sa_salle_puis_recommence_ailleurs(db_session):
+    """Ce que la collation change n'est pas le montant d'une salle, c'est
+    l'enveloppe d'une journée : cent dollars par réunion, mais quatre cents sur
+    vingt-quatre heures, là où la sortie simple bloque au premier cumul de cent
+    pour un même bénéficiaire."""
     org, user, service = await _contexte(db_session)
 
-    ordre = await _collation(db_session, org, user, service, participants=40, par_personne=5)
+    premiere = await _collation(db_session, org, user, service, participants=20, par_personne=5)
+    seconde = await _collation(
+        db_session, org, user, service, participants=20, par_personne=5, reunion="Commission des finances"
+    )
 
-    assert ordre["montant"] == Decimal("200.00")
-    assert ordre["type_sortie"] == "COLLATION"
-    assert ordre["participants"] == 40
+    assert premiere["montant"] == Decimal("100.00")
+    assert premiere["type_sortie"] == "COLLATION"
+    assert premiere["participants"] == 20
+    # Deux cents dollars dans la journée pour le même bénéficiaire : la sortie
+    # simple, elle, se serait arrêtée à cent.
+    assert seconde["montant"] == Decimal("100.00")
 
 
 @pytest.mark.asyncio
@@ -143,10 +151,10 @@ async def test_le_total_est_derive_jamais_declare(db_session):
     n'aurait aucune raison d'exister."""
     org, user, service = await _contexte(db_session)
 
-    ordre = await _collation(db_session, org, user, service, participants=12, par_personne="7.50")
+    ordre = await _collation(db_session, org, user, service, participants=12, par_personne="4.50")
 
-    assert ordre["montant"] == Decimal("90.00")  # et non le 1 envoyé
-    assert ordre["montant_par_personne"] == Decimal("7.50")
+    assert ordre["montant"] == Decimal("54.00")  # et non le 1 envoyé
+    assert ordre["montant_par_personne"] == Decimal("4.50")
 
 
 @pytest.mark.asyncio
@@ -154,10 +162,10 @@ async def test_une_meme_reunion_ne_se_decoupe_pas(db_session):
     """Sans regroupement par réunion, il suffirait de servir la même salle en
     plusieurs fois pour ignorer le plafond total."""
     org, user, service = await _contexte(db_session)
-    await _collation(db_session, org, user, service, participants=30, par_personne=5)
+    await _collation(db_session, org, user, service, participants=15, par_personne=5)
 
     with pytest.raises(HTTPException) as refus:
-        await _collation(db_session, org, user, service, participants=30, par_personne=5)
+        await _collation(db_session, org, user, service, participants=15, par_personne=5)
     assert "Fractionnement" in str(refus.value.detail)
 
 
@@ -165,13 +173,13 @@ async def test_une_meme_reunion_ne_se_decoupe_pas(db_session):
 async def test_deux_reunions_du_meme_jour_sont_deux_depenses(db_session):
     """Le regroupement porte sur la réunion, non sur celui qui prend l'argent."""
     org, user, service = await _contexte(db_session)
-    await _collation(db_session, org, user, service, participants=30, par_personne=5)
+    await _collation(db_session, org, user, service, participants=15, par_personne=5)
 
     autre = await _collation(
-        db_session, org, user, service, participants=30, par_personne=5, reunion="Commission de discipline"
+        db_session, org, user, service, participants=15, par_personne=5, reunion="Commission de discipline"
     )
 
-    assert autre["montant"] == Decimal("150.00")
+    assert autre["montant"] == Decimal("75.00")
 
 
 @pytest.mark.asyncio
@@ -181,7 +189,7 @@ async def test_une_collation_ne_bloque_pas_la_sortie_directe_simple(db_session):
     toute sortie directe du même responsable, au nom d'un fractionnement qui
     n'existe pas."""
     org, user, service = await _contexte(db_session)
-    await _collation(db_session, org, user, service, participants=30, par_personne=5)
+    await _collation(db_session, org, user, service, participants=20, par_personne=5)
 
     ordre = await _simple(db_session, org, user, service, montant=90)
 
@@ -239,7 +247,7 @@ async def test_la_collation_porte_sa_justification_en_base(db_session):
     """Le total cesse d'être un chiffre tapé à la main dont la description
     dirait « collation CA » : ce qui le produit est écrit là où on le relit."""
     org, user, service = await _contexte(db_session)
-    cree = await _collation(db_session, org, user, service, participants=30, par_personne=4)
+    cree = await _collation(db_session, org, user, service, participants=20, par_personne=4)
 
     ordre = (
         await db_session.execute(
@@ -250,7 +258,7 @@ async def test_la_collation_porte_sa_justification_en_base(db_session):
     assert ordre.reunion_intitule == "Conseil d'administration"
     assert ordre.reunion_date == LE_JOUR
     assert ordre.reunion_normalisee == "conseil d'administration"
-    assert ordre.participants == 30
+    assert ordre.participants == 20
     assert ordre.montant_par_personne == Decimal("4.00")
 
 
@@ -261,13 +269,13 @@ async def test_les_collations_d_une_journee_ont_leur_propre_plafond(db_session):
     l'après-midi, une autre le soir — pour vider la caisse par petites salles
     successives, chacune dans les clous."""
     org, user, service = await _contexte(db_session)
-    for nom in ("Bureau du matin", "Commission de midi"):
-        await _collation(db_session, org, user, service, participants=40, par_personne=5, reunion=nom)
+    for nom in ("Bureau du matin", "Commission de midi", "Comité de l'après-midi", "Assemblée du soir"):
+        await _collation(db_session, org, user, service, participants=20, par_personne=5, reunion=nom)
 
     with pytest.raises(HTTPException) as refus:
         await _collation(
-            db_session, org, user, service, participants=40, par_personne=5, reunion="Assemblée du soir"
+            db_session, org, user, service, participants=20, par_personne=5, reunion="Réunion de nuit"
         )
 
     assert "24 h" in str(refus.value.detail)
-    assert "600" in str(refus.value.detail)
+    assert "500" in str(refus.value.detail)

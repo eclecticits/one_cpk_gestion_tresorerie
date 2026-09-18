@@ -28,8 +28,8 @@ class OrganisationSettingsPublicOut(BaseModel):
     #: Bornes d'une collation de réunion en sortie directe. Le prix par tête dit
     #: que c'en est bien une ; le total dit qu'elle reste une sortie directe.
     #: Lisibles par tous : l'écran de saisie les annonce avant le refus.
-    collation_plafond_par_personne_usd: Decimal = Decimal("10")
-    collation_plafond_total_usd: Decimal = Decimal("200")
+    collation_plafond_par_personne_usd: Decimal = Decimal("5")
+    collation_plafond_total_usd: Decimal = Decimal("100")
     collation_plafond_24h_usd: Decimal = Decimal("400")
     modules_config: dict[str, Any] | None = None
     workflow_config: dict[str, Any] | None = None

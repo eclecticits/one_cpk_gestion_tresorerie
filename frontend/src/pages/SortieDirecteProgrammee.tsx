@@ -90,8 +90,8 @@ export default function SortieDirecteProgrammee() {
   // annonce avant que le serveur ne refuse. Un plafond qu'on découvre au refus
   // n'est pas un garde-fou, c'est une porte fermée sans écriteau.
   const { settings } = useOrganisationSettings()
-  const plafondParPersonne = toNumber(settings?.collation_plafond_par_personne_usd ?? 10)
-  const plafondCollationTotal = toNumber(settings?.collation_plafond_total_usd ?? 200)
+  const plafondParPersonne = toNumber(settings?.collation_plafond_par_personne_usd ?? 5)
+  const plafondCollationTotal = toNumber(settings?.collation_plafond_total_usd ?? 100)
   const plafondCollation24h = toNumber(settings?.collation_plafond_24h_usd ?? 400)
 
   const [services, setServices] = useState<Service[]>([])
@@ -327,13 +327,13 @@ export default function SortieDirecteProgrammee() {
       notifyWarning('Bénéficiaire requis', 'Saisissez le bénéficiaire.')
       return
     }
-    if (!motif.trim()) {
+    if (!estCollation && !motif.trim()) {
       notifyWarning('Motif requis', 'Précisez le motif de cette dépense directe.')
       return
     }
     if (estCollation) {
       if (!reunionIntitule.trim()) {
-        notifyWarning('Réunion requise', "Nommez la réunion : c'est elle qui justifie le nombre de têtes.")
+        notifyWarning('Motif requis', "Nommez la réunion : c'est elle qui justifie le nombre de têtes.")
         return
       }
       if (!reunionDate) {
@@ -404,7 +404,10 @@ export default function SortieDirecteProgrammee() {
         beneficiaire: beneficiaire.trim(),
         montant: submittedTotal,
         devise,
-        motif: motif.trim() || null,
+        // En collation, le motif est le libellé saisi plus haut : l'ordre
+        // porte alors exactement ce que l'agent a écrit, et non une phrase
+        // reconstituée.
+        motif: estCollation ? reunionIntitule.trim() : (motif.trim() || null),
         type_sortie: typeSortie,
         reunion_intitule: estCollation ? reunionIntitule.trim() : null,
         reunion_date: estCollation ? reunionDate : null,
@@ -414,9 +417,7 @@ export default function SortieDirecteProgrammee() {
         lignes: lignesValides.map((l) => ({
           budget_poste_id: l.budget_poste_id,
           rubrique: l.budget_poste_id ? postesById.get(l.budget_poste_id)?.code || '' : '',
-          description: estCollation
-            ? `Collation — ${reunionIntitule.trim()} (${nbParticipants} × ${prixParTete})`
-            : l.description.trim(),
+          description: estCollation ? reunionIntitule.trim() : l.description.trim(),
           montant_total: estCollation ? submittedTotal : parseFloat(l.montant),
           devise,
         })),
@@ -561,7 +562,12 @@ export default function SortieDirecteProgrammee() {
               type="button"
               className={estCollation ? styles.modeActif : styles.modeInactif}
               aria-pressed={estCollation}
-              onClick={() => setTypeSortie('COLLATION')}
+              onClick={() => {
+                setTypeSortie('COLLATION')
+                // Le tarif réglé est le cas courant : le proposer évite une
+                // frappe, sans empêcher de descendre en dessous.
+                if (!montantParPersonne) setMontantParPersonne(String(plafondParPersonne))
+              }}
             >
               Collation de réunion
               <small>
@@ -598,13 +604,17 @@ export default function SortieDirecteProgrammee() {
 
           {estCollation && (
             <div className={styles.collationGrid}>
+              {/* Ce champ EST le motif de la dépense, et c'est aussi ce qui
+                  regroupe les collations d'une même réunion sous un seul
+                  plafond : deux formulations d'une même salle feraient deux
+                  salles. D'où l'exemple, qui pousse à nommer la réunion. */}
               <div className={styles.field}>
-                <label htmlFor="direct-reunion">Réunion <span aria-hidden="true">*</span></label>
+                <label htmlFor="direct-reunion">Motif de la dépense <span aria-hidden="true">*</span></label>
                 <input
                   id="direct-reunion"
                   value={reunionIntitule}
                   onChange={(e) => setReunionIntitule(e.target.value)}
-                  placeholder="Ex. : Conseil d'administration"
+                  placeholder="Ex. : Collation du Conseil d'administration"
                   required
                   aria-required="true"
                 />
@@ -708,13 +718,18 @@ export default function SortieDirecteProgrammee() {
                     </select>
                     {validationAttempted && !ligne.budget_poste_id && <small id={`direct-budget-error-${index}`} className={styles.fieldError}>Sélectionnez un poste.</small>}
                   </div>
+                  {/* En collation, la description EST le motif : deux champs
+                      pour une même phrase finiraient par se contredire, et
+                      c'est la description qui part sur la pièce. */}
                   <div className={`${styles.lineField} ${styles.descriptionField}`}>
                     <label htmlFor={`direct-description-${index}`}>Description</label>
                     <input
                       id={`direct-description-${index}`}
-                      value={ligne.description}
+                      value={estCollation ? reunionIntitule : ligne.description}
                       onChange={(e) => updateLigne(index, 'description', e.target.value)}
                       placeholder="Détail de la dépense"
+                      disabled={estCollation}
+                      title={estCollation ? 'Reprend le motif de la dépense' : undefined}
                     />
                   </div>
                   <div className={`${styles.lineField} ${styles.amountField}`}>
@@ -753,6 +768,10 @@ export default function SortieDirecteProgrammee() {
             </div>
           </div>
 
+          {/* Une collation dit déjà son motif plus haut : le redemander ici
+              ferait recopier la même phrase, et deux motifs pour une dépense
+              finiraient par se contredire. */}
+          {!estCollation && (
           <div className={styles.field}>
             <label htmlFor="direct-reason">Motif de la dépense <span aria-hidden="true">*</span></label>
             <textarea
@@ -765,6 +784,7 @@ export default function SortieDirecteProgrammee() {
               aria-required="true"
             />
           </div>
+          )}
         </div>
 
         <div className={styles.formFooter}>

@@ -65,8 +65,8 @@ LIMITE_SORTIE_DIRECTE_USD = Decimal("100")
 # dollars font deux cents dollars et restent une collation. C'est le prix PAR
 # TÊTE qui dit ce qu'est la dépense ; le total dit seulement jusqu'où elle peut
 # aller sans passer par une réquisition.
-DEFAUT_COLLATION_PAR_PERSONNE_USD = Decimal("10")
-DEFAUT_COLLATION_TOTAL_USD = Decimal("200")
+DEFAUT_COLLATION_PAR_PERSONNE_USD = Decimal("5")
+DEFAUT_COLLATION_TOTAL_USD = Decimal("100")
 # Le plafond par réunion borne une dépense, pas une journée : sans cette borne,
 # il suffirait d'aligner les réunions pour vider la caisse par petites salles
 # successives, chacune dans les clous.

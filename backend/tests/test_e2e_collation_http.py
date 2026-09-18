@@ -67,7 +67,7 @@ async def test_parcours_collation_par_http(app_client: AsyncClient, admin_access
         base.update(extra)
         return base
 
-    # 2. Quarante têtes à cinq dollars : 200 USD, que les 100 USD refusaient.
+    # 2. Vingt têtes à cinq dollars : la salle tient sous son plafond.
     ok = await app_client.post(
         "/api/v1/ordres-decaissement",
         headers=entetes,
@@ -76,13 +76,13 @@ async def test_parcours_collation_par_http(app_client: AsyncClient, admin_access
             type_sortie="COLLATION",
             reunion_intitule=reunion,
             reunion_date="2026-09-18",
-            participants=40,
+            participants=20,
             montant_par_personne=5,
         ),
     )
     assert ok.status_code == 201, ok.text
-    assert Decimal(str(ok.json()["montant"])) == Decimal("200.00")
-    assert ok.json()["participants"] == 40
+    assert Decimal(str(ok.json()["montant"])) == Decimal("100.00")
+    assert ok.json()["participants"] == 20
 
     # 3. Le même montant en sortie simple reste refusé.
     simple = await app_client.post(
@@ -116,7 +116,7 @@ async def test_parcours_collation_par_http(app_client: AsyncClient, admin_access
             type_sortie="COLLATION",
             reunion_intitule=reunion,
             reunion_date="2026-09-18",
-            participants=30,
+            participants=15,
             montant_par_personne=5,
         ),
     )
@@ -136,5 +136,5 @@ async def test_parcours_collation_par_http(app_client: AsyncClient, admin_access
     assert liste.status_code == 200
     collations = [i for i in liste.json()["items"] if i.get("type_sortie") == "COLLATION"]
     assert collations, "la collation doit se relire dans la liste des sorties directes"
-    assert collations[0]["participants"] == 40
+    assert collations[0]["participants"] == 20
     assert collations[0]["reunion_intitule"] == reunion
