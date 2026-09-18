@@ -12,6 +12,7 @@ import { listEncaissementTarifs, type EncaissementTarif } from '../api/encaissem
 import { usePermissions } from '../hooks/usePermissions'
 import NotesImpayeesPanel, { type CiblePayeur } from './NotesImpayeesPanel'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
+import { useConfirm } from '../contexts/ConfirmContext'
 import OrganisationAutocomplete, {
   ORGANISATION_OTHER_VALUE,
   type OrganisationAutocompleteValue,
@@ -132,6 +133,7 @@ export default function EncaissementForm({
   // Forcer un prix tarifé est réservé à qui règle les tarifs — le serveur
   // applique la même règle, l'écran ne fait que la montrer.
   const { hasPermission } = usePermissions()
+  const confirm = useConfirm()
   const peutForcerTarif = hasPermission('can_edit_settings')
 
   const [searchEC, setSearchEC] = useState('')
@@ -679,6 +681,25 @@ export default function EncaissementForm({
     if (submitLockRef.current) return
     if (!validateForm()) return
 
+    // Zéro payé n'est pas une faute en soi : c'est ainsi qu'on enregistre une
+    // note de débit à recouvrer, et tout le suivi des créances en vit. Mais
+    // c'est aussi ce qu'on obtient en oubliant de saisir le montant, et le
+    // bouton dit « Enregistrer et valider », pas « Reconnaître une dette ».
+    // On ne refuse donc pas : on fait dire à l'agent ce qu'il enregistre.
+    if (toNumber(formData.montant_paye) === 0) {
+      const assume = await confirm({
+        title: 'Aucun montant payé',
+        description:
+          `Rien n'est encaissé : cet enregistrement créera une note de débit de `
+          + `${formatCurrency(montantTotalArticles)} à recouvrer, et la caisse ne bougera pas. `
+          + `Si le client a payé, fermez cette fenêtre et saisissez le montant reçu.`,
+        confirmText: 'Enregistrer la dette',
+        cancelText: 'Saisir le montant',
+        variant: 'danger',
+      })
+      if (!assume) return
+    }
+
     try {
       submitLockRef.current = true
       setActiveSubmitAction('submit')
@@ -855,6 +876,22 @@ export default function EncaissementForm({
       onError('Montant payé requis', 'Veuillez saisir le montant payé.')
       return false
     }
+    // Un encaissement fait entrer de l'argent : un montant négatif n'a pas de
+    // sens ici. Zéro reste permis (note de débit), mais se confirme à l'envoi.
+    // Pas toNumber : il ramène l'illisible à 0, qu'on prendrait pour une dette.
+    const montantPayeSaisi = Number(String(formData.montant_paye).trim().replace(',', '.'))
+    if (!isProforma && !Number.isFinite(montantPayeSaisi)) {
+      onError('Montant payé invalide', 'Le montant payé doit être un nombre.')
+      return false
+    }
+    if (!isProforma && montantPayeSaisi < 0) {
+      onError(
+        'Montant payé négatif',
+        "Un encaissement fait entrer de l'argent. Pour en faire sortir, passez par une sortie de fonds ou un retour en trésorerie.",
+      )
+      return false
+    }
+
     if (formData.canal === 'BANQUE' && !formData.compte_bancaire_id) {
       onError('Compte requis', 'Veuillez sélectionner un compte de dépôt.')
       return false
@@ -1668,6 +1705,7 @@ export default function EncaissementForm({
                 type="number"
                 inputMode="decimal"
                 step="0.01"
+                min="0"
                 value={formData.montant_paye}
                 onChange={e => setFormData(prev => ({ ...prev, montant_paye: e.target.value }))}
                 required
