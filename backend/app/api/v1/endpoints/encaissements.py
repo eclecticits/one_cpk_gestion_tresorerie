@@ -42,6 +42,7 @@ from app.models.rbac import Permission, role_permissions
 from app.modules.comptabilite.models import ComptaEcriture
 from app.modules.comptabilite.services.generation_service import annuler_ecriture_operation
 from app.modules.comptabilite.services.integration_mode import is_accounting_automatic  # compatibility for existing tests
+from app.schemas.client import TYPES_CLIENT, TYPES_CLIENT_AVEC_SEXE
 from app.schemas.payment import AffecterBudgetPayload, EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
 from app.services.entrees_caisse import list_entrees_internes_caisse
@@ -152,16 +153,7 @@ async def _portee_encaissements(
     return portee
 
 
-TYPE_CLIENTS = {
-    "expert_comptable",
-    "personne_physique",
-    "personne_morale",
-    "client_externe",
-    "banque_institution",
-    "partenaire",
-    "organisation",
-    "autre",
-}
+TYPE_CLIENTS = set(TYPES_CLIENT)
 STATUT_PAIEMENT = {"non_paye", "partiel", "complet", "avance"}
 MODE_PAIEMENT = {"cash", "mobile_money", "virement", "card", "cheque"}
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
@@ -1929,6 +1921,18 @@ async def create_proforma(
     return await _encaissement_response(db, encaissement, expert)
 
 
+def _exiger_sexe(payload: EncaissementCreate, sexe_connu: str | None) -> None:
+    if (
+        payload.type_client in TYPES_CLIENT_AVEC_SEXE
+        and payload.nature_mouvement != "FONDS_DE_TIERS"
+        and not sexe_connu
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Le sexe du client est obligatoire (M ou F).",
+        )
+
+
 async def _resolve_or_create_client(
     db: AsyncSession,
     tenant_id: int,
@@ -1960,6 +1964,7 @@ async def _resolve_or_create_client(
         client = res.scalar_one_or_none()
         if client is None:
             raise HTTPException(status_code=404, detail="Client introuvable")
+        _exiger_sexe(payload, sexe or client.sexe)
     else:
         nom = (payload.client_nom or "").strip()
         if not nom:
@@ -1971,6 +1976,7 @@ async def _resolve_or_create_client(
             )
         )
         client = res.scalar_one_or_none()
+        _exiger_sexe(payload, sexe or (client.sexe if client else None))
         if client is None:
             client = Client(
                 organisation_id=tenant_id,

@@ -12,6 +12,7 @@ from io import BytesIO
 
 import pytest
 from openpyxl import load_workbook
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api.v1.endpoints.exports import MONEY, export_encaissements
@@ -104,6 +105,36 @@ async def test_une_fiche_sans_sexe_se_complete_au_passage_suivant(db_session):
 
     client = await db_session.get(Client, client_id)
     assert client.sexe == "M"
+
+
+@pytest.mark.asyncio
+async def test_une_personne_sans_sexe_est_refusee(db_session):
+    org = await _organisation(db_session)
+    with pytest.raises(HTTPException) as exc:
+        await _resolve_or_create_client(
+            db_session, org.id, _payload(client_nom=f"Sans Sexe {uuid.uuid4().hex[:6]}"), None
+        )
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_une_fiche_qui_connait_le_sexe_dispense_de_le_ressaisir(db_session):
+    org = await _organisation(db_session)
+    nom = f"Client Connu {uuid.uuid4().hex[:6]}"
+    db_session.add(Client(organisation_id=org.id, nom=nom, sexe="F", active=True))
+    await db_session.flush()
+
+    client_id = await _resolve_or_create_client(db_session, org.id, _payload(client_nom=nom), None)
+
+    assert (await db_session.get(Client, client_id)).sexe == "F"
+
+
+@pytest.mark.asyncio
+async def test_une_personne_morale_n_a_pas_de_sexe_a_donner(db_session):
+    org = await _organisation(db_session)
+    payload = _payload(type_client="personne_morale", client_nom=f"Societe {uuid.uuid4().hex[:6]}")
+
+    assert await _resolve_or_create_client(db_session, org.id, payload, None)
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,31 @@ def _normalize_optional_email(value: str | None) -> str | None:
         raise ValueError(f"Adresse email invalide : {exc}") from exc
 
 
+# Les cinq types de client proposés à la saisie. Client externe, banque /
+# institution et organisation ont été fondus dedans (migration
+# 20260918_types_client) : la liste disait la même chose sous trop de noms, et
+# l'on y rangeait une personne sous « Organisation ».
+TYPES_CLIENT: tuple[str, ...] = (
+    "expert_comptable",
+    "personne_physique",
+    "personne_morale",
+    "partenaire",
+    "autre",
+)
+
+# Seule la personne physique a un sexe, et il est alors obligatoire.
+TYPES_CLIENT_AVEC_SEXE = frozenset({"personne_physique"})
+
+
+def normalize_optional_type_client(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    cleaned = value.strip()
+    if cleaned not in TYPES_CLIENT:
+        raise ValueError(f"Type de client invalide : attendu {', '.join(TYPES_CLIENT)}")
+    return cleaned
+
+
 def normalize_optional_sexe(value: str | None) -> str | None:
     """Ramène le sexe à 'M', 'F' ou rien.
 
@@ -65,6 +90,11 @@ class ClientCreate(BaseModel):
     def _validate_sexe(cls, v: str | None) -> str | None:
         return normalize_optional_sexe(v)
 
+    @field_validator("type_client")
+    @classmethod
+    def _validate_type_client(cls, v: str | None) -> str | None:
+        return normalize_optional_type_client(v)
+
 
 class ClientUpdate(BaseModel):
     nom: str | None = Field(default=None, min_length=2, max_length=300)
@@ -85,6 +115,11 @@ class ClientUpdate(BaseModel):
     @classmethod
     def _validate_sexe(cls, v: str | None) -> str | None:
         return normalize_optional_sexe(v)
+
+    @field_validator("type_client")
+    @classmethod
+    def _validate_type_client(cls, v: str | None) -> str | None:
+        return normalize_optional_type_client(v)
 
 
 class ClientOut(BaseModel):

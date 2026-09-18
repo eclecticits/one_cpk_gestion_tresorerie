@@ -168,7 +168,7 @@ async def test_encaissement_hors_budget_affecte_tresorerie_pas_budget_puis_regul
 
     enc = await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="CPK",
             libelle="Recette non prévue",
             montant=Decimal("2000"),
@@ -354,7 +354,7 @@ async def test_fonds_tiers_identite_tenant_externe_et_legacy(db_session, monkeyp
 
     await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="Client",
             libelle="Fonds tenant",
             montant=Decimal("500"),
@@ -386,7 +386,7 @@ async def test_fonds_tiers_identite_tenant_externe_et_legacy(db_session, monkeyp
 
     await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="Client",
             libelle="Fonds externe",
             montant=Decimal("300"),
@@ -439,7 +439,7 @@ async def test_fonds_tiers_reference_autre_tenant_sans_acces_aux_comptes(db_sess
 
     await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="Client",
             libelle="Fonds tenant B",
             montant=Decimal("500"),
@@ -503,7 +503,7 @@ async def test_fonds_tiers_identite_rejets_simples(db_session, monkeypatch, fond
     with pytest.raises(HTTPException) as exc_info:
         await create_encaissement(
             payload=EncaissementCreate(
-                type_client="client_externe",
+                type_client="personne_physique", client_sexe="M",
                 client_nom="Client",
                 libelle="Fonds invalide",
                 montant=Decimal("100"),
@@ -543,7 +543,7 @@ async def test_fonds_tiers_identite_rejette_double_inactive_et_tenant_courant(db
     async def create_with(fonds_tiers):
         return await create_encaissement(
             payload=EncaissementCreate(
-                type_client="client_externe",
+                type_client="personne_physique", client_sexe="M",
                 client_nom="Client",
                 libelle="Fonds invalide",
                 montant=Decimal("100"),
@@ -597,7 +597,7 @@ async def test_remboursement_fonds_tiers_nomme_qui_a_recu_l_argent(db_session, m
 
     await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="Client",
             libelle="Fonds tenant",
             montant=Decimal("500"),
@@ -858,7 +858,7 @@ async def test_annulation_encaissement_regularise_rend_le_budget(db_session, mon
 
     enc = await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="CPK",
             libelle="Recette non prévue",
             montant=Decimal("800"),
@@ -941,7 +941,7 @@ async def test_dashboard_separe_tresorerie_et_budget(db_session, monkeypatch):
     async def _encaisser(nature: str, montant: Decimal, poste_id: int | None):
         return await create_encaissement(
             payload=EncaissementCreate(
-                type_client="client_externe",
+                type_client="personne_physique", client_sexe="M",
                 client_nom="CPK",
                 libelle="Recette",
                 montant=montant,
@@ -1009,7 +1009,7 @@ async def test_export_encaissements_porte_la_nature_budgetaire(db_session, monke
 
     await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="CP Sud",
             libelle="Fonds pour compte de tiers",
             montant=Decimal("250"),
@@ -1061,7 +1061,7 @@ async def test_export_budget_ignore_fonds_tiers_meme_avec_poste_residuel(db_sess
     db.add(
         Encaissement(
             organisation_id=org.id,
-            type_client="client_externe",
+            type_client="personne_physique",
             client_nom="Tiers",
             libelle="Fonds de tiers legacy avec poste",
             montant=Decimal("500"),
@@ -1122,7 +1122,7 @@ async def test_export_sorties_fonds_affiche_tiers_sans_impact_budgetaire(db_sess
 
     await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="Client",
             libelle="Fonds externe",
             montant=Decimal("500"),
@@ -1213,7 +1213,7 @@ async def test_dashboard_separe_hors_budget_et_fonds_de_tiers(db_session, monkey
 
     await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="Client",
             libelle="Fonds externe",
             montant=Decimal("500"),

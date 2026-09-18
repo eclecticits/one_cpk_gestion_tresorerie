@@ -1076,7 +1076,7 @@ async def test_complement_paiement_credite_caisse(db_session):
 
     enc = Encaissement(
         organisation_id=org.id,
-        type_client="client_externe",
+        type_client="personne_physique",
         client_nom="Client Partiel",
         libelle="Prestation",
         montant=Decimal("100"),
@@ -1134,7 +1134,7 @@ async def test_relance_plafond_et_delai(db_session, monkeypatch):
     await db.flush()
     enc = Encaissement(
         organisation_id=org.id,
-        type_client="client_externe",
+        type_client="personne_physique",
         client_nom="Client Débiteur",
         libelle="Prestation",
         montant=Decimal("100"),

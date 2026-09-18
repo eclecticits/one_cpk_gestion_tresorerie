@@ -338,7 +338,7 @@ async def run(args) -> None:
             if expert_id:
                 type_client = "expert_comptable"; client_nom = None; n["enc_expert_matched"] += 1
             else:
-                type_client = "client_externe" if payer else "autre"
+                type_client = "personne_physique" if payer else "autre"
                 client_nom = payer or (e["libelle"][:120] if e["libelle"] else "Divers")
             montant = D(e["montant"])
             session.add(Encaissement(

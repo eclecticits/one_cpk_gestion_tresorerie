@@ -22,10 +22,7 @@ const TYPE_LABELS: Record<string, string> = TYPE_CLIENT_LABELS
 const TYPE_OPTIONS: TypeClient[] = [
   'personne_physique',
   'personne_morale',
-  'client_externe',
-  'banque_institution',
   'partenaire',
-  'organisation',
   'autre',
 ]
 

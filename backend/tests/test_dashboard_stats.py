@@ -57,7 +57,7 @@ async def test_dashboard_stats_reflects_new_encaissement(db_session, monkeypatch
 
     payload = EncaissementCreate(
         numero_recu="REC-TEST-0001",
-        type_client="client_externe",
+        type_client="personne_physique", client_sexe="M",
         expert_comptable_id=None,
         client_nom="Client Test",
         libelle="Encaissement test",
@@ -111,7 +111,7 @@ async def test_dashboard_stats_deduit_retours_des_sorties_periodiques(db_session
     op_date = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
     enc = Encaissement(
         organisation_id=org.id,
-        type_client="client_externe",
+        type_client="personne_physique",
         client_nom="Client août",
         libelle="Recette économique",
         montant=Decimal("500.00"),

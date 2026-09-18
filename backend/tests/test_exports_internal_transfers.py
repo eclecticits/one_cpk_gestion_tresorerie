@@ -78,7 +78,7 @@ async def test_export_encaissements_affiche_versement_banque_hors_totaux(db_sess
     await db_session.flush()
     enc = Encaissement(
         organisation_id=org.id,
-        type_client="client_externe",
+        type_client="personne_physique",
         client_nom="Client réel",
         client_id=client.id,
         libelle="Recette économique",

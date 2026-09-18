@@ -64,10 +64,7 @@ export type TypeClient =
   | 'expert_comptable'
   | 'personne_physique'
   | 'personne_morale'
-  | 'client_externe'
-  | 'banque_institution'
   | 'partenaire'
-  | 'organisation'
   | 'autre'
 
 export type StatutPaiement = 'non_paye' | 'partiel' | 'complet' | 'avance'

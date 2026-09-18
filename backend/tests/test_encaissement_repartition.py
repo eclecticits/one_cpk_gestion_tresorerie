@@ -119,7 +119,7 @@ async def test_deux_articles_deux_postes_chacun_sa_part(db_session, monkeypatch)
 
     encaissement = await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="Cabinet ABC",
             libelle="Cotisation et inscription",
             montant=Decimal("400"),
@@ -213,7 +213,7 @@ async def test_un_article_sans_poste_suit_l_encaissement(db_session, monkeypatch
 
     encaissement = await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="Cabinet ABC",
             libelle="Cotisation annuelle",
             montant=Decimal("120"),

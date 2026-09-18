@@ -39,6 +39,11 @@ class Client(Base):
         # compris celles qu'aucun formulaire ne renseigne : une organisation
         # n'a pas de sexe, et NULL est la seule façon de le dire.
         CheckConstraint("sexe IS NULL OR sexe IN ('M', 'F')", name="ck_clients_sexe"),
+        CheckConstraint(
+            "type_client IS NULL OR type_client IN "
+            "('expert_comptable','personne_physique','personne_morale','partenaire','autre')",
+            name="ck_clients_type_client",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -49,8 +54,7 @@ class Client(Base):
         index=True,
     )
     nom: Mapped[str] = mapped_column(String(300), nullable=False, index=True)
-    # Type indicatif (dernier type utilisé) : client_externe, banque_institution,
-    # partenaire, organisation, autre.
+    # Type indicatif (dernier type utilisé) : voir app.schemas.client.TYPES_CLIENT.
     type_client: Mapped[str | None] = mapped_column(String(50), nullable=True)
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     telephone: Mapped[str | None] = mapped_column(String(50), nullable=True)

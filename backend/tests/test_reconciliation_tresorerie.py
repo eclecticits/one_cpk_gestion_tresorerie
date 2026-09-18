@@ -89,7 +89,7 @@ async def _banque(db, org, *, solde_initial=Decimal("0"), solde=None):
 def _encaissement(org, *, montant, canal="CAISSE", compte_id=None, statut_operation="ACTIVE"):
     return Encaissement(
         organisation_id=org.id,
-        type_client="client_externe",
+        type_client="personne_physique",
         client_nom="Client",
         libelle="Recette",
         montant=montant,

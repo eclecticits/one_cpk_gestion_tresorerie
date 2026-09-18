@@ -33,7 +33,7 @@ class Encaissement(Base):
         CheckConstraint("montant_total >= 0", name="ck_encaissements_montant_total_nonneg"),
         CheckConstraint("montant_paye >= 0", name="ck_encaissements_montant_paye_nonneg"),
         CheckConstraint(
-            "type_client IN ('expert_comptable','personne_physique','personne_morale','client_externe','banque_institution','partenaire','organisation','autre')",
+            "type_client IN ('expert_comptable','personne_physique','personne_morale','partenaire','autre')",
             name="ck_encaissements_type_client",
         ),
         CheckConstraint(
@@ -81,7 +81,7 @@ class Encaissement(Base):
         index=True,
     )
     
-    # Type de client: expert_comptable, client_externe, banque_institution, partenaire, organisation, autre
+    # Type de client : voir app.schemas.client.TYPES_CLIENT
     type_client: Mapped[str] = mapped_column(String(50), nullable=False)
     
     # Si type_client == expert_comptable

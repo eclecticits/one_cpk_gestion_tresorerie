@@ -167,7 +167,7 @@ async def regulariser_ecart(
             numero_recu=numero,
             libelle=LIBELLE_REGULARISATION,
             description=motif_clean,
-            type_client="organisation",
+            type_client="autre",
             client_nom=LIBELLE_REGULARISATION,
             montant=montant,
             montant_total=montant,

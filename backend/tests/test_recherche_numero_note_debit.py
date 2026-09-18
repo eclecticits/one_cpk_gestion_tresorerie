@@ -41,7 +41,7 @@ async def _org(db):
 
 async def _note(db, org, *, numero_recu=None, numero_proforma=None, est_proforma=False):
     enc = Encaissement(
-        organisation_id=org.id, type_client="client_externe", client_nom="Client",
+        organisation_id=org.id, type_client="personne_physique", client_nom="Client",
         libelle="Prestation", montant=Decimal("100"), montant_total=Decimal("100"),
         montant_paye=Decimal("100"), montant_percu=Decimal("100"),
         devise_perception="USD", canal="CAISSE", statut_paiement="complet",
@@ -255,7 +255,7 @@ async def test_les_propositions_respectent_la_portee_par_service(db_session):
 
 async def _note_client(db, org, nom: str, *, numero: str):
     enc = Encaissement(
-        organisation_id=org.id, type_client="client_externe", client_nom=nom,
+        organisation_id=org.id, type_client="personne_physique", client_nom=nom,
         libelle="Prestation", montant=Decimal("100"), montant_total=Decimal("100"),
         montant_paye=Decimal("100"), montant_percu=Decimal("100"),
         devise_perception="USD", canal="CAISSE", statut_paiement="complet",

@@ -4,10 +4,7 @@ export const TYPE_CLIENT_LABELS: Record<TypeClient, string> = {
   expert_comptable: 'Expert-comptable',
   personne_physique: 'Personne physique',
   personne_morale: 'Personne morale',
-  client_externe: 'Client externe',
-  banque_institution: 'Banque / Institution',
   partenaire: 'Partenaire',
-  organisation: 'Organisation',
   autre: 'Autre',
 }
 
@@ -16,14 +13,20 @@ export function getTypeClientLabel(typeClient: TypeClient): string {
 }
 
 /**
- * Types de client derrière lesquels il y a une personne, donc un sexe.
+ * Seule la personne physique a un sexe, et il est alors obligatoire.
  *
- * Une banque, une organisation, un partenaire ou une personne morale n'en ont
- * pas : leur demander le champ produirait une colonne vide dans l'export et
- * une question sans réponse à la saisie. L'expert-comptable en aurait un, mais
- * il relève d'un autre référentiel, qui ne porte pas l'information.
+ * Une personne morale ou un partenaire n'en ont pas. L'expert-comptable en
+ * aurait un, mais il relève d'un autre référentiel, qui ne porte pas
+ * l'information. Même liste que TYPES_CLIENT_AVEC_SEXE côté serveur.
  */
-export const TYPES_CLIENT_AVEC_SEXE: TypeClient[] = ['personne_physique', 'client_externe']
+export const TYPES_CLIENT_AVEC_SEXE: TypeClient[] = ['personne_physique']
+
+/** Libellé du champ nom selon ce qu'il désigne. */
+export function libelleNomClient(typeClient: TypeClient): string {
+  if (typeClient === 'personne_morale') return 'Raison sociale'
+  if (typeClient === 'partenaire') return 'Nom du partenaire'
+  return 'Nom du client'
+}
 
 export function typeClientDemandeLeSexe(typeClient: TypeClient): boolean {
   return TYPES_CLIENT_AVEC_SEXE.includes(typeClient)

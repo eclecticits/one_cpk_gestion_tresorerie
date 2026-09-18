@@ -150,7 +150,7 @@ async def _encaissement_row(
         numero_proforma=f"PF-{_suffix()}" if est_proforma else None,
         est_proforma=est_proforma,
         organisation_id=org.id,
-        type_client="client_externe",
+        type_client="personne_physique",
         client_nom="Client intégrité",
         libelle="Encaissement intégrité",
         montant=Decimal("500"),
@@ -455,7 +455,7 @@ async def test_filters_and_pagination(db_session, monkeypatch):
         enc = Encaissement(
             numero_recu=f"REC-20260127-00{idx+2}",
             organisation_id=org.id,
-            type_client="client_externe",
+            type_client="personne_physique",
             client_nom=f"Client {idx}",
             libelle=f"Libellé {idx}",
             description=None,
@@ -580,7 +580,7 @@ async def test_create_encaissement_retries_on_duplicate_numero(db_session, monke
     existing = Encaissement(
         numero_recu="REC-20260127-0001",
         organisation_id=org.id,
-        type_client="client_externe",
+        type_client="personne_physique",
         client_nom="Client A",
         libelle="Formation",
         description=None,
@@ -610,7 +610,7 @@ async def test_create_encaissement_retries_on_duplicate_numero(db_session, monke
 
     payload = EncaissementCreate(
         numero_recu="",
-        type_client="client_externe",
+        type_client="personne_physique", client_sexe="M",
         client_nom="Client B",
         libelle="Formation",
         description=None,
@@ -667,7 +667,7 @@ async def test_encaissement_manual_accounting_mode_accepts_unmapped_poste(db_ses
 
     payload = EncaissementCreate(
         numero_recu="",
-        type_client="client_externe",
+        type_client="personne_physique", client_sexe="M",
         client_nom="Client manuel",
         libelle="Recette manuelle",
         montant=100,
@@ -720,7 +720,7 @@ async def test_payment_initial_uses_payment_history_accounting_origin(db_session
 
     created = await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
+            type_client="personne_physique", client_sexe="M",
             client_nom="Client initial",
             libelle="Paiement initial",
             montant=Decimal("1000"),

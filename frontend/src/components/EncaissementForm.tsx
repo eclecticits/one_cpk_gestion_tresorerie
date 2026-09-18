@@ -4,7 +4,7 @@ import { AlertTriangle } from 'lucide-react'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, NatureMouvement, TypeClient, Service } from '../types'
 import { toNumber } from '../utils/amount'
-import { TYPE_CLIENT_LABELS, typeClientDemandeLeSexe } from '../utils/encaissementHelpers'
+import { TYPE_CLIENT_LABELS, libelleNomClient, typeClientDemandeLeSexe } from '../utils/encaissementHelpers'
 import type { ProjetActivite } from '../api/projetsActivites'
 import { uploadEncaissementPiece } from '../api/encaissementPieces'
 import { listerNotesImpayees } from '../api/creances'
@@ -852,6 +852,10 @@ export default function EncaissementForm({
       onError('Nom du client requis', 'Veuillez saisir le nom complet du client.')
       return false
     }
+    if (demandeLeSexe && !clientSexe) {
+      onError('Sexe requis', 'Veuillez indiquer le sexe du client (M ou F).')
+      return false
+    }
     if (
       !estFondsDeTiers && formData.type_client !== 'expert_comptable' &&
       clientEmail.trim() &&
@@ -1314,7 +1318,7 @@ export default function EncaissementForm({
           ) : (
             <>
               <div className={`${styles.field} ${styles.col4}`}>
-                <label>Nom du client *</label>
+                <label>{libelleNomClient(formData.type_client)} *</label>
                 <div style={{ position: 'relative' }}>
                   <input
                     type="text"
@@ -1399,11 +1403,12 @@ export default function EncaissementForm({
                     deux boutons, à côté de l'email et du téléphone. */}
                 {demandeLeSexe && (
                   <div className={`${styles.field} ${styles.col1}`}>
-                    <label id="client-sexe-label">Sexe</label>
+                    <label id="client-sexe-label">Sexe *</label>
                     <div
                       className={styles.segmented}
                       role="radiogroup"
                       aria-labelledby="client-sexe-label"
+                      aria-required="true"
                     >
                       {SEXES.map(({ value, libelle }) => (
                         <button
@@ -1418,8 +1423,7 @@ export default function EncaissementForm({
                               ? `${styles.segmentedItem} ${styles.segmentedItemActive}`
                               : styles.segmentedItem
                           }
-                          // Recliquer sur la valeur active revient à « non précisé ».
-                          onClick={() => setClientSexe(prev => (prev === value ? '' : value))}
+                          onClick={() => setClientSexe(value)}
                         >
                           {value}
                         </button>

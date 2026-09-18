@@ -461,7 +461,7 @@ async def test_encaissement_simple_genere_ecriture_si_comptabilite_active(db_ses
     from app.api.v1.endpoints.encaissements import create_encaissement
 
     payload = EncaissementCreate(
-        type_client="client_externe", client_nom="Client Test", libelle="Cotisation",
+        type_client="personne_physique", client_sexe="M", client_nom="Client Test", libelle="Cotisation",
         montant=Decimal("300"), montant_total=Decimal("300"), montant_paye=Decimal("300"),
         montant_percu=Decimal("300"), devise_perception="USD", mode_paiement="cash",
         canal="CAISSE", budget_poste_id=poste_recette.id,

@@ -97,7 +97,7 @@ async def _seed_encaissement_caisse(db_session, org, montant):
         organisation_id=org.id,
         numero_recu=f"ND-SEED-{uuid.uuid4().hex[:6]}",
         libelle="Encaissement initial",
-        type_client="organisation",
+        type_client="autre",
         client_nom="Seed",
         montant=montant, montant_total=montant, montant_paye=montant, montant_percu=montant,
         devise_perception="USD", taux_change_applique=Decimal("1"),
