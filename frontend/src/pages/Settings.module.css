@@ -1040,6 +1040,13 @@
   transition: box-shadow 0.2s ease;
 }
 
+/* Une carte large pour les sections qui portent un tableau plutôt qu'un
+   formulaire : 980px suffisent à deux colonnes de champs, pas à sept colonnes
+   de saisie qu'on relit en entier. */
+.wideCard {
+  max-width: 1400px;
+}
+
 .formCard:hover {
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 14px 34px rgba(15, 23, 42, 0.07);
 }

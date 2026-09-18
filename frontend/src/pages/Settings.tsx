@@ -2616,7 +2616,7 @@ export default function Settings() {
             <h2>Encaissements</h2>
             <span className={styles.mutedText}>Tarifs : libellé, montant, poste</span>
           </div>
-          <div className={styles.formCard}>
+          <div className={`${styles.formCard} ${styles.wideCard}`}>
             <EncaissementTarifsSettings canEdit={canEditSettings} />
           </div>
         </div>
