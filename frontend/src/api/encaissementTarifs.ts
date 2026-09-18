@@ -15,6 +15,17 @@ export interface EncaissementTarif {
    *  Nul avec un code renseigné = code introuvable dans cet exercice. */
   budget_poste_id: number | null
   budget_poste_libelle: string | null
+  /** Fenêtre de validité de CETTE version. `effet_au` nul = version en
+   *  vigueur ; renseigné = version close, qui vaut encore pour les reçus
+   *  qu'elle couvrait mais ne s'applique plus à une saisie d'aujourd'hui. */
+  effet_du: string
+  effet_au: string | null
+  /** La version que celle-ci a remplacée, s'il y en a une. */
+  remplace_id: number | null
+  /** Lignes d'encaissement passées sous cette version. Au-delà de zéro, une
+   *  modification substantielle ouvre une version neuve au lieu d'écraser
+   *  celle-ci, et un retrait la clôt au lieu de l'effacer. */
+  utilisations: number
   created_at: string
   updated_at: string
 }
@@ -23,9 +34,15 @@ export type EncaissementTarifPayload = Partial<
   Pick<EncaissementTarif, 'libelle' | 'montant' | 'devise' | 'budget_poste_code' | 'is_active' | 'position'>
 >
 
-export function listEncaissementTarifs(actifs?: boolean): Promise<EncaissementTarif[]> {
+export function listEncaissementTarifs(
+  actifs?: boolean,
+  archives?: boolean,
+): Promise<EncaissementTarif[]> {
+  const params: Record<string, boolean> = {}
+  if (actifs !== undefined) params.actifs = actifs
+  if (archives !== undefined) params.archives = archives
   return apiRequest<EncaissementTarif[]>('GET', '/encaissement-tarifs', {
-    params: actifs === undefined ? undefined : { actifs },
+    params: Object.keys(params).length ? params : undefined,
   })
 }
 

@@ -19,18 +19,20 @@ sert, si bien qu'un tarif survit à l'ouverture d'un nouvel exercice.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
-    UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -41,10 +43,19 @@ from app.db.base import Base
 class EncaissementTarif(Base):
     __tablename__ = "encaissement_tarifs"
     __table_args__ = (
-        # Un libellé désigne un tarif et un seul : sans cela, la saisie ne
-        # saurait pas lequel appliquer. La casse et les espaces ne font pas
-        # deux tarifs (unicité posée sur le libellé normalisé).
-        UniqueConstraint("organisation_id", "libelle_normalise", name="uq_encaissement_tarifs_org_libelle"),
+        # Un libellé désigne un tarif et un seul À LA FOIS : sans cela, la
+        # saisie ne saurait pas lequel appliquer. La casse et les espaces ne
+        # font pas deux tarifs (unicité posée sur le libellé normalisé).
+        # L'unicité ne porte que sur les versions en vigueur — une version
+        # close garde son nom, et ce nom peut être repris.
+        Index(
+            "uq_encaissement_tarifs_org_libelle_vivant",
+            "organisation_id",
+            "libelle_normalise",
+            unique=True,
+            postgresql_where=text("effet_au IS NULL"),
+        ),
+        Index("ix_encaissement_tarifs_libelle_effet", "organisation_id", "libelle_normalise", "effet_du"),
         CheckConstraint("montant IS NULL OR montant > 0", name="ck_encaissement_tarifs_montant_positif"),
         CheckConstraint("devise IN ('USD','CDF')", name="ck_encaissement_tarifs_devise"),
     )
@@ -68,6 +79,23 @@ class EncaissementTarif(Base):
     #: Ordre d'affichage voulu par l'administrateur (la pré-liste se classait
     #: déjà à la main, avec ses flèches monter/descendre).
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Début de validité de CETTE version. Un encaissement prend le tarif en
+    #: vigueur à SA date, non celui d'aujourd'hui : antidater un reçu ne doit
+    #: pas lui appliquer un prix voté depuis.
+    effet_du: Mapped[date] = mapped_column(
+        Date, nullable=False, server_default=text("CURRENT_DATE")
+    )
+    #: Fin de validité (exclusive). Nul = version en vigueur. Une version ne
+    #: s'efface jamais : elle se clôt, et c'est ce qui permet de relire un reçu
+    #: d'hier avec le tarif d'hier.
+    effet_au: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: La version que celle-ci remplace. Chaîne l'histoire d'un tarif, et
+    #: permet de dire « « X » est devenu « Y » » à qui tape l'ancien nom.
+    remplace_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("encaissement_tarifs.id", ondelete="SET NULL"), nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

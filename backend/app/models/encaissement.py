@@ -229,6 +229,20 @@ class EncaissementArticle(Base):
         nullable=True,
         index=True,
     )
+    #: Version du tarif sous laquelle CETTE ligne a été émise. Le libellé et le
+    #: prix restent la photo qui fait foi ; ce lien dit en plus sous quelle
+    #: définition réglée elle l'a été. En RESTRICT : la base interdit d'elle-
+    #: même d'effacer un tarif qui a servi, sans dépendre d'un contrôle
+    #: applicatif qu'on pourrait oublier.
+    tarif_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("encaissement_tarifs.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    #: Le prix s'écarte du tarif, et quelqu'un en avait le droit. Se lit ligne
+    #: par ligne, sans avoir à remonter le journal d'audit.
+    tarif_force: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 

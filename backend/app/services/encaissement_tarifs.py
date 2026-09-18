@@ -12,11 +12,12 @@ que d'imputer au hasard.
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
@@ -101,12 +102,32 @@ async def postes_par_code(
 
 
 async def tarifs_resolus(
-    db: AsyncSession, organisation_id: int, *, actifs_seulement: bool = False
+    db: AsyncSession,
+    organisation_id: int,
+    *,
+    actifs_seulement: bool = False,
+    a_la_date: date | None = None,
+    inclure_closes: bool = False,
 ) -> list[tuple[EncaissementTarif, BudgetPoste | None]]:
-    """Les tarifs de l'organisation, chacun avec le poste où il tombe aujourd'hui."""
+    """Les tarifs de l'organisation, chacun avec le poste où il tombe aujourd'hui.
+
+    Un tarif est une SUITE DE VERSIONS : ce qu'on lit dépend donc du moment.
+    Sans précision, on rend le catalogue en cours (les versions ouvertes), qui
+    est ce que l'écran des réglages doit montrer. Avec `a_la_date`, on rend ce
+    qui faisait foi ce jour-là — c'est cette forme que la saisie emploie, pour
+    qu'un reçu antidaté ne prenne pas un prix voté depuis. `inclure_closes`
+    rend toute l'histoire, pour la relire.
+    """
     requete = select(EncaissementTarif).where(EncaissementTarif.organisation_id == organisation_id)
     if actifs_seulement:
         requete = requete.where(EncaissementTarif.is_active.is_(True))
+    if a_la_date is not None:
+        requete = requete.where(
+            EncaissementTarif.effet_du <= a_la_date,
+            or_(EncaissementTarif.effet_au.is_(None), EncaissementTarif.effet_au > a_la_date),
+        )
+    elif not inclure_closes:
+        requete = requete.where(EncaissementTarif.effet_au.is_(None))
     tarifs = list(
         (
             await db.execute(requete.order_by(EncaissementTarif.position, EncaissementTarif.id))
@@ -121,12 +142,67 @@ async def tarifs_resolus(
     ]
 
 
+async def succession(
+    db: AsyncSession, organisation_id: int, libelle_normalise: str
+) -> EncaissementTarif | None:
+    """La version en cours qui a succédé à un libellé qu'on ne trouve plus.
+
+    Le libellé est la CLÉ d'application d'un tarif. Le renommer libérerait donc
+    l'ancien nom : le caissier qui le retape — il est encore dans ses habitudes
+    et dans la pré-liste — ne serait plus verrouillé du tout, et rien ne le
+    signalerait. On remonte la chaîne des versions pour pouvoir le dire.
+
+    Rend `None` quand le tarif a simplement été retiré : là, l'administrateur a
+    voulu que ce libellé redevienne libre, et le dire autrement serait le
+    contredire. `None` également quand la version qui a pris le relais porte le
+    MÊME nom : ce n'est pas un renommage mais un changement de prix, et le nom
+    n'a jamais cessé d'être le bon — s'il ne s'applique pas à la date demandée,
+    c'est que le tarif n'existait pas encore ce jour-là.
+    """
+    close = (
+        await db.execute(
+            select(EncaissementTarif)
+            .where(
+                EncaissementTarif.organisation_id == organisation_id,
+                EncaissementTarif.libelle_normalise == libelle_normalise,
+                EncaissementTarif.effet_au.is_not(None),
+            )
+            .order_by(EncaissementTarif.effet_au.desc(), EncaissementTarif.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    # Une chaîne de renommages successifs mène au nom d'aujourd'hui. La borne
+    # évite qu'un cycle — que rien n'interdit en base — ne tourne sans fin.
+    vue: set[int] = set()
+    courante = close
+    for _ in range(20):
+        if courante is None or courante.id in vue:
+            return None
+        vue.add(courante.id)
+        suivante = (
+            await db.execute(
+                select(EncaissementTarif).where(
+                    EncaissementTarif.organisation_id == organisation_id,
+                    EncaissementTarif.remplace_id == courante.id,
+                )
+            )
+        ).scalars().first()
+        if suivante is None:
+            return None
+        if suivante.effet_au is None:
+            return suivante if suivante.libelle_normalise != libelle_normalise else None
+        courante = suivante
+    return None
+
+
 async def appliquer_tarifs(
     db: AsyncSession,
     organisation_id: int,
     articles: list[dict[str, Any]],
     *,
     peut_forcer: bool,
+    date_encaissement: date | None = None,
 ) -> list[dict[str, Any]]:
     """Impose aux articles ce que leur tarif définit, et rend les écarts.
 
@@ -138,6 +214,16 @@ async def appliquer_tarifs(
     prix, ne fixer que le poste, ou les deux. Ce qui n'est pas défini reste tel
     que la caisse l'a saisi.
 
+    C'est la version en vigueur À LA DATE DE L'ENCAISSEMENT qui s'applique, non
+    celle d'aujourd'hui : un reçu antidaté doit porter le prix qui était réglé
+    ce jour-là, sinon un changement de tarif réécrirait le passé au moment
+    même où l'on tente de le rattraper.
+
+    Chaque ligne garde le tarif sous lequel elle est passée (`tarif_id`) et dit
+    si son prix s'en est écarté (`tarif_force`) : le libellé et le montant
+    restent la photo qui fait foi, ce lien dit sous quelle définition réglée
+    elle a été émise.
+
     Forcer est possible, mais se sait : sans le droit d'y toucher, un écart au
     prix tarifé est refusé ; avec ce droit, il est appliqué et rendu à
     l'appelant, qui le consigne. Sans cette porte, un tarif mal réglé bloquerait
@@ -146,17 +232,32 @@ async def appliquer_tarifs(
     if not articles:
         return []
 
-    resolus = await tarifs_resolus(db, organisation_id, actifs_seulement=True)
+    jour = date_encaissement or date.today()
+    resolus = await tarifs_resolus(db, organisation_id, actifs_seulement=True, a_la_date=jour)
     par_libelle = {tarif.libelle_normalise: (tarif, poste) for tarif, poste in resolus}
-    if not par_libelle:
-        return []
 
     ecarts: list[dict[str, Any]] = []
     for article in articles:
-        trouve = par_libelle.get(normaliser_libelle(article.get("libelle")))
+        cle = normaliser_libelle(article.get("libelle"))
+        trouve = par_libelle.get(cle)
         if trouve is None:
+            # Aucun tarif ne porte ce nom ce jour-là. Reste à savoir si le nom
+            # est libre, ou s'il a été renommé — auquel cas le laisser passer
+            # rouvrirait en silence le verrou qu'on croit avoir posé.
+            if cle:
+                remplacant = await succession(db, organisation_id, cle)
+                if remplacant is not None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"« {article.get('libelle')} » est devenu "
+                            f"« {remplacant.libelle} » : reprenez ce libellé, "
+                            f"les encaissements déjà passés ne changent pas."
+                        ),
+                    )
             continue
         tarif, poste = trouve
+        avant = len(ecarts)
 
         if tarif.montant is not None:
             tarife = Decimal(str(tarif.montant))
@@ -174,6 +275,7 @@ async def appliquer_tarifs(
                 ecarts.append(
                     {
                         "libelle": tarif.libelle,
+                        "tarif_id": tarif.id,
                         "champ": "prix_unitaire",
                         "tarif": str(tarife),
                         "saisi": str(saisi),
@@ -198,6 +300,7 @@ async def appliquer_tarifs(
                     ecarts.append(
                         {
                             "libelle": tarif.libelle,
+                            "tarif_id": tarif.id,
                             "champ": "montant",
                             "tarif": str(attendu),
                             "saisi": str(montant_ligne),
@@ -220,10 +323,16 @@ async def appliquer_tarifs(
                 ecarts.append(
                     {
                         "libelle": tarif.libelle,
+                        "tarif_id": tarif.id,
                         "champ": "budget_poste_id",
                         "tarif": poste.code,
                         "saisi": str(actuel),
                     }
                 )
+
+        # La ligne porte désormais sa provenance : sous quelle version réglée
+        # elle est passée, et si elle s'en est écartée.
+        article["tarif_id"] = tarif.id
+        article["tarif_force"] = len(ecarts) > avant
 
     return ecarts

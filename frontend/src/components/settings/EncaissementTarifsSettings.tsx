@@ -8,6 +8,7 @@ import {
   type EncaissementTarif,
 } from '../../api/encaissementTarifs'
 import { getBudgetPostes } from '../../api/budget'
+import { useConfirm } from '../../contexts/ConfirmContext'
 import { useNotification } from '../../contexts/NotificationContext'
 import styles from './EncaissementTarifsSettings.module.css'
 
@@ -21,6 +22,10 @@ interface Ligne {
   is_active: boolean
   /** Poste auquel le code se résout aujourd'hui ; vide = code introuvable. */
   poste_resolu: string | null
+  /** Lignes d'encaissement déjà passées sous cette version. Au-delà de zéro,
+   *  la modifier ouvre une version neuve et la retirer la clôt : l'archive ne
+   *  bouge pas, seules les saisies à venir suivent le nouveau réglage. */
+  utilisations: number
 }
 
 interface PosteOption {
@@ -36,6 +41,7 @@ const versLigne = (tarif: EncaissementTarif): Ligne => ({
   budget_poste_code: tarif.budget_poste_code || '',
   is_active: tarif.is_active,
   poste_resolu: tarif.budget_poste_id ? tarif.budget_poste_libelle : null,
+  utilisations: tarif.utilisations || 0,
 })
 
 const ligneVide = (): Ligne => ({
@@ -45,6 +51,7 @@ const ligneVide = (): Ligne => ({
   budget_poste_code: '',
   is_active: true,
   poste_resolu: null,
+  utilisations: 0,
 })
 
 /** Ce qui, dans une ligne, mérite d'être enregistré. Sert à reconnaître un
@@ -63,9 +70,14 @@ interface Props {
 
 export default function EncaissementTarifsSettings({ canEdit }: Props) {
   const { showError, showSuccess } = useNotification()
+  const confirm = useConfirm()
   const [lignes, setLignes] = useState<Ligne[]>([])
   const [initiales, setInitiales] = useState<EncaissementTarif[]>([])
   const [postes, setPostes] = useState<PosteOption[]>([])
+  // Les versions closes ne s'éditent pas : elles se relisent. Les tenir hors
+  // des lignes éditables évite qu'un enregistrement ne tente de les réécrire.
+  const [closes, setCloses] = useState<EncaissementTarif[]>([])
+  const [voirCloses, setVoirCloses] = useState(false)
   const [chargement, setChargement] = useState(true)
   const [enregistrement, setEnregistrement] = useState(false)
   const [recherche, setRecherche] = useState('')
@@ -73,14 +85,16 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
   const charger = useCallback(async () => {
     setChargement(true)
     try {
-      const [tarifs, budget] = await Promise.all([
+      const [tarifs, budget, histoire] = await Promise.all([
         listEncaissementTarifs(),
         // Les postes de recette de l'exercice courant : un encaissement
         // alimente une recette, jamais une dépense.
         getBudgetPostes({ type: 'RECETTE', active: true }).catch(() => ({ postes: [] as any[] })),
+        listEncaissementTarifs(undefined, true).catch(() => [] as EncaissementTarif[]),
       ])
       setInitiales(tarifs)
       setLignes(tarifs.map(versLigne))
+      setCloses(histoire.filter((t) => t.effet_au !== null))
       setPostes(
         ((budget as any)?.postes ?? [])
           .filter((p: any) => p?.code)
@@ -124,6 +138,55 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
       !postes.some((p) => p.code.toUpperCase() === ligne.budget_poste_code.toUpperCase()),
     [postes],
   )
+
+  const parId = useMemo(() => new Map(initiales.map((t) => [t.id, t])), [initiales])
+
+  /** La ligne touche-t-elle à ce qui engage un reçu — libellé, prix, devise,
+   *  imputation — alors qu'elle a déjà tarifé quelque chose ? Le serveur ouvre
+   *  alors une version neuve et referme l'actuelle. L'ordre et le commutateur
+   *  « Actif » n'engagent rien : ils règlent ce que la caisse se voit proposer,
+   *  et se corrigent sur place. */
+  const ouvriraUneVersion = useCallback(
+    (ligne: Ligne) => {
+      if (!ligne.id || ligne.utilisations === 0) return false
+      const avant = parId.get(ligne.id)
+      if (!avant) return false
+      const prixAvant = avant.montant === null || avant.montant === undefined ? '' : String(avant.montant)
+      const memePrix =
+        prixAvant.trim() === ''
+          ? ligne.montant.trim() === ''
+          : ligne.montant.trim() !== '' && Number(prixAvant) === Number(ligne.montant)
+      return (
+        avant.libelle.trim() !== ligne.libelle.trim() ||
+        !memePrix ||
+        (avant.devise || 'USD') !== ligne.devise ||
+        (avant.budget_poste_code || '') !== ligne.budget_poste_code
+      )
+    },
+    [parId],
+  )
+
+  /** Retirer un tarif qui a servi ne l'efface pas : il se clôt. Le dire avant
+   *  vaut mieux que de le laisser découvrir — l'administrateur croirait sinon
+   *  avoir supprimé ce qui demeure. */
+  const retirer = async (index: number) => {
+    const ligne = lignes[index]
+    if (ligne.utilisations > 0) {
+      const alle = await confirm({
+        title: `Retirer « ${ligne.libelle} » ?`,
+        description:
+          `Ce tarif a déjà été appliqué à ${ligne.utilisations} ` +
+          `${pluriel(ligne.utilisations, "ligne d'encaissement", "lignes d'encaissement")}. ` +
+          `Il sera clos, non effacé : les encaissements passés gardent leur montant et ` +
+          `continuent de le désigner. Seules les saisies à venir cesseront d'y être soumises.`,
+        confirmText: 'Clore le tarif',
+        cancelText: 'Annuler',
+        variant: 'danger',
+      })
+      if (!alle) return
+    }
+    setLignes((prev) => prev.filter((_, i) => i !== index))
+  }
 
   const alertes = useMemo(() => lignes.filter(codeInconnu).length, [lignes, codeInconnu])
 
@@ -239,6 +302,16 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
         </div>
         <div className={styles.outils}>
           {modifiee && <span className={styles.brouillon}>Modifications non enregistrées</span>}
+          {closes.length > 0 && (
+            <button
+              type="button"
+              className={styles.lienHistoire}
+              onClick={() => setVoirCloses((v) => !v)}
+            >
+              {voirCloses ? 'Masquer' : 'Voir'} les {closes.length}{' '}
+              {pluriel(closes.length, 'version close', 'versions closes')}
+            </button>
+          )}
           <div className={styles.rechercheWrap}>
             <Search size={14} className={styles.rechercheIcone} />
             <input
@@ -289,6 +362,17 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
                     maxLength={255}
                     disabled={!canEdit}
                   />
+                  {ligne.utilisations > 0 && (
+                    <span className={styles.usage}>
+                      Appliqué à {ligne.utilisations}{' '}
+                      {pluriel(ligne.utilisations, 'encaissement', 'encaissements')}
+                    </span>
+                  )}
+                  {ouvriraUneVersion(ligne) && (
+                    <span className={styles.version}>
+                      Une nouvelle version sera créée — les encaissements passés ne changent pas
+                    </span>
+                  )}
                 </td>
                 <td>
                   <div className={styles.montantCell}>
@@ -365,9 +449,9 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
                   <button
                     type="button"
                     className={styles.actionBtn}
-                    onClick={() => setLignes((prev) => prev.filter((_, i) => i !== index))}
+                    onClick={() => retirer(index)}
                     disabled={!canEdit}
-                    title="Retirer"
+                    title={ligne.utilisations > 0 ? 'Clore ce tarif (les reçus passés ne changent pas)' : 'Retirer'}
                   >
                     Retirer
                   </button>
@@ -377,6 +461,31 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
           </tbody>
         </table>
       </div>
+
+      {voirCloses && closes.length > 0 && (
+        <div className={styles.histoire}>
+          <h4 className={styles.histoireTitre}>Versions closes</h4>
+          <p className={styles.histoireIntro}>
+            Elles ne s'appliquent plus à une saisie d'aujourd'hui, mais valent encore pour les
+            encaissements qu'elles couvraient : c'est ce qui permet de relire un ancien reçu au prix
+            réglé de l'époque.
+          </p>
+          <ul className={styles.histoireListe}>
+            {closes.map((version) => (
+              <li key={version.id}>
+                <strong>{version.libelle}</strong>
+                {version.montant !== null && version.montant !== undefined && (
+                  <> — {String(version.montant)} {version.devise}</>
+                )}
+                {version.budget_poste_code && <> · {version.budget_poste_code}</>}
+                <span className={styles.histoireDates}>
+                  du {version.effet_du} au {version.effet_au}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {canEdit && (
         <div className={styles.actions}>

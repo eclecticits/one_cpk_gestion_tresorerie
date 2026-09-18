@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -41,5 +41,15 @@ class EncaissementTarifOut(EncaissementTarifBase):
     #: croire à une imputation qui n'aura pas lieu.
     budget_poste_id: int | None = None
     budget_poste_libelle: str | None = None
+    #: Fenêtre de validité de CETTE version. `effet_au` nul = version en
+    #: vigueur ; renseigné = version close, qui vaut encore pour les reçus
+    #: qu'elle couvrait mais ne s'applique plus à une saisie d'aujourd'hui.
+    effet_du: date
+    effet_au: date | None = None
+    #: La version que celle-ci a remplacée, s'il y en a une.
+    remplace_id: int | None = None
+    #: Nombre de lignes d'encaissement passées sous cette version. Ce qui rend
+    #: une modification versionnable, et une suppression impossible.
+    utilisations: int = 0
     created_at: datetime
     updated_at: datetime

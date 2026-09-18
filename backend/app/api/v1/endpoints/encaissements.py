@@ -866,6 +866,11 @@ def _add_encaissement_articles(
                 # Le poste de l'encaissement reste le repli : une ligne qui n'en
                 # désigne pas s'impute là où l'encaissement s'impute.
                 budget_poste_id=article.get("budget_poste_id") or encaissement.budget_poste_id,
+                # Sous quelle version réglée la ligne est passée, et si son prix
+                # s'en est écarté. Renseignés par `appliquer_tarifs` ; nuls pour
+                # une ligne qu'aucun tarif ne reconnaissait.
+                tarif_id=article.get("tarif_id"),
+                tarif_force=bool(article.get("tarif_force")),
                 sort_order=article["sort_order"],
             )
         )
@@ -1839,6 +1844,25 @@ async def create_proforma(
         date_emission, user=user, champ="date_encaissement"
     )
 
+    # Le tarif vaut aussi pour une proforma : elle annonce au client ce qu'il
+    # devra payer. Un devis hors tarif ferait une promesse que l'encaissement
+    # refuserait ensuite — le client verrait le prix changer entre le papier
+    # qu'on lui a remis et la caisse.
+    ecarts_tarifaires = await appliquer_tarifs(
+        db,
+        tenant_id,
+        article_payloads,
+        peut_forcer=await _user_has_permission(db, user, "can_edit_settings"),
+        date_encaissement=date_emission.date(),
+    )
+    await _valider_postes_articles(
+        db,
+        tenant_id=tenant_id,
+        service_id=service_id,
+        articles=article_payloads,
+        impact_budgetaire=True,
+    )
+
     numero_proforma = await generate_document_number(
         db, doc_type="PF-ND", tenant_id=tenant_id, service_id=None
     )
@@ -1880,6 +1904,17 @@ async def create_proforma(
     db.add(encaissement)
     await db.flush()
     _add_encaissement_articles(db, encaissement, tenant_id, article_payloads)
+    # Forcer un tarif est permis, mais jamais silencieux — sur une proforma
+    # autant que sur un encaissement : c'est le même écart au prix réglé.
+    if ecarts_tarifaires:
+        await log_action(
+            db,
+            user_id=current_user_id,
+            action="ENCAISSEMENT_TARIF_FORCE",
+            target_table="encaissements",
+            target_id=str(encaissement.id),
+            new_value={"ecarts": ecarts_tarifaires, "proforma": True},
+        )
     await db.commit()
     res = await db.execute(
         select(Encaissement).options(selectinload(Encaissement.articles)).where(Encaissement.id == encaissement.id)
@@ -2145,23 +2180,6 @@ async def create_encaissement(
         if allowed_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail="Rubrique non autorisée pour ce service")
 
-    # Les tarifs d'abord : ils imposent aux lignes ce qu'ils définissent (prix,
-    # poste, ou les deux) avant que ces postes ne soient contrôlés.
-    ecarts_tarifaires = await appliquer_tarifs(
-        db,
-        tenant_id,
-        article_payloads,
-        peut_forcer=await _user_has_permission(db, user, "can_edit_settings"),
-    )
-
-    await _valider_postes_articles(
-        db,
-        tenant_id=tenant_id,
-        service_id=service_id,
-        articles=article_payloads,
-        impact_budgetaire=impact_budgetaire,
-    )
-
     date_encaissement = payload.date_encaissement
     if isinstance(date_encaissement, str):
         parsed = _parse_datetime(date_encaissement)
@@ -2171,6 +2189,26 @@ async def create_encaissement(
     # L'horloge du serveur fait foi, sauf pour un super administrateur.
     date_encaissement = resoudre_date_operation(
         date_encaissement, user=user, champ="date_encaissement"
+    )
+
+    # Les tarifs ensuite : ils imposent aux lignes ce qu'ils définissent (prix,
+    # poste, ou les deux) avant que ces postes ne soient contrôlés. La date est
+    # résolue d'abord parce que c'est elle qui désigne la VERSION du tarif :
+    # antidater un reçu ne doit pas lui appliquer un prix voté depuis.
+    ecarts_tarifaires = await appliquer_tarifs(
+        db,
+        tenant_id,
+        article_payloads,
+        peut_forcer=await _user_has_permission(db, user, "can_edit_settings"),
+        date_encaissement=date_encaissement.date(),
+    )
+
+    await _valider_postes_articles(
+        db,
+        tenant_id=tenant_id,
+        service_id=service_id,
+        articles=article_payloads,
+        impact_budgetaire=impact_budgetaire,
     )
 
     duplicate_identity = _build_duplicate_identity(
