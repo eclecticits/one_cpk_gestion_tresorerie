@@ -8,6 +8,8 @@ import { TYPE_CLIENT_LABELS, typeClientDemandeLeSexe } from '../utils/encaisseme
 import type { ProjetActivite } from '../api/projetsActivites'
 import { uploadEncaissementPiece } from '../api/encaissementPieces'
 import { listerNotesImpayees } from '../api/creances'
+import { listEncaissementTarifs, type EncaissementTarif } from '../api/encaissementTarifs'
+import { usePermissions } from '../hooks/usePermissions'
 import NotesImpayeesPanel, { type CiblePayeur } from './NotesImpayeesPanel'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import OrganisationAutocomplete, {
@@ -63,7 +65,16 @@ type ArticleDraft = {
   libelle: string
   quantite: string
   prix_unitaire: string
+  /** Poste imposé par le tarif reconnu, s'il en impose un. */
+  budget_poste_id?: number | null
+  /** L'utilisateur a demandé à sortir du prix tarifé sur CETTE ligne. */
+  force?: boolean
 }
+
+/** Clé de reconnaissance d'un libellé : mêmes règles que le serveur
+ *  (minuscules, espaces resserrés), sans quoi l'écran et lui ne
+ *  reconnaîtraient pas les mêmes lignes. */
+const normaliserLibelle = (valeur: string) => valeur.trim().replace(/\s+/g, ' ').toLowerCase()
 
 export default function EncaissementForm({
   user,
@@ -115,6 +126,13 @@ export default function EncaissementForm({
   const [articles, setArticles] = useState<ArticleDraft[]>([
     { libelle: '', quantite: '1', prix_unitaire: '' },
   ])
+  // Tarifs actifs : ce qu'un libellé connu vaut, et où il s'impute. Le serveur
+  // les impose de son côté ; ici ils évitent la frappe et annoncent le verrou.
+  const [tarifs, setTarifs] = useState<EncaissementTarif[]>([])
+  // Forcer un prix tarifé est réservé à qui règle les tarifs — le serveur
+  // applique la même règle, l'écran ne fait que la montrer.
+  const { hasPermission } = usePermissions()
+  const peutForcerTarif = hasPermission('can_edit_settings')
 
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
@@ -190,6 +208,57 @@ export default function EncaissementForm({
     return user?.role !== 'admin' && user?.role !== 'super_admin' && services.length > 0
   }, [user?.role, services.length])
 
+  useEffect(() => {
+    let vivant = true
+    listEncaissementTarifs(true)
+      .then((liste) => {
+        if (vivant) setTarifs(liste)
+      })
+      .catch(() => {
+        // Sans tarifs, la saisie reste entièrement libre : c'est le
+        // comportement d'avant, pas une panne à signaler au caissier.
+        if (vivant) setTarifs([])
+      })
+    return () => {
+      vivant = false
+    }
+  }, [])
+
+  const tarifParLibelle = useMemo(() => {
+    const index = new Map<string, EncaissementTarif>()
+    for (const tarif of tarifs) index.set(normaliserLibelle(tarif.libelle), tarif)
+    return index
+  }, [tarifs])
+
+  const tarifDeLigne = useCallback(
+    (article: ArticleDraft) => tarifParLibelle.get(normaliserLibelle(article.libelle || '')),
+    [tarifParLibelle],
+  )
+
+  /** Les tarifs arrivent après l'ouverture de l'écran. Une ligne tapée pendant
+   *  ce court instant doit recevoir son prix et son poste à leur arrivée :
+   *  sinon elle se retrouverait verrouillée sur un montant libre que le serveur
+   *  refuserait au moment d'enregistrer. */
+  useEffect(() => {
+    if (tarifParLibelle.size === 0) return
+    setArticles((prev) => {
+      let changee = false
+      const suivant = prev.map((article) => {
+        const tarif = tarifParLibelle.get(normaliserLibelle(article.libelle || ''))
+        if (!tarif) return article
+        const poste = tarif.budget_poste_id ?? null
+        const prix =
+          tarif.montant !== null && tarif.montant !== undefined && !article.force
+            ? String(tarif.montant)
+            : article.prix_unitaire
+        if (poste === (article.budget_poste_id ?? null) && prix === article.prix_unitaire) return article
+        changee = true
+        return { ...article, budget_poste_id: poste, prix_unitaire: prix }
+      })
+      return changee ? suivant : prev
+    })
+  }, [tarifParLibelle])
+
   const articleRows = useMemo(() => {
     return articles.map((article) => {
       const quantite = toNumber(article.quantite || 0)
@@ -202,6 +271,45 @@ export default function EncaissementForm({
       }
     })
   }, [articles])
+
+  /** Poste que les lignes désignent d'elles-mêmes : celui qui porte le plus
+   *  gros montant. Les tarifs renversent l'ordre de saisie — on tape le
+   *  libellé et l'imputation suit —, si bien qu'exiger le poste AVANT les
+   *  lignes n'a plus de sens quand les lignes le disent déjà. */
+  const postePrincipalDesLignes = useMemo(() => {
+    const parPoste = new Map<number, number>()
+    for (const article of articles) {
+      const poste = article.budget_poste_id
+      if (!poste) continue
+      const quantite = toNumber(article.quantite || 0)
+      const prix = toNumber(article.prix_unitaire || 0)
+      parPoste.set(poste, (parPoste.get(poste) || 0) + quantite * prix)
+    }
+    let gagnant: number | null = null
+    let meilleur = -1
+    for (const [poste, montant] of parPoste) {
+      if (montant > meilleur) {
+        gagnant = poste
+        meilleur = montant
+      }
+    }
+    return gagnant
+  }, [articles])
+
+  /** Nom du poste que les lignes imposent, pour que l'écran le dise au lieu de
+   *  laisser un champ vide sous une étoile d'obligation. */
+  const postePrincipalLibelle = useMemo(() => {
+    if (!postePrincipalDesLignes) return null
+    const tarif = tarifs.find((t) => t.budget_poste_id === postePrincipalDesLignes)
+    return tarif?.budget_poste_libelle || null
+  }, [postePrincipalDesLignes, tarifs])
+
+  /** Le poste retenu pour l'encaissement : celui que l'agent a choisi, sinon
+   *  celui que ses lignes désignent. */
+  const postePourEncaissement = useMemo(
+    () => (formData.budget_poste_id ? Number(formData.budget_poste_id) : postePrincipalDesLignes),
+    [formData.budget_poste_id, postePrincipalDesLignes],
+  )
 
   const montantTotalArticles = useMemo(() => {
     return roundMoney(articleRows.reduce((total, article) => total + article.montant, 0))
@@ -442,9 +550,30 @@ export default function EncaissementForm({
   }
 
   const updateArticle = (index: number, field: keyof ArticleDraft, value: string) => {
-    setArticles((prev) => prev.map((article, idx) => (
-      idx === index ? { ...article, [field]: value } : article
-    )))
+    setArticles((prev) => prev.map((article, idx) => {
+      if (idx !== index) return article
+      const suivant: ArticleDraft = { ...article, [field]: value }
+      if (field !== 'libelle') return suivant
+      // Le libellé vient de changer : un tarif reconnu apporte son prix et son
+      // poste. Changer de libellé remet la ligne à plat — le prix d'un tarif
+      // n'a plus de raison de rester sur une ligne qui parle d'autre chose.
+      const tarif = tarifParLibelle.get(normaliserLibelle(value))
+      suivant.force = false
+      suivant.budget_poste_id = tarif?.budget_poste_id ?? null
+      if (tarif?.montant !== null && tarif?.montant !== undefined) {
+        suivant.prix_unitaire = String(tarif.montant)
+      } else if (article.budget_poste_id || tarifDeLigne(article)) {
+        // On quitte un tarif : son prix ne doit pas rester sur la ligne.
+        suivant.prix_unitaire = ''
+      }
+      return suivant
+    }))
+  }
+
+  /** Rouvre le prix d'une ligne tarifée. Le serveur exige le même droit :
+   *  ce bouton annonce la porte, il ne l'ouvre pas à lui seul. */
+  const forcerMontant = (index: number) => {
+    setArticles((prev) => prev.map((article, idx) => (idx === index ? { ...article, force: true } : article)))
   }
 
   const addArticle = () => {
@@ -501,6 +630,10 @@ export default function EncaissementForm({
       quantite: article.quantite,
       prix_unitaire: article.prixUnitaire,
       montant: article.montant,
+      // Le poste du tarif, quand il en impose un : c'est lui qui rend possible
+      // un reçu mêlant deux natures. Sinon la ligne suit le poste choisi plus
+      // haut pour l'encaissement.
+      budget_poste_id: article.budget_poste_id ?? null,
     }))
   }
 
@@ -557,7 +690,7 @@ export default function EncaissementForm({
         montant_percu: montantPercu,
         devise_perception: devise,
         taux_change_applique: devise === 'CDF' ? tauxChange : 1,
-        budget_poste_id: impacteLeBudget ? Number(formData.budget_poste_id) : null,
+        budget_poste_id: impacteLeBudget ? postePourEncaissement : null,
         nature_mouvement: natureMouvement,
         fonds_tiers: estFondsDeTiers
           ? {
@@ -635,7 +768,7 @@ export default function EncaissementForm({
         montant_percu: 0,
         devise_perception: devise,
         taux_change_applique: devise === 'CDF' ? tauxChange : 1,
-        budget_poste_id: Number(formData.budget_poste_id),
+        budget_poste_id: postePourEncaissement,
         service_id: formData.service_id ? Number(formData.service_id) : null,
         project_activity_id: formData.project_activity_id ? Number(formData.project_activity_id) : null,
         statut_paiement: 'non_paye',
@@ -708,8 +841,11 @@ export default function EncaissementForm({
       onError('Compte requis', 'Veuillez sélectionner un compte de dépôt.')
       return false
     }
-    if (impacteLeBudget && !formData.budget_poste_id) {
-      onError('Poste requis', 'Veuillez sélectionner un poste budgétaire.')
+    if (impacteLeBudget && !postePourEncaissement) {
+      onError(
+        'Poste requis',
+        'Sélectionnez un poste budgétaire, ou choisissez un libellé tarifé qui porte le sien.',
+      )
       return false
     }
     if (estFondsDeTiers && !formData.ft_tiers_selection) {
@@ -1268,7 +1404,16 @@ export default function EncaissementForm({
 
             {impacteLeBudget && (
             <div className={`${styles.field} ${styles.col4}`}>
-              <label>Poste budgétaire *</label>
+              <label>
+                Poste budgétaire *
+                {!formData.budget_poste_id && postePrincipalDesLignes && (
+                  <span className={styles.tarifPoste}>
+                    {postePrincipalLibelle
+                      ? `Défini par les lignes : ${postePrincipalLibelle}`
+                      : 'Défini par les libellés tarifés'}
+                  </span>
+                )}
+              </label>
               <div style={{ position: 'relative' }}>
                 <input
                   type="text"
@@ -1332,7 +1477,23 @@ export default function EncaissementForm({
               <button type="button" onClick={addArticle} className={styles.secondaryBtn}>Ajouter une ligne</button>
             </div>
             <datalist id="encaissement-libelles">
-              {libellePresets.map(l => <option key={l} value={l} />)}
+              {/* Un tarif annonce ce qu'il engage : prix, poste, ou les deux.
+                  Les libellés sans tarif restent de simples suggestions. */}
+              {tarifs.map((tarif) => (
+                <option key={`tarif-${tarif.id}`} value={tarif.libelle}>
+                  {[
+                    tarif.montant !== null && tarif.montant !== undefined
+                      ? `${formatCurrency(toNumber(tarif.montant))} ${tarif.devise}`
+                      : null,
+                    tarif.budget_poste_id ? tarif.budget_poste_libelle : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </option>
+              ))}
+              {libellePresets
+                .filter((l) => !tarifParLibelle.has(normaliserLibelle(l)))
+                .map((l) => <option key={l} value={l} />)}
             </datalist>
             <div className={styles.articleTableWrap}>
               <table className={styles.articleTable}>
@@ -1348,6 +1509,12 @@ export default function EncaissementForm({
                 <tbody>
                   {articles.map((article, index) => {
                     const row = articleRows[index]
+                    const tarifLigne = tarifDeLigne(article)
+                    const prixVerrouille =
+                      !!tarifLigne &&
+                      tarifLigne.montant !== null &&
+                      tarifLigne.montant !== undefined &&
+                      !article.force
                     return (
                       <tr key={`article-${index}`}>
                         <td>
@@ -1360,6 +1527,13 @@ export default function EncaissementForm({
                         placeholder="Libellé de l'article"
                         required
                       />
+                      {/* Le poste tenu par le tarif se lit sous le libellé : le
+                          caissier voit où tombe la recette sans quitter la ligne. */}
+                      {tarifLigne?.budget_poste_id && (
+                        <span className={styles.tarifPoste}>
+                          → {tarifLigne.budget_poste_libelle}
+                        </span>
+                      )}
                         </td>
                         <td>
                       <input
@@ -1381,8 +1555,24 @@ export default function EncaissementForm({
                         value={article.prix_unitaire}
                         onChange={(e) => updateArticle(index, 'prix_unitaire', e.target.value)}
                         onKeyDown={(e) => handleArticleKeyDown(e, index)}
+                        disabled={prixVerrouille}
+                        title={prixVerrouille ? `Prix fixé par le tarif « ${tarifLigne?.libelle} »` : undefined}
                         required
                       />
+                      {prixVerrouille && peutForcerTarif && (
+                        <button
+                          type="button"
+                          className={styles.tarifForcer}
+                          onClick={() => forcerMontant(index)}
+                        >
+                          Forcer le montant
+                        </button>
+                      )}
+                      {article.force && tarifLigne?.montant !== null && tarifLigne?.montant !== undefined && (
+                        <span className={styles.tarifForce}>
+                          Tarif : {formatCurrency(toNumber(tarifLigne.montant))} — l'écart sera journalisé
+                        </span>
+                      )}
                         </td>
                         <td><strong>{formatCurrency(row?.montant || 0)}</strong></td>
                         <td>
