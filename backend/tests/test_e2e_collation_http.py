@@ -105,7 +105,9 @@ async def test_parcours_collation_par_http(app_client: AsyncClient, admin_access
     )
     assert cher.status_code == 400
 
-    # 5. La même réunion ne se sert pas deux fois pour contourner le total.
+    # 5. La même réunion ne se sert pas deux fois pour contourner le total :
+    #    ce second ordre tient sous le plafond d'une réunion, mais pas une fois
+    #    ajouté au premier.
     encore = await app_client.post(
         "/api/v1/ordres-decaissement",
         headers=entetes,
@@ -114,7 +116,7 @@ async def test_parcours_collation_par_http(app_client: AsyncClient, admin_access
             type_sortie="COLLATION",
             reunion_intitule=reunion,
             reunion_date="2026-09-18",
-            participants=80,
+            participants=30,
             montant_par_personne=5,
         ),
     )

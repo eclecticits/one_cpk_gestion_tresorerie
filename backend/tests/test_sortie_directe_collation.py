@@ -154,10 +154,10 @@ async def test_une_meme_reunion_ne_se_decoupe_pas(db_session):
     """Sans regroupement par réunion, il suffirait de servir la même salle en
     plusieurs fois pour ignorer le plafond total."""
     org, user, service = await _contexte(db_session)
-    await _collation(db_session, org, user, service, participants=60, par_personne=5)
+    await _collation(db_session, org, user, service, participants=30, par_personne=5)
 
     with pytest.raises(HTTPException) as refus:
-        await _collation(db_session, org, user, service, participants=60, par_personne=5)
+        await _collation(db_session, org, user, service, participants=30, par_personne=5)
     assert "Fractionnement" in str(refus.value.detail)
 
 
@@ -165,13 +165,13 @@ async def test_une_meme_reunion_ne_se_decoupe_pas(db_session):
 async def test_deux_reunions_du_meme_jour_sont_deux_depenses(db_session):
     """Le regroupement porte sur la réunion, non sur celui qui prend l'argent."""
     org, user, service = await _contexte(db_session)
-    await _collation(db_session, org, user, service, participants=60, par_personne=5)
+    await _collation(db_session, org, user, service, participants=30, par_personne=5)
 
     autre = await _collation(
-        db_session, org, user, service, participants=60, par_personne=5, reunion="Commission de discipline"
+        db_session, org, user, service, participants=30, par_personne=5, reunion="Commission de discipline"
     )
 
-    assert autre["montant"] == Decimal("300.00")
+    assert autre["montant"] == Decimal("150.00")
 
 
 @pytest.mark.asyncio
@@ -181,7 +181,7 @@ async def test_une_collation_ne_bloque_pas_la_sortie_directe_simple(db_session):
     toute sortie directe du même responsable, au nom d'un fractionnement qui
     n'existe pas."""
     org, user, service = await _contexte(db_session)
-    await _collation(db_session, org, user, service, participants=80, par_personne=5)
+    await _collation(db_session, org, user, service, participants=30, par_personne=5)
 
     ordre = await _simple(db_session, org, user, service, montant=90)
 
@@ -224,6 +224,7 @@ async def test_les_plafonds_se_reglent_par_organisation(db_session):
             organisation_id=org.id,
             collation_plafond_par_personne_usd=Decimal("25"),
             collation_plafond_total_usd=Decimal("2000"),
+            collation_plafond_24h_usd=Decimal("5000"),
         )
     )
     await db_session.commit()
@@ -251,3 +252,22 @@ async def test_la_collation_porte_sa_justification_en_base(db_session):
     assert ordre.reunion_normalisee == "conseil d'administration"
     assert ordre.participants == 30
     assert ordre.montant_par_personne == Decimal("4.00")
+
+
+@pytest.mark.asyncio
+async def test_les_collations_d_une_journee_ont_leur_propre_plafond(db_session):
+    """Le plafond par réunion borne une dépense, pas une journée. Sans cette
+    troisième borne, il suffirait d'aligner les réunions — une le matin, une
+    l'après-midi, une autre le soir — pour vider la caisse par petites salles
+    successives, chacune dans les clous."""
+    org, user, service = await _contexte(db_session)
+    for nom in ("Bureau du matin", "Commission de midi"):
+        await _collation(db_session, org, user, service, participants=40, par_personne=5, reunion=nom)
+
+    with pytest.raises(HTTPException) as refus:
+        await _collation(
+            db_session, org, user, service, participants=40, par_personne=5, reunion="Assemblée du soir"
+        )
+
+    assert "24 h" in str(refus.value.detail)
+    assert "600" in str(refus.value.detail)

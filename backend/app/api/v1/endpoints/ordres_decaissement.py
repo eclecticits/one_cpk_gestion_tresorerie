@@ -66,7 +66,11 @@ LIMITE_SORTIE_DIRECTE_USD = Decimal("100")
 # TÊTE qui dit ce qu'est la dépense ; le total dit seulement jusqu'où elle peut
 # aller sans passer par une réquisition.
 DEFAUT_COLLATION_PAR_PERSONNE_USD = Decimal("10")
-DEFAUT_COLLATION_TOTAL_USD = Decimal("500")
+DEFAUT_COLLATION_TOTAL_USD = Decimal("200")
+# Le plafond par réunion borne une dépense, pas une journée : sans cette borne,
+# il suffirait d'aligner les réunions pour vider la caisse par petites salles
+# successives, chacune dans les clous.
+DEFAUT_COLLATION_24H_USD = Decimal("400")
 
 
 def _beneficiaire_requisition(req: Requisition, fallback: str | None = None) -> str:
@@ -197,13 +201,15 @@ async def _assert_pas_fractionnement_direct(
         )
 
 
-async def _plafonds_collation(db: AsyncSession, tenant_id: int) -> tuple[Decimal, Decimal]:
-    """Les deux bornes d'une collation : par tête, et au total.
+async def _plafonds_collation(db: AsyncSession, tenant_id: int) -> tuple[Decimal, Decimal, Decimal]:
+    """Les trois bornes d'une collation : par tête, par réunion, par journée.
 
     Le prix par tête dit que c'en est bien une — deux cents dollars pour deux
     personnes n'est pas une collation, quel que soit le nom qu'on lui donne. Le
-    total dit qu'elle reste une sortie directe : à neuf cents dollars, la
-    dépense mérite une approbation même à cinq dollars la tête.
+    total par réunion dit ce qu'une salle peut coûter. Le cumul sur vingt-quatre
+    heures dit ce qu'une journée peut coûter : sans lui, il suffirait d'aligner
+    les réunions — une le matin, une l'après-midi — pour vider la caisse par
+    petites salles successives, chacune dans les clous.
     """
     res = await db.execute(
         select(OrganisationSettings).where(OrganisationSettings.organisation_id == tenant_id).limit(1)
@@ -211,10 +217,68 @@ async def _plafonds_collation(db: AsyncSession, tenant_id: int) -> tuple[Decimal
     settings = res.scalar_one_or_none()
     par_personne = getattr(settings, "collation_plafond_par_personne_usd", None)
     total = getattr(settings, "collation_plafond_total_usd", None)
+    jour = getattr(settings, "collation_plafond_24h_usd", None)
     return (
         Decimal(str(par_personne)) if par_personne is not None else DEFAUT_COLLATION_PAR_PERSONNE_USD,
         Decimal(str(total)) if total is not None else DEFAUT_COLLATION_TOTAL_USD,
+        Decimal(str(jour)) if jour is not None else DEFAUT_COLLATION_24H_USD,
     )
+
+
+def _cle_advisory_collation_jour(tenant_id: int) -> int:
+    digest = hashlib.sha256(f"od-collation-24h:{tenant_id}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+async def _assert_collations_du_jour(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    montant_usd: Decimal,
+    plafond_24h: Decimal,
+    exclure_ordre_id: uuid.UUID | None = None,
+) -> None:
+    """Les collations des vingt-quatre dernières heures tiennent-elles sous le
+    plafond de la journée ?
+
+    Cette borne-ci ne regarde ni la réunion ni le bénéficiaire : elle compte
+    tout ce que l'organisation a servi. C'est la seule façon d'empêcher que
+    trois réunions distinctes, chacune sous son propre plafond, ne fassent
+    ensemble une dépense que personne n'a approuvée.
+    """
+    await db.execute(select(func.pg_advisory_xact_lock(_cle_advisory_collation_jour(tenant_id))))
+    depuis = _utcnow() - timedelta(hours=24)
+    montant_usd_existant = func.coalesce(
+        OrdreDecaissement.montant_usd_snapshot,
+        case(
+            (func.upper(OrdreDecaissement.devise) == "USD", OrdreDecaissement.montant),
+            else_=None,
+        ),
+        0,
+    )
+    cumul_anterieur = await db.scalar(
+        select(func.coalesce(func.sum(montant_usd_existant), 0)).where(
+            OrdreDecaissement.organisation_id == tenant_id,
+            OrdreDecaissement.requisition_id.is_(None),
+            OrdreDecaissement.type_sortie == "COLLATION",
+            OrdreDecaissement.statut.in_(("AUTORISE", "PAYE")),
+            OrdreDecaissement.created_at >= depuis,
+            *(
+                (OrdreDecaissement.id != exclure_ordre_id,)
+                if exclure_ordre_id is not None
+                else ()
+            ),
+        )
+    )
+    cumul = Decimal(montant_usd or 0) + Decimal(str(cumul_anterieur or 0))
+    if cumul > plafond_24h:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Collations limitées à {plafond_24h} USD sur 24 h : celles déjà "
+                f"programmées et celle-ci cumulent {cumul} USD. Créez une réquisition."
+            ),
+        )
 
 
 def _cle_advisory_collation(tenant_id: int, cle_reunion: str, jour: date) -> int:
@@ -369,7 +433,7 @@ async def _controler_sortie_directe(
     par_personne_usd = await _montant_direct_usd(
         db, tenant_id=tenant_id, montant=par_personne, devise=payload.devise
     )
-    plafond_tete, plafond_total = await _plafonds_collation(db, tenant_id)
+    plafond_tete, plafond_total, plafond_24h = await _plafonds_collation(db, tenant_id)
     if par_personne_usd > plafond_tete:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -396,6 +460,13 @@ async def _controler_sortie_directe(
         jour=jour,
         montant_usd=montant_usd,
         plafond_total=plafond_total,
+        exclure_ordre_id=exclure_ordre_id,
+    )
+    await _assert_collations_du_jour(
+        db,
+        tenant_id=tenant_id,
+        montant_usd=montant_usd,
+        plafond_24h=plafond_24h,
         exclure_ordre_id=exclure_ordre_id,
     )
 

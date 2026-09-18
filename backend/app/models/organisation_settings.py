@@ -44,7 +44,13 @@ class OrganisationSettings(Base):
         Numeric(10, 2), nullable=False, default=Decimal("10")
     )
     collation_plafond_total_usd: Mapped[Decimal] = mapped_column(
-        Numeric(14, 2), nullable=False, default=Decimal("500")
+        Numeric(14, 2), nullable=False, default=Decimal("200")
+    )
+    # Le plafond par réunion borne une dépense, pas une journée : sans cette
+    # troisième borne, il suffirait d'aligner les réunions — une le matin, une
+    # l'après-midi — pour vider la caisse par petites salles successives.
+    collation_plafond_24h_usd: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("400")
     )
 
     # Configuration détaillée par module métier (JSONB)

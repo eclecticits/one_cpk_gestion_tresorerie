@@ -287,6 +287,8 @@ async def update_organisation_settings(
         settings.collation_plafond_par_personne_usd = data["collation_plafond_par_personne_usd"]
     if "collation_plafond_total_usd" in data and data["collation_plafond_total_usd"] is not None:
         settings.collation_plafond_total_usd = data["collation_plafond_total_usd"]
+    if "collation_plafond_24h_usd" in data and data["collation_plafond_24h_usd"] is not None:
+        settings.collation_plafond_24h_usd = data["collation_plafond_24h_usd"]
     if settings.collation_plafond_par_personne_usd > settings.collation_plafond_total_usd:
         raise HTTPException(
             status_code=400,
@@ -355,6 +357,7 @@ def _settings_out(settings: OrganisationSettings) -> OrganisationSettingsPublicO
         ),
         collation_plafond_par_personne_usd=settings.collation_plafond_par_personne_usd,
         collation_plafond_total_usd=settings.collation_plafond_total_usd,
+        collation_plafond_24h_usd=settings.collation_plafond_24h_usd,
         modules_config=settings.modules_config,
         workflow_config=wf.normalize_config(settings.workflow_config),
     )

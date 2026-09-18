@@ -64,7 +64,12 @@ export type OrganisationSettings = {
   /** Bornes d'une collation de réunion en sortie directe. Le prix par tête dit
    *  que c'en est bien une ; le total dit qu'elle reste une sortie directe. */
   collation_plafond_par_personne_usd: number | string
+  /** Ce qu'une réunion peut coûter. */
   collation_plafond_total_usd: number | string
+  /** Ce qu'une JOURNÉE peut coûter, toutes réunions confondues : sans cette
+   *  borne, il suffirait d'aligner les réunions pour vider la caisse par
+   *  petites salles successives, chacune dans les clous. */
+  collation_plafond_24h_usd: number | string
   modules_config: Record<string, { enabled?: boolean }> | null
   workflow_config: WorkflowConfig | null
 }
@@ -131,6 +136,7 @@ export async function updateOrganisationSettings(
       | 'accounting_integration_mode'
       | 'collation_plafond_par_personne_usd'
       | 'collation_plafond_total_usd'
+      | 'collation_plafond_24h_usd'
     >
   > & { accounting_integration_change_motif?: string | null }
 ): Promise<OrganisationSettings> {

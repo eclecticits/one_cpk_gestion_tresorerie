@@ -177,6 +177,7 @@ export default function Settings() {
   // d'impression avec lesquels la section partage son écran.
   const [collationParPersonne, setCollationParPersonne] = useState('')
   const [collationTotal, setCollationTotal] = useState('')
+  const [collation24h, setCollation24h] = useState('')
   const [savingCollation, setSavingCollation] = useState(false)
   const [savingNotificationSettings, setSavingNotificationSettings] = useState(false)
   const [testingNotificationSettings, setTestingNotificationSettings] = useState(false)
@@ -551,6 +552,7 @@ export default function Settings() {
       if (tenantSettingsRes) {
         setCollationParPersonne(String(tenantSettingsRes.collation_plafond_par_personne_usd ?? ''))
         setCollationTotal(String(tenantSettingsRes.collation_plafond_total_usd ?? ''))
+        setCollation24h(String(tenantSettingsRes.collation_plafond_24h_usd ?? ''))
       }
       setAccountingUnmappedCount(mappingsNonMappes)
       setNotificationSettings(notificationSettingsRes.data)
@@ -1016,8 +1018,9 @@ export default function Settings() {
     e.preventDefault()
     const parPersonne = Number(collationParPersonne)
     const total = Number(collationTotal)
-    if (!(parPersonne > 0) || !(total > 0)) {
-      showError('Plafond invalide', 'Les deux plafonds doivent être supérieurs à 0.')
+    const jour = Number(collation24h)
+    if (!(parPersonne > 0) || !(total > 0) || !(jour > 0)) {
+      showError('Plafond invalide', 'Les trois plafonds doivent être supérieurs à 0.')
       return
     }
     setSavingCollation(true)
@@ -1025,6 +1028,7 @@ export default function Settings() {
       const updated = await updateOrganisationSettings({
         collation_plafond_par_personne_usd: parPersonne,
         collation_plafond_total_usd: total,
+        collation_plafond_24h_usd: jour,
       })
       setTenantSettings(updated)
       showSuccess('Plafonds enregistrés', 'Ils s’appliqueront aux prochaines sorties directes.')
@@ -2205,6 +2209,17 @@ export default function Settings() {
                             step="0.01"
                             value={collationTotal}
                             onChange={(e) => setCollationTotal(e.target.value)}
+                            disabled={!canEditSettings}
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>Plafond sur 24 h (USD)</label>
+                          <input
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={collation24h}
+                            onChange={(e) => setCollation24h(e.target.value)}
                             disabled={!canEditSettings}
                           />
                         </div>

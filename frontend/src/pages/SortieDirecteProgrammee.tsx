@@ -91,7 +91,8 @@ export default function SortieDirecteProgrammee() {
   // n'est pas un garde-fou, c'est une porte fermée sans écriteau.
   const { settings } = useOrganisationSettings()
   const plafondParPersonne = toNumber(settings?.collation_plafond_par_personne_usd ?? 10)
-  const plafondCollationTotal = toNumber(settings?.collation_plafond_total_usd ?? 500)
+  const plafondCollationTotal = toNumber(settings?.collation_plafond_total_usd ?? 200)
+  const plafondCollation24h = toNumber(settings?.collation_plafond_24h_usd ?? 400)
 
   const [services, setServices] = useState<Service[]>([])
   const [postes, setPostes] = useState<BudgetPosteSummary[]>([])
@@ -563,7 +564,10 @@ export default function SortieDirecteProgrammee() {
               onClick={() => setTypeSortie('COLLATION')}
             >
               Collation de réunion
-              <small>{plafondParPersonne} $ par personne, {plafondCollationTotal} $ au total</small>
+              <small>
+                {plafondParPersonne} $ par personne, {plafondCollationTotal} $ par réunion,
+                {' '}{plafondCollation24h} $ sur 24 h
+              </small>
             </button>
           </div>
 

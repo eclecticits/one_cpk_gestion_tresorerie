@@ -29,7 +29,8 @@ class OrganisationSettingsPublicOut(BaseModel):
     #: que c'en est bien une ; le total dit qu'elle reste une sortie directe.
     #: Lisibles par tous : l'écran de saisie les annonce avant le refus.
     collation_plafond_par_personne_usd: Decimal = Decimal("10")
-    collation_plafond_total_usd: Decimal = Decimal("500")
+    collation_plafond_total_usd: Decimal = Decimal("200")
+    collation_plafond_24h_usd: Decimal = Decimal("400")
     modules_config: dict[str, Any] | None = None
     workflow_config: dict[str, Any] | None = None
 
@@ -53,3 +54,4 @@ class OrganisationSettingsUpdate(BaseModel):
     accounting_integration_change_motif: str | None = Field(default=None, max_length=500)
     collation_plafond_par_personne_usd: Decimal | None = Field(default=None, gt=0)
     collation_plafond_total_usd: Decimal | None = Field(default=None, gt=0)
+    collation_plafond_24h_usd: Decimal | None = Field(default=None, gt=0)
