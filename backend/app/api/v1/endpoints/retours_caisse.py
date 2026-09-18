@@ -63,6 +63,7 @@ from app.schemas.retour_caisse import (
 )
 from app.services.audit_service import get_request_ip, log_action
 from app.services.document_sequences import generate_document_number
+from app.services.mouvements_budgetaires import cancel_budget_imputations, create_budget_imputation
 from app.services.report_cache import invalidate_report_summary_cache
 
 logger = logging.getLogger("onec_cpk_api.retours_caisse")
@@ -254,6 +255,9 @@ async def create_retour_caisse(
     budget_poste_id = payload.budget_poste_id or sortie.budget_poste_id
     budget_poste_code: str | None = None
     budget_poste_libelle: str | None = None
+    # Retenu hors du bloc : le mouvement d'imputation s'écrit plus bas, une fois
+    # le retour enregistré et son identifiant connu.
+    montant_budget: Decimal | None = None
     ajuste_budget = bool(payload.ajuste_budget) and budget_poste_id is not None
     if ajuste_budget:
         res = await db.execute(
@@ -301,6 +305,29 @@ async def create_retour_caisse(
     )
     db.add(retour)
     await db.flush()
+
+    # --- Mouvement d'imputation budgétaire --------------------------------
+    # Le compteur du poste ne suffit pas. C'est le MOUVEMENT que la
+    # ré-imputation déplace quand la dépense change de poste : sans lui, le
+    # retour reste sur l'ancien poste pendant que la dépense part sur le
+    # nouveau, et les deux postes mentent — l'un sur-compte ce qui est revenu,
+    # l'autre garde une correction sans dépense derrière.
+    # Une sortie de fonds écrit le sien de la même façon (`sorties_fonds.py`) ;
+    # le sens `RETOUR_DEPENSE` et la colonne `retour_caisse_id` existaient pour
+    # celui-ci et n'étaient alimentés par personne.
+    if ajuste_budget and budget_poste_id is not None and montant_budget is not None:
+        await create_budget_imputation(
+            db,
+            organisation_id=tenant_id,
+            retour_caisse_id=retour.id,
+            budget_poste_id=budget_poste_id,
+            sens="RETOUR_DEPENSE",
+            montant_mouvement=montant,
+            devise_mouvement=devise,
+            montant_budget=montant_budget,
+            exchange_rate_snapshot=sortie.exchange_rate_snapshot,
+            created_by=user.id,
+        )
 
     # --- Écriture comptable inverse (module opt-in) -----------------------
     integration_mode = await get_accounting_integration_mode(db, tenant_id)
@@ -513,7 +540,19 @@ async def update_retour_statut(
     montant = Decimal(retour.montant or 0)
 
     # --- Rétablir l'imputation budgétaire (re-débiter la charge) ----------
-    if retour.ajuste_budget and retour.budget_poste_id:
+    # Le mouvement d'abord : il rétablit lui-même le compteur du poste, et il
+    # le fait sur le poste où le retour est RÉELLEMENT imputé aujourd'hui —
+    # qui n'est pas forcément celui d'origine si la dépense a été ré-imputée
+    # entre-temps. Le rétablissement à la main ne vaut que pour les retours
+    # enregistrés avant que ce mouvement n'existe : sans ce repli, annuler l'un
+    # d'eux ne rendrait plus rien au budget.
+    mouvement_annule = await cancel_budget_imputations(
+        db,
+        organisation_id=tenant_id,
+        user_id=user.id,
+        retour_caisse_id=retour.id,
+    )
+    if not mouvement_annule and retour.ajuste_budget and retour.budget_poste_id:
         res = await db.execute(
             select(BudgetPoste).where(BudgetPoste.id == retour.budget_poste_id).with_for_update()
         )

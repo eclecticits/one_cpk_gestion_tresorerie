@@ -16,10 +16,14 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
+from app.models.caisse_centrale import CaisseCentrale
+from app.models.retour_caisse import RetourCaisse
 from app.models.ligne_requisition import LigneRequisition
 from app.models.mouvement_budget_imputation import MouvementBudgetImputation
 from app.models.sortie_fonds import SortieFonds
 from app.services.budget_engagement import resynchroniser_engagement_requisition
+from app.api.v1.endpoints.retours_caisse import create_retour_caisse
+from app.schemas.retour_caisse import RetourCaisseCreate
 from app.services.reimputation_budgetaire import apercu_reimputation, reimputer_requisition
 
 from test_budget_engagements import (
@@ -362,3 +366,88 @@ async def test_une_requisition_examinee_mais_non_payee_suit_aussi(db_session):
     assert resultat["montant_paye_deplace"] == Decimal("0")
     assert await _engage(db_session, ancien) == Decimal("0.00")
     assert await _engage(db_session, nouveau) == MONTANT
+
+
+class _FausseRequete:
+    """`get_request_ip` lit l'en-tête ; le journal n'a pas besoin de plus."""
+
+    headers: dict = {}
+    client = None
+
+
+async def _rendre(db, org, user, sortie, montant):
+    """Rend un reliquat sur cette sortie, par le vrai chemin de l'application."""
+    db.add(CaisseCentrale(organisation_id=org.id, est_ouverte=True, solde_usd=Decimal("50000"), solde_cdf=0))
+    await db.flush()
+    return await create_retour_caisse(
+        payload=RetourCaisseCreate(
+            sortie_fonds_id=sortie.id,
+            montant=Decimal(str(montant)),
+            type_retour="reliquat_avance",
+            motif="Reliquat de mission",
+        ),
+        request=_FausseRequete(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+
+
+@pytest.mark.asyncio
+async def test_un_retour_suit_la_depense_qu_il_corrige(db_session):
+    """Le retour ne vaut que collé à sa dépense.
+
+    Déplacer le réalisé sans lui laisse deux postes qui mentent : celui d'arrivée
+    compte une dépense dont une part est revenue, celui de départ garde une
+    correction sans dépense derrière. C'est ce qu'on a observé en production —
+    un reliquat rendu la veille, resté sur l'ancien poste après ré-imputation.
+    """
+    org, user, ancien, nouveau, req = await _contexte_engage(db_session)
+    sortie = await _payer(db_session, org, req, ancien)
+    await _rendre(db_session, org, user, sortie, 10)
+    # Le retour a bien allégé le poste d'origine.
+    assert await _paye(db_session, ancien) == MONTANT - Decimal("10")
+
+    await reimputer_requisition(
+        db_session,
+        requisition=req,
+        nouveau_poste_id=nouveau.id,
+        user_id=user.id,
+        motif="Correction après paiement",
+    )
+
+    # Le poste de départ ne garde rien, le poste d'arrivée porte le NET.
+    assert await _paye(db_session, ancien) == Decimal("0.00")
+    assert await _paye(db_session, nouveau) == MONTANT - Decimal("10")
+
+    mouvements = (await db_session.execute(
+        select(MouvementBudgetImputation).where(
+            MouvementBudgetImputation.sens == "RETOUR_DEPENSE",
+            MouvementBudgetImputation.organisation_id == org.id,
+        )
+    )).scalars().all()
+    assert len(mouvements) == 1, "le retour doit inscrire son mouvement, comme une sortie"
+    assert mouvements[0].budget_poste_id == nouveau.id, "le retour a suivi sa dépense"
+    assert mouvements[0].statut == "ACTIVE"
+
+
+@pytest.mark.asyncio
+async def test_le_retour_inscrit_son_mouvement_des_sa_creation(db_session):
+    """Sans ce mouvement, le compteur du poste bouge mais rien ne dit pourquoi :
+    la ré-imputation n'a alors rien à déplacer."""
+    org, user, ancien, _nouveau, req = await _contexte_engage(db_session)
+    sortie = await _payer(db_session, org, req, ancien)
+
+    retour = await _rendre(db_session, org, user, sortie, 25)
+
+    mouvement = (await db_session.execute(
+        select(MouvementBudgetImputation).where(
+            MouvementBudgetImputation.retour_caisse_id == retour.id
+        )
+    )).scalar_one()
+    assert mouvement.sens == "RETOUR_DEPENSE"
+    assert mouvement.budget_poste_id == ancien.id
+    assert mouvement.montant_budget == Decimal("25.00")
+    # Le compteur, lui, n'a bougé qu'une fois : le mouvement le décrit, il ne le
+    # double pas.
+    assert await _paye(db_session, ancien) == MONTANT - Decimal("25")

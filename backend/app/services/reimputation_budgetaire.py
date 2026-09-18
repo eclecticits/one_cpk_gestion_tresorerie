@@ -50,13 +50,14 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.mouvement_budget_imputation import MouvementBudgetImputation
 from app.models.requisition import Requisition
+from app.models.retour_caisse import RetourCaisse
 from app.models.sortie_fonds import SortieFonds
 from app.services.budget_engagement import (
     postes_de_requisition,
@@ -206,16 +207,44 @@ async def _imputations_par_sortie(
 ) -> dict[uuid.UUID, list[MouvementBudgetImputation]]:
     if not sorties:
         return {}
+    ids = [s.id for s in sorties]
+
+    # Les retours rendus sur ces sorties comptent parmi leurs impacts : leur
+    # mouvement ne porte pas `sortie_fonds_id` mais `retour_caisse_id`, et
+    # l'ignorer laisserait le reliquat sur l'ancien poste pendant que la dépense
+    # part sur le nouveau. Le poste d'arrivée compterait alors une dépense dont
+    # une part est revenue, celui de départ une correction sans dépense derrière.
+    sortie_par_retour = {
+        rid: sid
+        for rid, sid in (
+            await db.execute(
+                select(RetourCaisse.id, RetourCaisse.sortie_fonds_id).where(
+                    RetourCaisse.organisation_id == organisation_id,
+                    RetourCaisse.sortie_fonds_id.in_(ids),
+                    RetourCaisse.statut == "VALIDE",
+                )
+            )
+        ).all()
+    }
+
+    conditions = [MouvementBudgetImputation.sortie_fonds_id.in_(ids)]
+    if sortie_par_retour:
+        conditions.append(MouvementBudgetImputation.retour_caisse_id.in_(list(sortie_par_retour)))
     requete = select(MouvementBudgetImputation).where(
         MouvementBudgetImputation.organisation_id == organisation_id,
-        MouvementBudgetImputation.sortie_fonds_id.in_([s.id for s in sorties]),
+        or_(*conditions),
         MouvementBudgetImputation.statut == "ACTIVE",
     )
     if verrouiller:
         requete = requete.with_for_update()
     par_sortie: dict[uuid.UUID, list[MouvementBudgetImputation]] = {}
     for imp in (await db.execute(requete)).scalars().all():
-        par_sortie.setdefault(imp.sortie_fonds_id, []).append(imp)
+        # Un mouvement de retour se range sous la sortie qu'il corrige : c'est
+        # elle qui décide s'il part, et il ne doit pas la retenir seul.
+        cle = imp.sortie_fonds_id or sortie_par_retour.get(imp.retour_caisse_id)
+        if cle is None:
+            continue
+        par_sortie.setdefault(cle, []).append(imp)
     return par_sortie
 
 
@@ -510,18 +539,27 @@ async def reimputer_requisition(
     fusionne = plan.fusionne_plusieurs_postes
 
     def _deplacer_realise(depuis: int, montant: Decimal, sens: str) -> None:
-        """Le compteur des deux postes suit le sens de l'imputation."""
+        """Le compteur des deux postes suit le sens de l'imputation.
+
+        Aucun plancher ici : un déplacement se fait mouvement par mouvement, et
+        l'ordre dans lequel ils se présentent est arbitraire. Écrêter en chemin
+        ferait disparaître l'écart d'un passage négatif transitoire — une
+        dépense retirée avant le retour qui la corrige laisse le poste sous zéro
+        le temps d'une ligne, et les dix dollars ainsi rabotés ne revenaient
+        jamais. Le plancher s'applique une fois, à la fin, quand tous les
+        mouvements ont parlé.
+        """
         nonlocal montant_paye_deplace
         ancien = postes.get(depuis)
         if sens in SENS_DEPENSE:
             if ancien is not None:
-                ancien.montant_paye = max(Decimal("0"), _montant(ancien.montant_paye) - montant)
+                ancien.montant_paye = _montant(ancien.montant_paye) - montant
             nouveau_poste.montant_paye = _montant(nouveau_poste.montant_paye) + montant
             montant_paye_deplace += montant
         elif sens == "RETOUR_DEPENSE":
             if ancien is not None:
                 ancien.montant_paye = _montant(ancien.montant_paye) + montant
-            nouveau_poste.montant_paye = max(Decimal("0"), _montant(nouveau_poste.montant_paye) - montant)
+            nouveau_poste.montant_paye = _montant(nouveau_poste.montant_paye) - montant
             montant_paye_deplace -= montant
 
     # Les lignes d'une réquisition validée sont gelées par un déclencheur — le
@@ -564,6 +602,12 @@ async def reimputer_requisition(
         db.add_all(remplacantes)
         _deplacer_realise(imp.budget_poste_id, part, imp.sens)
         imputations_reparties += 1
+
+    # Le plancher, maintenant que tous les mouvements ont parlé : un compteur ne
+    # se lit jamais négatif, mais il a pu l'être en chemin.
+    for poste in (*postes.values(), nouveau_poste):
+        if _montant(poste.montant_paye) < 0:
+            poste.montant_paye = Decimal("0")
 
     await db.flush()
 
