@@ -79,6 +79,11 @@ export default defineConfig({
       // are unreliable, so file edits don't trigger HMR without polling.
       usePolling: true,
       interval: 300,
+      // Ne recharger qu'une fois le fichier entièrement écrit : sur DrvFs, une
+      // sauvegarde lue à moitié donne un module invalide, et la page qui le
+      // demande à cet instant tombe en « Failed to fetch dynamically imported
+      // module ».
+      awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
     },
     proxy: {
       '/api': {

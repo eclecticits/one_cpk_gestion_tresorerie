@@ -1,4 +1,5 @@
 import React from 'react'
+import { isChunkLoadError, reloadOnceForChunkError } from '../utils/lazyWithRetry'
 
 interface Props {
   children: React.ReactNode
@@ -20,11 +21,15 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    // Un module qui n'a pas pu se charger n'est pas une panne du code : la
+    // page se recharge d'elle-même, une fois, avant d'afficher quoi que ce soit.
+    if (isChunkLoadError(error) && reloadOnceForChunkError()) return
     console.error('ErrorBoundary caught an error:', error, errorInfo)
   }
 
   render() {
     if (this.state.hasError) {
+      const chargementInterrompu = isChunkLoadError(this.state.error)
       return (
         <div style={{
           display: 'flex',
@@ -46,7 +51,9 @@ export class ErrorBoundary extends React.Component<Props, State> {
               Erreur de chargement
             </h1>
             <p style={{ color: '#64748b', marginBottom: '16px' }}>
-              Une erreur est survenue lors du chargement de l'application.
+              {chargementInterrompu
+                ? "Une partie de l'application n'a pas pu être chargée, probablement parce qu'une nouvelle version vient d'être installée. Rechargez la page."
+                : "Une erreur est survenue lors du chargement de l'application."}
             </p>
             <div style={{
               padding: '12px',

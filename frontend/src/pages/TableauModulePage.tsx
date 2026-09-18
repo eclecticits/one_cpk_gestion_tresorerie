@@ -1,9 +1,10 @@
-import { useEffect, useState, lazy, Suspense } from 'react'
+import { useEffect, useState, Suspense } from 'react'
+import { lazyWithRetry } from '../utils/lazyWithRetry'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Settings, Table2, Upload, X, XCircle } from 'lucide-react'
 import TableauAssistantChat from '../components/TableauAssistantChat'
 // xlsx est lourd : chargement dynamique seulement quand l'onglet "import" est actif.
-const ImportTableauDossiers = lazy(() => import('../components/ImportTableauDossiers'))
+const ImportTableauDossiers = lazyWithRetry(() => import('../components/ImportTableauDossiers'))
 import BackButton from '../components/BackButton'
 import { ApiError } from '../lib/apiClient'
 import { usePermissions } from '../hooks/usePermissions'

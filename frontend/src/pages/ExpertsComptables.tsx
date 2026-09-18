@@ -1,10 +1,11 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, lazy, Suspense } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, Suspense } from 'react'
+import { lazyWithRetry } from '../utils/lazyWithRetry'
 import { createPortal } from 'react-dom'
 import { Archive, Ban, Eye, History, Pencil, Repeat2, RotateCcw } from 'lucide-react'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, CategoriePersonne, StatutProfessionnel } from '../types'
 // xlsx est lourd : chargement dynamique seulement à l'ouverture de la modale d'import.
-const ImportModules = lazy(() => import('../components/ImportModules'))
+const ImportModules = lazyWithRetry(() => import('../components/ImportModules'))
 import CategoryChange from '../components/CategoryChange'
 import SuccessNotification from '../components/SuccessNotification'
 import LoadingScreen from '../components/LoadingScreen'

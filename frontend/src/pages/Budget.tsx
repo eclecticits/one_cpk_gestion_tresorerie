@@ -1,4 +1,5 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazyWithRetry } from '../utils/lazyWithRetry'
 import { Check, ChevronDown, Columns3, Download, FileText, Globe, MessageSquare, MoreVertical, Plus, Table, X } from 'lucide-react'
 import { closeBudgetExercise, createBudgetCommentaire, updateBudgetCommentaire, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetCommentaireGeneral, getBudgetCommentaires, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, saveBudgetCommentaireGeneral, updateBudgetPoste } from '../api/budget'
 import type { BudgetCommentaire, BudgetCommentaireGeneral } from '../api/budget'
@@ -41,7 +42,7 @@ import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import PageHeader from '../components/PageHeader'
 // xlsx est lourd : le composant d'import n'est chargé qu'à l'ouverture de la
 // modale (importOpen), pas au chargement de la page Budget.
-const ImportBudgetPostes = lazy(() => import('../components/ImportBudgetPostes'))
+const ImportBudgetPostes = lazyWithRetry(() => import('../components/ImportBudgetPostes'))
 
 type BudgetTypeFilter = 'TOUT' | 'DEPENSE' | 'RECETTE'
 type BudgetPosteNode = BudgetPosteTree

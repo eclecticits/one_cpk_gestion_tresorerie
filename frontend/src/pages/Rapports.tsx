@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { lazyWithRetry } from '../utils/lazyWithRetry'
 import { CheckCircle2, Circle } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
@@ -37,7 +38,7 @@ const generateJournalPDF: PdfJournalGeneratorModule['generateJournalPDF'] = asyn
 }
 // recharts est lourd : chargé dynamiquement, seulement quand l'onglet "Synthèse
 // annuelle" affiche effectivement le graphique.
-const AnnualBarChart = lazy(() => import('../components/rapports/AnnualBarChart'))
+const AnnualBarChart = lazyWithRetry(() => import('../components/rapports/AnnualBarChart'))
 import { useAnnualReport } from '../hooks/useAnnualReport'
 import TopExpenses from '../components/TopExpenses'
 import AccessDeniedState from '../components/AccessDeniedState'
