@@ -18,6 +18,7 @@ from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
 from app.core.tenant_context import set_current_tenant_id
 from app.services.mailer import send_in_thread, send_weekly_report_email
+from app.services.email_config import normalize_smtp_password
 from app.services.system_settings_service import get_system_settings
 
 logger = logging.getLogger("onec_cpk_api.weekly_report")
@@ -195,7 +196,10 @@ async def send_weekly_report(db: AsyncSession, *, tenant_id: int) -> None:
     smtp_host = (settings.smtp_host or (ns.smtp_host if ns else None) or "smtp.gmail.com").strip()
     smtp_port = int(settings.smtp_port or (ns.smtp_port if ns else None) or 465)
     smtp_user = (settings.smtp_user or (ns.email_expediteur if ns else "") or "").strip()
-    smtp_password = (settings.smtp_password or (ns.smtp_password if ns else "") or "").strip()
+    smtp_password = normalize_smtp_password(
+        settings.smtp_password or (ns.smtp_password if ns else ""),
+        host=smtp_host,
+    )
 
     recipient = (settings.weekly_report_to or (ns.email_president if ns else "") or (ns.email_tresorier if ns else "")).strip()
     cc_emails = (settings.weekly_report_cc or (ns.emails_bureau_cc if ns else "") or "").strip()

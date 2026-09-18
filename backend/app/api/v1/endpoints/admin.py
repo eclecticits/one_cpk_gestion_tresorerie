@@ -40,7 +40,7 @@ from app.models.user_service import user_services
 from app.models.user_role import UserRole
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import _send_email_message, send_in_thread, send_security_code
-from app.services.email_config import resolve_smtp_config
+from app.services.email_config import normalize_smtp_password, resolve_smtp_config
 from app.services.system_settings_service import consolidate_system_settings
 from app.services.weekly_report import send_weekly_report, _get_system_settings
 from app.utils.scheduler import get_weekly_report_status
@@ -1206,6 +1206,12 @@ async def upsert_notification_settings(
         data["emails_bureau_cc"] = _normalize_email_list(data.get("emails_bureau_cc"))
     if "emails_bureau_sortie_cc" in data:
         data["emails_bureau_sortie_cc"] = _normalize_email_list(data.get("emails_bureau_sortie_cc"))
+    if "smtp_password" in data:
+        smtp_host = data.get("smtp_host") or ns.smtp_host or "smtp.gmail.com"
+        data["smtp_password"] = normalize_smtp_password(
+            data.get("smtp_password"),
+            host=smtp_host,
+        )
     if "whatsapp_api_url" in data:
         data["whatsapp_api_url"] = (data.get("whatsapp_api_url") or "").strip()
     if "whatsapp_api_key" in data:
@@ -1262,8 +1268,9 @@ async def test_email_connection(
     if not payload.email_expediteur or not payload.smtp_password:
         raise HTTPException(status_code=400, detail="Email expéditeur et mot de passe SMTP requis.")
 
-    smtp_host = payload.smtp_host or "smtp.gmail.com"
+    smtp_host = (payload.smtp_host or "smtp.gmail.com").strip()
     smtp_port = int(payload.smtp_port or 465)
+    smtp_password = normalize_smtp_password(payload.smtp_password, host=smtp_host)
 
     msg = EmailMessage()
     msg["Subject"] = "Test de connexion ONE-CPK"
@@ -1276,7 +1283,7 @@ async def test_email_connection(
             smtp_host=smtp_host,
             smtp_port=smtp_port,
             smtp_user=payload.email_expediteur,
-            smtp_password=payload.smtp_password,
+            smtp_password=smtp_password,
             msg=msg,
         )
     except Exception as exc:
