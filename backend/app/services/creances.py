@@ -41,10 +41,16 @@ def est_exigible():
     C'est le montant qui fait foi, pas `statut_paiement` : ce dernier est dérivé
     à l'écriture, une reprise de données peut l'avoir laissé en arrière, jamais
     les deux colonnes de montant.
+
+    Une note annulée ne réclame plus rien, et l'annulation laisse ses montants
+    en l'état. L'écarter ici, et non selon qui regarde : celui qui a le droit
+    de voir les opérations annulées la retrouvait parmi les créances, avec un
+    règlement que l'annulation interdit.
     """
     return and_(
         Encaissement.est_proforma.is_(False),
         Encaissement.is_deleted.is_(False),
+        Encaissement.statut_operation != "ANNULEE",
         montant_du() > RESTE_NEGLIGEABLE,
     )
 

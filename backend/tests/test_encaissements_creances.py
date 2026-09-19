@@ -468,3 +468,33 @@ async def test_sans_payeur_designe_la_liste_refuse_de_repondre(db_session):
     with pytest.raises(HTTPException) as refus:
         await _notes_impayees(db_session, user)
     assert refus.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_une_note_annulee_n_est_plus_une_creance(db_session):
+    """Annulée, la note ne réclame plus rien — même à qui a le droit de la voir.
+
+    Seul l'utilisateur privé des opérations annulées les voyait disparaître :
+    celui qui peut les lire les retrouvait parmi les créances, avec un
+    « Compléter » menant à un règlement que l'annulation interdit.
+    """
+    org = await _enc_org(db_session, name=f"Annulee {_suffix()}")
+    user = await _enc_user(db_session, org)
+    client = await _client_du_referentiel(db_session, org, f"Annule {_suffix()}")
+    annulee = await _devoir(db_session, org, user, nom=client.nom, total=3989, paye=0)
+    annulee.client_id = client.id
+    annulee.statut_operation = "ANNULEE"
+    due = await _devoir(db_session, org, user, nom=client.nom, total=200, paye=0)
+    due.client_id = client.id
+    await db_session.flush()
+
+    notes = await _notes_impayees(db_session, user, client_id=str(client.id))
+    assert [n["id"] for n in notes["notes"]] == [str(due.id)]
+    assert notes["total_du"] == pytest.approx(200.0)
+
+    debiteurs = await _lister(db_session, user)
+    assert debiteurs["total_du"] == pytest.approx(200.0)
+
+    (proposition,) = [p for p in await _proposer(db_session, user, client.nom) if p["valeur"] == client.nom]
+    assert proposition["reste_du"] == pytest.approx(200.0)
+    assert proposition["nb_impayes"] == 1
