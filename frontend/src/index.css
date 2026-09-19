@@ -4,6 +4,13 @@
   box-sizing: border-box;
 }
 
+html {
+  min-height: 100%;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  color-scheme: light;
+}
+
 :root {
   --tenant-primary: #1f6b5c;
   --tenant-sidebar: #173f39;
@@ -95,7 +102,9 @@
 }
 
 body {
-  font-family: 'IBM Plex Sans', 'Aptos', 'Segoe UI', sans-serif;
+  min-width: 320px;
+  min-height: 100vh;
+  font-family: 'Inter', 'Aptos', 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background:
@@ -103,6 +112,12 @@ body {
     linear-gradient(180deg, #fbfcfe 0%, #f4f7fb 100%);
   color: var(--tenant-text, #1e293b);
   line-height: 1.5;
+}
+
+@supports (min-height: 100dvh) {
+  body {
+    min-height: 100dvh;
+  }
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -128,6 +143,12 @@ p {
 
 #root {
   min-height: 100vh;
+}
+
+@supports (min-height: 100dvh) {
+  #root {
+    min-height: 100dvh;
+  }
 }
 
 button {
@@ -228,6 +249,20 @@ input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
+}
+
+/* Les cases et boutons radio gardent une taille visuelle compacte. Le grand
+   sélecteur `input` ci-dessus leur imposait sinon la largeur du formulaire et
+   une hauteur de champ texte, particulièrement gênantes sur tablette. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+  flex: 0 0 18px;
+  accent-color: var(--tenant-primary, #1f6b5c);
 }
 
 a {
@@ -337,6 +372,19 @@ main label {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
   .card,
   [class*="card_"],
   [class*="Card_"] {
@@ -433,6 +481,7 @@ main label {
   html, body {
     overflow-x: hidden;
     position: relative;
+    overscroll-behavior-x: none;
   }
 
   * {
@@ -457,6 +506,36 @@ main label {
 
   button {
     width: auto;
+  }
+
+  /* Safari iOS agrandit automatiquement la page lorsque le champ actif a une
+     police inférieure à 16 px. Cette taille évite le zoom et conserve le
+     contexte autour des formulaires. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+@media (pointer: coarse) {
+  button,
+  a,
+  select,
+  input,
+  textarea,
+  [role="button"] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    min-height: 20px;
+    flex-basis: 20px;
   }
 }
 

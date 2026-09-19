@@ -12,6 +12,11 @@
   margin-bottom: var(--spacing-md);
 }
 
+.heading {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
 .title {
   margin: 0;
   /* 2rem (32px) était un titre de page d'accueil sur des écrans de saisie où
@@ -35,8 +40,35 @@
 .actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--spacing-sm);
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Une tablette dispose de place pour garder des actions compactes, mais pas
+   pour les mettre en concurrence avec un titre et un sous-titre. Les actions
+   prennent donc leur propre ligne jusqu'au retour de la navigation desktop. */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .header {
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .heading,
+  .actions {
+    width: 100%;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+
+  .actions > * {
+    min-width: 0;
+    max-width: 100%;
+  }
 }
 
 @media (max-width: 768px) {
@@ -46,11 +78,35 @@
     gap: var(--spacing-sm);
   }
 
+  .heading {
+    flex: 0 1 auto;
+    width: 100%;
+  }
+
   .actions {
     width: 100%;
+    justify-content: flex-start;
+  }
+
+  .actions > * {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .actions > :only-child {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .title {
+    overflow-wrap: anywhere;
   }
 
   .actions > * {
     flex: 1 1 100%;
+    width: 100%;
   }
 }

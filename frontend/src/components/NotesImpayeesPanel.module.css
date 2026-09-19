@@ -10,6 +10,8 @@
   display: grid;
   place-items: center;
   padding: var(--spacing-md);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(15, 23, 42, 0.55);
   backdrop-filter: blur(4px);
 }

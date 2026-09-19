@@ -1,21 +1,20 @@
 .nav {
   position: fixed;
-  bottom: 10px;
+  bottom: max(8px, env(safe-area-inset-bottom, 0px));
   left: 0;
   right: 0;
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 0 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
   z-index: var(--z-fixed);
   pointer-events: none;
-  safe-area-inset-bottom: env(safe-area-inset-bottom);
 }
 
 .nav::before {
   content: "";
   position: absolute;
-  inset: 0 12px 0 12px;
+  inset: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(203, 213, 225, 0.9);
   border-radius: 20px;
@@ -36,12 +35,13 @@
   text-decoration: none;
   transition: all var(--transition-fast);
   min-width: 60px;
-  min-height: var(--touch-target-min);
   -webkit-tap-highlight-color: transparent;
   pointer-events: auto;
   z-index: 1;
   flex: 1;
   max-width: 88px;
+  min-height: 64px;
+  touch-action: manipulation;
 }
 
 .navItem:hover {
@@ -55,6 +55,11 @@
 
 .navItem.active {
   color: #0f172a;
+}
+
+.navItem:focus-visible {
+  outline: 3px solid var(--tenant-accent, #d4a11f);
+  outline-offset: -2px;
 }
 
 .navItem.active .icon {
@@ -92,12 +97,19 @@
 
 @media (max-width: 380px) {
   .nav {
-    padding: 0 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    padding-right: max(8px, env(safe-area-inset-right, 0px));
+    padding-left: max(8px, env(safe-area-inset-left, 0px));
+  }
+
+  .nav::before {
+    right: max(8px, env(safe-area-inset-right, 0px));
+    left: max(8px, env(safe-area-inset-left, 0px));
   }
 
   .navItem {
     padding: 6px 8px;
-    min-width: 50px;
+    min-width: 0;
+    min-height: 60px;
   }
 
   .icon {
@@ -112,5 +124,33 @@
 
   .label {
     font-size: 10px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .navItem {
+    min-height: 52px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .label {
+    font-size: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navItem,
+  .icon {
+    transition: none;
+  }
+
+  .navItem:active {
+    transform: none;
   }
 }

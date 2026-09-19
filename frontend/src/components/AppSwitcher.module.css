@@ -6,7 +6,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
+  padding: 8px 12px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
@@ -18,6 +18,8 @@
   letter-spacing: 0.02em;
   max-width: 100%;
   overflow: hidden;
+  min-height: var(--touch-target-min, 44px);
+  touch-action: manipulation;
 }
 
 .trigger:hover {
@@ -49,7 +51,9 @@
   border-radius: 16px;
   box-shadow: var(--elev-3);
   padding: 12px;
-  min-width: 220px;
+  width: min(260px, calc(100vw - 32px));
+  min-width: min(220px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   animation: panelIn 0.15s var(--ease-spring, ease-out);
 }
 
@@ -70,6 +74,10 @@
 .tileGrid {
   display: grid;
   gap: 6px;
+  max-height: min(380px, calc(100dvh - 180px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .tile {
@@ -85,6 +93,8 @@
   text-align: left;
   width: 100%;
   position: relative;
+  min-height: 58px;
+  touch-action: manipulation;
 }
 
 .tile:hover {
@@ -100,6 +110,12 @@
 
 .tileActive:hover {
   background: var(--app-bg, rgba(31, 77, 69, 0.15));
+}
+
+.trigger:focus-visible,
+.tile:focus-visible {
+  outline: 3px solid var(--tenant-accent, #d4a11f);
+  outline-offset: 2px;
 }
 
 .tileIcon {
@@ -128,4 +144,15 @@
   font-weight: 700;
   color: var(--app-color, #1f4d45);
   margin-left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: none;
+  }
+
+  .trigger,
+  .tile {
+    transition: none;
+  }
 }

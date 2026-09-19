@@ -26,7 +26,9 @@ export function ResponsiveModal({
   className = '',
   contentClassName = '',
 }: ResponsiveModalProps) {
-  const isMobile = useMobile()
+  // Les petites tablettes conservent une modale cadrée. Le plein écran est
+  // réservé aux téléphones étroits, où il évite une double zone de scroll.
+  const useFullScreenLayout = useMobile('sm')
   const titleId = useId()
   const modalRef = useRef<HTMLDivElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
@@ -91,10 +93,13 @@ export function ResponsiveModal({
     }
   }
 
-  const modalSize = isMobile ? 'full' : size
+  const modalSize = useFullScreenLayout ? 'full' : size
 
   const modal = (
-    <div className={styles.backdrop} onClick={handleBackdropClick}>
+    <div
+      className={`${styles.backdrop} ${useFullScreenLayout ? styles.fullScreenBackdrop : ''}`}
+      onClick={handleBackdropClick}
+    >
       <div 
         ref={modalRef}
         className={`${styles.modal} ${styles[modalSize]} ${className}`}
@@ -107,6 +112,7 @@ export function ResponsiveModal({
           <h2 id={titleId} className={styles.title}>{title}</h2>
           {showCloseButton && (
             <button 
+              type="button"
               className={styles.closeButton}
               onClick={onClose}
               aria-label="Fermer"

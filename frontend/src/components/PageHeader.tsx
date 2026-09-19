@@ -11,7 +11,7 @@ export default function PageHeader({
 }) {
   return (
     <header className={styles.header}>
-      <div>
+      <div className={styles.heading}>
         <h1 className={styles.title}>{title}</h1>
         {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
       </div>

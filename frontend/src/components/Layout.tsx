@@ -307,6 +307,33 @@ const NAV_BY_APP = {
   COMPTABILITE: COMPTABILITE_NAV,
 }
 
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
+// Les sous-menus repliés restent dans le DOM, masqués par `visibility: hidden`
+// — le navigateur refuse de les focaliser. Les compter donnerait un dernier
+// élément fantôme, et la boucle du piège à focus ne reviendrait jamais au
+// premier. La visibilité étant héritée, un seul calcul de style par élément
+// suffit à écarter la cellule comme son conteneur.
+const getVisibleFocusableElements = (root: HTMLElement | null): HTMLElement[] => {
+  if (!root) return []
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    element =>
+      element.offsetParent !== null &&
+      element.getAttribute('aria-hidden') !== 'true' &&
+      window.getComputedStyle(element).visibility !== 'hidden',
+  )
+}
+
+const getSubmenuId = (key: string) =>
+  `navigation-submenu-${key.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]/g, '-')}`
+
 export default function Layout() {
   const { user, signOut } = useAuth()
   const { settings: orgSettings } = useOrganisationSettings()
@@ -343,20 +370,88 @@ export default function Layout() {
   const isMobile = useMobile()
 
   const navRef = useRef<HTMLElement>(null)
+  const sidebarRef = useRef<HTMLElement>(null)
+  const mobileMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
   const [navIndicator, setNavIndicator] = useState({ top: 0, height: 0, opacity: 0 })
 
   const userMenuRef = useRef<HTMLDivElement>(null)
+  const userTriggerRef = useRef<HTMLButtonElement>(null)
   const [showUserMenu, setShowUserMenu] = useState(false)
+
+  // Le tiroir masque le contenu principal : le focus reste dans ses contrôles
+  // et revient au bouton d'ouverture quand l'utilisateur le ferme.
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+
+    const focusId = window.requestAnimationFrame(() => {
+      getVisibleFocusableElements(sidebarRef.current)[0]?.focus()
+    })
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setMobileMenuOpen(false)
+        setShowUserMenu(false)
+        window.requestAnimationFrame(() => mobileMenuButtonRef.current?.focus())
+        return
+      }
+
+      if (event.key !== 'Tab') return
+      const focusable = [
+        mobileMenuButtonRef.current,
+        ...getVisibleFocusableElements(sidebarRef.current),
+      ].filter((element): element is HTMLElement => Boolean(element))
+      if (focusable.length === 0) return
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      window.cancelAnimationFrame(focusId)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [mobileMenuOpen])
+
+  // Empêche le contenu sous l'overlay de rester atteignable par les technologies
+  // d'assistance pendant que le tiroir est ouvert.
+  useEffect(() => {
+    const main = mainRef.current
+    if (!main) return
+    // `inert` retire à la fois le focus et la lecture ; là où il manque, seul
+    // aria-hidden est disponible, et on ne le pose jamais en plus d'inert :
+    // un conteneur à la fois masqué et atteignable au clavier est pire que
+    // rien pour un lecteur d'écran.
+    const attribute = 'inert' in HTMLElement.prototype ? 'inert' : 'aria-hidden'
+    if (mobileMenuOpen) main.setAttribute(attribute, 'true')
+    else main.removeAttribute(attribute)
+    return () => main.removeAttribute(attribute)
+  }, [mobileMenuOpen])
 
   useEffect(() => {
     if (!showUserMenu) return
-    const handleClickOutside = (event: MouseEvent) => {
+
+    const focusId = window.requestAnimationFrame(() => {
+      userMenuRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus()
+    })
+    const handleClickOutside = (event: PointerEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setShowUserMenu(false)
       }
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    document.addEventListener('pointerdown', handleClickOutside)
+    return () => {
+      window.cancelAnimationFrame(focusId)
+      document.removeEventListener('pointerdown', handleClickOutside)
+    }
   }, [showUserMenu])
 
   const _modulesConfig = orgSettings?.modules_config as Record<string, { enabled?: boolean }> | null | undefined
@@ -406,6 +501,14 @@ export default function Layout() {
       setActiveApp(detectedApp)
     }
   }, [location.pathname])
+
+  // Un changement de route peut aussi venir du sélecteur d'application, de
+  // l'historique ou d'un lien interne : le tiroir ne doit jamais masquer la
+  // nouvelle page après la navigation.
+  useEffect(() => {
+    setMobileMenuOpen(false)
+    setShowUserMenu(false)
+  }, [location.pathname, location.search, location.hash])
 
   useEffect(() => {
     if (!orgSettings) return
@@ -513,7 +616,37 @@ export default function Layout() {
     return false
   }
 
-  const handleLinkClick = () => setMobileMenuOpen(false)
+  const handleLinkClick = () => {
+    setMobileMenuOpen(false)
+    setShowUserMenu(false)
+  }
+
+  const handleUserMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      setShowUserMenu(false)
+      userTriggerRef.current?.focus()
+      return
+    }
+
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    const items = Array.from(
+      userMenuRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') || [],
+    ).filter(element => element.offsetParent !== null)
+    if (items.length === 0) return
+
+    event.preventDefault()
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement)
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : event.key === 'ArrowUp'
+          ? (currentIndex <= 0 ? items.length - 1 : currentIndex - 1)
+          : (currentIndex + 1) % items.length
+    items[nextIndex]?.focus()
+  }
 
   const toggleDesktopCollapsed = () => {
     setDesktopCollapsed(prev => {
@@ -532,6 +665,7 @@ export default function Layout() {
 
     const hasNestedItems = subItem.subItems?.some(n => canAccessNavItem(n))
     const itemKey = getNavItemKey(subItem, depth)
+    const submenuId = getSubmenuId(itemKey)
     const visualDepth = Math.max(0, depth - 1)
     const isExpanded = openSectionsByDepth[depth] === itemKey
     const isActive = isPathActive(subItem.path, subItem.subItems, subItem.matchPathPrefixes, subItem.matchSearches)
@@ -544,6 +678,7 @@ export default function Layout() {
             className={`${styles.subNavItem} ${styles.subNavGroupButton} ${isActive ? styles.active : ''}`}
             data-depth={visualDepth}
             aria-expanded={isExpanded}
+            aria-controls={submenuId}
             onClick={() => toggleExpanded(itemKey, depth, subItem.label)}
           >
             <span className={styles.subNavLabel}>
@@ -554,7 +689,7 @@ export default function Layout() {
               <ChevronDown size={14} />
             </span>
           </button>
-          <div className={`${styles.subMenuWrap} ${isExpanded ? styles.subMenuOpen : ''}`}>
+          <div id={submenuId} className={`${styles.subMenuWrap} ${isExpanded ? styles.subMenuOpen : ''}`}>
             <div className={styles.subMenuInner}>
               <div className={styles.nestedSubMenu}>
                 {subItem.subItems!.map(nested => renderSubNavItem(nested, depth + 1))}
@@ -572,6 +707,7 @@ export default function Layout() {
         className={`${styles.subNavItem} ${isPathActive(subItem.path, undefined, subItem.matchPathPrefixes, subItem.matchSearches) ? styles.active : ''}`}
         data-depth={visualDepth}
         onClick={handleLinkClick}
+        aria-current={isPathActive(subItem.path, undefined, subItem.matchPathPrefixes, subItem.matchSearches) ? 'page' : undefined}
       >
         <span className={styles.subNavIcon}>{subItem.icon}</span>
         {subItem.label}
@@ -655,25 +791,20 @@ export default function Layout() {
 
     const hasSubItems = item.subItems && item.subItems.length > 0
     const itemKey = getNavItemKey(item, 0)
+    const submenuId = getSubmenuId(itemKey)
     const isExpanded = openSectionsByDepth[0] === itemKey
     const isActive = isPathActive(item.path, item.subItems, item.matchPathPrefixes, item.matchSearches)
 
     if (hasSubItems) {
       return (
         <div key={item.label} className={styles.navItemWithSub} data-group-label={item.label}>
-          <div
+          <button
+            type="button"
             className={`${styles.navItem} ${isActive ? styles.active : ''} ${styles.hasSubmenu}`}
             onClick={() => toggleExpanded(itemKey, 0, item.label)}
             data-nav-active={isActive || undefined}
-            role="button"
-            tabIndex={0}
             aria-expanded={isExpanded}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                toggleExpanded(itemKey, 0, item.label)
-              }
-            }}
+            aria-controls={submenuId}
           >
             <span className={styles.navItemContent}>
               <span className={styles.navIcon}>{item.icon}</span>
@@ -682,8 +813,8 @@ export default function Layout() {
             <span className={`${styles.arrow} ${isExpanded ? styles.arrowExpanded : ''}`}>
               <ChevronDown size={16} />
             </span>
-          </div>
-          <div className={`${styles.subMenuWrap} ${isExpanded ? styles.subMenuOpen : ''}`}>
+          </button>
+          <div id={submenuId} className={`${styles.subMenuWrap} ${isExpanded ? styles.subMenuOpen : ''}`}>
             <div className={styles.subMenuInner}>
               <div className={styles.subMenu}>
                 {item.subItems!.map(subItem => renderSubNavItem(subItem))}
@@ -701,6 +832,7 @@ export default function Layout() {
         className={`${styles.navItem} ${isActive ? styles.active : ''}`}
         onClick={handleLinkClick}
         data-nav-active={isActive || undefined}
+        aria-current={isActive ? 'page' : undefined}
       >
         <span className={styles.navItemContent}>
           <span className={styles.navIcon}>{item.icon}</span>
@@ -712,16 +844,38 @@ export default function Layout() {
 
   if (loading) return <div>Chargement...</div>
 
+  const nomComplet = [user?.prenom, user?.nom].filter(Boolean).join(' ')
+
+  // Les raccourcis du bas mènent tous à la trésorerie : ailleurs, ils
+  // renvoyaient hors du module consulté. Le contenu doit savoir si cette barre
+  // occupe le bas de l'écran, sinon les autres modules gardent sur mobile une
+  // réserve de 92 px sous leur dernière ligne.
+  const showMobileBottomNav =
+    isMobile &&
+    !mobileMenuOpen &&
+    activeApp === 'TREASURY' &&
+    mobileNavItems.some(item => canAccessRoute(item.permission))
+
   return (
     <div className={`${styles.layout} ${desktopCollapsed ? styles.collapsed : ''}`}>
+      <a className={styles.skipLink} href="#main-content">
+        Aller au contenu
+      </a>
       <button
-        className={styles.mobileMenuToggle}
-        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        aria-label="Toggle menu"
+        ref={mobileMenuButtonRef}
+        type="button"
+        className={`${styles.mobileMenuToggle} ${mobileMenuOpen ? styles.mobileMenuToggleOpen : ''}`}
+        onClick={() => {
+          setMobileMenuOpen(open => !open)
+          setShowUserMenu(false)
+        }}
+        aria-label={mobileMenuOpen ? 'Fermer le menu principal' : 'Ouvrir le menu principal'}
+        aria-controls="main-navigation-drawer"
+        aria-expanded={mobileMenuOpen}
       >
-        <span className={styles.hamburger}></span>
-        <span className={styles.hamburger}></span>
-        <span className={styles.hamburger}></span>
+        <span className={styles.hamburger} aria-hidden="true"></span>
+        <span className={styles.hamburger} aria-hidden="true"></span>
+        <span className={styles.hamburger} aria-hidden="true"></span>
       </button>
 
       <button
@@ -735,13 +889,28 @@ export default function Layout() {
       </button>
 
       {mobileMenuOpen && (
-        <div className={styles.overlay} onClick={() => setMobileMenuOpen(false)} />
+        <button
+          type="button"
+          className={styles.overlay}
+          onClick={() => {
+            setMobileMenuOpen(false)
+            setShowUserMenu(false)
+            window.requestAnimationFrame(() => mobileMenuButtonRef.current?.focus())
+          }}
+          aria-label="Fermer le menu principal"
+          tabIndex={-1}
+        />
       )}
 
-      <aside className={`${styles.sidebar} ${mobileMenuOpen ? styles.sidebarOpen : ''}`}>
+      <aside
+        ref={sidebarRef}
+        id="main-navigation-drawer"
+        className={`${styles.sidebar} ${mobileMenuOpen ? styles.sidebarOpen : ''}`}
+        aria-label="Navigation de l'application"
+      >
         <div className={styles.logo}>
           <div className={styles.logoHeader}>
-            <img src="/imge_onec.png" alt="ONEC Logo" className={styles.logoImage} />
+            <img src="/imge_onec.png" alt="ONEC" className={styles.logoImage} />
             <button
               type="button"
               className={styles.collapseBtn}
@@ -773,7 +942,7 @@ export default function Layout() {
           )}
         </div>
 
-        <nav className={styles.nav} ref={navRef}>
+        <nav className={styles.nav} ref={navRef} aria-label={`Navigation ${activeAppDef.label}`}>
           <div
             className={styles.activeIndicator}
             style={{
@@ -785,9 +954,21 @@ export default function Layout() {
           {navItems.map(item => renderNavItem(item))}
         </nav>
 
-        <div className={styles.userInfo} ref={userMenuRef}>
+        <div
+          className={styles.userInfo}
+          ref={userMenuRef}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setShowUserMenu(false)
+          }}
+        >
           {showUserMenu && (
-            <div className={styles.userMenu} role="menu">
+            <div
+              id="account-menu"
+              className={styles.userMenu}
+              role="menu"
+              aria-label="Actions du compte"
+              onKeyDown={handleUserMenuKeyDown}
+            >
               <button
                 type="button"
                 role="menuitem"
@@ -808,10 +989,10 @@ export default function Layout() {
               </button>
               <button
                 type="button"
-                role="menuitem"
+                role="menuitemcheckbox"
                 onClick={basculerSons}
                 className={styles.userMenuItem}
-                aria-pressed={sonsAllumes}
+                aria-checked={sonsAllumes}
               >
                 {sonsAllumes ? <Volume2 size={16} /> : <VolumeX size={16} />}
                 <span>{sonsAllumes ? 'Sons activés' : 'Sons coupés'}</span>
@@ -833,10 +1014,19 @@ export default function Layout() {
             </div>
           )}
           <button
+            ref={userTriggerRef}
             type="button"
             className={styles.userTrigger}
             onClick={() => setShowUserMenu(prev => !prev)}
             aria-expanded={showUserMenu}
+            aria-haspopup="menu"
+            aria-controls={showUserMenu ? 'account-menu' : undefined}
+            aria-label={nomComplet ? `Menu du compte de ${nomComplet}` : 'Menu du compte'}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+              event.preventDefault()
+              setShowUserMenu(true)
+            }}
           >
             <div className={styles.userAvatar}>
               {(user?.prenom?.[0] || '').toUpperCase()}
@@ -851,7 +1041,13 @@ export default function Layout() {
         </div>
       </aside>
 
-      <main className={`${styles.main} ${location.pathname === '/settings' ? styles.mainAllowXScroll : ''}`}>
+      <main
+        ref={mainRef}
+        id="main-content"
+        tabIndex={-1}
+        data-bottom-nav={showMobileBottomNav ? 'true' : undefined}
+        className={`${styles.main} ${location.pathname === '/settings' ? styles.mainAllowXScroll : ''}`}
+      >
         <BillingAlert />
         {paymentAlert && (
           <div className={styles.paymentBanner} role="alert">
@@ -907,7 +1103,7 @@ export default function Layout() {
         </div>
       </main>
 
-      {isMobile && (
+      {showMobileBottomNav && (
         <MobileBottomNav items={mobileNavItems} hasPermission={canAccessRoute} />
       )}
 

@@ -26,6 +26,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
   animation: slideUp var(--transition-base) var(--ease-spring);
 }
 
@@ -94,14 +96,16 @@
   font-weight: 700;
   color: var(--tenant-text, #2d3748);
   margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .closeButton {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--radius-md);
   background: #f1f5f9;
   color: #64748b;
@@ -123,7 +127,9 @@
 .content {
   padding: 24px;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   flex: 1;
   min-height: 0;
 }
@@ -176,8 +182,8 @@
   }
 
   .closeButton {
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
   }
 
   .content {
@@ -193,8 +199,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 32px;
-  min-height: 32px;
+  min-width: 44px;
+  min-height: 44px;
   border: 1px solid #fca5a5;
   border-radius: 8px;
   background: #fee2e2;
@@ -207,4 +213,91 @@
   background: #dc2626;
   border-color: #dc2626;
   color: #ffffff;
+}
+
+.closeButton:focus-visible {
+  outline: 3px solid var(--tenant-accent, #d4a11f);
+  outline-offset: 2px;
+}
+
+/* Tablettes portrait et paysage : la modale reste un repère visuel dans la
+   page et son contenu dense (formulaire ou tableau) reste atteignable au doigt. */
+@media (min-width: 600px) and (max-width: 1024px) {
+  .content {
+    scrollbar-gutter: stable;
+  }
+
+  .closeButton {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* En portrait, on conserve une marge franche autour de la carte. Les tablettes
+   en paysage peu hautes gardent les espacements compacts de la règle ci-dessus
+   basée sur max-height: 700px. */
+@media (min-width: 600px) and (max-width: 1024px) and (min-height: 701px) {
+  .backdrop {
+    padding: 24px;
+  }
+
+  .modal {
+    max-height: calc(100dvh - 48px);
+  }
+
+  .header {
+    padding: 18px 20px;
+  }
+
+  .content {
+    padding: 20px;
+  }
+
+  .footer {
+    padding: 14px 20px;
+  }
+}
+
+@media (max-width: 479px) {
+  .fullScreenBackdrop {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .full {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+  }
+
+  .full .header {
+    padding-top: max(14px, env(safe-area-inset-top, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+  }
+
+  .full .content {
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+  }
+
+  .full .footer {
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-bottom: max(14px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop,
+  .modal,
+  .full {
+    animation: none;
+  }
+
+  .closeButton {
+    transition: none;
+  }
 }

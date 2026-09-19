@@ -18,13 +18,15 @@ function AppTile({ app, isActive, onSelect }: { app: AppDefinition; isActive: bo
       type="button"
       className={`${styles.tile} ${isActive ? styles.tileActive : ''}`}
       onClick={onSelect}
+      role="menuitemradio"
+      aria-checked={isActive}
       style={isActive ? { '--app-color': app.color, '--app-bg': app.bgColor } as React.CSSProperties : undefined}
     >
       <span className={styles.tileIcon} style={{ color: app.color }}>
         {APP_ICONS[app.id]}
       </span>
       <span className={styles.tileLabel}>{app.label}</span>
-      {isActive && <span className={styles.tileCheck}>✓</span>}
+      {isActive && <span className={styles.tileCheck} aria-hidden="true">✓</span>}
     </button>
   )
 }
@@ -38,7 +40,7 @@ export default function AppSwitcher() {
 
   useEffect(() => {
     if (!open) return
-    const handler = (e: MouseEvent) => {
+    const handler = (e: PointerEvent) => {
       if (
         panelRef.current &&
         !panelRef.current.contains(e.target as Node) &&
@@ -48,8 +50,20 @@ export default function AppSwitcher() {
         setOpen(false)
       }
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    document.addEventListener('pointerdown', handler)
+
+    const focusId = window.requestAnimationFrame(() => {
+      const selectedItem = panelRef.current?.querySelector<HTMLButtonElement>(
+        '[role="menuitemradio"][aria-checked="true"]',
+      )
+      const firstItem = panelRef.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"]')
+      ;(selectedItem || firstItem)?.focus()
+    })
+
+    return () => {
+      document.removeEventListener('pointerdown', handler)
+      window.cancelAnimationFrame(focusId)
+    }
   }, [open])
 
   if (availableApps.length <= 1) return null
@@ -60,25 +74,74 @@ export default function AppSwitcher() {
     navigate(app.entryPath)
   }
 
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+      btnRef.current?.focus()
+      return
+    }
+
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+
+    const items = Array.from(
+      panelRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') || [],
+    )
+    if (items.length === 0) return
+
+    event.preventDefault()
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement)
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : event.key === 'ArrowUp'
+          ? (currentIndex <= 0 ? items.length - 1 : currentIndex - 1)
+          : (currentIndex + 1) % items.length
+    items[nextIndex]?.focus()
+  }
+
   return (
-    <div className={styles.wrapper}>
+    <div
+      className={styles.wrapper}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
+      }}
+    >
       <button
         ref={btnRef}
         type="button"
         className={`${styles.trigger} ${open ? styles.triggerOpen : ''}`}
         onClick={() => setOpen(v => !v)}
         title="Changer d'application"
-        aria-label="Sélecteur d'applications"
+        aria-label="Changer d'application"
         aria-expanded={open}
+        aria-haspopup="menu"
+        aria-controls={open ? 'application-switcher-menu' : undefined}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+          event.preventDefault()
+          setOpen(true)
+        }}
       >
         <LayoutGrid size={16} />
         <span className={styles.triggerLabel}>{activeAppDef.label}</span>
       </button>
 
       {open && (
-        <div ref={panelRef} className={styles.panel}>
-          <p className={styles.panelTitle}>Applications</p>
-          <div className={styles.tileGrid}>
+        <div
+          ref={panelRef}
+          className={styles.panel}
+        >
+          <p id="application-switcher-title" className={styles.panelTitle}>Applications</p>
+          <div
+            id="application-switcher-menu"
+            className={styles.tileGrid}
+            role="menu"
+            aria-labelledby="application-switcher-title"
+            onKeyDown={handleMenuKeyDown}
+          >
             {availableApps.map(app => (
               <AppTile
                 key={app.id}
