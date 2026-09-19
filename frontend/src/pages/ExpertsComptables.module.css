@@ -821,8 +821,6 @@
 .secondaryBtn,
 .tertiaryBtn,
 .clearFiltersBtn,
-.viewBtn,
-.editInlineBtn,
 .menuBtn,
 .pageBtn,
 .deactivateActionBtn,
@@ -862,8 +860,6 @@
 .primaryBtn:hover,
 .secondaryBtn:hover,
 .tertiaryBtn:hover,
-.viewBtn:hover,
-.editInlineBtn:hover,
 .menuBtn:hover,
 .pageBtn:hover:not(:disabled) {
   border-color: #93c5fd;
@@ -874,8 +870,6 @@
 .secondaryBtn:focus-visible,
 .tertiaryBtn:focus-visible,
 .clearFiltersBtn:focus-visible,
-.viewBtn:focus-visible,
-.editInlineBtn:focus-visible,
 .menuBtn:focus-visible,
 .pageBtn:focus-visible,
 .expertIdentity:focus-visible,
@@ -1117,7 +1111,8 @@
 }
 
 .actionsCol {
-  width: 14%;
+  /* Un seul bouton ⋮ : la colonne n'a plus besoin de la place de trois. */
+  width: 72px;
   position: sticky;
   right: 0;
   background: #ffffff;
@@ -1236,18 +1231,12 @@
   gap: 6px;
 }
 
-.viewBtn,
-.editInlineBtn,
 .menuBtn {
   min-height: 36px;
   padding: 0 10px;
   background: #ffffff;
   border-color: #cbd5e1;
   color: #334155;
-}
-
-.viewBtn {
-  color: #1d4ed8;
 }
 
 .menuBtn {

@@ -1157,12 +1157,9 @@ export default function ExpertsComptables() {
                 </td>
                 <td className={styles.actionsCol}>
                   <div className={styles.actionsCell}>
-                    <button type="button" onClick={() => setDetailExpert(expert)} className={styles.viewBtn}>
-                      Voir
-                    </button>
-                    <button type="button" onClick={() => openEditForm(expert)} className={styles.editInlineBtn}>
-                      Modifier
-                    </button>
+                    {/* Voir et Modifier vivent dans le menu ⋮, et le nom de
+                        l'expert ouvre déjà sa fiche : les répéter ici volait à
+                        la table une colonne entière pour rien. */}
                     <button
                       type="button"
                       className={styles.menuBtn}
