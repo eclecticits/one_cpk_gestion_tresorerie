@@ -1528,7 +1528,9 @@ async def construire_classeur_budget(
         FIRST = 8
         headers = [
             "Code", "Nature", "Niveau", "Poste budgétaire", "Type",
-            f"{LBL_PREVISION} (USD)", "Budget N-1 (USD)", "Solde budgétaire N/N-1 (USD)",
+            # « Écart N-1 », comme la colonne de l'écran : prévision N moins
+            # prévision N-1. « Solde » était déjà pris par le disponible.
+            f"{LBL_PREVISION} (USD)", "Budget N-1 (USD)", "Écart N-1 (USD)",
             "Engagé (USD)", f"{LBL_REALISE} (USD)", f"{LBL_SOLDE} (USD)",
             "Reste à engager (USD)", "Taux d'engagement %", f"{LBL_TAUX} %",
         ]

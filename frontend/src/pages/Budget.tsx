@@ -1221,7 +1221,14 @@ export default function Budget() {
             {!isRecetteView && <td className={styles.colEngage}>{formatAmount(totals.engage)}</td>}
             <td className={styles.colReal}>{formatAmount(totals.paye)}</td>
             <td className={`${styles.colAvailable} ${isOverrun ? styles.overrunValue : ''}`}>
-              {isRecetteView ? formatAmount(totals.paye) : formatAmount(totals.disponible)}
+              {/* En recette, le solde est ce qui manque (ou dépasse) à l'objectif :
+                  réalisé moins prévu, comme l'export Excel et le PDF. Cette
+                  cellule répétait le réalisé de la colonne voisine. */}
+              {isRecetteView ? (
+                <span className={ecart > 0.005 ? styles.deltaPositive : ecart < -0.005 ? styles.deltaNegative : styles.deltaNeutral}>
+                  {formatAmount(ecart)}
+                </span>
+              ) : formatAmount(totals.disponible)}
               {!isRecetteView && selectedServiceId && (
                 <div
                   className={styles.remainingBar}
@@ -1683,10 +1690,16 @@ export default function Budget() {
             <strong>{formatAmount(rootTotals.prevu)}</strong>
           </div>
           {isRecetteView ? (
-            <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
-              <span>Réalisation</span>
-              <strong>{formatAmount(rootTotals.paye)}</strong>
-            </div>
+            <>
+              <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
+                <span>Réalisation</span>
+                <strong>{formatAmount(rootTotals.paye)}</strong>
+              </div>
+              <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
+                <span>Solde budgétaire</span>
+                <strong>{formatAmount(rootTotals.paye - rootTotals.prevu)}</strong>
+              </div>
+            </>
           ) : (
             <>
               <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
@@ -1801,7 +1814,12 @@ export default function Budget() {
                     répéter les deux voisines. */}
                 {!isRecetteView && <th className={styles.colEngage}>Engagé</th>}
                 <th className={styles.colReal}>Réalisé</th>
-                <th className={styles.colAvailable}>{isRecetteView ? 'Réalisation' : 'Solde budgétaire'}</th>
+                <th
+                  className={styles.colAvailable}
+                  title={isRecetteView ? 'Réalisé moins prévision : négatif, il manque à l’objectif' : undefined}
+                >
+                  Solde budgétaire
+                </th>
                 {!isRecetteView && <th className={styles.colResteEngager}>Reste à engager</th>}
                 {!isRecetteView && <th className={styles.colTauxEngagement}>Taux d'engagement</th>}
                 <th className={styles.colProgress}>{isRecetteView ? 'Statut' : 'Taux de réalisation'}</th>

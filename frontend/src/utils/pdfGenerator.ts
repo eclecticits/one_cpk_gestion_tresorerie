@@ -1510,7 +1510,7 @@ export const generateBudgetPDF = async (
      *  une ligne, et n'a donc pas à dépendre de la version annotée. */
     commentaireGeneral?: string | null
     /** Prévision de l'exercice N-1 par code de poste normalisé. Sa présence ajoute
-     *  les colonnes « Budget N-1 » et « Solde budgétaire » et bascule en paysage : huit
+     *  les colonnes « Budget N-1 » et « Écart N-1 » et bascule en paysage : huit
      *  colonnes chiffrées ne tiennent pas dans les 182 mm utiles d'un A4
      *  portrait, déjà remplis à 180 mm par les six colonnes actuelles. */
     comparaisonN1?: Map<string, number>
@@ -1747,6 +1747,10 @@ export const generateBudgetPDF = async (
   })
   const HEADER_TAUX_REALISATION = 'Taux de\nréalisation'
   const HEADER_SOLDE_BUDGETAIRE = 'Solde\nbudgétaire'
+  // Prévision N moins prévision N-1, comme la colonne « Écart N-1 » de
+  // l'écran. Elle portait l'en-tête « Solde budgétaire », déjà pris par le
+  // disponible : deux colonnes de même nom et de sens différent.
+  const HEADER_ECART_N1 = 'Écart\nN-1'
   const isRecette = vue === 'RECETTE'
 
   // La police des colonnes chiffrées, calée sur le plus long montant qu'elles
@@ -1799,7 +1803,7 @@ export const generateBudgetPDF = async (
       'Code',
       'Poste budgétaire',
       'Prévision',
-      ...(avecComparaison ? ['Budget N-1', HEADER_SOLDE_BUDGETAIRE] : []),
+      ...(avecComparaison ? ['Budget N-1', HEADER_ECART_N1] : []),
       'Engagé',
       'Réalisation',
       HEADER_TAUX_REALISATION,
