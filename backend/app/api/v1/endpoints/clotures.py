@@ -18,7 +18,6 @@ from app.api.deps import get_current_tenant_id, get_current_user, has_permission
 from app.db.session import get_db
 from app.utils.excel_io import save_workbook
 from app.models.cloture_caisse import ClotureCaisse
-from app.models.encaissement import Encaissement
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.organisation import Organisation
 from app.models.ouverture_caisse import OuvertureCaisse
@@ -28,6 +27,7 @@ from app.models.retour_caisse import RetourCaisse
 from app.models.sortie_fonds import SortieFonds
 from app.models.transfert_interne import TransfertInterne
 from app.models.user import User
+from app.services.encaissement_flux import flux_encaissements
 from app.services.regularisation_caisse import (
     SOURCE_CLOTURE,
     SOURCE_OUVERTURE,
@@ -178,31 +178,24 @@ async def _compute_balance(db: AsyncSession, tenant_id: int) -> ClotureBalanceRe
     # Les encaissements ANNULÉS ou supprimés ne sont plus en caisse : leur montant
     # a été redébité. Sans ces deux filtres, le solde théorique de clôture les
     # recompte et diverge du solde de trésorerie (qui, lui, les exclut).
-    enc_query = select(func.coalesce(func.sum(Encaissement.montant_paye), 0)).where(
-        Encaissement.organisation_id == tenant_id,
-        Encaissement.canal == "CAISSE",
-        Encaissement.devise_perception == "USD",
-        Encaissement.est_proforma.is_(False),
-        Encaissement.is_deleted.is_(False),
-        (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
-    )
-    if date_debut:
-        enc_query = enc_query.where(Encaissement.date_encaissement > date_debut)
-    enc_query = enc_query.where(Encaissement.date_encaissement <= date_fin)
-    enc_total_usd = _decimal((await db.execute(enc_query)).scalar_one() or 0)
+    #
+    # Les entrées se comptent versement par versement (`flux_encaissements`) :
+    # une note peut être réglée pour partie en caisse et pour partie en banque,
+    # et sa date d'émission n'est pas celle où l'argent est arrivé au tiroir.
+    flux = flux_encaissements(tenant_id)
 
-    enc_cdf_query = select(func.coalesce(func.sum(Encaissement.montant_percu), 0)).where(
-        Encaissement.organisation_id == tenant_id,
-        Encaissement.canal == "CAISSE",
-        Encaissement.devise_perception == "CDF",
-        Encaissement.est_proforma.is_(False),
-        Encaissement.is_deleted.is_(False),
-        (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
-    )
-    if date_debut:
-        enc_cdf_query = enc_cdf_query.where(Encaissement.date_encaissement > date_debut)
-    enc_cdf_query = enc_cdf_query.where(Encaissement.date_encaissement <= date_fin)
-    enc_total_cdf = _decimal((await db.execute(enc_cdf_query)).scalar_one() or 0)
+    async def _flux_caisse(devise: str) -> Decimal:
+        query = select(func.coalesce(func.sum(flux.c.montant), 0)).where(
+            flux.c.canal == "CAISSE",
+            flux.c.devise == devise,
+        )
+        if date_debut:
+            query = query.where(flux.c.date_flux > date_debut)
+        query = query.where(flux.c.date_flux <= date_fin)
+        return _decimal((await db.execute(query)).scalar_one() or 0)
+
+    enc_total_usd = await _flux_caisse("USD")
+    enc_total_cdf = await _flux_caisse("CDF")
 
     paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
     sort_query = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(

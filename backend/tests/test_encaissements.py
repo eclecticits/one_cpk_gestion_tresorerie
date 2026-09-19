@@ -1494,12 +1494,17 @@ async def test_cancel_operation_neutralizes_treasury_and_budget_exactly(db_sessi
         devise=devise,
         compte_bancaire_id=compte_id,
     )
+    # Le versement porte sa propre destination, comme le fait le service : c'est
+    # elle qui dit où l'argent est entré, donc d'où l'annulation doit le retirer.
     db_session.add(
         PaymentHistory(
             organisation_id=org.id,
             encaissement_id=enc.id,
             montant=Decimal("500"),
             mode_paiement="cash",
+            canal=canal,
+            devise=devise,
+            compte_bancaire_id=compte_id,
             created_by=user.id,
         )
     )
@@ -1755,3 +1760,219 @@ async def test_soft_delete_is_tenant_isolated(db_session):
     assert exc.value.status_code == 404
     await db_session.refresh(enc_b)
     assert enc_b.is_deleted is False
+
+
+@pytest.mark.asyncio
+async def test_complement_par_banque_credite_la_banque_pas_la_caisse(db_session, monkeypatch):
+    """Un acompte en caisse soldé par virement : chaque versement va où il est dit.
+
+    C'est le cas que le règlement mixte doit couvrir. Tant que le versement
+    recopiait la destination de la note, le virement de solde atterrissait dans
+    le tiroir : la caisse affichait de l'argent qu'elle n'avait pas, et le
+    compte bancaire manquait le sien.
+    """
+    org = await _enc_org(db_session)
+    user = await _enc_user(db_session, org)
+    poste = await _enc_budget_poste(db_session, org)
+    caisse = CaisseCentrale(organisation_id=org.id, solde_usd=Decimal("0"), est_ouverte=True)
+    db_session.add(caisse)
+    compte = CompteBancaire(
+        organisation_id=org.id,
+        intitule="Compte de dépôt",
+        numero_compte=f"BK-{_suffix()}",
+        devise="USD",
+        solde_initial=Decimal("0"),
+        solde_actuel=Decimal("0"),
+        is_active=True,
+        account_type="BANK",
+    )
+    db_session.add(compte)
+    await db_session.flush()
+    await _prepare_audit_context(org, user)
+    enc = await _encaissement_row(db_session, org, user, poste=poste, montant_paye=Decimal("0"))
+    enc.montant = Decimal("1000")
+    enc.montant_total = Decimal("1000")
+    await db_session.commit()
+
+    async def no_email(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.payments.schedule_client_payment_email", no_email)
+
+    await create_payment(
+        payload=PaymentHistoryCreate(encaissement_id=enc.id, montant=Decimal("300"), mode_paiement="cash"),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db_session,
+    )
+    solde = await create_payment(
+        payload=PaymentHistoryCreate(
+            encaissement_id=enc.id,
+            montant=Decimal("700"),
+            mode_paiement="virement",
+            canal="BANQUE",
+            compte_bancaire_id=compte.id,
+        ),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db_session,
+    )
+
+    await db_session.refresh(enc)
+    await db_session.refresh(caisse)
+    await db_session.refresh(compte)
+    assert solde["canal"] == "BANQUE"
+    assert solde["compte_bancaire_id"] == compte.id
+    assert caisse.solde_usd == Decimal("300.00")
+    assert compte.solde_actuel == Decimal("700.00")
+    assert enc.montant_paye == Decimal("1000.00")
+    assert enc.statut_paiement == "complet"
+    # L'en-tête garde la destination du premier versement : c'est là qu'a
+    # commencé l'encaissement, le détail vit sur les versements.
+    assert enc.canal == "CAISSE"
+
+    # Annulation du seul versement bancaire : la banque rend, la caisse garde.
+    await cancel_encaissement_payment(
+        db_session,
+        organisation_id=org.id,
+        payment_id=uuid.UUID(solde["id"]),
+        motif_annulation="Virement rejeté",
+        user_id=user.id,
+    )
+    await db_session.commit()
+    await db_session.refresh(caisse)
+    await db_session.refresh(compte)
+    assert caisse.solde_usd == Decimal("300.00")
+    assert compte.solde_actuel == Decimal("0.00")
+
+
+@pytest.mark.asyncio
+async def test_complement_banque_exige_un_compte(db_session, monkeypatch):
+    org = await _enc_org(db_session)
+    user = await _enc_user(db_session, org)
+    caisse = CaisseCentrale(organisation_id=org.id, solde_usd=Decimal("0"), est_ouverte=True)
+    db_session.add(caisse)
+    await _prepare_audit_context(org, user)
+    enc = await _encaissement_row(db_session, org, user, montant_paye=Decimal("0"))
+    await db_session.commit()
+
+    async def no_email(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.payments.schedule_client_payment_email", no_email)
+
+    with pytest.raises(HTTPException) as exc:
+        await create_payment(
+            payload=PaymentHistoryCreate(
+                encaissement_id=enc.id,
+                montant=Decimal("100"),
+                mode_paiement="virement",
+                canal="BANQUE",
+            ),
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 400
+    assert "compte_bancaire_id" in exc.value.detail
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_flux_encaissements_ventile_les_versements_par_destination(db_session, monkeypatch):
+    """La trésorerie et la clôture lisent ce flux : il doit séparer les canaux."""
+    from sqlalchemy import func as sa_func
+
+    from app.services.encaissement_flux import flux_encaissements
+
+    org = await _enc_org(db_session)
+    user = await _enc_user(db_session, org)
+    caisse = CaisseCentrale(organisation_id=org.id, solde_usd=Decimal("0"), est_ouverte=True)
+    db_session.add(caisse)
+    compte = CompteBancaire(
+        organisation_id=org.id,
+        intitule="Compte de dépôt",
+        numero_compte=f"BK-{_suffix()}",
+        devise="USD",
+        solde_initial=Decimal("0"),
+        solde_actuel=Decimal("0"),
+        is_active=True,
+        account_type="BANK",
+    )
+    db_session.add(compte)
+    await db_session.flush()
+    await _prepare_audit_context(org, user)
+    enc = await _encaissement_row(db_session, org, user, montant_paye=Decimal("0"))
+    enc.montant = Decimal("1000")
+    enc.montant_total = Decimal("1000")
+    await db_session.commit()
+
+    async def no_email(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.payments.schedule_client_payment_email", no_email)
+
+    for montant, canal, compte_id in (
+        (Decimal("300"), None, None),
+        (Decimal("700"), "BANQUE", compte.id),
+    ):
+        await create_payment(
+            payload=PaymentHistoryCreate(
+                encaissement_id=enc.id,
+                montant=montant,
+                mode_paiement="cash" if canal is None else "virement",
+                canal=canal,
+                compte_bancaire_id=compte_id,
+            ),
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db_session,
+        )
+
+    flux = flux_encaissements(org.id)
+
+    async def _total(canal: str) -> Decimal:
+        res = await db_session.execute(
+            select(sa_func.coalesce(sa_func.sum(flux.c.montant), 0)).where(
+                flux.c.canal == canal,
+                flux.c.devise == "USD",
+                flux.c.encaissement_id == enc.id,
+            )
+        )
+        return Decimal(res.scalar_one() or 0)
+
+    assert await _total("CAISSE") == Decimal("300.00")
+    assert await _total("BANQUE") == Decimal("700.00")
+
+
+@pytest.mark.asyncio
+async def test_flux_encaissements_reprend_les_notes_sans_versement(db_session):
+    """Les encaissements d'avant l'historique des versements restent comptés."""
+    from sqlalchemy import func as sa_func
+
+    from app.services.encaissement_flux import flux_encaissements
+
+    org = await _enc_org(db_session)
+    user = await _enc_user(db_session, org)
+    await _prepare_audit_context(org, user)
+    enc = await _encaissement_row(db_session, org, user, montant_paye=Decimal("500"))
+    await db_session.commit()
+
+    flux = flux_encaissements(org.id)
+    res = await db_session.execute(
+        select(sa_func.coalesce(sa_func.sum(flux.c.montant), 0)).where(
+            flux.c.encaissement_id == enc.id,
+            flux.c.canal == "CAISSE",
+            flux.c.devise == "USD",
+        )
+    )
+    assert Decimal(res.scalar_one() or 0) == Decimal("500.00")

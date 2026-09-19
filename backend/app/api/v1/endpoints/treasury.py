@@ -11,7 +11,6 @@ from app.api.deps import get_current_tenant_id, get_current_user, require_ai_ena
 from app.db.session import get_db
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
-from app.models.encaissement import Encaissement
 from app.models.retour_caisse import RetourCaisse
 from app.models.sortie_fonds import SortieFonds
 from app.models.transfert_interne import TransfertInterne
@@ -24,6 +23,7 @@ from app.schemas.treasury import (
     TreasuryOverviewOut,
 )
 from app.services.ai_batch_service import AIBatchProcessor
+from app.services.encaissement_flux import flux_encaissements
 from app.services.ai_memory_service import AIMemoryService
 # ExcelParser est importé dans la vue : il tire pandas (57 Mo de RSS et ~1,3 s
 # d'import), payés par chaque worker au démarrage alors qu'un seul endpoint s'en
@@ -92,24 +92,20 @@ async def _recalculate_treasury_balances(
         )
     )
 
+    # Entrées de caisse : comptées versement par versement, car une note peut
+    # être encaissée en deux fois vers deux destinations différentes. La lire sur
+    # l'en-tête mettrait le versement bancaire dans le tiroir.
+    flux = flux_encaissements(tenant_id)
     enc_usd_res = await db.execute(
-        select(func.coalesce(func.sum(Encaissement.montant_paye), 0)).where(
-            Encaissement.organisation_id == tenant_id,
-            Encaissement.is_deleted.is_(False),
-            ((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE")),
-            Encaissement.canal == "CAISSE",
-            Encaissement.devise_perception == "USD",
-            Encaissement.est_proforma.is_(False),
+        select(func.coalesce(func.sum(flux.c.montant), 0)).where(
+            flux.c.canal == "CAISSE",
+            flux.c.devise == "USD",
         )
     )
     enc_cdf_res = await db.execute(
-        select(func.coalesce(func.sum(Encaissement.montant_percu), 0)).where(
-            Encaissement.organisation_id == tenant_id,
-            Encaissement.is_deleted.is_(False),
-            ((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE")),
-            Encaissement.canal == "CAISSE",
-            Encaissement.devise_perception == "CDF",
-            Encaissement.est_proforma.is_(False),
+        select(func.coalesce(func.sum(flux.c.montant), 0)).where(
+            flux.c.canal == "CAISSE",
+            flux.c.devise == "CDF",
         )
     )
 

@@ -310,3 +310,82 @@ async def test_les_deux_jambes_restent_lisibles_apres_contrepassation(db_session
     # Et le net est nul des deux côtés : rien n'a été créé ni perdu.
     assert caisse.total_entrees == caisse.total_sorties
     assert banque.total_entrees == banque.total_sorties
+
+
+# ---------------------------------------------------------------------------
+# Règlement mixte : une note, deux poches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_note_reglee_en_deux_poches_se_lit_dans_les_deux_journaux(db_session, monkeypatch):
+    """Acompte au guichet, solde par virement : chaque poche voit sa part.
+
+    Le journal lisait la destination sur la note, pas sur le versement. Une note
+    ouverte en caisse puis soldée par virement portait donc ses 1 000 en caisse,
+    alors que 700 dormaient en banque — un écart que le rapprochement bancaire
+    ne pouvait pas expliquer.
+    """
+    from fastapi import BackgroundTasks
+
+    from app.api.v1.endpoints.payments import create_payment
+    from app.models.encaissement import Encaissement
+    from app.schemas.payment import PaymentHistoryCreate
+
+    org, user, compte = await _contexte(db_session)
+    enc = Encaissement(
+        organisation_id=org.id,
+        numero_recu=f"ND-{uuid.uuid4().hex[:8]}",
+        type_client="personne_physique",
+        client_nom="Client mixte",
+        libelle="Cotisation",
+        montant=Decimal("1000"),
+        montant_total=Decimal("1000"),
+        montant_paye=Decimal("0"),
+        montant_percu=Decimal("0"),
+        devise_perception="USD",
+        taux_change_applique=Decimal("1"),
+        canal="CAISSE",
+        mode_paiement="cash",
+        statut_paiement="non_paye",
+        date_encaissement=MOMENT,
+        created_by=user.id,
+    )
+    db_session.add(enc)
+    await db_session.commit()
+
+    async def no_email(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.payments.schedule_client_payment_email", no_email)
+
+    class _Request:
+        headers: dict = {}
+        client = None
+
+    for montant, canal, compte_id, mode in (
+        (Decimal("300"), None, None, "cash"),
+        (Decimal("700"), "BANQUE", compte.id, "virement"),
+    ):
+        await create_payment(
+            payload=PaymentHistoryCreate(
+                encaissement_id=enc.id,
+                montant=montant,
+                mode_paiement=mode,
+                canal=canal,
+                compte_bancaire_id=compte_id,
+            ),
+            request=_Request(),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db_session,
+        )
+
+    caisse = await _journal(db_session, user, org, "CAISSE")
+    banque = await _journal(db_session, user, org, "BANQUE", compte.id)
+
+    assert [l.entree for l in _lignes(caisse, sens="entree")] == [Decimal("300")]
+    assert [l.entree for l in _lignes(banque, sens="entree")] == [Decimal("700")]
+    # Rien n'est compté deux fois : les deux parts font la note, pas le double.
+    assert caisse.total_entrees + banque.total_entrees == Decimal("1000")

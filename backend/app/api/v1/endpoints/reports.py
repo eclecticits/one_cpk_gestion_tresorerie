@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_tenant_id
 from app.core.cache import cache_get, cache_set
+from app.services.encaissement_flux import flux_encaissements
 from app.services.report_cache import report_summary_cache_key
 from app.core.config import settings
 from app.db.session import get_db
@@ -1323,30 +1324,26 @@ async def journal_tresorerie(
                 )
                 base_date = last.date_cloture
 
-    def _enc_amount_expr():
-        return (
-            Encaissement.montant_paye
-            if devise == "USD"
-            else Encaissement.montant_percu
-        )
+    # Une note réglée en plusieurs fois peut viser deux destinations : l'acompte
+    # au tiroir, le solde par virement. Ce relevé suit donc les versements, pas
+    # l'en-tête — sinon le compte bancaire se verrait crédité de tout, acompte
+    # en espèces compris, et la caisse de rien.
+    flux = flux_encaissements(tenant_id)
+
+    def _flux_du_compte(query):
+        query = query.where(flux.c.canal == canal, flux.c.devise == devise)
+        if compte_bancaire_id:
+            query = query.where(flux.c.compte_bancaire_id == compte_bancaire_id)
+        return query
 
     async def _sum_encaissements(before: bool) -> Decimal:
-        query = select(func.coalesce(func.sum(_enc_amount_expr()), 0)).where(
-            Encaissement.is_deleted.is_(False),
-            Encaissement.est_proforma.is_(False),
-            (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
-            Encaissement.canal == canal,
-            Encaissement.devise_perception == devise,
-            Encaissement.organisation_id == tenant_id,
-        )
-        if compte_bancaire_id:
-            query = query.where(Encaissement.compte_bancaire_id == compte_bancaire_id)
+        query = _flux_du_compte(select(func.coalesce(func.sum(flux.c.montant), 0)))
         if base_date:
-            query = query.where(Encaissement.date_encaissement >= base_date)
+            query = query.where(flux.c.date_flux >= base_date)
         if start_dt and before:
-            query = query.where(Encaissement.date_encaissement < start_dt)
+            query = query.where(flux.c.date_flux < start_dt)
         if start_dt and not before and end_dt:
-            query = query.where(Encaissement.date_encaissement >= start_dt, Encaissement.date_encaissement <= end_dt)
+            query = query.where(flux.c.date_flux >= start_dt, flux.c.date_flux <= end_dt)
         return Decimal((await db.execute(query)).scalar_one() or 0)
 
     async def _sum_sorties(before: bool) -> Decimal:
@@ -1456,29 +1453,36 @@ async def journal_tresorerie(
 
     mouvements: list[dict] = []
 
-    enc_query = select(
-        Encaissement.id,
-        Encaissement.date_encaissement,
-        Encaissement.libelle,
-        Encaissement.reference,
-        _enc_amount_expr().label("montant"),
-        Encaissement.is_reconciled,
-        Encaissement.reconciled_at,
-        Encaissement.bank_statement_ref,
-    ).where(
-        Encaissement.is_deleted.is_(False),
-        Encaissement.est_proforma.is_(False),
-        (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
-        Encaissement.canal == canal,
-        Encaissement.devise_perception == devise,
-        Encaissement.organisation_id == tenant_id,
+    # Une ligne par note, du montant réellement entré ICI : le rapprochement se
+    # fait note par note (`is_reconciled` vit sur l'encaissement), mais ce qu'il
+    # y a à rapprocher sur ce compte est la part qui y est tombée.
+    part_du_compte = _flux_du_compte(
+        select(
+            flux.c.encaissement_id.label("encaissement_id"),
+            func.sum(flux.c.montant).label("montant"),
+            func.min(flux.c.date_flux).label("date_flux"),
+        )
     )
-    if compte_bancaire_id:
-        enc_query = enc_query.where(Encaissement.compte_bancaire_id == compte_bancaire_id)
     if start_dt:
-        enc_query = enc_query.where(Encaissement.date_encaissement >= start_dt)
+        part_du_compte = part_du_compte.where(flux.c.date_flux >= start_dt)
     if end_dt:
-        enc_query = enc_query.where(Encaissement.date_encaissement <= end_dt)
+        part_du_compte = part_du_compte.where(flux.c.date_flux <= end_dt)
+    part_du_compte = part_du_compte.group_by(flux.c.encaissement_id).subquery()
+
+    enc_query = (
+        select(
+            Encaissement.id,
+            part_du_compte.c.date_flux,
+            Encaissement.libelle,
+            Encaissement.reference,
+            part_du_compte.c.montant.label("montant"),
+            Encaissement.is_reconciled,
+            Encaissement.reconciled_at,
+            Encaissement.bank_statement_ref,
+        )
+        .join(part_du_compte, part_du_compte.c.encaissement_id == Encaissement.id)
+        .where(Encaissement.organisation_id == tenant_id)
+    )
     enc_rows = (await db.execute(enc_query)).all()
     for enc_id, dt, libelle, reference, montant, is_reconciled, reconciled_at, bank_statement_ref in enc_rows:
         mouvements.append(

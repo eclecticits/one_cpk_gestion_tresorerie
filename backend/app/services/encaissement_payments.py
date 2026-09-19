@@ -201,6 +201,55 @@ async def _adjust_budget(
     poste.montant_paye = clean_money(current + (montant * direction))
 
 
+async def _resolve_destination(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    encaissement: Encaissement,
+    canal: str | None,
+    compte_bancaire_id: int | None,
+    devise: str,
+) -> tuple[str, int | None]:
+    """Destination de CE versement : celle demandée, sinon celle de la note.
+
+    Un client qui a versé un acompte en caisse peut solder par virement, et
+    l'inverse. Le versement porte donc sa propre destination ; l'en-tête ne sert
+    plus que de défaut, pour que les appels d'avant le règlement mixte et le
+    versement initial continuent de viser la caisse ou le compte de la note.
+    """
+    canal_entete = (encaissement.canal or "CAISSE").upper()
+    canal_cible = (canal or canal_entete).upper()
+    if canal_cible not in {"CAISSE", "BANQUE"}:
+        raise HTTPException(status_code=400, detail="canal invalide")
+
+    compte_cible = compte_bancaire_id
+    # Sans compte explicite, on ne reprend celui de la note que si le versement
+    # va au même endroit : reprendre un compte bancaire pour un versement en
+    # caisse (ou l'inverse) désignerait un compte qui n'a pas reçu l'argent.
+    if compte_cible is None and canal_cible == canal_entete:
+        compte_cible = encaissement.compte_bancaire_id
+
+    if compte_cible is not None:
+        res = await db.execute(
+            select(CompteBancaire).where(
+                CompteBancaire.id == compte_cible,
+                CompteBancaire.organisation_id == organisation_id,
+            )
+        )
+        compte = res.scalar_one_or_none()
+        if compte is None or compte.is_active is False:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if (compte.devise or "").upper() != devise:
+            raise HTTPException(status_code=400, detail="devise incompatible avec le compte bancaire")
+        type_attendu = "BANK" if canal_cible == "BANQUE" else "CASH"
+        if (compte.account_type or "").upper() != type_attendu:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+    elif canal_cible == "BANQUE":
+        raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
+
+    return canal_cible, compte_cible
+
+
 async def record_encaissement_payment(
     db: AsyncSession,
     *,
@@ -211,6 +260,8 @@ async def record_encaissement_payment(
     reference: str | None,
     notes: str | None,
     user_id: uuid.UUID | None,
+    canal: str | None = None,
+    compte_bancaire_id: int | None = None,
     date_paiement: datetime | None = None,
     ip_address: str | None = None,
     rubrique_produit_defaut: str | None = None,
@@ -219,6 +270,16 @@ async def record_encaissement_payment(
     montant = clean_money(montant)
     if montant <= 0:
         raise HTTPException(status_code=400, detail="montant invalide")
+
+    devise = (encaissement.devise_perception or "USD").upper()
+    canal, compte_bancaire_id = await _resolve_destination(
+        db,
+        organisation_id=organisation_id,
+        encaissement=encaissement,
+        canal=canal,
+        compte_bancaire_id=compte_bancaire_id,
+        devise=devise,
+    )
 
     now = datetime.now(timezone.utc)
     recent_payment_res = await db.execute(
@@ -243,6 +304,10 @@ async def record_encaissement_payment(
             and recent_payment.reference == reference
             and recent_payment.notes == notes
             and recent_payment.created_by == user_id
+            # Même montant vers une autre destination : c'est un second
+            # versement, pas le rejeu du premier.
+            and (recent_payment.canal or "CAISSE").upper() == canal
+            and recent_payment.compte_bancaire_id == compte_bancaire_id
         )
         if same_double_click_payment:
             setattr(recent_payment, "_idempotent_replay", True)
@@ -255,9 +320,6 @@ async def record_encaissement_payment(
     payment_date = date_paiement or now
     if payment_date.tzinfo is None:
         payment_date = payment_date.replace(tzinfo=timezone.utc)
-    canal = (encaissement.canal or "CAISSE").upper()
-    devise = (encaissement.devise_perception or "USD").upper()
-    compte_bancaire_id = encaissement.compte_bancaire_id
     budget_poste_id = encaissement.budget_poste_id
     taux_change = Decimal(str(encaissement.taux_change_applique or 1))
     impact_budgetaire = (
@@ -286,11 +348,19 @@ async def record_encaissement_payment(
     db.add(payment)
     await db.flush()
 
-    new_paid = clean_money((encaissement.montant_paye or 0) + montant)
+    previous_paid = clean_money(encaissement.montant_paye or 0)
+    new_paid = clean_money(previous_paid + montant)
     encaissement.montant_paye = new_paid
     encaissement.montant_percu = new_paid
     encaissement.statut_paiement = _payment_status_for(encaissement, new_paid)
     encaissement.date_paiement = payment_date
+    # Premier versement d'une note encore vierge : l'en-tête suit la destination
+    # réellement utilisée. Sans cela, une note créée impayée — donc en caisse par
+    # défaut — puis soldée par virement resterait classée « caisse » dans les
+    # listes et les filtres.
+    if recent_payment is None and previous_paid == 0:
+        encaissement.canal = canal
+        encaissement.compte_bancaire_id = compte_bancaire_id
 
     await _credit_treasury(
         db,
@@ -427,10 +497,17 @@ async def cancel_encaissement_payment(
 
     encaissement = await _lock_encaissement(db, organisation_id=organisation_id, encaissement_id=payment.encaissement_id)
     montant = clean_money(payment.montant)
-    has_payment_snapshot = payment.budget_poste_id is not None or payment.compte_bancaire_id is not None
-    canal = ((payment.canal if has_payment_snapshot else None) or encaissement.canal or "CAISSE").upper()
-    devise = ((payment.devise if has_payment_snapshot else None) or encaissement.devise_perception or "USD").upper()
-    compte_bancaire_id = payment.compte_bancaire_id if has_payment_snapshot else encaissement.compte_bancaire_id
+    # La destination du versement fait foi. Depuis le règlement mixte elle peut
+    # différer de celle de la note — acompte en caisse, solde par virement — et
+    # rendre l'argent ailleurs que là où il est entré creuserait un trou dans une
+    # trésorerie et un excédent dans l'autre. L'en-tête ne sert plus que de repli
+    # pour les lignes sans destination propre.
+    canal_entete = (encaissement.canal or "CAISSE").upper()
+    canal = (payment.canal or canal_entete).upper()
+    devise = (payment.devise or encaissement.devise_perception or "USD").upper()
+    compte_bancaire_id = payment.compte_bancaire_id
+    if compte_bancaire_id is None and canal == canal_entete:
+        compte_bancaire_id = encaissement.compte_bancaire_id
     # Le poste figé sur le paiement fait foi : c'est lui, et lui seul, qui dit ce
     # que CE paiement a imputé.
     budget_poste_id = payment.budget_poste_id

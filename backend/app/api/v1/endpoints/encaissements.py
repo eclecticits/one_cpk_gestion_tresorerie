@@ -201,6 +201,11 @@ async def _notify_paiement_whatsapp(
     event_type: str,
     expert: ExpertComptable | None = None,
     montant_recu: Any = None,
+    #: Moyen et destination du versement notifié. Vides = ceux de la note : un
+    #: complément réglé autrement porte les siens, sinon l'accusé annoncerait au
+    #: client un mode de paiement qu'il n'a pas utilisé.
+    mode_paiement_recu: str | None = None,
+    canal_recu: str | None = None,
     entity_type: str = NOTIF_ENTITY_ENCAISSEMENT,
     entity_id: str | None = None,
     nonce: str = "",
@@ -294,9 +299,9 @@ async def _notify_paiement_whatsapp(
                 # `total` = montant total de la pièce (cf. TEMPLATE_VARIABLES).
                 "total": _fmt_montant(total),
                 "reste_a_payer": _fmt_montant(reste),
-                "mode_paiement": _mode_paiement_label(encaissement.mode_paiement),
-                "canal": _mode_paiement_label(encaissement.mode_paiement)
-                or ("Caisse" if (encaissement.canal or "") == "CAISSE" else "Banque"),
+                "mode_paiement": _mode_paiement_label(mode_paiement_recu or encaissement.mode_paiement),
+                "canal": _mode_paiement_label(mode_paiement_recu or encaissement.mode_paiement)
+                or ("Caisse" if (canal_recu or encaissement.canal or "") == "CAISSE" else "Banque"),
             },
             settings=settings_obj,
             nonce=nonce,

@@ -27,6 +27,11 @@ class PaymentHistoryBase(DecimalBaseModel):
 
 class PaymentHistoryCreate(PaymentHistoryBase):
     encaissement_id: UUID
+    #: Destination de CE versement, indépendante de celle de la note : un
+    #: acompte encaissé en caisse peut se solder par un virement. Vide = la
+    #: destination de la note, comme avant le règlement mixte.
+    canal: CanalPaiement | None = None
+    compte_bancaire_id: int | None = None
 
 
 class PaymentHistoryResponse(PaymentHistoryBase):

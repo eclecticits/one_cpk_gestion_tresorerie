@@ -102,6 +102,8 @@ async def create_payment(
         reference=payload.reference,
         notes=payload.notes,
         user_id=user.id,
+        canal=payload.canal,
+        compte_bancaire_id=payload.compte_bancaire_id,
         ip_address=get_request_ip(request),
     )
 
@@ -127,6 +129,8 @@ async def create_payment(
             tenant_id=encaissement.organisation_id,
             event_type=PAYMENT_COMPLEMENT,
             montant_recu=payment.montant,
+            mode_paiement_recu=payment.mode_paiement,
+            canal_recu=payment.canal,
             entity_type="payment_history",
             entity_id=str(payment.id),
         )

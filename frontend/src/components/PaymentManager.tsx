@@ -1,12 +1,30 @@
-import { useState, useEffect } from 'react'
-import { getPaymentHistory, createPayment, PaymentHistoryItem } from '../api/payments'
+import { useMemo, useState, useEffect } from 'react'
+import { getPaymentHistory, createPayment, CanalPaiement, PaymentHistoryItem } from '../api/payments'
+import { listComptesBancaires } from '../api/banques'
 import { apiRequest } from '../lib/apiClient'
 import { Encaissement, ModePaiement } from '../types'
+import type { CompteBancaire } from '../types/banque'
 import { format } from 'date-fns'
 import { Banknote, Check, CreditCard, Inbox, Mail, Plus } from 'lucide-react'
 import { formatAmount, toNumber } from '../utils/amount'
 import styles from './PaymentManager.module.css'
 import { useToast } from '../hooks/useToast'
+import { useTreasuryLock } from '../hooks/useTreasuryLock'
+
+/** Un endroit où l'argent peut entrer, et le moyen qui va avec.
+ *
+ *  Le moyen ne se choisit pas à part : on ne dépose pas d'espèces au tiroir par
+ *  virement, et un virement n'entre pas en caisse. Les deux champs séparés
+ *  laissaient composer ces paires impossibles ; ici, choisir la destination
+ *  décide du moyen.
+ */
+type Destination = {
+  value: string
+  libelle: string
+  canal: CanalPaiement
+  compteId?: number
+  mode: ModePaiement
+}
 
 interface PaymentManagerProps {
   encaissement: Encaissement
@@ -41,16 +59,79 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
       setSendingRelance(false)
     }
   }
+  // La destination se choisit versement par versement : un client qui a versé
+  // un acompte au guichet peut solder par virement, et l'argent doit alors
+  // entrer en banque, pas au tiroir.
+  const { isCaisseClosed } = useTreasuryLock()
+  const deviseNote = ((encaissement as any).devise_perception || 'USD').toUpperCase()
+  const canalNote: CanalPaiement = ((encaissement as any).canal || 'CAISSE') === 'BANQUE' ? 'BANQUE' : 'CAISSE'
+  const [comptesBancaires, setComptesBancaires] = useState<CompteBancaire[]>([])
+
+  // Même libellé qu'à l'encaissement : la banque d'abord, puis l'intitulé et la
+  // devise. Un compte doit se reconnaître d'un écran à l'autre sans hésitation.
+  const libelleCompte = (compte: CompteBancaire) =>
+    `${compte.banque?.nom || 'Banque'} - ${compte.intitule} (${compte.devise})`
   const [paymentData, setPaymentData] = useState({
     montant: '',
-    mode_paiement: 'cash' as ModePaiement,
+    destination: '',
     reference: '',
     notes: '',
   })
 
+  const comptesEligibles = useMemo(
+    () =>
+      comptesBancaires.filter(
+        (compte) =>
+          String(compte.devise || '').toUpperCase() === deviseNote &&
+          String(compte.account_type || 'BANK').toUpperCase() === 'BANK'
+      ),
+    [comptesBancaires, deviseNote]
+  )
+
+  // Caisse fermée : plus rien n'entre au tiroir, elle disparaît de la liste,
+  // mais un virement reste encaissable.
+  const destinations = useMemo<Destination[]>(() => {
+    const items: Destination[] = []
+    if (!isCaisseClosed) {
+      items.push({ value: 'CAISSE', libelle: 'Caisse (espèces)', canal: 'CAISSE', mode: 'cash' })
+    }
+    comptesEligibles.forEach((compte) => {
+      items.push({
+        value: `BANQUE:${compte.id}`,
+        libelle: libelleCompte(compte),
+        canal: 'BANQUE',
+        compteId: compte.id,
+        mode: 'virement',
+      })
+    })
+    return items
+  }, [comptesEligibles, isCaisseClosed])
+
+  const destinationChoisie = destinations.find((d) => d.value === paymentData.destination) || null
+
   useEffect(() => {
     loadHistory()
   }, [encaissement.id])
+
+  useEffect(() => {
+    listComptesBancaires({ active: true })
+      .then(setComptesBancaires)
+      .catch(() => setComptesBancaires([]))
+  }, [])
+
+  // Par défaut, là où la note a commencé : c'est le cas courant, et le reste se
+  // choisit en un clic. Se tromper de compte de dépôt ne se rattrape qu'au
+  // rapprochement, donc aucune destination n'est devinée au-delà de celle-là.
+  useEffect(() => {
+    if (destinations.length === 0) return
+    if (destinations.some((d) => d.value === paymentData.destination)) return
+    const compteNote = (encaissement as any).compte_bancaire_id
+    const defaut =
+      canalNote === 'BANQUE'
+        ? destinations.find((d) => d.compteId === compteNote)
+        : destinations.find((d) => d.canal === 'CAISSE')
+    setPaymentData((prev) => ({ ...prev, destination: (defaut || destinations[0]).value }))
+  }, [destinations, paymentData.destination, canalNote, encaissement])
 
   const loadHistory = async () => {
     try {
@@ -72,21 +153,23 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
       return
     }
 
+    if (!destinationChoisie) {
+      notifyWarning('Destination manquante', 'Choisissez où cet argent est encaissé.')
+      return
+    }
+
     try {
       await createPayment({
         encaissement_id: encaissement.id,
         montant,
-        mode_paiement: paymentData.mode_paiement,
+        mode_paiement: destinationChoisie.mode,
+        canal: destinationChoisie.canal,
+        compte_bancaire_id: destinationChoisie.compteId,
         reference: paymentData.reference || undefined,
         notes: paymentData.notes || undefined,
       })
 
-      setPaymentData({
-        montant: '',
-        mode_paiement: 'cash',
-        reference: '',
-        notes: '',
-      })
+      setPaymentData((prev) => ({ ...prev, montant: '', reference: '', notes: '' }))
       setShowAddPayment(false)
       await loadHistory()
       onUpdate()
@@ -95,6 +178,15 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
       console.error('Error adding payment:', error)
       notifyError('Erreur', error.message || 'Impossible d’ajouter le paiement.')
     }
+  }
+
+  // Où cet argent est entré. Deux versements d'une même note peuvent viser deux
+  // endroits : le lire sur la note effacerait justement ce qu'on cherche ici.
+  const libelleDestination = (payment: PaymentHistoryItem) => {
+    const canal = payment.canal || canalNote
+    if (canal !== 'BANQUE') return 'Caisse'
+    const compte = comptesBancaires.find((c) => c.id === payment.compte_bancaire_id)
+    return compte ? libelleCompte(compte) : 'Banque'
   }
 
   const formatCurrency = (amount: string | number | null | undefined) => {
@@ -353,29 +445,42 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                   </div>
                 </div>
                 <div className={styles.field}>
-                  <label>Mode de paiement *</label>
+                  <label>Encaisser sur *</label>
                   <select
-                    value={paymentData.mode_paiement}
-                    onChange={(e) => setPaymentData({ ...paymentData, mode_paiement: e.target.value as ModePaiement })}
+                    value={paymentData.destination}
+                    onChange={(e) => setPaymentData({ ...paymentData, destination: e.target.value })}
                     required
                   >
-                    <option value="cash">Cash (espèces)</option>
-                    <option value="mobile_money">Mobile Money (Airtel, Orange, Vodacom...)</option>
-                    <option value="card">Carte (Visa)</option>
-                    <option value="virement">Opération bancaire</option>
-                    <option value="cheque">Chèque</option>
+                    {destinations.length === 0 && <option value="">Aucune destination disponible</option>}
+                    {destinations.map((destination) => (
+                      <option key={destination.value} value={destination.value}>
+                        {destination.libelle}
+                      </option>
+                    ))}
                   </select>
+                  <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                    {destinationChoisie?.canal === 'BANQUE'
+                      ? 'Opération bancaire : l’argent entre sur ce compte, pas en caisse.'
+                      : 'Espèces au guichet : l’argent entre en caisse.'}
+                  </div>
+                  {destinations.length === 0 && (
+                    <div style={{ fontSize: '12px', color: '#b45309', marginTop: '4px' }}>
+                      {isCaisseClosed
+                        ? `Caisse fermée et aucun compte ${deviseNote} actif : ouvrez la caisse ou un compte bancaire pour encaisser.`
+                        : `Aucun compte ${deviseNote} actif : ouvrez-en un dans les paramètres bancaires.`}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {(paymentData.mode_paiement === 'mobile_money' || paymentData.mode_paiement === 'virement' || paymentData.mode_paiement === 'cheque') && (
+              {destinationChoisie?.canal === 'BANQUE' && (
                 <div className={styles.field}>
-                  <label>Référence</label>
+                  <label>Référence de l’opération bancaire</label>
                   <input
                     type="text"
                     value={paymentData.reference}
                     onChange={(e) => setPaymentData({ ...paymentData, reference: e.target.value })}
-                    placeholder="Numéro de transaction"
+                    placeholder="Numéro de l’opération, du bordereau ou du chèque"
                   />
                 </div>
               )}
@@ -395,12 +500,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                   type="button"
                   onClick={() => {
                     setShowAddPayment(false)
-                    setPaymentData({
-                      montant: '',
-                      mode_paiement: 'cash',
-                      reference: '',
-                      notes: ''
-                    })
+                    setPaymentData((prev) => ({ ...prev, montant: '', reference: '', notes: '' }))
                   }}
                   className={styles.secondaryBtn}
                 >
@@ -454,12 +554,13 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                     </span>
                   </div>
                   <div className={styles.historyDetails}>
-                    <span className={styles.historyMode}>
-                      {payment.mode_paiement === 'cash' ? 'Cash' :
-                       payment.mode_paiement === 'mobile_money' ? 'Mobile Money' :
-                       payment.mode_paiement === 'card' ? 'Carte (Visa)' :
-                       payment.mode_paiement === 'cheque' ? 'Chèque' : 'Opération bancaire'}
-                    </span>
+                    <span className={styles.historyMode}>{libelleDestination(payment)}</span>
+                    {payment.mode_paiement !== 'cash' && payment.mode_paiement !== 'virement' && (
+                      <span className={styles.historyRef}>
+                        {payment.mode_paiement === 'mobile_money' ? 'Mobile Money' :
+                         payment.mode_paiement === 'card' ? 'Carte (Visa)' : 'Chèque'}
+                      </span>
+                    )}
                     {payment.reference && (
                       <span className={styles.historyRef}>Réf: {payment.reference}</span>
                     )}
