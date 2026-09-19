@@ -184,6 +184,17 @@ export default function Encaissements() {
     try {
       setLoading(true)
 
+      // La page de création n'affiche ni liste, ni pro forma, ni entrées de
+      // caisse. Sur mobile, attendre ces trois requêtes avant de montrer le
+      // formulaire donnait l'impression que l'encaissement était impossible.
+      // Seul le référentiel de services est nécessaire à la saisie ; les autres
+      // dépendances du formulaire se chargent déjà séparément en parallèle.
+      if (isCreatePage) {
+        const servicesRes = await getServices({ active: true })
+        setServices(Array.isArray(servicesRes) ? servicesRes : [])
+        return
+      }
+
       // Chercher un numéro ou un payeur précis, c'est vouloir CES opérations —
       // pas « celles qui tombent dans la période affichée ». L'écran s'ouvre sur
       // aujourd'hui : sans cette exception, une note retrouvée par son numéro
@@ -304,6 +315,7 @@ export default function Encaissements() {
     filterDeletedStatus,
     pageSize,
     page,
+    isCreatePage,
   ])
 
   const loadBudgetLines = useCallback(
