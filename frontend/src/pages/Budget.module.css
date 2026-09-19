@@ -144,21 +144,6 @@
   overflow: visible;
 }
 
-.quickAdd {
-  border: 1px solid #d3dbe8;
-  background: #f8fafc;
-  color: #1c2b3f;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.75rem;
-}
-
-.quickAdd:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .tableRow .menuButton {
   opacity: 1;
   pointer-events: auto;
@@ -186,9 +171,8 @@
   background: #f8fafc;
 }
 
-/* Les deux boutons d'une ligne ont le meme gabarit carre : leurs icones
-   tombent sur le meme axe d'une ligne a l'autre. --control-h-sm est la
-   taille des commandes situees dans une ligne de tableau, plus dense que
+/* Le bouton d'actions de ligne garde un gabarit carre. --control-h-sm est
+   la taille des commandes situees dans une ligne de tableau, plus dense que
    --control-h reserve aux barres d'outils et aux formulaires. */
 .iconBtn {
   width: var(--control-h-sm, 32px);
@@ -476,10 +460,8 @@
   color: var(--tenant-primary, #0b5d43);
 }
 
-/* Bandeau de synthese : les chiffres de l'exercice et ceux de la vue
-   courante tiennent dans une seule bande de ~86 px. Les deux sections
-   empilees d'avant (cartes de 78 px + panneau de 142 px) poussaient le
-   tableau 150 px plus bas sans rien dire de plus. */
+/* Bandeau de synthese de la vue courante, volontairement compact pour
+   laisser le tableau budgétaire remonter dans la page. */
 .statBand {
   display: flex;
   flex-direction: column;
@@ -536,8 +518,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Le total de la vue courante (prevision, engage, solde) se distingue de
-   la synthese de l'exercice par un liseré, pas par une carte de plus. */
+/* Les indicateurs de la vue courante sont soulignés par un liseré. */
 .summaryCardStrong {
   background: #ffffff;
   border-left: 3px solid var(--tenant-primary, #0b5d43);
@@ -601,28 +582,25 @@
    (barre de defilement verticale) = 1015 px : le tableau tient, avec 15 px
    de jeu. */
 .colCode { width: 76px; }
-.colLabel { width: 288px; }
+.colLabel { width: 336px; }
 .colAmount { width: 120px; text-align: right; }
 .colPrevYear { width: 100px; text-align: right; }
 .colDelta { width: 100px; text-align: right; }
 .colReal { width: 108px; text-align: right; }
 .colAvailable { width: 116px; text-align: right; }
 .colEngage { width: 108px; text-align: right; }
-.colResteEngager { width: 112px; text-align: right; }
 .colTauxEngagement { width: 92px; text-align: right; }
 .colProgress { width: 132px; }
 .colActions {
-  width: 112px;
+  width: 64px;
   overflow: visible !important;
 }
 .colSelect { width: 48px; text-align: center; }
 
-/* Vue depense : trois colonnes d'engagement s'ajoutent (Engage, Reste a
-   engager, Taux d'engagement), soit 312 px. Les autres reviennent a leur
-   plancher — le libelle rend 68 px, le taux de realisation 20 — pour ramener
-   l'ensemble a 1180 px. Au-dela des 1015 px que laisse un ecran de 1366, le
-   conteneur defile horizontalement, comme il le fait deja pour la N-1. */
-.tableEngagement .colLabel { width: 220px; }
+/* Vue depense : « Reste a engager » faisait doublon avec le solde dans le
+   circuit normal. Sa largeur revient au libelle, tandis que les indicateurs
+   Engage et Taux d'engagement restent visibles. */
+.tableEngagement .colLabel { width: 380px; }
 .tableEngagement .colAmount { width: 112px; }
 .tableEngagement .colReal { width: 100px; }
 .tableEngagement .colAvailable { width: 108px; }
@@ -631,12 +609,13 @@
 /* Comparaison N-1 depliee : deux colonnes de 100 px s'ajoutent. Les autres
    reviennent a leur plancher pour limiter le debordement — 1096 px au lieu
    de 1212 si on gardait le jeu large. */
-.tableCompare .colLabel { width: 236px; }
+.tableCompare .colLabel { width: 280px; }
 .tableCompare .colAmount { width: 112px; }
 .tableCompare .colReal { width: 100px; }
 .tableCompare .colAvailable { width: 108px; }
 .tableCompare .colProgress { width: 108px; }
-.tableCompare .colActions { width: 108px; }
+.tableCompare .colActions { width: 64px; }
+.tableEngagement.tableCompare .colLabel { width: 392px; }
 
 /* Une colonne de montants se lit verticalement : meme chasse pour tous
    les chiffres, sinon les unites ne s'alignent pas d'une ligne a l'autre. */
@@ -646,7 +625,6 @@
 .colReal,
 .colAvailable,
 .colEngage,
-.colResteEngager,
 .colTauxEngagement {
   font-variant-numeric: tabular-nums;
 }

@@ -60,8 +60,8 @@ type BudgetPosteNode = BudgetPosteTree
 const baseConsommee = (type: string | null | undefined, engage: number, paye: number) =>
   (type || '').toUpperCase() === 'DEPENSE' ? Math.max(engage, paye) : engage
 
-/** Montants d'un poste, sous-postes compris, et les trois lectures qu'on en
- *  tire. Les mêmes colonnes que l'export Excel, aux mêmes définitions :
+/** Montants d'un poste, sous-postes compris, et les lectures qu'on en tire.
+ *  Les indicateurs gardent les mêmes définitions que l'export Excel :
  *  `taux d'engagement = engagé / prévu`, `taux de réalisation = payé / prévu`.
  *  `pourcentage` reste la consommation du crédit — celle qui déclenche les
  *  alertes et remplit les barres : un poste engagé à 100 % doit alerter, même
@@ -72,7 +72,6 @@ type BudgetTotals = {
   paye: number
   disponible: number
   pourcentage: number
-  resteAEngager: number
   tauxEngagement: number
   tauxRealisation: number
 }
@@ -240,7 +239,6 @@ export default function Budget() {
       paye,
       disponible,
       pourcentage,
-      resteAEngager: prevu - engage,
       tauxEngagement: prevu > 0 ? (engage / prevu) * 100 : 0,
       tauxRealisation: prevu > 0 ? (paye / prevu) * 100 : 0,
     }
@@ -1051,7 +1049,6 @@ export default function Budget() {
         paye: toNumber(line.montant_paye),
         disponible: toNumber(line.montant_disponible),
         pourcentage: toNumber(line.pourcentage_consomme),
-        resteAEngager: toNumber(line.montant_prevu) - toNumber(line.montant_engage),
         tauxEngagement: toNumber(line.montant_prevu) > 0
           ? (toNumber(line.montant_engage) / toNumber(line.montant_prevu)) * 100
           : 0,
@@ -1242,15 +1239,6 @@ export default function Budget() {
               )}
             </td>
             {!isRecetteView && (
-              <td className={styles.colResteEngager}>
-                {/* Ce qu'il reste à engager peut être négatif : un poste forcé
-                    au-delà de son crédit doit le montrer, pas l'arrondir à zéro. */}
-                <span className={totals.resteAEngager < -0.005 ? styles.overrunValue : ''}>
-                  {formatAmount(totals.resteAEngager)}
-                </span>
-              </td>
-            )}
-            {!isRecetteView && (
               <td className={styles.colTauxEngagement}>
                 {totals.prevu > 0 ? `${totals.tauxEngagement.toFixed(1)} %` : '—'}
               </td>
@@ -1297,20 +1285,6 @@ export default function Budget() {
                   </span>
                 )}
                 {rowStatus[line.id] === 'error' && <span className={styles.badgeError}>Erreur</span>}
-                <button
-                  type="button"
-                  className={`${styles.quickAdd} ${styles.iconBtn}`}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    handleAddChild(line)
-                  }}
-                  disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
-                  title="Ajouter un sous-poste"
-                  aria-label="Ajouter un sous-poste"
-                >
-                  <Plus size={14} />
-                </button>
                 <div className={styles.menuWrapper}>
                   <button
                     className={`${styles.menuButton} ${styles.iconBtn}`}
@@ -1673,9 +1647,9 @@ export default function Budget() {
         }
       />
 
-      {/* Une seule bande de synthese : la vue courante et l'exercice
-          partagent la meme ligne de cartes. Empilees, les deux blocs
-          poussaient le tableau 150 px plus bas pour six nombres. */}
+      {/* La synthese suit strictement la vue courante. Melanger ici les
+          recettes et les depenses de tout l'exercice rendait notamment la
+          vue « Depenses » ambigue, alors que ses totaux sont deja filtres. */}
       <section className={styles.statBand}>
         <div className={styles.statBandHeader}>
           <span>Synthèse · {isRecetteView ? 'Recettes' : 'Dépenses'}</span>
@@ -1707,42 +1681,12 @@ export default function Budget() {
                 <strong>{formatAmount(rootTotals.engage)}</strong>
               </div>
               <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
+                <span>Réalisé</span>
+                <strong>{formatAmount(rootTotals.paye)}</strong>
+              </div>
+              <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
                 <span>Solde budgétaire</span>
                 <strong>{formatAmount(rootTotals.disponible)}</strong>
-              </div>
-            </>
-          )}
-          {budgetSummary && (
-            <>
-              <div className={styles.summaryCard}>
-                <span title={selectedService ? 'Total recettes' : 'Total recettes en prévision'}>
-                  {selectedService ? 'Total recettes' : 'Total recettes en prévision'}
-                </span>
-                <strong>
-                  {formatAmount(
-                    selectedService ? budgetSummary.total_recettes ?? budgetSummary.recettes?.reel ?? 0 : budgetSummary.recettes?.prevu ?? 0
-                  )}
-                </strong>
-              </div>
-              <div className={styles.summaryCard}>
-                <span title={selectedService ? 'Total dépenses' : 'Total dépenses en prévision'}>
-                  {selectedService ? 'Total dépenses' : 'Total dépenses en prévision'}
-                </span>
-                <strong>
-                  {formatAmount(
-                    selectedService ? budgetSummary.total_depenses ?? budgetSummary.depenses?.reel ?? 0 : budgetSummary.depenses?.prevu ?? 0
-                  )}
-                </strong>
-              </div>
-              <div className={styles.summaryCard}>
-                <span>{selectedService ? 'Solde du service' : 'Solde prévisionnel'}</span>
-                <strong>
-                  {formatAmount(
-                    selectedService
-                      ? budgetSummary.solde ?? (budgetSummary.total_recettes ?? 0) - (budgetSummary.total_depenses ?? 0)
-                      : (budgetSummary.recettes?.prevu ?? 0) - (budgetSummary.depenses?.prevu ?? 0)
-                  )}
-                </strong>
               </div>
             </>
           )}
@@ -1807,10 +1751,10 @@ export default function Budget() {
                     <th className={styles.colDelta} title="Écart de prévision avec l'exercice précédent">Écart N-1</th>
                   </>
                 )}
-                {/* Colonnes d'engagement : celles de l'export Excel, aux mêmes
-                    libellés et aux mêmes définitions. Absentes en vue recette,
+                {/* Indicateurs d'engagement, avec les mêmes définitions que
+                    l'export Excel. Absents en vue recette,
                     où un poste n'a pas de circuit d'engagement — `montant_engage`
-                    y porte le réalisé, et les trois colonnes ne feraient que
+                    y porte le réalisé, et ces colonnes ne feraient que
                     répéter les deux voisines. */}
                 {!isRecetteView && <th className={styles.colEngage}>Engagé</th>}
                 <th className={styles.colReal}>Réalisé</th>
@@ -1820,7 +1764,6 @@ export default function Budget() {
                 >
                   Solde budgétaire
                 </th>
-                {!isRecetteView && <th className={styles.colResteEngager}>Reste à engager</th>}
                 {!isRecetteView && <th className={styles.colTauxEngagement}>Taux d'engagement</th>}
                 <th className={styles.colProgress}>{isRecetteView ? 'Statut' : 'Taux de réalisation'}</th>
                 <th className={styles.colActions}>Actions</th>
