@@ -1655,20 +1655,141 @@
   }
 
   .createForm .formActions {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    border-radius: 0;
-    flex-wrap: wrap;
+    /* Sur téléphone, une barre collante de quatre actions couvre plusieurs
+       champs et bloque la saisie dès l'ouverture. Elle reste donc dans le flux,
+       après les pièces justificatives et le résumé. Le padding bas du Layout
+       la garde au-dessus de la navigation mobile une fois atteinte. */
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-radius: 12px;
   }
 
   .createForm .formActions .primaryBtn,
   .createForm .formActions .secondaryBtn {
-    flex: 1 1 150px;
+    width: 100%;
     min-height: 44px;
     padding: 10px 12px;
     font-size: 13px;
+  }
+
+  /* La grille d'articles de 780 px rendait la création pratiquement
+     inutilisable sur téléphone : les champs quantité/prix et la validation
+     partaient hors écran. Chaque ligne devient une fiche verticale lisible. */
+  .articleSection {
+    padding: 12px;
+  }
+
+  .articleHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .articleHeader .secondaryBtn {
+    width: 100%;
+  }
+
+  .articleTableWrap {
+    overflow: visible;
+  }
+
+  .articleTable,
+  .articleTable tbody,
+  .articleTable tfoot,
+  .articleTable tr {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .articleTable thead {
+    display: none;
+  }
+
+  .articleTable tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  .articleTable tbody tr {
+    padding: 10px;
+    border: 1px solid #dbe4ee;
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: var(--elev-1);
+  }
+
+  .articleTable tbody td {
+    display: grid;
+    grid-template-columns: minmax(92px, 0.65fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 0;
+    border: 0;
+  }
+
+  .articleTable tbody td::before {
+    content: attr(data-label);
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .articleTable tbody td:first-child {
+    align-items: start;
+  }
+
+  .articleTable input,
+  .articleTable .iconBtn {
+    min-width: 0;
+    min-height: 44px;
+  }
+
+  .articleTable tfoot {
+    margin-top: 12px;
+  }
+
+  .articleTable tfoot tr {
+    padding: 10px 12px;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    background: #eff6ff;
+  }
+
+  .articleTable tfoot .articleTotalLabel,
+  .articleTable tfoot .articleTotalSpacer {
+    display: none;
+  }
+
+  .articleTable tfoot .articleTotalValue {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .articleTable tfoot .articleTotalValue::before {
+    content: attr(data-label);
+    color: #475569;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+}
+
+@media (max-width: 480px) {
+  .createForm .formActions {
+    grid-template-columns: 1fr;
   }
 }
 

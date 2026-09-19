@@ -986,9 +986,57 @@
 
 @media (max-width: 900px) {
   .table {
-    display: block;
-    overflow-x: auto;
-    white-space: nowrap;
+    /* .tableWrapper est l'unique zone de défilement. Un second overflow sur
+       <table> créait deux gestes horizontaux imbriqués et rognait les menus. */
+    min-width: 1000px;
+  }
+
+  .tableEngagement {
+    min-width: 1220px;
+  }
+
+  .tableCompare {
+    min-width: 1120px;
+  }
+
+  .tableEngagement.tableCompare {
+    min-width: 1420px;
+  }
+
+  /* Le code reste visible pendant l'exploration des montants à droite : il
+     sert de repère compact sans immobiliser la large colonne de libellé. */
+  .table th.colCode,
+  .table td.colCode {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    box-shadow: 8px 0 12px -12px rgba(15, 23, 42, 0.7);
+  }
+
+  /* Une cellule figée doit porter un fond opaque : `inherit` remonte au <tr>,
+     qui n'en déclare aucun pour les lignes paires, et les montants auraient
+     défilé en transparence sous le code. Les fonds sont repris ligne par ligne
+     parce qu'ils sont posés sur les <td>, que ce sélecteur écrase.
+     `background-color` seul laisse intacte la trame des lignes hors calcul. */
+  .table tbody td.colCode {
+    background-color: #ffffff;
+  }
+
+  .table tbody tr:nth-child(odd) td.colCode {
+    background-color: #fbfdff;
+  }
+
+  .table tbody tr.parentRowOpen td.colCode {
+    background-color: #eef7f4;
+  }
+
+  .table tbody tr.childRow td.colCode {
+    background-color: #f8fafc;
+  }
+
+  .table th.colCode {
+    z-index: 3;
+    background: #f8fafc;
   }
 }
 

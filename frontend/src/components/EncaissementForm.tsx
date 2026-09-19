@@ -1530,7 +1530,7 @@ export default function EncaissementForm({
                       !article.force
                     return (
                       <tr key={`article-${index}`}>
-                        <td>
+                        <td data-label="Libellé">
                       <input
                         type="text"
                         value={article.libelle}
@@ -1548,7 +1548,7 @@ export default function EncaissementForm({
                         </span>
                       )}
                         </td>
-                        <td>
+                        <td data-label="Quantité">
                       <input
                         type="text"
                         inputMode="decimal"
@@ -1559,7 +1559,7 @@ export default function EncaissementForm({
                         required
                       />
                         </td>
-                        <td>
+                        <td data-label="Prix unitaire">
                       <input
                         type="number"
                         inputMode="decimal"
@@ -1587,8 +1587,8 @@ export default function EncaissementForm({
                         </span>
                       )}
                         </td>
-                        <td><strong>{formatCurrency(row?.montant || 0)}</strong></td>
-                        <td>
+                        <td data-label="Total"><strong>{formatCurrency(row?.montant || 0)}</strong></td>
+                        <td data-label="Action">
                     <button
                       type="button"
                       className={styles.iconBtn}
@@ -1606,9 +1606,9 @@ export default function EncaissementForm({
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={3}>Total général</td>
-                    <td>{formatCurrency(montantTotalArticles)}</td>
-                    <td />
+                    <td colSpan={3} className={styles.articleTotalLabel}>Total général</td>
+                    <td className={styles.articleTotalValue} data-label="Total général">{formatCurrency(montantTotalArticles)}</td>
+                    <td className={styles.articleTotalSpacer} />
                   </tr>
                 </tfoot>
               </table>

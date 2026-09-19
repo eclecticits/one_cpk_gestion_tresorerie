@@ -78,14 +78,21 @@ export default function FondsTiers() {
             <Link to="/sorties-fonds/nouvelle" className={styles.primaryLink}>
               Reverser des fonds
             </Link>
-            <button type="button" className={styles.iconBtn} onClick={charger} title="Rafraîchir">
-              <RefreshCw size={16} />
+            <button
+              type="button"
+              className={styles.iconBtn}
+              onClick={charger}
+              disabled={chargement}
+              aria-label={chargement ? 'Actualisation en cours' : 'Rafraîchir les fonds de tiers'}
+              title="Rafraîchir"
+            >
+              <RefreshCw size={16} aria-hidden="true" />
             </button>
           </div>
         }
       />
 
-      <div className={styles.summary}>
+      <section className={styles.summary} aria-label="Synthèse des fonds de tiers" aria-live="polite">
         {soldesParDevise.length === 0 ? (
           <div className={styles.summaryCard}>
             <span className={styles.summaryLabel}>Reste à reverser</span>
@@ -105,9 +112,9 @@ export default function FondsTiers() {
             {operations.filter((op) => op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE').length}
           </strong>
         </div>
-      </div>
+      </section>
 
-      <div className={styles.filters}>
+      <div className={styles.filters} role="group" aria-label="Filtrer les fonds de tiers par statut">
         {([
           ['A_REVERSER', 'À reverser'],
           ['REGULARISE', 'Soldés'],
@@ -117,6 +124,7 @@ export default function FondsTiers() {
           <button
             key={valeur}
             type="button"
+            aria-pressed={filtre === valeur}
             className={`${styles.filterBtn} ${filtre === valeur ? styles.filterBtnActive : ''}`}
             onClick={() => setFiltre(valeur)}
           >
@@ -125,10 +133,11 @@ export default function FondsTiers() {
         ))}
       </div>
 
-      {erreur && <div className={styles.error}>{erreur}</div>}
+      {erreur && <div className={styles.error} role="alert">{erreur}</div>}
 
-      <div className={styles.tableWrap}>
+      <div className={styles.tableWrap} aria-busy={chargement}>
         <table className={styles.table}>
+          <caption className={styles.srOnly}>Opérations de fonds détenus pour le compte de tiers</caption>
           <thead>
             <tr>
               <th>Tiers</th>
@@ -139,7 +148,7 @@ export default function FondsTiers() {
               <th>Reste</th>
               <th>Statut</th>
               <th>Reçu le</th>
-              <th></th>
+              <th><span className={styles.srOnly}>Action</span></th>
             </tr>
           </thead>
           <tbody>
@@ -158,7 +167,7 @@ export default function FondsTiers() {
             ) : (
               visibles.map((op) => (
                 <tr key={op.id}>
-                  <td>
+                  <td data-label="Tiers">
                     <strong>{op.tiers_display_name}</strong>
                     <div className={styles.sub}>
                       {op.tiers_type === 'ORGANISATION'
@@ -169,22 +178,22 @@ export default function FondsTiers() {
                     </div>
                     {op.motif && <div className={styles.sub}>{op.motif}</div>}
                   </td>
-                  <td>{op.beneficiaire_reel || '—'}</td>
-                  <td>{op.payeur_origine || '—'}</td>
-                  <td>{formatMontant(op.montant_recu, op.devise)}</td>
-                  <td>{formatMontant(op.montant_rembourse, op.devise)}</td>
-                  <td>
+                  <td data-label="Bénéficiaire réel">{op.beneficiaire_reel || '—'}</td>
+                  <td data-label="Payeur d'origine">{op.payeur_origine || '—'}</td>
+                  <td data-label="Reçu">{formatMontant(op.montant_recu, op.devise)}</td>
+                  <td data-label="Reversé">{formatMontant(op.montant_rembourse, op.devise)}</td>
+                  <td data-label="Reste">
                     <strong className={toNumber(op.solde_restant) > 0 ? styles.soldeDu : styles.soldeNul}>
                       {formatMontant(op.solde_restant, op.devise)}
                     </strong>
                   </td>
-                  <td>
+                  <td data-label="Statut">
                     <span className={styles.statut} data-statut={op.statut}>
                       {FONDS_TIERS_STATUT_LABELS[op.statut]}
                     </span>
                   </td>
-                  <td>{new Date(op.created_at).toLocaleDateString('fr-FR')}</td>
-                  <td>
+                  <td data-label="Reçu le">{new Date(op.created_at).toLocaleDateString('fr-FR')}</td>
+                  <td data-label="Action">
                     {(op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE') && (
                       <Link
                         to={`/sorties-fonds/nouvelle?type_sortie=remboursement_fonds_tiers&fonds_tiers_operation_id=${op.id}`}

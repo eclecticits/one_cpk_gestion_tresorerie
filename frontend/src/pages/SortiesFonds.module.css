@@ -776,6 +776,18 @@
     flex: 1;
     height: 48px;
   }
+
+  /* La navigation principale mobile est elle aussi fixée au bas de l'écran.
+     La barre du formulaire dédié reste collante dans .main et ne la masque
+     plus ; les modales conservent leur pied fixe habituel. */
+  .createForm .formActions {
+    position: sticky;
+    left: auto;
+    right: auto;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+  }
 }
 
 @media (max-width: 1180px) {
@@ -785,6 +797,11 @@
 
   .requisitionSummaryPanel {
     position: static;
+  }
+
+  .filtersGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
   }
 }
 
@@ -1131,9 +1148,41 @@
   }
 
   .filtersSection {
-    position: sticky;
-    top: 0;
-    z-index: 5;
+    /* Six contrôles sur deux rangées occupent déjà une part importante d'un
+       écran tablette : les figer cachait les fiches pendant le défilement. */
+    position: static;
+  }
+
+  .filtersGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filterGroup input,
+  .filterGroup select,
+  .resetBtn,
+  .applyBtn,
+  .exportBtn {
+    min-height: var(--touch-target-min, 44px);
+  }
+}
+
+@media (max-width: 560px) {
+  .filtersSection {
+    padding: 14px;
+  }
+
+  .filtersHeader {
+    align-items: flex-start;
+  }
+
+  .filtersGrid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .filtersActions,
+  .filtersActions > * {
+    width: 100%;
   }
 }
 

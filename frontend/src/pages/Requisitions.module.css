@@ -3186,6 +3186,19 @@
     font-size: 14px;
   }
 
+  /* Sur la page de création, la barre globale bottom:0 masquerait la
+     navigation mobile. La variante du formulaire reste collante dans .main
+     et s'arrête juste au-dessus de cette navigation. */
+  .createForm .formActions {
+    position: sticky;
+    left: auto;
+    right: auto;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    border-left: 1px solid #e2e8f0;
+    border-right: 1px solid #e2e8f0;
+    border-radius: 10px;
+  }
+
   .headerActions {
     flex-wrap: wrap;
     width: 100%;
@@ -3244,7 +3257,9 @@
   }
 
   .kpiGrid {
-    grid-template-columns: 1fr;
+    /* Deux raccourcis restent confortables même à 320 px et évitent de
+       repousser la liste de plusieurs écrans sous cinq cartes empilées. */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .cardActionBtn {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Ban, CheckCircle2, Pencil, Trash2, Users } from 'lucide-react'
+import { ArrowLeft, Ban, CheckCircle2, Pencil, Trash2, Users, X } from 'lucide-react'
 import {
   Client,
   ClientUpdatePayload,
@@ -139,17 +139,17 @@ export default function Clients() {
         <input
           className={styles.search}
           type="search"
+          aria-label="Rechercher un client"
           placeholder="Rechercher par nom, email ou téléphone…"
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <div className={styles.filterGroup} role="tablist" aria-label="Filtrer par statut">
+        <div className={styles.filterGroup} role="group" aria-label="Filtrer les clients par statut">
           {(['actifs', 'bloques', 'tous'] as StatutFilter[]).map(key => (
             <button
               key={key}
               type="button"
-              role="tab"
-              aria-selected={statut === key}
+              aria-pressed={statut === key}
               className={`${styles.filterBtn} ${statut === key ? styles.filterBtnActive : ''}`}
               onClick={() => setStatut(key)}
             >
@@ -159,12 +159,13 @@ export default function Clients() {
         </div>
       </div>
 
-      {error && <div className={`${styles.banner} ${styles.bannerError}`}>{error}</div>}
-      {success && <div className={`${styles.banner} ${styles.bannerSuccess}`}>{success}</div>}
+      {error && <div className={`${styles.banner} ${styles.bannerError}`} role="alert">{error}</div>}
+      {success && <div className={`${styles.banner} ${styles.bannerSuccess}`} role="status">{success}</div>}
 
-      <div className={styles.card}>
+      <div className={styles.card} aria-busy={loading}>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
+            <caption className={styles.srOnly}>Liste des clients</caption>
             <thead>
               <tr>
                 <th>Nom</th>
@@ -187,11 +188,11 @@ export default function Clients() {
               ) : (
                 clients.map(client => (
                   <tr key={client.id}>
-                    <td>
+                    <td data-label="Client">
                       <div className={styles.clientName}>{client.nom}</div>
                       {client.adresse && <div className={styles.muted}>{client.adresse}</div>}
                     </td>
-                    <td>
+                    <td data-label="Type">
                       {client.type_client ? (
                         <span className={styles.typeBadge}>
                           {TYPE_LABELS[client.type_client] ?? client.type_client}
@@ -200,7 +201,7 @@ export default function Clients() {
                         <span className={styles.muted}>—</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Contact">
                       {client.email || client.telephone ? (
                         <>
                           {client.email && <div>{client.email}</div>}
@@ -210,7 +211,7 @@ export default function Clients() {
                         <span className={styles.muted}>—</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Encaissements">
                       {client.nb_encaissements ? (
                         <>
                           <div>{client.nb_encaissements}</div>
@@ -222,19 +223,22 @@ export default function Clients() {
                         <span className={styles.muted}>0</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Statut">
                       <span
                         className={`${styles.statusBadge} ${client.active ? styles.statusActive : styles.statusBlocked}`}
                       >
                         {client.active ? 'Actif' : 'Bloqué'}
                       </span>
                     </td>
-                    <td>
+                    <td data-label="Actions">
                       <div className={styles.actions}>
                         <button
                           type="button"
                           className={styles.actionBtn}
-                          onClick={() => setEditing(client)}
+                          onClick={() => {
+                            setError(null)
+                            setEditing(client)
+                          }}
                           disabled={busyId === client.id}
                         >
                           <Pencil size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />
@@ -283,6 +287,7 @@ export default function Clients() {
           onClose={() => setEditing(null)}
           onSaved={(msg) => {
             setEditing(null)
+            setError(null)
             setSuccess(msg)
             load()
           }}
@@ -308,13 +313,25 @@ function EditClientModal({ client, onClose, onSaved, onError }: EditModalProps) 
   const [adresse, setAdresse] = useState(client.adresse ?? '')
   const [notes, setNotes] = useState(client.notes ?? '')
   const [saving, setSaving] = useState(false)
+  const [modalError, setModalError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !saving) onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose, saving])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (nom.trim().length < 2) {
-      onError('Le nom du client est trop court.')
+      const message = 'Le nom du client est trop court.'
+      setModalError(message)
+      onError(message)
       return
     }
+    setModalError(null)
     setSaving(true)
     try {
       const payload: ClientUpdatePayload = {
@@ -328,18 +345,43 @@ function EditClientModal({ client, onClose, onSaved, onError }: EditModalProps) 
       await updateClient(client.id, payload)
       onSaved(`Fiche de « ${nom.trim()} » mise à jour.`)
     } catch (err) {
-      onError(err instanceof Error && err.message ? err.message : 'Échec de la mise à jour.')
+      const message = err instanceof Error && err.message ? err.message : 'Échec de la mise à jour.'
+      setModalError(message)
+      onError(message)
       setSaving(false)
     }
   }
 
   return (
-    <div className={styles.overlay} onClick={onClose}>
-      <form className={styles.modal} onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+    <div className={styles.overlay} onClick={() => !saving && onClose()}>
+      <form
+        className={styles.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-busy={saving}
+        aria-labelledby="edit-client-title"
+        aria-describedby={modalError ? 'edit-client-error' : undefined}
+        onClick={e => e.stopPropagation()}
+        onSubmit={handleSubmit}
+      >
         <div className={styles.modalHeader}>
-          <h2 className={styles.modalTitle}>Modifier le client</h2>
+          <h2 id="edit-client-title" className={styles.modalTitle}>Modifier le client</h2>
+          <button
+            type="button"
+            className={styles.closeBtn}
+            onClick={onClose}
+            disabled={saving}
+            aria-label="Fermer la fenêtre de modification"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
         </div>
         <div className={styles.modalBody}>
+          {modalError && (
+            <div id="edit-client-error" className={`${styles.banner} ${styles.bannerError}`} role="alert">
+              {modalError}
+            </div>
+          )}
           <div className={styles.field}>
             <label className={styles.label} htmlFor="client-nom">Nom *</label>
             <input
@@ -348,6 +390,7 @@ function EditClientModal({ client, onClose, onSaved, onError }: EditModalProps) 
               value={nom}
               onChange={e => setNom(e.target.value)}
               required
+              autoFocus
             />
           </div>
           <div className={styles.field}>
@@ -370,6 +413,7 @@ function EditClientModal({ client, onClose, onSaved, onError }: EditModalProps) 
               <input
                 id="client-email"
                 type="email"
+                autoComplete="email"
                 className={styles.input}
                 value={email}
                 onChange={e => setEmail(e.target.value)}
@@ -379,6 +423,8 @@ function EditClientModal({ client, onClose, onSaved, onError }: EditModalProps) 
               <label className={styles.label} htmlFor="client-tel">Téléphone</label>
               <input
                 id="client-tel"
+                type="tel"
+                autoComplete="tel"
                 className={styles.input}
                 value={telephone}
                 onChange={e => setTelephone(e.target.value)}
