@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { Eraser, Mic, Send, Sparkles, Volume2, VolumeX, X } from 'lucide-react'
 import { chatWithMind } from '../api/ai'
 import AiContentBanner from './AiContentBanner'
@@ -27,6 +34,39 @@ const QUICK_SUGGESTIONS = [
   'Qui a le plus gros budget restant ?',
 ]
 
+type Point = { x: number; y: number }
+type Viewport = { width: number; height: number }
+
+const ORB_SIZE = 56
+const VIEWPORT_GAP = 12
+const MOBILE_BOTTOM_CLEARANCE = 88
+const POSITION_STORAGE_KEY = 'onecMindPosition'
+
+const getViewport = (): Viewport => ({
+  width: window.innerWidth,
+  height: window.innerHeight,
+})
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(Math.max(value, min), Math.max(min, max))
+
+const clampOrbPosition = (position: Point, viewport: Viewport): Point => {
+  const bottomClearance = viewport.width < 768 ? MOBILE_BOTTOM_CLEARANCE : VIEWPORT_GAP
+  return {
+    x: clamp(position.x, VIEWPORT_GAP, viewport.width - ORB_SIZE - VIEWPORT_GAP),
+    y: clamp(position.y, VIEWPORT_GAP, viewport.height - ORB_SIZE - bottomClearance),
+  }
+}
+
+const getDefaultOrbPosition = (viewport: Viewport): Point => {
+  const rightGap = viewport.width < 768 ? 16 : 24
+  const bottomGap = viewport.width < 768 ? MOBILE_BOTTOM_CLEARANCE : 24
+  return clampOrbPosition({
+    x: viewport.width - ORB_SIZE - rightGap,
+    y: viewport.height - ORB_SIZE - bottomGap,
+  }, viewport)
+}
+
 export default function OnecMind() {
   const { user } = useAuth()
   const [open, setOpen] = useState(false)
@@ -42,6 +82,19 @@ export default function OnecMind() {
   const messagesRef = useRef<Message[]>([])
   const recognitionRef = useRef<any>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
+  const orbRef = useRef<HTMLButtonElement | null>(null)
+  const dragRef = useRef<{
+    pointerId: number
+    origin: Point
+    start: Point
+    moved: boolean
+  } | null>(null)
+  const suppressClickRef = useRef(false)
+  const [dragging, setDragging] = useState(false)
+  const [viewport, setViewport] = useState<Viewport>(() => (
+    typeof window === 'undefined' ? { width: 1280, height: 800 } : getViewport()
+  ))
+  const [orbPosition, setOrbPosition] = useState<Point | null>(null)
 
   // Le prénom était écrit en dur dans l'accueil : tout le monde était salué
   // « Christian ».
@@ -52,6 +105,40 @@ export default function OnecMind() {
       inputRef.current.focus()
     }
   }, [open])
+
+  // La position reste personnelle au navigateur, puis est recadrée si la
+  // fenêtre change de taille ou si le téléphone passe en mode paysage.
+  useEffect(() => {
+    const nextViewport = getViewport()
+    setViewport(nextViewport)
+    try {
+      const saved = window.localStorage.getItem(POSITION_STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<Point>
+        if (
+          typeof parsed.x === 'number' && Number.isFinite(parsed.x) &&
+          typeof parsed.y === 'number' && Number.isFinite(parsed.y)
+        ) {
+          setOrbPosition(clampOrbPosition({ x: parsed.x, y: parsed.y }, nextViewport))
+          return
+        }
+      }
+    } catch {
+      // Une préférence corrompue ou un stockage indisponible ne doit jamais
+      // empêcher l'assistant de s'afficher.
+    }
+    setOrbPosition(getDefaultOrbPosition(nextViewport))
+  }, [])
+
+  useEffect(() => {
+    const handleResize = () => {
+      const nextViewport = getViewport()
+      setViewport(nextViewport)
+      setOrbPosition((current) => clampOrbPosition(current ?? getDefaultOrbPosition(nextViewport), nextViewport))
+    }
+    window.addEventListener('resize', handleResize, { passive: true })
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   useEffect(() => {
     if (listRef.current) {
@@ -183,14 +270,122 @@ export default function OnecMind() {
     }
   }
 
+  const persistOrbPosition = (position: Point) => {
+    try {
+      window.localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(position))
+    } catch {
+      // Le déplacement reste utilisable pour la session en navigation privée.
+    }
+  }
+
+  const handleOrbPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 || !orbPosition) return
+    // Un glissement terminé hors de l'orbe ne produit aucun clic : sans cette
+    // remise à zéro, le drapeau restait armé et avalait l'ouverture suivante.
+    suppressClickRef.current = false
+    dragRef.current = {
+      pointerId: event.pointerId,
+      origin: { x: event.clientX, y: event.clientY },
+      start: orbPosition,
+      moved: false,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setDragging(true)
+  }
+
+  const handleOrbPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const deltaX = event.clientX - drag.origin.x
+    const deltaY = event.clientY - drag.origin.y
+    if (!drag.moved && Math.hypot(deltaX, deltaY) < 5) return
+    drag.moved = true
+    suppressClickRef.current = true
+    setOrbPosition(clampOrbPosition({
+      x: drag.start.x + deltaX,
+      y: drag.start.y + deltaY,
+    }, viewport))
+  }
+
+  const finishOrbDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    dragRef.current = null
+    setDragging(false)
+    if (drag.moved) {
+      const finalPosition = clampOrbPosition({
+        x: drag.start.x + event.clientX - drag.origin.x,
+        y: drag.start.y + event.clientY - drag.origin.y,
+      }, viewport)
+      setOrbPosition(finalPosition)
+      persistOrbPosition(finalPosition)
+    }
+  }
+
+  const orbStyle = orbPosition
+    ? ({ left: orbPosition.x, top: orbPosition.y, right: 'auto', bottom: 'auto' } satisfies CSSProperties)
+    : undefined
+
+  const panelStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!orbPosition) return undefined
+
+    // Sur un écran très bas, le panneau prend toute la hauteur disponible :
+    // tenter de préserver l'orbe laisserait trop peu de place à la saisie.
+    if (viewport.height < 460) {
+      return {
+        left: VIEWPORT_GAP,
+        top: VIEWPORT_GAP,
+        right: 'auto',
+        bottom: 'auto',
+        width: Math.max(0, viewport.width - VIEWPORT_GAP * 2),
+        maxHeight: Math.max(0, viewport.height - VIEWPORT_GAP * 2),
+      }
+    }
+
+    const width = Math.min(420, viewport.width - VIEWPORT_GAP * 2)
+    const left = clamp(
+      orbPosition.x + ORB_SIZE - width,
+      VIEWPORT_GAP,
+      viewport.width - width - VIEWPORT_GAP,
+    )
+    const gap = 12
+    const roomAbove = orbPosition.y - gap - VIEWPORT_GAP
+    const roomBelow = viewport.height - (orbPosition.y + ORB_SIZE) - gap - VIEWPORT_GAP
+    const openAbove = roomAbove >= roomBelow
+    const availableHeight = Math.max(160, openAbove ? roomAbove : roomBelow)
+
+    return openAbove
+      ? {
+          left,
+          right: 'auto',
+          top: 'auto',
+          bottom: viewport.height - orbPosition.y + gap,
+          width,
+          maxHeight: Math.min(640, availableHeight),
+        }
+      : {
+          left,
+          right: 'auto',
+          top: orbPosition.y + ORB_SIZE + gap,
+          bottom: 'auto',
+          width,
+          maxHeight: Math.min(640, availableHeight),
+        }
+  }, [orbPosition, viewport])
+
   return (
     <div className={styles.wrapper}>
       {open && (
         <div
+          id="onec-mind-panel"
           className={styles.panel}
           role="dialog"
           aria-label="Assistant ONEC Smart"
           ref={panelRef}
+          style={panelStyle}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setOpen(false)
           }}
@@ -383,10 +578,36 @@ export default function OnecMind() {
       )}
 
       <button
-        className={styles.orb}
-        onClick={() => setOpen((prev) => !prev)}
+        ref={orbRef}
+        type="button"
+        className={`${styles.orb} ${dragging ? styles.orbDragging : ''}`}
+        style={orbStyle}
+        onPointerDown={handleOrbPointerDown}
+        onPointerMove={handleOrbPointerMove}
+        onPointerUp={finishOrbDrag}
+        onPointerCancel={finishOrbDrag}
+        onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false
+            return
+          }
+          setOpen((prev) => !prev)
+        }}
+        onKeyDown={(event) => {
+          if (!orbPosition || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+          event.preventDefault()
+          const step = event.shiftKey ? 40 : 12
+          const next = clampOrbPosition({
+            x: orbPosition.x + (event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0),
+            y: orbPosition.y + (event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0),
+          }, viewport)
+          setOrbPosition(next)
+          persistOrbPosition(next)
+        }}
         aria-label={open ? "Fermer l'assistant ONEC Smart" : "Ouvrir l'assistant ONEC Smart"}
         aria-expanded={open}
+        aria-controls={open ? 'onec-mind-panel' : undefined}
+        title="Assistant ONEC Smart — glissez pour déplacer"
       >
         <Sparkles size={22} />
       </button>
