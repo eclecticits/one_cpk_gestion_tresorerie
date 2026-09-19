@@ -1,0 +1,15 @@
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.toggle input {
+  margin: 0;
+  cursor: pointer;
+}

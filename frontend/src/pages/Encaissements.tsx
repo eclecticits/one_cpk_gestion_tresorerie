@@ -125,6 +125,9 @@ export default function Encaissements() {
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterOperationStatus, setFilterOperationStatus] = useState<string>('ACTIVE')
   const [filterDeletedStatus, setFilterDeletedStatus] = useState<string>('all')
+  // Les annulées et supprimées restent dans le classeur pour la trace, hors
+  // totaux ; décoché, l'export ne porte que les actives.
+  const [exportAvecAnnulations, setExportAvecAnnulations] = useState(true)
   // Le numéro de note de débit se cherche comme un client se choisit dans le
   // formulaire : la frappe alimente une liste de propositions, et RIEN d'autre.
   // Le filtre — donc la liste, ses totaux et sa pagination — ne bouge qu'au
@@ -587,6 +590,7 @@ export default function Encaissements() {
         operation_status: filterOperationStatus,
         deleted_status: filterDeletedStatus,
         est_proforma: false,
+        avec_annulations: exportAvecAnnulations,
       }, `encaissements_${suffix}.xlsx`, {
         // Seul instant où la page apprend que l'export part en file d'attente :
         // le serveur a répondu 202, la génération dure, et sans ce message rien
@@ -620,6 +624,7 @@ export default function Encaissements() {
     filterBudgetPosteId,
     filterOperationStatus,
     filterDeletedStatus,
+    exportAvecAnnulations,
   ])
 
   const exportToPDF = useCallback(async () => {
@@ -986,6 +991,8 @@ export default function Encaissements() {
         resetFilters={resetFilters}
         totalCount={totalCount}
         exportToExcel={exportToExcel}
+        exportAvecAnnulations={exportAvecAnnulations}
+        setExportAvecAnnulations={setExportAvecAnnulations}
         exportToPDF={exportToPDF}
         totalMontantNotesDebit={totalMontantNotesDebit}
         totalEncaissements={totalEncaissements}

@@ -20,6 +20,7 @@ import styles from './SortiesFonds.module.css'
 import SortieFondsNotification from '../components/SortieFondsNotification'
 import AffecterBudgetModal from '../components/AffecterBudgetModal'
 import NatureMouvementBadge from '../components/NatureMouvementBadge'
+import ExportAnnulationsToggle from '../components/ExportAnnulationsToggle'
 import { estAffectable, listFondsTiers, type FondsTiersOperation } from '../api/mouvementsHorsBudget'
 import { CATEGORIES_SORTIE, natureDuTypeSortie, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
@@ -123,6 +124,9 @@ export default function SortiesFonds() {
   const [filterType, setFilterType] = useState<string>('')
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
   const [filterStatut, setFilterStatut] = useState<string>('')
+  // Les sorties et retours annulés restent dans le classeur pour la trace,
+  // hors totaux ; décoché, l'export ne porte que les validés.
+  const [exportAvecAnnulations, setExportAvecAnnulations] = useState(true)
   const [filterNumeroRequisition, setFilterNumeroRequisition] = useState('')
   const [budgetSearch, setBudgetSearch] = useState('')
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
@@ -2006,6 +2010,7 @@ export default function SortiesFonds() {
         mode_paiement: filterModePaiement,
         statut: filterStatut,
         requisition_numero: filterNumeroRequisition,
+        avec_annulations: exportAvecAnnulations,
       }, `sorties_fonds_${suffix}.xlsx`, {
         // Le serveur a répondu 202 : la génération dure et le bouton désactivé
         // ne dit pas pourquoi. Sans ce message, l'attente est indiscernable
@@ -2248,6 +2253,12 @@ export default function SortiesFonds() {
             >
               Réinitialiser
             </button>
+          )}
+          {totalCount > 0 && hasPermission('view_cancelled_financial_operations') && (
+            <ExportAnnulationsToggle
+              checked={exportAvecAnnulations}
+              onChange={setExportAvecAnnulations}
+            />
           )}
           {totalCount > 0 && (
             <button

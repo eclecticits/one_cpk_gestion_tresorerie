@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from copy import copy as _copier_style
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
 from io import BytesIO
-from typing import Any
+from typing import Annotated, Any
 from collections.abc import Iterator, Sequence
 import logging
 import re
@@ -51,6 +52,7 @@ from app.models.budget_commentaire import BudgetPosteCommentaire
 from app.models.compte_bancaire import CompteBancaire
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
+from app.models.requisition_status_history import RequisitionStatusHistory
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
@@ -88,6 +90,8 @@ async def require_expert_admin(
 # EN_DECAISSEMENT : une réquisition payée par tranches y reste jusqu'à la
 # dernière ; l'omettre retirait du classeur toutes ses tranches déjà payées.
 REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "EN_DECAISSEMENT", "PAYEE")
+#: Une réquisition rejetée est l'« annulée » du métier : elle ne compte plus.
+STATUTS_REJET = ("REJETEE", "REJETTE")
 
 
 def _requisition_status_values_for_filter(value: str) -> list[str]:
@@ -590,6 +594,8 @@ AMBER_SOFT = "FFFEF3C7"
 RED_SOFT = "FFFEE2E2"
 SLATE = "FF334155"
 SLATE_LIGHT = "FFF8FAFC"
+GREY_SOFT = "FFE5E7EB"
+GREY_TEXT = "FF6B7280"
 LEVEL_FILLS = ["FF6EE7B7", "FFA7F3D0", "FFC6F6DF", "FFD1FAE5"]
 header_font = Font(bold=True, color="FFFFFFFF", size=10)
 header_fill = PatternFill(fill_type="solid", fgColor=GREEN)
@@ -598,6 +604,10 @@ muted_fill = PatternFill(fill_type="solid", fgColor=SLATE_LIGHT)
 # Transferts internes caisse <-> banque : ni une dépense, ni une recette. Teinte
 # franche mais douce, distincte du zébrage gris et du bandeau vert.
 transfert_fill = PatternFill(fill_type="solid", fgColor=TEAL_SOFT)
+# Opérations annulées : gris, et barrées par `struck_font`. Les supprimées
+# gardent leur rouge historique (RED_SOFT) ; le texte barré est commun aux deux.
+annulee_fill = PatternFill(fill_type="solid", fgColor=GREY_SOFT)
+struck_font = Font(strike=True, color=GREY_TEXT)
 # Types de sortie qui ne font pas sortir l'argent de l'organisation.
 TRANSFERT_TYPES = ("versement_banque", "approvisionnement_caisse")
 
@@ -749,6 +759,8 @@ def _build_list_sheet(
     highlight_rows: frozenset[int] | set[int] = frozenset(),
     highlight_fill: PatternFill | None = None,
     highlight_row_fills: dict[int, PatternFill] | None = None,
+    struck_rows: frozenset[int] | set[int] = frozenset(),
+    note_totaux: str | None = None,
 ) -> int:
     """Construit une feuille « liste » au style budget : bandeau titre, en-tête
     vert, lignes zébrées, formats monétaires, ligne TOTAL, en-tête figé, filtre
@@ -761,7 +773,12 @@ def _build_list_sheet(
     ``highlight_rows`` (index dans ``data_rows``) reçoit ``highlight_fill`` à la
     place du zébrage : sert à distinguer d'un coup d'œil une catégorie de lignes
     mêlée aux autres. La couleur doit toujours DOUBLER une information écrite
-    (une colonne qui nomme la catégorie), jamais la remplacer."""
+    (une colonne qui nomme la catégorie), jamais la remplacer.
+
+    ``struck_rows`` (index dans ``data_rows``) sont écrites en gris barré : une
+    opération annulée ou supprimée reste lisible à sa place, mais ne se laisse
+    pas additionner à la main par erreur. ``note_totaux`` s'écrit sous la ligne
+    TOTAL pour dire ce que ce total laisse de côté."""
     if ordinal:
         headers = ["N°", *headers]
         data_rows = [[idx + 1, *row] for idx, row in enumerate(data_rows)]
@@ -814,6 +831,7 @@ def _build_list_sheet(
         row_fill = (highlight_row_fills or {}).get(ridx)
         highlighted = row_fill is not None or (highlight_fill is not None and ridx in highlight_rows)
         zebra = ridx % 2 == 1
+        barree = ridx in struck_rows
         for i, val in enumerate(row_values, start=1):
             c = ws.cell(row=r, column=i, value=val)
             est_money = i in money
@@ -835,8 +853,11 @@ def _build_list_sheet(
                 _ordinal=est_ordinal,
                 _remplissage=cle_remplissage,
                 _row_fill=row_fill,
+                _barree=barree,
             ) -> None:
                 cellule.border = border
+                if _barree:
+                    cellule.font = struck_font
                 if _money:
                     cellule.number_format = MONEY
                     cellule.alignment = right
@@ -849,7 +870,7 @@ def _build_list_sheet(
                 elif _remplissage is not None:
                     cellule.fill = _row_fill or highlight_fill
 
-            _styler(c, (est_money, est_ordinal, cle_remplissage), appliquer)
+            _styler(c, (est_money, est_ordinal, cle_remplissage, barree), appliquer)
 
     last_data = HEADER_ROW + len(data_rows)
     total_row = last_data + 1
@@ -870,6 +891,13 @@ def _build_list_sheet(
 
     # Largeurs auto AVANT le bandeau titre (le titre ne doit pas élargir A)
     _autosize_columns(ws)
+    # La note aussi vient après : fusionnée sur toute la largeur, elle
+    # gonflerait sinon la colonne « N° » jusqu'à la largeur maximale.
+    if total_values is not None and note_totaux:
+        ws.merge_cells(f"A{total_row + 1}:{last_col_letter}{total_row + 1}")
+        c = ws.cell(row=total_row + 1, column=1, value=note_totaux)
+        c.font = Font(italic=True, color=GREY_TEXT)
+        c.alignment = Alignment(horizontal="left", vertical="center")
     _write_banner(ws, title, subtitle, ncols, organisation)
 
     ws.freeze_panes = f"A{first_data}"
@@ -877,6 +905,158 @@ def _build_list_sheet(
     ws.sheet_view.showGridLines = False
     ws.sheet_properties.tabColor = GREEN
     return total_row
+
+
+# ── Traçabilité : ce qui est annulé ou supprimé se voit, et ne compte pas ─────
+#
+# Une annulation défait l'effet d'une opération, pas son existence. Retirer la
+# ligne du classeur, c'est effacer la trace qu'un contrôle viendra chercher :
+# qui a annulé, quand, pourquoi. La règle, commune aux exports : la ligne reste
+# à sa place, grisée et barrée, avec son motif ; les totaux, synthèses et
+# graphiques ne portent que sur les opérations actives ; un journal séparé
+# rassemble ce qui a été défait.
+
+#: Colonnes ajoutées en fin de liste, identiques d'un export à l'autre.
+TRACE_HEADERS = [
+    "Motif d'annulation / suppression",
+    "Annulé / supprimé le",
+    "Annulé / supprimé par",
+]
+
+#: Droit qui ouvre la trace : le même que celui qui montre les annulées à l'écran.
+PERMISSION_TRACE = "view_cancelled_financial_operations"
+
+
+@dataclass(frozen=True)
+class TraceOperation:
+    """Une opération défaite, telle que le journal des annulations la présente."""
+
+    type_operation: str
+    reference: str
+    date_operation: datetime | None
+    montant: Decimal
+    devise: str
+    etat: str
+    motif: str
+    le: datetime | None
+    par: str
+    etat_origine: str = ""
+
+
+def _date_heure_document(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    if value.tzinfo is not None:
+        value = value.astimezone(_fuseau_documents())
+    return value.strftime("%d/%m/%Y %H:%M")
+
+
+def _colonnes_trace(trace: TraceOperation | None) -> list[str]:
+    """Les trois colonnes de fin de ligne : vides pour une opération active."""
+    if trace is None:
+        return ["", "", ""]
+    return [trace.motif or "", _date_heure_document(trace.le), trace.par or ""]
+
+
+async def inclure_trace_pour(db: AsyncSession, user: User, demandee: bool) -> bool:
+    """La trace n'entre dans le classeur que pour qui peut la voir à l'écran.
+
+    Un export ne doit pas montrer plus que la liste qu'il exporte : sans ce
+    droit, l'utilisateur reçoit le classeur d'avant, actives seules.
+    """
+    if not demandee:
+        return False
+    from app.services.service_access import user_has_permission
+
+    return await user_has_permission(db, user, PERMISSION_TRACE)
+
+
+async def _noms_utilisateurs(
+    db: AsyncSession, organisation_id: int, ids: set[Any]
+) -> dict[Any, str]:
+    """Nom lisible des auteurs d'annulation, en une requête par lot."""
+    ids = {i for i in ids if i}
+    noms: dict[Any, str] = {}
+    for lot in _par_lots(sorted(ids, key=str)):
+        res = await db.execute(
+            select(User).where(User.id.in_(lot), User.organisation_id == organisation_id)
+        )
+        noms.update({u.id: _person_name(u) for u in res.scalars().all()})
+    return noms
+
+
+def _note_non_comptees(traces: Sequence[TraceOperation]) -> str | None:
+    """« Non comptées : 2 annulées (4 489,00), 1 supprimée (15,00) ».
+
+    Sans elle, qui refait la somme de la colonne à la main ne retombe pas sur
+    le total, et conclut que le classeur se trompe.
+    """
+    if not traces:
+        return None
+    par_etat: dict[str, list[Decimal]] = defaultdict(list)
+    for trace in traces:
+        par_etat[trace.etat].append(Decimal(trace.montant or 0))
+    morceaux = []
+    for etat in sorted(par_etat):
+        montants = par_etat[etat]
+        pluriel = "s" if len(montants) > 1 else ""
+        total = sum(montants, Decimal("0"))
+        montant = f"{total:,.2f}".replace(",", " ").replace(".", ",")
+        morceaux.append(f"{len(montants)} {etat.lower()}{pluriel} ({montant})")
+    return (
+        "Non comptées dans les totaux, grisées et barrées dans la liste : "
+        + ", ".join(morceaux)
+        + ". Détail dans l'onglet « Journal des annulations »."
+    )
+
+
+def _build_journal_annulations(
+    wb: Workbook, traces: Sequence[TraceOperation], *, organisation: str, sujet: str
+) -> None:
+    """L'onglet qu'un contrôle lit en premier : tout ce qui a été défait.
+
+    Créé même vide quand la trace est incluse : un journal sans ligne dit
+    « rien n'a été annulé sur la période », un onglet absent ne dit rien.
+    """
+    ws = wb.create_sheet("Journal des annulations")
+    lignes = [
+        [
+            t.type_operation,
+            t.reference,
+            _date_heure_document(t.date_operation),
+            float(t.montant or 0),
+            t.devise,
+            t.etat,
+            t.etat_origine,
+            t.motif,
+            _date_heure_document(t.le),
+            t.par,
+        ]
+        for t in sorted(
+            traces, key=lambda t: _sort_key_datetime(t.le or t.date_operation), reverse=True
+        )
+    ]
+    _build_list_sheet(
+        ws,
+        title=f"JOURNAL DES ANNULATIONS — {sujet}",
+        subtitle="Opérations annulées ou supprimées : présentes pour la trace, hors de tout total",
+        headers=[
+            "Type d'opération",
+            "Référence",
+            "Date de l'opération",
+            "Montant",
+            "Devise",
+            "État",
+            "État d'origine",
+            "Motif",
+            "Annulé / supprimé le",
+            "Annulé / supprimé par",
+        ],
+        data_rows=lignes,
+        money_cols=(4,),
+        organisation=organisation,
+    )
+    ws.sheet_properties.tabColor = "FF6B7280"
 
 
 def _write_synthese_block(
@@ -1820,9 +2000,17 @@ async def construire_classeur_encaissements(
     expert_comptable_id: str | None = None,
     deleted_status: str | None = "all",
     est_proforma: bool | None = False,
+    operation_status: str | None = None,
+    inclure_annulations: bool = False,
     seuil_bascule: int | None = None,
 ) -> tuple[Workbook, str]:
     """Construit le classeur `encaissements` et rend `(classeur, nom de fichier)`.
+
+    `inclure_annulations` arrive déjà tranché par le droit de l'utilisateur
+    (`inclure_trace_pour`) : les notes annulées entrent alors dans la liste,
+    grisées, barrées, hors totaux, et dans le journal des annulations.
+    `operation_status="ANNULEE"` restreint le classeur aux seules annulées,
+    comme le filtre de l'écran.
 
     EXTRAIT DE L'ENDPOINT, sans autre changement que `user.organisation_id`
     remplace par `organisation_id`. Le worker et la route HTTP appellent
@@ -1878,7 +2066,10 @@ async def construire_classeur_encaissements(
         query = query.where(Encaissement.is_deleted.is_(True))
     if est_proforma is not None:
         query = query.where(Encaissement.est_proforma.is_(est_proforma))
-    if est_proforma is False:
+    annulees_seules = inclure_annulations and (operation_status or "").strip().upper() == "ANNULEE"
+    if annulees_seules:
+        query = query.where(Encaissement.statut_operation == "ANNULEE")
+    elif est_proforma is False and not inclure_annulations:
         query = query.where((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"))
     if expert_comptable_id:
         try:
@@ -1902,6 +2093,11 @@ async def construire_classeur_encaissements(
     rows = (await db.execute(query)).all()
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
     organisation = await _tenant_display_name(db, organisation_id)
+    auteurs_annulation = await _noms_utilisateurs(
+        db,
+        organisation_id,
+        {enc.annulee_par_id for enc, _, _, _ in rows} | {enc.deleted_by for enc, _, _, _ in rows},
+    )
 
     # Seuls les fonds de tiers ont un tiers à nommer : restreindre le `IN` à
     # ceux-là évite d'envoyer tous les identifiants de la période — un export
@@ -1930,7 +2126,9 @@ async def construire_classeur_encaissements(
     # mêler d'await à ce bloc CPU.
     approvisionnements: list = []
     versements_banque: list = []
-    if _filtres_admettent_un_transfert(
+    # Un transfert interne ne s'annule pas : il n'a pas sa place dans un
+    # classeur restreint aux annulées.
+    if not annulees_seules and _filtres_admettent_un_transfert(
         mode_paiement=mode_paiement,
         est_proforma=est_proforma,
         deleted_status=deleted_status,
@@ -1987,12 +2185,14 @@ async def construire_classeur_encaissements(
             "Statut paiement",
             "Encaissé par",
             "Statut",
+            *TRACE_HEADERS,
         ]
 
         # (clé de tri, ligne, entrée interne ?) : notes de débit et entrées de caisse
         # sont mêlées puis retriées par date. Le drapeau suit la ligne à travers le
         # tri, seul moyen de retrouver les entrées internes une fois l'ordre changé.
-        entries: list[tuple[Any, list[Any], bool, bool]] = []
+        entries: list[tuple[Any, list[Any], bool, bool, bool]] = []
+        traces: list[TraceOperation] = []
         total_notes_debit = Decimal("0")
         total_paye = Decimal("0")
         totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
@@ -2012,12 +2212,30 @@ async def construire_classeur_encaissements(
                 reste = Decimal("0.00")
                 montant_paye = montant_total
             is_deleted = bool(enc.is_deleted)
-            if not is_deleted:
+            est_annulee = (enc.statut_operation or "ACTIVE") == "ANNULEE"
+            # Supprimée ou annulée : la ligne reste, le montant ne compte plus.
+            hors_calcul = is_deleted or est_annulee
+            trace: TraceOperation | None = None
+            if hors_calcul:
+                trace = TraceOperation(
+                    type_operation="Encaissement",
+                    reference=enc.numero_recu or "",
+                    date_operation=enc.date_encaissement or enc.created_at,
+                    montant=Decimal(montant_total or 0),
+                    devise="USD",
+                    etat="Supprimée" if is_deleted else "Annulée",
+                    motif=("" if is_deleted else (enc.motif_annulation or "")),
+                    le=enc.deleted_at if is_deleted else enc.annulee_le,
+                    par=auteurs_annulation.get(enc.deleted_by if is_deleted else enc.annulee_par_id, ""),
+                    etat_origine=f"Paiement : {enc.statut_paiement or ''}",
+                )
+                traces.append(trace)
+            if not hors_calcul:
                 total_notes_debit += Decimal(montant_total or 0)
                 total_paye += Decimal(montant_paye or 0)
 
             mode_label = _format_mode_paiement(enc.mode_paiement)
-            if not is_deleted:
+            if not hors_calcul:
                 totals_by_mode[mode_label or "Non précisé"] += Decimal(montant_paye or 0)
                 totals_by_type_client[enc.type_client or "Non précisé"] += Decimal(montant_total or 0)
                 totals_by_nature[_nature_budgetaire_label(enc)] += Decimal(montant_paye or 0)
@@ -2058,10 +2276,12 @@ async def construire_classeur_encaissements(
                     enc.reference or "",
                     enc.statut_paiement,
                     _person_name(encaisseur),
-                    "SUPPRIMÉ" if is_deleted else "Actif",
+                    "SUPPRIMÉ" if is_deleted else ("ANNULÉ" if est_annulee else "Actif"),
+                    *_colonnes_trace(trace),
                 ],
                 False,
                 is_deleted,
+                est_annulee and not is_deleted,
             ))
 
         # --- Entrées de caisse hors notes de débit : les approvisionnements
@@ -2113,8 +2333,10 @@ async def construire_classeur_encaissements(
                     "—",
                     ligne["auteur"],
                     "Actif",
+                    *_colonnes_trace(None),
                 ],
                 True,
+                False,
                 False,
             ))
 
@@ -2155,18 +2377,22 @@ async def construire_classeur_encaissements(
                     "—",
                     ligne["auteur"],
                     "Actif",
+                    *_colonnes_trace(None),
                 ],
                 True,
+                False,
                 False,
             ))
 
         # Tri décroissant par date : notes de débit et entrées de caisse entremêlées.
         entries.sort(key=lambda e: _sort_key_datetime(e[0]), reverse=True)
-        data_rows = [row for _, row, _, _ in entries]
-        entrees_internes_rows = {idx for idx, (_, _, interne, _) in enumerate(entries) if interne}
-        deleted_rows = {idx for idx, (_, _, _, deleted) in enumerate(entries) if deleted}
+        data_rows = [row for _, row, _, _, _ in entries]
+        entrees_internes_rows = {idx for idx, (_, _, interne, _, _) in enumerate(entries) if interne}
+        deleted_rows = {idx for idx, (_, _, _, deleted, _) in enumerate(entries) if deleted}
+        annulees_rows = {idx for idx, (_, _, _, _, annulee) in enumerate(entries) if annulee}
         row_fills = {idx: transfert_fill for idx in entrees_internes_rows}
         row_fills.update({idx: PatternFill(fill_type="solid", fgColor=RED_SOFT) for idx in deleted_rows})
+        row_fills.update({idx: annulee_fill for idx in annulees_rows})
 
         periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
         legende_entrees = (
@@ -2180,6 +2406,8 @@ async def construire_classeur_encaissements(
             if deleted_rows
             else ""
         )
+        if annulees_rows:
+            legende_supprimes += "  |  Lignes grises barrées = encaissements annulés (hors totaux)"
         _build_list_sheet(
             ws,
             title="ENCAISSEMENTS",
@@ -2199,6 +2427,8 @@ async def construire_classeur_encaissements(
             highlight_rows=entrees_internes_rows,
             highlight_fill=transfert_fill,
             highlight_row_fills=row_fills,
+            struck_rows=deleted_rows | annulees_rows,
+            note_totaux=_note_non_comptees(traces),
         )
 
         mode_rows = [
@@ -2240,6 +2470,8 @@ async def construire_classeur_encaissements(
             chart_value_col=2,
             organisation=organisation,
         )
+        if inclure_annulations or traces:
+            _build_journal_annulations(wb, traces, organisation=organisation, sujet="ENCAISSEMENTS")
 
         suffix = f"{date_debut or 'debut'}_{date_fin or 'fin'}"
         filename = f"encaissements_{suffix}.xlsx"
@@ -2262,6 +2494,10 @@ async def export_encaissements(
     expert_comptable_id: str | None = Query(default=None),
     deleted_status: str | None = Query(default="all"),
     est_proforma: bool | None = Query(default=False),
+    operation_status: Annotated[str | None, Query(description="ACTIVE, ANNULEE, ALL")] = None,
+    avec_annulations: Annotated[
+        bool, Query(description="Faux : actives seules, sans annulées ni supprimées")
+    ] = True,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -2272,6 +2508,11 @@ async def export_encaissements(
     202). C'est ce qui rend la bascule reversible type par type sans
     redeploiement du frontend — EXPORT_ASYNC_TYPES suffit, dans les deux sens.
     """
+    # Le droit est tranché ICI, au moment de la demande : le worker ne connaît
+    # pas l'utilisateur, il reçoit une décision, pas une question.
+    inclure_annulations = await inclure_trace_pour(db, user, avec_annulations)
+    if not avec_annulations:
+        deleted_status = "active"
     params = {
             "date_debut": date_debut,
             "date_fin": date_fin,
@@ -2284,6 +2525,8 @@ async def export_encaissements(
             "expert_comptable_id": expert_comptable_id,
             "deleted_status": deleted_status,
             "est_proforma": est_proforma,
+            "operation_status": operation_status,
+            "inclure_annulations": inclure_annulations,
     }
     try:
         wb, filename = await construire_classeur_encaissements(
@@ -2300,6 +2543,8 @@ async def export_encaissements(
             expert_comptable_id=expert_comptable_id,
             deleted_status=deleted_status,
             est_proforma=est_proforma,
+            operation_status=operation_status,
+            inclure_annulations=inclure_annulations,
             seuil_bascule=_seuil_bascule("encaissements"),
         )
     except BasculeAsynchroneRequise as bascule:
@@ -2324,9 +2569,15 @@ async def construire_classeur_sorties_fonds(
     statut: str | None = None,
     requisition_numero: str | None = None,
     reference: str | None = None,
+    inclure_annulations: bool = False,
     seuil_bascule: int | None = None,
 ) -> tuple[Workbook, str]:
     """Construit le classeur `sorties-fonds` et rend `(classeur, nom de fichier)`.
+
+    `inclure_annulations` (déjà tranché par le droit de l'utilisateur) ajoute
+    aux validées les sorties et retours annulés : grisés, barrés, hors totaux,
+    et repris dans le journal des annulations. Une sortie annulée ne compte
+    jamais dans un total, quel que soit le filtre de statut.
 
     EXTRAIT DE L'ENDPOINT, sans autre changement que `user.organisation_id`
     remplace par `organisation_id`. Le worker et la route HTTP appellent
@@ -2377,20 +2628,17 @@ async def construire_classeur_sorties_fonds(
                 SortieFonds.mode_paiement == mode_paiement,
                 SortieFonds.type_sortie.notin_(TRANSFERT_TYPES),
             )
-    if statut:
-        statut_value = statut.strip().upper()
-        if statut_value == "ALL":
-            query = query
-        elif statut_value == "VALIDE":
-            query = query.where(
-                (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
-            )
-        else:
-            query = query.where(SortieFonds.statut == statut_value)
-    else:
+    statut_value = (statut or "").strip().upper()
+    if statut_value == "ALL":
+        pass
+    elif statut_value in ("", "VALIDE"):
+        # Les validées, et à côté d'elles les annulées pour la trace.
+        statuts_listes = ["VALIDE", "ANNULEE"] if inclure_annulations else ["VALIDE"]
         query = query.where(
-            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut.in_(statuts_listes))
         )
+    else:
+        query = query.where(SortieFonds.statut == statut_value)
     if reference:
         query = query.where(SortieFonds.reference.ilike(f"%{reference}%"))
     if requisition_numero:
@@ -2448,10 +2696,18 @@ async def construire_classeur_sorties_fonds(
     # Retours en caisse de la période : préchargés ici (avant la construction,
     # purement synchrone, du classeur) pour ne pas mêler d'await à ce bloc CPU.
     include_retours = (
-        (not statut or statut.strip().upper() in ("VALIDE", "ALL"))
+        (not statut or statut.strip().upper() in ("VALIDE", "ALL", "ANNULEE"))
         and not type_sortie
         and not mode_paiement
     )
+    # Un retour annulé suit la même règle qu'une sortie annulée : présent pour
+    # la trace, absent des totaux.
+    if statut_value == "ANNULEE":
+        statuts_retour = ["ANNULEE"]
+    elif inclure_annulations or statut_value == "ALL":
+        statuts_retour = ["VALIDE", "ANNULEE"]
+    else:
+        statuts_retour = ["VALIDE"]
     # Les transferts délégués au moteur dédié : même écran, mêmes filtres, donc
     # même classeur. Sans eux, l'export d'une période contiendrait moins de
     # lignes que la liste qu'il exporte — sur un document imprimé et signé.
@@ -2487,7 +2743,7 @@ async def construire_classeur_sorties_fonds(
             .outerjoin(Requisition, RetourCaisse.requisition_id == Requisition.id)
             .where(
                 RetourCaisse.organisation_id == organisation_id,
-                RetourCaisse.statut == "VALIDE",
+                RetourCaisse.statut.in_(statuts_retour),
             )
         )
         if start_dt:
@@ -2497,6 +2753,13 @@ async def construire_classeur_sorties_fonds(
         if requisition_numero:
             r_query = r_query.where(Requisition.numero_requisition.ilike(f"%{requisition_numero}%"))
         retours_rows = (await db.execute(r_query)).all()
+
+    auteurs_annulation = await _noms_utilisateurs(
+        db,
+        organisation_id,
+        {sortie.annulee_par_id for sortie, _, _, _ in rows}
+        | {retour.annulee_par_id for retour, _, _ in retours_rows},
+    )
 
     def _build_workbook() -> tuple[Workbook, str]:
         wb = Workbook()
@@ -2531,12 +2794,14 @@ async def construire_classeur_sorties_fonds(
             "Référence",
             "Statut",
             "Commentaire",
+            *TRACE_HEADERS,
         ]
 
         # (clé de tri, ligne, transfert interne ?) : sorties et retours sont mêlés
         # puis triés par date. Le drapeau suit la ligne à travers le tri, seul moyen
         # de retrouver les transferts une fois l'ordre changé.
-        entries: list[tuple[Any, list[Any], bool]] = []
+        entries: list[tuple[Any, list[Any], bool, bool]] = []
+        traces: list[TraceOperation] = []
         total_paye = Decimal("0")
         totals_by_type: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
         totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
@@ -2544,6 +2809,25 @@ async def construire_classeur_sorties_fonds(
 
         for sortie, req, creator, programmeur in rows:
             montant = Decimal(sortie.montant_paye or 0)
+            est_annulee = (sortie.statut or "VALIDE") == "ANNULEE"
+            trace: TraceOperation | None = None
+            if est_annulee:
+                trace = TraceOperation(
+                    type_operation="Sortie des fonds",
+                    reference=sortie.reference or (req.numero_requisition if req else ""),
+                    date_operation=sortie.date_paiement or sortie.created_at,
+                    montant=montant,
+                    devise=sortie.devise or "USD",
+                    etat="Annulée",
+                    motif=sortie.motif_annulation or "",
+                    le=sortie.annulee_le,
+                    par=auteurs_annulation.get(sortie.annulee_par_id, ""),
+                    etat_origine=sortie.ancien_statut or "",
+                )
+                traces.append(trace)
+                # Plus rien à additionner : le montant reste lisible sur la
+                # ligne, barré, et dans le journal.
+                montant = Decimal("0")
             total_paye += montant
             # Poste de la sortie d'abord : la ré-imputation le tient à jour, et
             # il ne cite que le poste réellement payé. Les lignes ne servent
@@ -2564,9 +2848,10 @@ async def construire_classeur_sorties_fonds(
             mode_label = (
                 "Transfert interne" if est_transfert else _format_mode_paiement(sortie.mode_paiement)
             )
-            totals_by_type[sortie.type_sortie or "Non précisé"] += montant
-            totals_by_mode[mode_label or "Non précisé"] += montant
-            totals_by_nature[_nature_budgetaire_label(sortie)] += montant
+            if not est_annulee:
+                totals_by_type[sortie.type_sortie or "Non précisé"] += montant
+                totals_by_mode[mode_label or "Non précisé"] += montant
+                totals_by_nature[_nature_budgetaire_label(sortie)] += montant
 
             # La colonne « Type d'opération » garde son rôle : nature de
             # l'enregistrement (sortie vs retour). C'est le mode de paiement qui
@@ -2596,8 +2881,10 @@ async def construire_classeur_sorties_fonds(
                     sortie.reference or "",
                     (sortie.statut or "VALIDE"),
                     sortie.commentaire or "",
+                    *_colonnes_trace(trace),
                 ],
                 est_transfert,
+                est_annulee,
             ))
 
         for ligne in transferts_delegues_rows:
@@ -2634,8 +2921,10 @@ async def construire_classeur_sorties_fonds(
                     ligne["reference"],
                     ligne["statut"],
                     "",
+                    *_colonnes_trace(None),
                 ],
                 True,
+                False,
             ))
 
         # --- Retours en caisse de la période : lignes à montant NÉGATIF, intégrées
@@ -2645,10 +2934,27 @@ async def construire_classeur_sorties_fonds(
         # (préchargés en amont dans retours_rows, cf. plus haut)
         for retour, sortie_orig, req_r in retours_rows:
             montant_neg = -Decimal(retour.montant or 0)
-            total_paye += montant_neg
             mode_label = _format_mode_paiement(retour.mode)
-            totals_by_type["Retour en trésorerie"] += montant_neg
-            totals_by_mode[mode_label or "Non précisé"] += montant_neg
+            retour_annule = (retour.statut or "VALIDE") == "ANNULEE"
+            trace_retour: TraceOperation | None = None
+            if retour_annule:
+                trace_retour = TraceOperation(
+                    type_operation="Retour en trésorerie",
+                    reference=retour.reference_numero or "",
+                    date_operation=retour.date_retour or retour.created_at,
+                    montant=Decimal(retour.montant or 0),
+                    devise=retour.devise or "USD",
+                    etat="Annulée",
+                    motif=retour.motif_annulation or "",
+                    le=retour.annulee_le,
+                    par=auteurs_annulation.get(retour.annulee_par_id, ""),
+                    etat_origine=retour.ancien_statut or "",
+                )
+                traces.append(trace_retour)
+            else:
+                total_paye += montant_neg
+                totals_by_type["Retour en trésorerie"] += montant_neg
+                totals_by_mode[mode_label or "Non précisé"] += montant_neg
             objet_retour = "↩ RETOUR EN TRÉSORERIE"
             if req_r and req_r.objet:
                 objet_retour = f"↩ RETOUR — {req_r.objet}"
@@ -2677,16 +2983,19 @@ async def construire_classeur_sorties_fonds(
                     retour.reference_numero or "",
                     retour.statut or "VALIDE",
                     retour.commentaire or "",
+                    *_colonnes_trace(trace_retour),
                 ],
                 False,
+                retour_annule,
             ))
 
         # Tri décroissant par date de création : sorties et retours entremêlés. Les
         # deux tables peuvent rendre des dates naïves ou aware selon le moteur, d'où
         # la clé normalisée (une comparaison mixte ferait échouer l'export entier).
         entries.sort(key=lambda e: _sort_key_datetime(e[0]), reverse=True)
-        data_rows = [row for _, row, _ in entries]
-        transfert_rows = {idx for idx, (_, _, est_transfert) in enumerate(entries) if est_transfert}
+        data_rows = [row for _, row, _, _ in entries]
+        transfert_rows = {idx for idx, (_, _, est_transfert, _) in enumerate(entries) if est_transfert}
+        annulees_rows = {idx for idx, (_, _, _, annulee) in enumerate(entries) if annulee}
 
         periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
         # Volume et net des mouvements internes. Le total de la colonne est un
@@ -2724,6 +3033,9 @@ async def construire_classeur_sorties_fonds(
             organisation=organisation,
             highlight_rows=transfert_rows,
             highlight_fill=transfert_fill,
+            highlight_row_fills={idx: annulee_fill for idx in annulees_rows},
+            struck_rows=annulees_rows,
+            note_totaux=_note_non_comptees(traces),
         )
 
         type_rows = [
@@ -2765,6 +3077,8 @@ async def construire_classeur_sorties_fonds(
             chart_value_col=2,
             organisation=organisation,
         )
+        if inclure_annulations or traces:
+            _build_journal_annulations(wb, traces, organisation=organisation, sujet="SORTIES DE FONDS")
 
         suffix = f"{date_debut or 'debut'}_{date_fin or 'fin'}"
         filename = f"sorties_fonds_{suffix}.xlsx"
@@ -2782,6 +3096,9 @@ async def export_sorties_fonds(
     statut: str | None = Query(default=None),
     requisition_numero: str | None = Query(default=None),
     reference: str | None = Query(default=None),
+    avec_annulations: Annotated[
+        bool, Query(description="Faux : validées seules, sans les annulées")
+    ] = True,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -2792,6 +3109,7 @@ async def export_sorties_fonds(
     202). C'est ce qui rend la bascule reversible type par type sans
     redeploiement du frontend — EXPORT_ASYNC_TYPES suffit, dans les deux sens.
     """
+    inclure_annulations = await inclure_trace_pour(db, user, avec_annulations)
     params = {
             "date_debut": date_debut,
             "date_fin": date_fin,
@@ -2800,6 +3118,7 @@ async def export_sorties_fonds(
             "statut": statut,
             "requisition_numero": requisition_numero,
             "reference": reference,
+            "inclure_annulations": inclure_annulations,
     }
     try:
         wb, filename = await construire_classeur_sorties_fonds(
@@ -2812,6 +3131,7 @@ async def export_sorties_fonds(
             statut=statut,
             requisition_numero=requisition_numero,
             reference=reference,
+            inclure_annulations=inclure_annulations,
             seuil_bascule=_seuil_bascule("sorties-fonds"),
         )
     except BasculeAsynchroneRequise as bascule:
@@ -2838,9 +3158,15 @@ async def construire_classeur_requisitions(
     budget_poste_id: int | None = None,
     search: str | None = None,
     objet: str | None = None,
+    inclure_annulations: bool = False,
     seuil_bascule: int | None = None,
 ) -> tuple[Workbook, str]:
     """Construit le classeur `requisitions` et rend `(classeur, nom de fichier)`.
+
+    Une réquisition rejetée (l'« annulée » du métier) ou supprimée reste dans
+    la liste, grisée et barrée, mais ne compte plus dans les totaux ni dans la
+    répartition par service. Les supprimées n'entrent qu'avec
+    `inclure_annulations`, déjà tranché par le droit de l'utilisateur.
 
     EXTRAIT DE L'ENDPOINT, sans autre changement que `user.organisation_id`
     remplace par `organisation_id`. Le worker et la route HTTP appellent
@@ -2849,10 +3175,9 @@ async def construire_classeur_requisitions(
     """
     query = select(Requisition, Service).outerjoin(
         Service, Requisition.service_id == Service.id
-    ).where(
-        Requisition.organisation_id == organisation_id,
-        Requisition.is_deleted.is_(False),
-    )
+    ).where(Requisition.organisation_id == organisation_id)
+    if not inclure_annulations:
+        query = query.where(Requisition.is_deleted.is_(False))
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
@@ -2925,6 +3250,26 @@ async def construire_classeur_requisitions(
             )
             montant_paye_map.update({row[0]: Decimal(row[1] or 0) for row in sortie_res.all()})
 
+    # Qui a rejeté, et quand : la réquisition ne garde que le motif, l'historique
+    # des statuts garde l'auteur et l'heure. Le dernier rejet fait foi.
+    rejets: dict[Any, RequisitionStatusHistory] = {}
+    rejetees_ids = [req.id for req, _ in rows if (req.status or "").upper() in STATUTS_REJET]
+    for lot in _par_lots(rejetees_ids):
+        historique = await db.execute(
+            select(RequisitionStatusHistory)
+            .where(
+                RequisitionStatusHistory.requisition_id.in_(lot),
+                RequisitionStatusHistory.new_status.in_(STATUTS_REJET),
+            )
+            .order_by(RequisitionStatusHistory.changed_at.asc())
+        )
+        rejets.update({h.requisition_id: h for h in historique.scalars().all()})
+    auteurs_annulation = await _noms_utilisateurs(
+        db,
+        organisation_id,
+        {h.changed_by for h in rejets.values()} | {req.deleted_by for req, _ in rows},
+    )
+
     # Les commentaires d'examen et les étapes de validation partagent une
     # annotation Excel par réquisition. Les utilisateurs sont chargés en une
     # seule requête pour afficher un nom plutôt qu'un identifiant technique.
@@ -2992,9 +3337,12 @@ async def construire_classeur_requisitions(
             "Montant total (USD)",
             "Montant déjà payé (USD)",
             "Reliquat (USD)",
+            *TRACE_HEADERS,
         ]
 
         data_rows: list[list[Any]] = []
+        traces: list[TraceOperation] = []
+        barrees: set[int] = set()
         total_montant = Decimal("0")
         total_paye = Decimal("0")
         by_statut_count: dict[str, int] = defaultdict(int)
@@ -3005,14 +3353,46 @@ async def construire_classeur_requisitions(
             montant_total = _round_money(req.montant_total)
             paye = _round_money(montant_paye_map.get(req.id, Decimal("0")))
             reliquat = _round_money(montant_total - paye)
-            total_montant += montant_total
-            total_paye += paye
+            est_supprimee = bool(req.is_deleted)
+            est_rejetee = (req.status or "").upper() in STATUTS_REJET
+            trace: TraceOperation | None = None
+            if est_supprimee or est_rejetee:
+                rejet = rejets.get(req.id)
+                trace = TraceOperation(
+                    type_operation="Réquisition",
+                    reference=req.numero_requisition or "",
+                    date_operation=req.date_requisition or req.created_at,
+                    montant=montant_total,
+                    devise=req.devise or "USD",
+                    etat="Supprimée" if est_supprimee else "Rejetée",
+                    motif="" if est_supprimee else (req.motif_rejet or (rejet.comment if rejet else "") or ""),
+                    le=req.deleted_at if est_supprimee else (rejet.changed_at if rejet else None),
+                    par=auteurs_annulation.get(
+                        req.deleted_by if est_supprimee else (rejet.changed_by if rejet else None), ""
+                    ),
+                    etat_origine=(
+                        (req.status or "") if est_supprimee
+                        else ((rejet.old_status or "") if rejet else "")
+                    ),
+                )
+                traces.append(trace)
+                barrees.add(len(data_rows))
+            else:
+                total_montant += montant_total
+                total_paye += paye
 
             service_label = f"{service.code} - {service.libelle}" if service else ""
             statut_label = req.status or "Non précisé"
-            by_statut_count[statut_label] += 1
-            by_statut_amount[statut_label] += montant_total
-            by_service_amount[service_label or "Sans service"] += montant_total
+            if trace is not None:
+                # La répartition par statut garde la trace, en le disant ; la
+                # répartition par service, elle, est un calcul.
+                statut_label = f"{statut_label} (supprimée)" if est_supprimee else statut_label
+                by_statut_count[f"{statut_label} — hors totaux"] += 1
+                by_statut_amount[f"{statut_label} — hors totaux"] += montant_total
+            else:
+                by_statut_count[statut_label] += 1
+                by_statut_amount[statut_label] += montant_total
+                by_service_amount[service_label or "Sans service"] += montant_total
 
             data_rows.append(
                 [
@@ -3027,6 +3407,7 @@ async def construire_classeur_requisitions(
                     float(montant_total),
                     float(paye),
                     float(reliquat),
+                    *_colonnes_trace(trace),
                 ]
             )
 
@@ -3044,6 +3425,9 @@ async def construire_classeur_requisitions(
                 9: float(total_montant - total_paye),
             },
             organisation=organisation,
+            highlight_row_fills={idx: annulee_fill for idx in barrees},
+            struck_rows=barrees,
+            note_totaux=_note_non_comptees(traces),
         )
 
         # Comme les commentaires du budget, le commentaire de l'examinateur est
@@ -3089,6 +3473,8 @@ async def construire_classeur_requisitions(
             chart_value_col=3,
             organisation=organisation,
         )
+        if inclure_annulations or traces:
+            _build_journal_annulations(wb, traces, organisation=organisation, sujet="RÉQUISITIONS")
 
         suffix = f"{date_debut or 'debut'}_{date_fin or 'fin'}"
         filename = f"requisitions_{suffix}.xlsx"
@@ -3109,6 +3495,9 @@ async def export_requisitions(
     budget_poste_id: int | None = Query(default=None),
     search: str | None = Query(default=None),
     objet: str | None = Query(default=None),
+    avec_annulations: Annotated[
+        bool, Query(description="Faux : sans les réquisitions supprimées ni le journal")
+    ] = True,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -3119,6 +3508,7 @@ async def export_requisitions(
     202). C'est ce qui rend la bascule reversible type par type sans
     redeploiement du frontend — EXPORT_ASYNC_TYPES suffit, dans les deux sens.
     """
+    inclure_annulations = await inclure_trace_pour(db, user, avec_annulations)
     params = {
             "date_debut": date_debut,
             "date_fin": date_fin,
@@ -3129,6 +3519,7 @@ async def export_requisitions(
             "budget_poste_id": budget_poste_id,
             "search": search,
             "objet": objet,
+            "inclure_annulations": inclure_annulations,
     }
     try:
         wb, filename = await construire_classeur_requisitions(
@@ -3143,6 +3534,7 @@ async def export_requisitions(
             budget_poste_id=budget_poste_id,
             search=search,
             objet=objet,
+            inclure_annulations=inclure_annulations,
             seuil_bascule=_seuil_bascule("requisitions"),
         )
     except BasculeAsynchroneRequise as bascule:

@@ -1,5 +1,6 @@
 import styles from '../pages/Encaissements.module.css'
 import DebiteursPanel from './DebiteursPanel'
+import ExportAnnulationsToggle from './ExportAnnulationsToggle'
 
 interface EncaissementFiltersProps {
   dateDebut: string
@@ -40,6 +41,8 @@ interface EncaissementFiltersProps {
   resetFilters: () => void
   totalCount: number
   exportToExcel: () => void
+  exportAvecAnnulations: boolean
+  setExportAvecAnnulations: (val: boolean) => void
   exportToPDF: () => void
   totalMontantNotesDebit: number
   totalEncaissements: number
@@ -85,6 +88,8 @@ export default function EncaissementFilters({
   resetFilters,
   totalCount,
   exportToExcel,
+  exportAvecAnnulations,
+  setExportAvecAnnulations,
   exportToPDF,
   totalMontantNotesDebit,
   totalEncaissements,
@@ -348,6 +353,12 @@ export default function EncaissementFilters({
         <DebiteursPanel />
         {totalCount > 0 && (
           <>
+            {canViewCancelled && (
+              <ExportAnnulationsToggle
+                checked={exportAvecAnnulations}
+                onChange={setExportAvecAnnulations}
+              />
+            )}
             <button onClick={exportToExcel} className={styles.excelBtn}>
               Exporter Excel
             </button>

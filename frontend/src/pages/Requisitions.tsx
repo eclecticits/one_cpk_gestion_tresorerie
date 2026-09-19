@@ -54,6 +54,7 @@ import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
 import PageHeader from '../components/PageHeader'
 import PlanDecaissement from '../components/PlanDecaissement'
+import ExportAnnulationsToggle from '../components/ExportAnnulationsToggle'
 import OrganisationAutocomplete from '../components/OrganisationAutocomplete'
 
 // Résumé calculé par le backend quand les lignes ne s'accordent pas sur leur
@@ -398,6 +399,9 @@ export default function Requisitions() {
   // celui dont l'attente sera la plus longue, donc celui où un bouton inerte se
   // paie en clics répétés — et en jobs créés pour rien.
   const [exportExcelEnCours, setExportExcelEnCours] = useState(false)
+  // Les réquisitions rejetées ou supprimées restent dans le classeur pour la
+  // trace, hors totaux ; décoché, sans les supprimées ni le journal.
+  const [exportAvecAnnulations, setExportAvecAnnulations] = useState(true)
   const [showValidationColumns, setShowValidationColumns] = useState(true)
 
   const [activeTab, setActiveTab] = useState<'classique' | 'remboursement_transport'>('classique')
@@ -2232,6 +2236,7 @@ export default function Requisitions() {
           objet: filterObjet || undefined,
           type_requisition: activeTab,
           mode_paiement: filterModePaiement || undefined,
+          avec_annulations: exportAvecAnnulations,
         },
         `requisitions${periodeSuffix}.xlsx`,
         {
@@ -2625,6 +2630,12 @@ export default function Requisitions() {
           )}
           {filteredRequisitions.length > 0 && (
             <>
+              {hasPermission('view_cancelled_financial_operations') && (
+                <ExportAnnulationsToggle
+                  checked={exportAvecAnnulations}
+                  onChange={setExportAvecAnnulations}
+                />
+              )}
               <button
                 onClick={exportToExcel}
                 className={`${styles.exportBtn} ${styles.exportExcel}`}
