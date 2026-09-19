@@ -245,6 +245,19 @@ input[type="number"] {
   appearance: textfield;
 }
 
+/* Des montants empilés ne se comparent d'un coup d'oeil que si leurs chiffres
+   ont tous la même chasse : sans cela, une colonne pleine de 1 se décale sous
+   les autres. La garantie ne dépend alors plus de la police servie — Inter
+   ici, le repli système là où elle ne charge pas.
+   La règle vaut pour tout tableau — là où des nombres s'alignent par
+   construction — et pour les champs de saisie de montants. Les composants qui
+   déclarent déjà tabular-nums sur leurs totaux ou leurs cartes hors tableau
+   gardent leur règle : elle couvre ce que ce sélecteur n'atteint pas. */
+table,
+input[type="number"] {
+  font-variant-numeric: tabular-nums;
+}
+
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
