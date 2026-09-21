@@ -284,6 +284,28 @@ async def test_sans_periode_rien_ne_change(db_session):
 
 
 @pytest.mark.asyncio
+async def test_une_borne_hors_exercice_est_refusee(db_session):
+    """Le budget est voté pour une année : la période ne peut pas en sortir."""
+    from fastapi import HTTPException
+
+    org, user, _recette, _depense = await _contexte(db_session)
+    await db_session.commit()
+
+    for debut, fin in (
+        (date(ANNEE - 1, 12, 1), date(ANNEE, 3, 20)),
+        (date(ANNEE, 1, 1), date(ANNEE + 1, 1, 15)),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await _lignes(db_session, org, user, debut=debut, fin=fin)
+        assert exc.value.status_code == 400
+        assert str(ANNEE) in exc.value.detail
+
+    # Et les bornes de l'exercice, elles, passent.
+    lignes = await _lignes(db_session, org, user, debut=date(ANNEE, 1, 1), fin=date(ANNEE, 12, 31))
+    assert lignes  # la réponse est produite, sans erreur
+
+
+@pytest.mark.asyncio
 async def test_le_classeur_excel_sort_les_memes_chiffres_que_l_ecran(db_session):
     """Un rapport tiré en Excel doit dire ce que l'écran affiche, à la période près."""
     from app.api.v1.endpoints.exports import construire_classeur_budget

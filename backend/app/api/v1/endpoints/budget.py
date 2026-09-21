@@ -29,7 +29,12 @@ from app.models.print_settings import PrintSettings
 from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
 from app.modules.comptabilite.models import ComptaMappingPosteBudgetaire
-from app.services.budget_execution import bornes_periode, part_ecoulee, realise_par_poste
+from app.services.budget_execution import (
+    bornes_periode,
+    part_ecoulee,
+    realise_par_poste,
+    valider_periode_exercice,
+)
 from app.services.budget_engagement import ecarts_engagement, resynchroniser_engagements
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import can_view_all_services, get_user_service_ids
@@ -195,6 +200,7 @@ async def _appliquer_periode(
             line.montant_prevu_a_date = line.montant_prevu
         return
 
+    valider_periode_exercice(annee, date_debut, date_fin)
     debut, fin = bornes_periode(date_debut, date_fin)
     periode = await realise_par_poste(
         db,
@@ -1917,6 +1923,7 @@ async def list_budget_lines(
     cumul_map: dict[int, Decimal] = {}
     part_exercice = Decimal("1")
     if date_debut is not None or date_fin is not None:
+        valider_periode_exercice(annee, date_debut, date_fin)
         debut_dt, fin_dt = bornes_periode(date_debut, date_fin)
         periode_map = await realise_par_poste(
             db,

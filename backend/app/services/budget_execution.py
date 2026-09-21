@@ -51,6 +51,23 @@ def bornes_periode(
     return debut, fin
 
 
+def valider_periode_exercice(annee: int, date_debut: date | None, date_fin: date | None) -> None:
+    """Une période d'exécution appartient à son exercice.
+
+    Le budget est voté pour une année : comparer un réalisé de février 2025 à la
+    prévision de 2026 ne veut rien dire, et le prorata temporis n'aurait pas de
+    dénominateur. Une borne hors de l'exercice est donc refusée plutôt que
+    rognée en silence — l'agent doit savoir que ce qu'il a saisi n'est pas ce
+    qu'il obtient.
+    """
+    for borne, libelle in ((date_debut, "date_debut"), (date_fin, "date_fin")):
+        if borne is not None and borne.year != annee:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{libelle} doit tomber dans l'exercice {annee} : du 01/01/{annee} au 31/12/{annee}.",
+            )
+
+
 def part_ecoulee(annee: int, date_fin: date | None) -> Decimal:
     """Part de l'exercice écoulée à la date de fin, entre 0 et 1.
 

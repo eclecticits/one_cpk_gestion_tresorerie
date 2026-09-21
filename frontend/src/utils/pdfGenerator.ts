@@ -1514,6 +1514,10 @@ export const generateBudgetPDF = async (
      *  colonnes chiffrées ne tiennent pas dans les 182 mm utiles d'un A4
      *  portrait, déjà remplis à 180 mm par les six colonnes actuelles. */
     comparaisonN1?: Map<string, number>
+    /** Bornes de la période d'exécution, telles qu'affichées à l'écran. Le
+     *  lecteur d'un PDF ne voit pas les filtres : sans cette mention, rien ne
+     *  distingue un rapport de trimestre d'un rapport d'exercice entier. */
+    periode?: { debut: string; fin: string }
   }
 ) => {
   const settings = await getPrintSettingsData()
@@ -1522,6 +1526,7 @@ export const generateBudgetPDF = async (
   const avecCommentaires = !!commentaires && commentaires.size > 0
   const comparaisonN1 = options?.comparaisonN1
   const avecComparaison = !!comparaisonN1 && comparaisonN1.size > 0
+  const periode = options?.periode
   const doc = new jsPDF({
     orientation: avecCommentaires || avecComparaison ? 'l' : 'p',
     unit: 'mm',
@@ -1595,7 +1600,7 @@ export const generateBudgetPDF = async (
     formatAmount(value, fractionDigits)
   try {
     const { default: QRCode } = await import('qrcode')
-    const qrPayload = `BUDGET:${annee}:${vue}|PREVU:${formatBudgetAmount(totalPrevu)}|ENG:${formatBudgetAmount(totalEngage)}|PAYE:${formatBudgetAmount(totalPaye)}`
+    const qrPayload = `BUDGET:${annee}:${vue}${periode ? `|PERIODE:${periode.debut}-${periode.fin}` : ''}|PREVU:${formatBudgetAmount(totalPrevu)}|ENG:${formatBudgetAmount(totalEngage)}|PAYE:${formatBudgetAmount(totalPaye)}`
     qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 })
   } catch (_err) {
     qrDataUrl = null
@@ -1615,6 +1620,7 @@ export const generateBudgetPDF = async (
     (vue === 'RECETTE'
       ? 'Suivi de la réalisation des recettes par poste et sous-poste'
       : "Suivi de l'exécution des dépenses par poste et sous-poste") +
+      (periode ? `  —  Période : ${periode.debut} au ${periode.fin}` : '') +
       // Le lecteur doit savoir laquelle des deux versions il a en main : les
       // chiffres sont identiques, seules les justifications s'ajoutent.
       (avecCommentaires ? '  —  version annotée (commentaires par ligne)' : ''),
@@ -2103,7 +2109,12 @@ export const generateBudgetPDF = async (
     doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
   }
 
-  doc.save(`budget_${annee}_${vue}.pdf`)
+  // Le nom du fichier porte lui aussi les bornes : deux rapports du même
+  // exercice, tirés sur deux périodes, ne doivent pas s'écraser dans un dossier.
+  const suffixePeriode = periode
+    ? `_${periode.debut.split('/').reverse().join('-')}_${periode.fin.split('/').reverse().join('-')}`
+    : ''
+  doc.save(`budget_${annee}_${vue}${suffixePeriode}.pdf`)
 }
 
 export const generateServiceBudgetReportPDF = async ({

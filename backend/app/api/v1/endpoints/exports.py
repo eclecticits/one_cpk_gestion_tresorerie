@@ -35,7 +35,11 @@ from app.api.deps import (
     has_permission,
 )
 from app.core.config import settings
-from app.services.budget_execution import bornes_periode, realise_par_poste
+from app.services.budget_execution import (
+    bornes_periode,
+    realise_par_poste,
+    valider_periode_exercice,
+)
 from app.services.export_jobs import serialiser_job, soumettre, types_asynchrones
 from app.services.export_queue import publier
 from app.db.session import get_db
@@ -1299,6 +1303,7 @@ async def construire_classeur_budget(
     fin_jour = _parse_datetime(date_fin).date() if date_fin else None
     realise_periode: dict[int, Decimal] | None = None
     if debut_jour is not None or fin_jour is not None:
+        valider_periode_exercice(annee, debut_jour, fin_jour)
         debut_dt, fin_dt = bornes_periode(debut_jour, fin_jour)
         realise_periode = await realise_par_poste(
             db,
@@ -1919,6 +1924,12 @@ async def construire_classeur_budget(
         suffix = filtre_type or "TOUT"
         if service_id is not None:
             suffix = f"{suffix}_service{service_id}"
+        # Les bornes entrent dans le nom : deux rapports du même exercice, tirés
+        # sur deux périodes, ne doivent pas se ressembler dans un dossier.
+        if debut_jour is not None or fin_jour is not None:
+            depuis = debut_jour.isoformat() if debut_jour else f"{annee}-01-01"
+            jusqu_a = fin_jour.isoformat() if fin_jour else f"{annee}-12-31"
+            suffix = f"{suffix}_{depuis}_{jusqu_a}"
         filename = f"budget_{annee}_{suffix}.xlsx"
         return wb, filename
 

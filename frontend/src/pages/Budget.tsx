@@ -57,6 +57,21 @@ type BudgetPosteNode = BudgetPosteTree
 //
 // Les postes de recettes n'ont pas de circuit d'engagement : `montant_engage`
 // y porte le réalisé, et `montant_paye` le suit.
+/** Le jour courant en ISO, lu sur l'horloge locale : `toISOString` renverrait
+ *  la veille passé 23 h à Kinshasa, et le rapport perdrait sa dernière journée. */
+const jourISO = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+/** Fin de période proposée à l'ouverture : aujourd'hui pour l'exercice en cours,
+ *  le 31 décembre pour un exercice déjà passé — « aujourd'hui » y serait hors
+ *  cadre. Un exercice à venir n'a rien à montrer : on n'y propose rien. */
+const finParDefaut = (annee: number): string | null => {
+  const courante = new Date().getFullYear()
+  if (annee === courante) return jourISO()
+  if (annee < courante) return `${annee}-12-31`
+  return null
+}
+
 /** Une borne vide vaut le bord de l'exercice : c'est ce que le serveur retient. */
 const formatDateFr = (valeur: string, annee: number | null, bord: 'debut' | 'fin') => {
   if (!valeur) return bord === 'debut' ? `01/01/${annee ?? ''}` : `31/12/${annee ?? ''}`
@@ -99,6 +114,15 @@ export default function Budget() {
   // réalisé depuis les mouvements.
   const [periodeDebut, setPeriodeDebut] = useState('')
   const [periodeFin, setPeriodeFin] = useState('')
+  // Exercice dont la période par défaut a déjà été posée. Sans ce témoin, un
+  // agent qui élargit à tout l'exercice verrait ses bornes revenir aussitôt.
+  const [periodeInitialiseePour, setPeriodeInitialiseePour] = useState<number | null>(null)
+  // Le budget est voté pour une année : une période d'exécution ne peut pas en
+  // sortir, sinon on comparerait un réalisé d'un autre exercice à la prévision
+  // de celui-ci, et le prorata temporis n'aurait plus de dénominateur.
+  const bornesExercice = selectedYear
+    ? { min: `${selectedYear}-01-01`, max: `${selectedYear}-12-31` }
+    : { min: undefined, max: undefined }
   const periodeActive = Boolean(periodeDebut || periodeFin)
   const periodeParams = periodeActive
     ? { date_debut: periodeDebut || undefined, date_fin: periodeFin || undefined }
@@ -106,6 +130,17 @@ export default function Budget() {
   // Le cumul depuis l'ouverture de l'exercice ne dit quelque chose de plus que
   // si la période ne part pas du 1er janvier.
   const afficheCumul = Boolean(periodeDebut) && periodeDebut > `${selectedYear ?? ''}-01-01`
+  // Ce que les exports doivent afficher : un lecteur de PDF ou de classeur ne
+  // voit pas les filtres de l'écran.
+  const periodeLisible = periodeActive
+    ? {
+        debut: formatDateFr(periodeDebut, selectedYear, 'debut'),
+        fin: formatDateFr(periodeFin, selectedYear, 'fin'),
+      }
+    : undefined
+  const suffixeFichierPeriode = periodeActive
+    ? `_${periodeDebut || `${selectedYear}-01-01`}_${periodeFin || `${selectedYear}-12-31`}`
+    : ''
   const [services, setServices] = useState<Service[]>([])
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
@@ -308,6 +343,23 @@ export default function Budget() {
       setLoading(false)
     }
   }, [filter, selectedYear, selectedServiceId, periodeDebut, periodeFin])
+
+  useEffect(() => {
+    if (!selectedYear) return
+    // Premier affichage d'un exercice : on propose du 1er janvier à aujourd'hui,
+    // la lecture courante d'un budget. Le bouton « Tout l'exercice » l'élargit.
+    if (periodeInitialiseePour !== selectedYear) {
+      const fin = finParDefaut(selectedYear)
+      setPeriodeDebut(fin ? `${selectedYear}-01-01` : '')
+      setPeriodeFin(fin ?? '')
+      setPeriodeInitialiseePour(selectedYear)
+      return
+    }
+    const { min, max } = bornesExercice
+    const horsCadre = (valeur: string) => valeur && (valeur < (min || '') || valeur > (max || ''))
+    if (horsCadre(periodeDebut)) setPeriodeDebut('')
+    if (horsCadre(periodeFin)) setPeriodeFin('')
+  }, [selectedYear, periodeDebut, periodeFin, periodeInitialiseePour])
 
   useEffect(() => {
     loadBudget()
@@ -914,7 +966,7 @@ export default function Budget() {
       await downloadExcel(
         '/exports/budget',
         { annee: selectedYear, type: filter, ...periodeParams },
-        `budget_${selectedYear}_${filter}.xlsx`,
+        `budget_${selectedYear}_${filter}${suffixeFichierPeriode}.xlsx`,
         { onMiseEnFile: () => notifyInfo('Export en préparation', MESSAGE_EXPORT_EN_FILE) }
       )
       notifyInfo('Export Excel', 'Le fichier a été téléchargé.')
@@ -934,7 +986,7 @@ export default function Budget() {
       await downloadExcel(
         '/exports/budget',
         { annee: selectedYear, type: filter, service_id: selectedServiceId, ...periodeParams },
-        `budget_${selectedYear}_${filter}_service${selectedServiceId}.xlsx`,
+        `budget_${selectedYear}_${filter}_service${selectedServiceId}${suffixeFichierPeriode}.xlsx`,
         { onMiseEnFile: () => notifyInfo('Export en préparation', MESSAGE_EXPORT_EN_FILE) }
       )
       notifyInfo('Export Excel (service)', 'Le fichier du service a été téléchargé.')
@@ -996,6 +1048,7 @@ export default function Budget() {
           // plein à 180 mm sur 182 utiles, deux colonnes de plus n'y entrent
           // pas sans écraser le libellé des postes.
           comparaisonN1: avecCommentaires ? prevYearTotalsByCode : undefined,
+          periode: periodeLisible,
         }
       )
       notifyInfo(
@@ -1485,7 +1538,8 @@ export default function Budget() {
                     type="date"
                     className={styles.periodeInput}
                     value={periodeDebut}
-                    max={periodeFin || undefined}
+                    min={bornesExercice.min}
+                    max={periodeFin || bornesExercice.max}
                     onChange={(e) => setPeriodeDebut(e.target.value)}
                   />
                   <label htmlFor="budget-periode-fin">au</label>
@@ -1494,7 +1548,8 @@ export default function Budget() {
                     type="date"
                     className={styles.periodeInput}
                     value={periodeFin}
-                    min={periodeDebut || undefined}
+                    min={periodeDebut || bornesExercice.min}
+                    max={bornesExercice.max}
                     onChange={(e) => setPeriodeFin(e.target.value)}
                   />
                   {periodeActive && (
