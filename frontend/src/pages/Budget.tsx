@@ -611,6 +611,19 @@ export default function Budget() {
   const isBrouillon = statut?.toLowerCase() === 'brouillon'
   const isClosed = statut?.toLowerCase() === 'clôturé'
   const maxYear = exercices.length > 0 ? Math.max(...exercices.map((ex) => ex.annee)) : null
+  /** L'exercice en cours : celui de l'année civile s'il existe, sinon le plus
+   *  récent ouvert. Reculer d'un exercice ne doit jamais passer inaperçu — les
+   *  colonnes gardent la même allure, seuls les chiffres changent. */
+  const exerciceEnCours = useMemo(() => {
+    if (exercices.length === 0) return null
+    const anneeCivile = new Date().getFullYear()
+    const deLAnnee = exercices.find((ex) => ex.annee === anneeCivile)
+    if (deLAnnee) return deLAnnee
+    const ouverts = exercices.filter((ex) => (ex.statut || '').toLowerCase() !== 'clôturé')
+    const candidats = ouverts.length > 0 ? ouverts : exercices
+    return candidats.reduce((recent, ex) => (ex.annee > recent.annee ? ex : recent))
+  }, [exercices])
+  const surExerciceEnCours = exerciceEnCours !== null && selectedYear === exerciceEnCours.annee
   const isOlderYearLocked = selectedYear !== null && maxYear !== null && selectedYear < maxYear
   const isReadOnly = isClosed || isOlderYearLocked
   const hasActiveEditableExercise = hasSelectedExercise && !isReadOnly
@@ -1563,10 +1576,35 @@ export default function Budget() {
                   )}
                 </div>
               </div>
-              <button className={styles.primaryAction} onClick={handleAddDraft} disabled={!hasActiveEditableExercise}>
-                <Plus size={16} />
-                Nouveau poste budgétaire
-              </button>
+              <div className={styles.toolbarRight}>
+                {/* Où l'on se trouve, et où revenir. Un exercice antérieur a la
+                    même allure qu'un exercice en cours : seuls les chiffres
+                    changent, et rien ne le disait à l'écran. */}
+                {exerciceEnCours && (
+                  surExerciceEnCours ? (
+                    <span className={`${styles.exerciceBadge} ${styles.exerciceBadgeEnCours}`}>
+                      Exercice en cours · {exerciceEnCours.annee}
+                      {statut ? ` · ${statut}` : ''}
+                    </span>
+                  ) : (
+                    <span className={`${styles.exerciceBadge} ${styles.exerciceBadgeArchive}`}>
+                      Consultation · {selectedYear}
+                      {statut ? ` (${statut})` : ''}
+                      <button
+                        type="button"
+                        className={styles.exerciceRetour}
+                        onClick={() => setSelectedYear(exerciceEnCours.annee)}
+                      >
+                        Revenir à {exerciceEnCours.annee}
+                      </button>
+                    </span>
+                  )
+                )}
+                <button className={styles.primaryAction} onClick={handleAddDraft} disabled={!hasActiveEditableExercise}>
+                  <Plus size={16} />
+                  Nouveau poste budgétaire
+                </button>
+              </div>
             </div>
             <div className={styles.toolbarRow}>
               <div className={styles.toolbarPills}>
@@ -1824,6 +1862,21 @@ export default function Budget() {
           )}
         </div>
       </section>
+
+      {exerciceEnCours && !surExerciceEnCours && (
+        <div className={styles.exerciceRappel} role="status">
+          <strong>Exercice {selectedYear}{statut ? ` · ${statut}` : ''}.</strong>{' '}
+          Ces montants ne sont pas ceux de l'exercice en cours ({exerciceEnCours.annee}
+          {exerciceEnCours.statut ? ` · ${exerciceEnCours.statut}` : ''}).
+          <button
+            type="button"
+            className={styles.exerciceRetour}
+            onClick={() => setSelectedYear(exerciceEnCours.annee)}
+          >
+            Revenir à {exerciceEnCours.annee}
+          </button>
+        </div>
+      )}
 
       <div className={styles.infoBar}>
         {isRecetteView ? (
