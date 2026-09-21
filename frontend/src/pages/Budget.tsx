@@ -619,7 +619,6 @@ export default function Budget() {
   // libellé d'aide, pour annoncer la règle avant que l'on écrive.
   const isBrouillon = statut?.toLowerCase() === 'brouillon'
   const isClosed = statut?.toLowerCase() === 'clôturé'
-  const maxYear = exercices.length > 0 ? Math.max(...exercices.map((ex) => ex.annee)) : null
   /** L'exercice en cours : celui de l'année civile s'il existe, sinon le plus
    *  récent ouvert. Reculer d'un exercice ne doit jamais passer inaperçu — les
    *  colonnes gardent la même allure, seuls les chiffres changent. */
@@ -633,7 +632,12 @@ export default function Budget() {
     return candidats.reduce((recent, ex) => (ex.annee > recent.annee ? ex : recent))
   }, [exercices])
   const surExerciceEnCours = exerciceEnCours !== null && selectedYear === exerciceEnCours.annee
-  const isOlderYearLocked = selectedYear !== null && maxYear !== null && selectedYear < maxYear
+  // Le verrou suit le calendrier, pas le classement — même règle qu'au serveur
+  // (`_is_locked_exercise`). Ouvrir le budget N+1 ne gèle plus l'exercice en
+  // cours : un exercice à venir se prépare, seul le passé ne se réécrit pas.
+  const anneeCivile = new Date().getFullYear()
+  const isOlderYearLocked = selectedYear !== null && selectedYear < anneeCivile
+  const isFutureExercise = selectedYear !== null && selectedYear > anneeCivile
   const isReadOnly = isClosed || isOlderYearLocked
   const hasActiveEditableExercise = hasSelectedExercise && !isReadOnly
   const canImport = hasActiveEditableExercise && filter !== 'TOUT'
@@ -1596,8 +1600,12 @@ export default function Budget() {
                       {statut ? ` · ${statut}` : ''}
                     </span>
                   ) : (
-                    <span className={`${styles.exerciceBadge} ${styles.exerciceBadgeArchive}`}>
-                      Consultation · {selectedYear}
+                    <span
+                      className={`${styles.exerciceBadge} ${
+                        isFutureExercise ? styles.exerciceBadgePreparation : styles.exerciceBadgeArchive
+                      }`}
+                    >
+                      {isFutureExercise ? 'Préparation' : 'Consultation'} · {selectedYear}
                       {statut ? ` (${statut})` : ''}
                       <button
                         type="button"
@@ -1763,7 +1771,7 @@ export default function Budget() {
                             closeMenus()
                             handleCloseExercise()
                           }}
-                          disabled={!hasSelectedExercise || isClosed || closing || isOlderYearLocked}
+                          disabled={!hasSelectedExercise || isClosed || closing || isFutureExercise}
                         >
                           {closing ? 'Clôture…' : 'Clôturer l’année'}
                         </button>
@@ -1877,6 +1885,7 @@ export default function Budget() {
           <strong>Exercice {selectedYear}{statut ? ` · ${statut}` : ''}.</strong>{' '}
           Ces montants ne sont pas ceux de l'exercice en cours ({exerciceEnCours.annee}
           {exerciceEnCours.statut ? ` · ${exerciceEnCours.statut}` : ''}).
+          {isFutureExercise ? ' Exercice à venir : la saisie y reste ouverte.' : ''}
           <button
             type="button"
             className={styles.exerciceRetour}
@@ -1902,6 +1911,7 @@ export default function Budget() {
             {!hasSelectedExercise ? ` ${selectionHint}` : ''}
             {isClosed ? ' Exercice clôturé (lecture seule).' : ''}
             {isOlderYearLocked ? ' Exercice antérieur verrouillé.' : ''}
+            {isFutureExercise ? ' Exercice à venir : en préparation.' : ''}
             {prevYearLoading ? ' Comparaison N-1 en cours…' : ''}
           </span>
         )}
