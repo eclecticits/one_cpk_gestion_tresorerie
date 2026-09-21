@@ -123,23 +123,32 @@ export default function Budget() {
   const bornesExercice = selectedYear
     ? { min: `${selectedYear}-01-01`, max: `${selectedYear}-12-31` }
     : { min: undefined, max: undefined }
-  const periodeActive = Boolean(periodeDebut || periodeFin)
+  // Bornes réellement transmises. Changer d'exercice met à jour `selectedYear`
+  // avant que l'effet de recadrage n'ait rejoué : pendant ce rendu, les champs
+  // portent encore les dates de l'exercice quitté, et la requête repartait avec
+  // — le serveur la refusait, à juste titre, et l'écran affichait une erreur
+  // pour une manipulation parfaitement normale. On ne transmet donc que ce qui
+  // appartient à l'exercice affiché.
+  const dansExercice = (valeur: string) => Boolean(valeur) && valeur.startsWith(`${selectedYear}-`)
+  const debutEffectif = dansExercice(periodeDebut) ? periodeDebut : ''
+  const finEffective = dansExercice(periodeFin) ? periodeFin : ''
+  const periodeActive = Boolean(debutEffectif || finEffective)
   const periodeParams = periodeActive
-    ? { date_debut: periodeDebut || undefined, date_fin: periodeFin || undefined }
+    ? { date_debut: debutEffectif || undefined, date_fin: finEffective || undefined }
     : {}
   // Le cumul depuis l'ouverture de l'exercice ne dit quelque chose de plus que
   // si la période ne part pas du 1er janvier.
-  const afficheCumul = Boolean(periodeDebut) && periodeDebut > `${selectedYear ?? ''}-01-01`
+  const afficheCumul = Boolean(debutEffectif) && debutEffectif > `${selectedYear ?? ''}-01-01`
   // Ce que les exports doivent afficher : un lecteur de PDF ou de classeur ne
   // voit pas les filtres de l'écran.
   const periodeLisible = periodeActive
     ? {
-        debut: formatDateFr(periodeDebut, selectedYear, 'debut'),
-        fin: formatDateFr(periodeFin, selectedYear, 'fin'),
+        debut: formatDateFr(debutEffectif, selectedYear, 'debut'),
+        fin: formatDateFr(finEffective, selectedYear, 'fin'),
       }
     : undefined
   const suffixeFichierPeriode = periodeActive
-    ? `_${periodeDebut || `${selectedYear}-01-01`}_${periodeFin || `${selectedYear}-12-31`}`
+    ? `_${debutEffectif || `${selectedYear}-01-01`}_${finEffective || `${selectedYear}-12-31`}`
     : ''
   const [services, setServices] = useState<Service[]>([])
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null)
@@ -342,7 +351,7 @@ export default function Budget() {
     } finally {
       setLoading(false)
     }
-  }, [filter, selectedYear, selectedServiceId, periodeDebut, periodeFin])
+  }, [filter, selectedYear, selectedServiceId, debutEffectif, finEffective])
 
   useEffect(() => {
     if (!selectedYear) return
@@ -1824,7 +1833,7 @@ export default function Budget() {
           <span>Synthèse · {isRecetteView ? 'Recettes' : 'Dépenses'}</span>
           <span>
             Exercice {budgetSummary?.annee ?? selectedYear ?? '—'}
-            {periodeActive ? ` · du ${formatDateFr(periodeDebut, selectedYear, 'debut')} au ${formatDateFr(periodeFin, selectedYear, 'fin')}` : ''}
+            {periodeActive ? ` · du ${formatDateFr(debutEffectif, selectedYear, 'debut')} au ${formatDateFr(finEffective, selectedYear, 'fin')}` : ''}
             {summaryLoading ? ' · synthèse en cours…' : ''}
           </span>
         </div>
