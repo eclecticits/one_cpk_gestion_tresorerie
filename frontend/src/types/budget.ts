@@ -14,6 +14,12 @@ export interface BudgetPosteSummary {
   montant_prevu: string | number
   montant_engage: string | number
   montant_paye: string | number
+  /** Réalisé depuis l'ouverture de l'exercice jusqu'à la fin de la période
+   *  demandée. Sans période, il vaut `montant_paye` : la période est l'année. */
+  montant_paye_cumule?: string | number
+  /** Prévision ramenée aux jours écoulés (prorata temporis). Sans période,
+   *  c'est la prévision elle-même. */
+  montant_prevu_a_date?: string | number
   montant_disponible: string | number
   pourcentage_consomme: string | number
 }

@@ -24,6 +24,12 @@ class BudgetPosteSummary(DecimalBaseModel):
     montant_prevu: Decimal = Decimal("0")
     montant_engage: Decimal = Decimal("0")
     montant_paye: Decimal = Decimal("0")
+    #: Réalisé depuis l'ouverture de l'exercice jusqu'à la fin de la période
+    #: demandée. Sans période, il vaut `montant_paye` : la période est l'année.
+    montant_paye_cumule: Decimal = Decimal("0")
+    #: Prévision ramenée aux jours écoulés (prorata temporis), pour dire si le
+    #: réalisé est en avance ou en retard. Sans période, c'est la prévision.
+    montant_prevu_a_date: Decimal = Decimal("0")
     montant_disponible: Decimal = Decimal("0")
     pourcentage_consomme: Decimal = Decimal("0")
 
@@ -31,6 +37,8 @@ class BudgetPosteSummary(DecimalBaseModel):
         "montant_prevu",
         "montant_engage",
         "montant_paye",
+        "montant_paye_cumule",
+        "montant_prevu_a_date",
         "montant_disponible",
         "pourcentage_consomme",
         mode="plain",

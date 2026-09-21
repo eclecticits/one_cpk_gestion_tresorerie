@@ -4,7 +4,7 @@ import json
 import enum
 from dataclasses import dataclass
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 import re
 
@@ -29,6 +29,7 @@ from app.models.print_settings import PrintSettings
 from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
 from app.modules.comptabilite.models import ComptaMappingPosteBudgetaire
+from app.services.budget_execution import bornes_periode, part_ecoulee, realise_par_poste
 from app.services.budget_engagement import ecarts_engagement, resynchroniser_engagements
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import can_view_all_services, get_user_service_ids
@@ -79,6 +80,8 @@ class _BudgetTreeLine:
     montant_prevu: Decimal = Decimal("0")
     montant_engage: Decimal = Decimal("0")
     montant_paye: Decimal = Decimal("0")
+    montant_paye_cumule: Decimal = Decimal("0")
+    montant_prevu_a_date: Decimal = Decimal("0")
 
 
 async def _get_or_create_budget_exercice(
@@ -166,6 +169,57 @@ async def _active_recettes_by_poste(
         .group_by(Encaissement.budget_poste_id)
     )
     return {int(row[0]): Decimal(row[1] or 0) for row in res.all() if row[0]}
+
+
+async def _appliquer_periode(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    lines: list[_BudgetTreeLine],
+    annee: int,
+    date_debut: date | None,
+    date_fin: date | None,
+    service_id: int | None,
+) -> None:
+    """Réécrit le réalisé des lignes sur la période demandée.
+
+    `montant_paye` des postes est un cumul à l'instant présent : il ne se filtre
+    pas, il se recalcule depuis les mouvements (voir
+    `app/services/budget_execution.py`). L'engagé, lui, reste celui du jour : le
+    système ne conserve aucun historique d'engagement, et un montant inventé
+    serait pire qu'une colonne assumée « à ce jour ».
+    """
+    if date_debut is None and date_fin is None:
+        for line in lines:
+            line.montant_paye_cumule = line.montant_paye
+            line.montant_prevu_a_date = line.montant_prevu
+        return
+
+    debut, fin = bornes_periode(date_debut, date_fin)
+    periode = await realise_par_poste(
+        db,
+        organisation_id=tenant_id,
+        date_debut=debut,
+        date_fin=fin,
+        service_id=service_id,
+    )
+    ouverture, _ = bornes_periode(date(annee, 1, 1), None)
+    cumul = (
+        periode
+        if debut is None or debut <= ouverture
+        else await realise_par_poste(
+            db,
+            organisation_id=tenant_id,
+            date_debut=ouverture,
+            date_fin=fin,
+            service_id=service_id,
+        )
+    )
+    part = part_ecoulee(annee, date_fin)
+    for line in lines:
+        line.montant_paye = periode.get(line.id, Decimal("0"))
+        line.montant_paye_cumule = cumul.get(line.id, Decimal("0"))
+        line.montant_prevu_a_date = (Decimal(line.montant_prevu or 0) * part).quantize(Decimal("0.01"))
 
 
 async def _log_budget_change(
@@ -630,7 +684,13 @@ def _build_tree_nodes(lines: list[BudgetPoste]) -> list[dict]:
 def _compute_tree_totals(node: dict) -> dict:
     children = node["children"]
     if children:
-        totals = {"montant_prevu": Decimal("0"), "montant_engage": Decimal("0"), "montant_paye": Decimal("0")}
+        totals = {
+            "montant_prevu": Decimal("0"),
+            "montant_engage": Decimal("0"),
+            "montant_paye": Decimal("0"),
+            "montant_paye_cumule": Decimal("0"),
+            "montant_prevu_a_date": Decimal("0"),
+        }
         for child in children:
             # Les totaux de l'enfant sont calculés dans tous les cas : la ligne
             # exclue reste affichée avec ses propres montants. Seule son
@@ -641,12 +701,16 @@ def _compute_tree_totals(node: dict) -> dict:
             totals["montant_prevu"] += child_totals["montant_prevu"]
             totals["montant_engage"] += child_totals["montant_engage"]
             totals["montant_paye"] += child_totals["montant_paye"]
+            totals["montant_paye_cumule"] += child_totals["montant_paye_cumule"]
+            totals["montant_prevu_a_date"] += child_totals["montant_prevu_a_date"]
     else:
         line = node["line"]
         totals = {
             "montant_prevu": Decimal(line.montant_prevu or 0),
             "montant_engage": Decimal(line.montant_engage or 0),
             "montant_paye": Decimal(line.montant_paye or 0),
+            "montant_paye_cumule": Decimal(getattr(line, "montant_paye_cumule", 0) or 0),
+            "montant_prevu_a_date": Decimal(getattr(line, "montant_prevu_a_date", 0) or 0),
         }
 
     line = node["line"]
@@ -684,6 +748,8 @@ def _node_to_tree_schema(node: dict) -> BudgetPosteTree:
         montant_prevu=totals["montant_prevu"],
         montant_engage=totals["montant_engage"],
         montant_paye=totals["montant_paye"],
+        montant_paye_cumule=totals["montant_paye_cumule"],
+        montant_prevu_a_date=totals["montant_prevu_a_date"],
         montant_disponible=totals["montant_disponible"],
         pourcentage_consomme=totals["pourcentage_consomme"],
         children=[_node_to_tree_schema(child) for child in node["children"]],
@@ -1720,6 +1786,8 @@ async def list_budget_postes(
     type: str | None = None,
     active: bool | None = None,
     service_id: int | None = None,
+    date_debut: date | None = None,
+    date_fin: date | None = None,
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -1729,6 +1797,8 @@ async def list_budget_postes(
         type=type,
         active=active,
         service_id=service_id,
+        date_debut=date_debut,
+        date_fin=date_fin,
         user=user,
         tenant_id=tenant_id,
         db=db,
@@ -1742,6 +1812,8 @@ async def list_budget_postes_tree(
     type: str | None = None,
     active: bool | None = None,
     service_id: int | None = None,
+    date_debut: date | None = None,
+    date_fin: date | None = None,
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -1751,6 +1823,8 @@ async def list_budget_postes_tree(
         type=type,
         active=active,
         service_id=service_id,
+        date_debut=date_debut,
+        date_fin=date_fin,
         user=user,
         tenant_id=tenant_id,
         db=db,
@@ -1764,6 +1838,9 @@ async def list_budget_lines(
     type: str | None = None,
     active: bool | None = None,
     service_id: int | None = None,
+    # Bornes incluses. Vides = l'exercice entier, comme avant.
+    date_debut: date | None = None,
+    date_fin: date | None = None,
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -1834,6 +1911,34 @@ async def list_budget_lines(
         )
         service_sorties_map = {int(row[0]): Decimal(row[1] or 0) for row in sorties_res.all() if row[0]}
 
+    # Réalisé de la période, recalculé depuis les mouvements : les cumuls des
+    # postes ne savent pas de quand ils datent.
+    periode_map: dict[int, Decimal] = {}
+    cumul_map: dict[int, Decimal] = {}
+    part_exercice = Decimal("1")
+    if date_debut is not None or date_fin is not None:
+        debut_dt, fin_dt = bornes_periode(date_debut, date_fin)
+        periode_map = await realise_par_poste(
+            db,
+            organisation_id=tenant_id,
+            date_debut=debut_dt,
+            date_fin=fin_dt,
+            service_id=service_id,
+        )
+        ouverture_dt, _ = bornes_periode(date(annee, 1, 1), None)
+        cumul_map = (
+            periode_map
+            if debut_dt is None or debut_dt <= ouverture_dt
+            else await realise_par_poste(
+                db,
+                organisation_id=tenant_id,
+                date_debut=ouverture_dt,
+                date_fin=fin_dt,
+                service_id=service_id,
+            )
+        )
+        part_exercice = part_ecoulee(annee, date_fin)
+
     summaries: list[BudgetLineSummary] = []
     for line in lines:
         montant_prevu = Decimal(line.montant_prevu or 0)
@@ -1849,6 +1954,12 @@ async def list_budget_lines(
         elif (line.type or "").upper() == "RECETTE":
             montant_engage = active_recettes_map.get(line.id, Decimal("0"))
             montant_paye = montant_engage
+        montant_paye_cumule = montant_paye
+        montant_prevu_a_date = montant_prevu
+        if periode_map or cumul_map:
+            montant_paye = periode_map.get(line.id, Decimal("0"))
+            montant_paye_cumule = cumul_map.get(line.id, Decimal("0"))
+            montant_prevu_a_date = (montant_prevu * part_exercice).quantize(Decimal("0.01"))
         is_depense = (line.type or "").upper() == "DEPENSE"
         base_consomme = _base_consomme(
             is_depense=is_depense, montant_engage=montant_engage, montant_paye=montant_paye
@@ -1873,6 +1984,8 @@ async def list_budget_lines(
                 montant_prevu=montant_prevu,
                 montant_engage=montant_engage,
                 montant_paye=montant_paye,
+                montant_paye_cumule=montant_paye_cumule,
+                montant_prevu_a_date=montant_prevu_a_date,
                 montant_disponible=disponible,
                 pourcentage_consomme=pourcentage,
             )
@@ -2014,6 +2127,9 @@ async def list_budget_lines_tree(
     type: str | None = None,
     active: bool | None = None,
     service_id: int | None = None,
+    # Bornes incluses. Vides = l'exercice entier, comme avant.
+    date_debut: date | None = None,
+    date_fin: date | None = None,
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -2128,6 +2244,18 @@ async def list_budget_lines_tree(
             if (line.type or "").upper() == "RECETTE":
                 line.montant_engage = active_recettes_map.get(line.id, Decimal("0"))
                 line.montant_paye = line.montant_engage
+
+    # En dernier : la période réécrit le réalisé que les blocs ci-dessus
+    # viennent de poser, sinon elle serait effacée par eux.
+    await _appliquer_periode(
+        db,
+        tenant_id=tenant_id,
+        lines=lines,
+        annee=annee,
+        date_debut=date_debut,
+        date_fin=date_fin,
+        service_id=service_id,
+    )
 
     roots = _build_tree_nodes(lines)
     for root in roots:

@@ -57,6 +57,13 @@ type BudgetPosteNode = BudgetPosteTree
 //
 // Les postes de recettes n'ont pas de circuit d'engagement : `montant_engage`
 // y porte le réalisé, et `montant_paye` le suit.
+/** Une borne vide vaut le bord de l'exercice : c'est ce que le serveur retient. */
+const formatDateFr = (valeur: string, annee: number | null, bord: 'debut' | 'fin') => {
+  if (!valeur) return bord === 'debut' ? `01/01/${annee ?? ''}` : `31/12/${annee ?? ''}`
+  const [a, m, j] = valeur.split('-')
+  return `${j}/${m}/${a}`
+}
+
 const baseConsommee = (type: string | null | undefined, engage: number, paye: number) =>
   (type || '').toUpperCase() === 'DEPENSE' ? Math.max(engage, paye) : engage
 
@@ -70,6 +77,10 @@ type BudgetTotals = {
   prevu: number
   engage: number
   paye: number
+  /** Réalisé depuis l'ouverture de l'exercice jusqu'à la fin de la période. */
+  payeCumule: number
+  /** Prévision ramenée aux jours écoulés, pour situer le réalisé. */
+  prevuADate: number
   disponible: number
   pourcentage: number
   tauxEngagement: number
@@ -82,6 +93,19 @@ export default function Budget() {
   const [statut, setStatut] = useState<string | null>(null)
   const [exercices, setExercices] = useState<BudgetExerciseSummary[]>([])
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
+  // Période d'exécution. Vide = l'exercice entier, c'est-à-dire l'écran d'avant :
+  // les colonnes de montants sont des cumuls à ce jour, qui ne savent pas de
+  // quand ils datent ; dès qu'une borne est posée, le serveur recalcule le
+  // réalisé depuis les mouvements.
+  const [periodeDebut, setPeriodeDebut] = useState('')
+  const [periodeFin, setPeriodeFin] = useState('')
+  const periodeActive = Boolean(periodeDebut || periodeFin)
+  const periodeParams = periodeActive
+    ? { date_debut: periodeDebut || undefined, date_fin: periodeFin || undefined }
+    : {}
+  // Le cumul depuis l'ouverture de l'exercice ne dit quelque chose de plus que
+  // si la période ne part pas du 1er janvier.
+  const afficheCumul = Boolean(periodeDebut) && periodeDebut > `${selectedYear ?? ''}-01-01`
   const [services, setServices] = useState<Service[]>([])
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
@@ -213,11 +237,15 @@ export default function Budget() {
     let prevu = toNumber(node.montant_prevu)
     let engage = toNumber(node.montant_engage)
     let paye = toNumber(node.montant_paye)
+    let payeCumule = toNumber(node.montant_paye_cumule ?? node.montant_paye)
+    let prevuADate = toNumber(node.montant_prevu_a_date ?? node.montant_prevu)
 
     if (node.children && node.children.length > 0) {
       prevu = 0
       engage = 0
       paye = 0
+      payeCumule = 0
+      prevuADate = 0
       node.children.forEach((child) => {
         // Les totaux de l'enfant sont calculés dans tous les cas : une ligne
         // hors calcul reste affichée avec ses montants. Seule son addition au
@@ -227,6 +255,8 @@ export default function Budget() {
         prevu += childTotals.prevu
         engage += childTotals.engage
         paye += childTotals.paye
+        payeCumule += childTotals.payeCumule
+        prevuADate += childTotals.prevuADate
       })
     }
 
@@ -237,6 +267,8 @@ export default function Budget() {
       prevu,
       engage,
       paye,
+      payeCumule,
+      prevuADate,
       disponible,
       pourcentage,
       tauxEngagement: prevu > 0 ? (engage / prevu) * 100 : 0,
@@ -258,8 +290,8 @@ export default function Budget() {
       setLoading(true)
       setError(null)
       const params = filter === 'TOUT'
-        ? { annee: selectedYear, service_id: selectedServiceId }
-        : { annee: selectedYear, type: filter, service_id: selectedServiceId }
+        ? { annee: selectedYear, service_id: selectedServiceId, ...periodeParams }
+        : { annee: selectedYear, type: filter, service_id: selectedServiceId, ...periodeParams }
       const response = await getBudgetPostesTree(params)
       const normalized = normalizeTree(response.postes || [])
       setLines(normalized)
@@ -275,7 +307,7 @@ export default function Budget() {
     } finally {
       setLoading(false)
     }
-  }, [filter, selectedYear, selectedServiceId])
+  }, [filter, selectedYear, selectedServiceId, periodeDebut, periodeFin])
 
   useEffect(() => {
     loadBudget()
@@ -881,7 +913,7 @@ export default function Budget() {
       setExporting('excel')
       await downloadExcel(
         '/exports/budget',
-        { annee: selectedYear, type: filter },
+        { annee: selectedYear, type: filter, ...periodeParams },
         `budget_${selectedYear}_${filter}.xlsx`,
         { onMiseEnFile: () => notifyInfo('Export en préparation', MESSAGE_EXPORT_EN_FILE) }
       )
@@ -901,7 +933,7 @@ export default function Budget() {
       setExporting('excel')
       await downloadExcel(
         '/exports/budget',
-        { annee: selectedYear, type: filter, service_id: selectedServiceId },
+        { annee: selectedYear, type: filter, service_id: selectedServiceId, ...periodeParams },
         `budget_${selectedYear}_${filter}_service${selectedServiceId}.xlsx`,
         { onMiseEnFile: () => notifyInfo('Export en préparation', MESSAGE_EXPORT_EN_FILE) }
       )
@@ -1047,6 +1079,8 @@ export default function Budget() {
         prevu: toNumber(line.montant_prevu),
         engage: toNumber(line.montant_engage),
         paye: toNumber(line.montant_paye),
+        payeCumule: toNumber(line.montant_paye_cumule ?? line.montant_paye),
+        prevuADate: toNumber(line.montant_prevu_a_date ?? line.montant_prevu),
         disponible: toNumber(line.montant_disponible),
         pourcentage: toNumber(line.pourcentage_consomme),
         tauxEngagement: toNumber(line.montant_prevu) > 0
@@ -1217,6 +1251,17 @@ export default function Budget() {
             )}
             {!isRecetteView && <td className={styles.colEngage}>{formatAmount(totals.engage)}</td>}
             <td className={styles.colReal}>{formatAmount(totals.paye)}</td>
+            {afficheCumul && (
+              <td className={styles.colReal}>{formatAmount(totals.payeCumule)}</td>
+            )}
+            {periodeActive && (
+              <td className={styles.colAmount}>
+                {/* Repère, pas un droit à dépenser : le crédit voté reste annuel. */}
+                <span className={totals.paye > totals.prevuADate ? styles.overrunValue : ''}>
+                  {formatAmount(totals.prevuADate)}
+                </span>
+              </td>
+            )}
             <td className={`${styles.colAvailable} ${isOverrun ? styles.overrunValue : ''}`}>
               {/* En recette, le solde est ce qui manque (ou dépasse) à l'objectif :
                   réalisé moins prévu, comme l'export Excel et le PDF. Cette
@@ -1431,6 +1476,37 @@ export default function Budget() {
                     </option>
                   ))}
                 </select>
+                {/* Période d'exécution. Laissée vide, l'écran est celui d'avant :
+                    les montants de l'exercice entier. */}
+                <div className={styles.periodeFilter}>
+                  <label htmlFor="budget-periode-debut">Du</label>
+                  <input
+                    id="budget-periode-debut"
+                    type="date"
+                    className={styles.periodeInput}
+                    value={periodeDebut}
+                    max={periodeFin || undefined}
+                    onChange={(e) => setPeriodeDebut(e.target.value)}
+                  />
+                  <label htmlFor="budget-periode-fin">au</label>
+                  <input
+                    id="budget-periode-fin"
+                    type="date"
+                    className={styles.periodeInput}
+                    value={periodeFin}
+                    min={periodeDebut || undefined}
+                    onChange={(e) => setPeriodeFin(e.target.value)}
+                  />
+                  {periodeActive && (
+                    <button
+                      type="button"
+                      className={styles.periodeReset}
+                      onClick={() => { setPeriodeDebut(''); setPeriodeFin('') }}
+                    >
+                      Tout l'exercice
+                    </button>
+                  )}
+                </div>
               </div>
               <button className={styles.primaryAction} onClick={handleAddDraft} disabled={!hasActiveEditableExercise}>
                 <Plus size={16} />
@@ -1655,6 +1731,7 @@ export default function Budget() {
           <span>Synthèse · {isRecetteView ? 'Recettes' : 'Dépenses'}</span>
           <span>
             Exercice {budgetSummary?.annee ?? selectedYear ?? '—'}
+            {periodeActive ? ` · du ${formatDateFr(periodeDebut, selectedYear, 'debut')} au ${formatDateFr(periodeFin, selectedYear, 'fin')}` : ''}
             {summaryLoading ? ' · synthèse en cours…' : ''}
           </span>
         </div>
@@ -1757,7 +1834,25 @@ export default function Budget() {
                     y porte le réalisé, et ces colonnes ne feraient que
                     répéter les deux voisines. */}
                 {!isRecetteView && <th className={styles.colEngage}>Engagé</th>}
-                <th className={styles.colReal}>Réalisé</th>
+                <th className={styles.colReal} title={periodeActive ? 'Réalisé sur la période choisie' : undefined}>
+                  Réalisé
+                </th>
+                {afficheCumul && (
+                  <th
+                    className={styles.colReal}
+                    title="Réalisé depuis l'ouverture de l'exercice jusqu'à la fin de la période"
+                  >
+                    Réalisé cumulé
+                  </th>
+                )}
+                {periodeActive && (
+                  <th
+                    className={styles.colAmount}
+                    title="Prévision ramenée aux jours écoulés (prorata temporis)"
+                  >
+                    Prévision à date
+                  </th>
+                )}
                 <th
                   className={styles.colAvailable}
                   title={isRecetteView ? 'Réalisé moins prévision : négatif, il manque à l’objectif' : undefined}

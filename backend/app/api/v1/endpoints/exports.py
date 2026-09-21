@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from copy import copy as _copier_style
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
 from io import BytesIO
@@ -35,6 +35,7 @@ from app.api.deps import (
     has_permission,
 )
 from app.core.config import settings
+from app.services.budget_execution import bornes_periode, realise_par_poste
 from app.services.export_jobs import serialiser_job, soumettre, types_asynchrones
 from app.services.export_queue import publier
 from app.db.session import get_db
@@ -1162,6 +1163,10 @@ async def construire_classeur_budget(
     annee: int | None = None,
     type: str | None = None,
     service_id: int | None = None,
+    # Bornes incluses, en ISO comme les autres exports : un job relu par le
+    # worker ne transporte que du texte. Vides = l'exercice entier, comme avant.
+    date_debut: str | None = None,
+    date_fin: str | None = None,
     seuil_bascule: int | None = None,
 ) -> tuple[Workbook, str]:
     """Construit le classeur budgetaire et rend `(classeur, nom de fichier)`.
@@ -1287,6 +1292,22 @@ async def construire_classeur_budget(
             if (poste.type or "").upper() == "RECETTE"
         }
 
+    # Période demandée : le réalisé se recalcule depuis les mouvements, comme à
+    # l'écran (app/services/budget_execution.py). Même surcharge d'affichage que
+    # ci-dessus — les entités de la session ne sont jamais touchées.
+    debut_jour = _parse_datetime(date_debut).date() if date_debut else None
+    fin_jour = _parse_datetime(date_fin).date() if date_fin else None
+    realise_periode: dict[int, Decimal] | None = None
+    if debut_jour is not None or fin_jour is not None:
+        debut_dt, fin_dt = bornes_periode(debut_jour, fin_jour)
+        realise_periode = await realise_par_poste(
+            db,
+            organisation_id=organisation_id,
+            date_debut=debut_dt,
+            date_fin=fin_dt,
+            service_id=service_id,
+        )
+
     # ── Arbre hiérarchique : un poste parent = somme de ses sous-postes ────────
     by_id = {p.id: p for p in lignes}
     children_map: dict[int | None, list] = {}
@@ -1326,6 +1347,13 @@ async def construire_classeur_budget(
             else:
                 engage = Decimal(p.montant_engage or 0)
                 paye = Decimal(p.montant_paye or 0)
+            if realise_periode is not None:
+                # L'engagement n'a pas d'historique : sur une période, seul le
+                # réalisé se recalcule. Un poste de recette n'a pas de circuit
+                # d'engagement, ses deux colonnes restent égales.
+                paye = realise_periode.get(p.id, Decimal("0"))
+                if surcharge is not None:
+                    engage = paye
         totals_cache[p.id] = (prevu, engage, paye)
         return totals_cache[p.id]
 
@@ -1461,6 +1489,10 @@ async def construire_classeur_budget(
 
         ws.merge_cells("A3:N3")
         subtitle_parts = ["Suivi de l'exécution budgétaire par poste et sous-poste", "Montants en USD"]
+        if debut_jour is not None or fin_jour is not None:
+            depuis = debut_jour.strftime("%d/%m/%Y") if debut_jour else f"01/01/{annee}"
+            jusqu_a = fin_jour.strftime("%d/%m/%Y") if fin_jour else f"31/12/{annee}"
+            subtitle_parts.insert(1, f"Période : {depuis} au {jusqu_a}")
         if service_label:
             subtitle_parts.insert(1, f"Service : {service_label}")
         ws["A3"] = " | ".join(subtitle_parts)
@@ -1912,6 +1944,8 @@ async def export_budget(
     annee: int | None = Query(default=None),
     type: str | None = Query(default=None),
     service_id: int | None = Query(default=None),
+    date_debut: date | None = Query(default=None),
+    date_fin: date | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -1922,7 +1956,13 @@ async def export_budget(
     202). C'est ce qui rend la bascule reversible type par type sans
     redeploiement du frontend — EXPORT_ASYNC_TYPES suffit, dans les deux sens.
     """
-    params = {"annee": annee, "type": type, "service_id": service_id}
+    params = {
+        "annee": annee,
+        "type": type,
+        "service_id": service_id,
+        "date_debut": date_debut.isoformat() if date_debut else None,
+        "date_fin": date_fin.isoformat() if date_fin else None,
+    }
     try:
         wb, filename = await construire_classeur_budget(
             db,
@@ -1930,6 +1970,8 @@ async def export_budget(
             annee=annee,
             type=type,
             service_id=service_id,
+            date_debut=date_debut.isoformat() if date_debut else None,
+            date_fin=date_fin.isoformat() if date_fin else None,
             seuil_bascule=_seuil_bascule("budget"),
         )
     except BasculeAsynchroneRequise as bascule:

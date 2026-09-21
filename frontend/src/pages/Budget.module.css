@@ -1390,3 +1390,46 @@
     transparent 12px
   );
 }
+
+/* Période d'exécution : deux dates dans la barre de filtres, au même gabarit
+   que les sélecteurs voisins. Vides, le budget se lit comme avant, sur
+   l'exercice entier. */
+.periodeFilter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #47566b;
+}
+
+.periodeInput {
+  height: var(--control-h, 38px);
+  padding: 0 8px;
+  border: 1px solid #d3dbe8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1c2b3f;
+  font-size: 0.82rem;
+}
+
+.periodeInput:focus-visible {
+  outline: 2px solid var(--tenant-primary, #0b5d43);
+  outline-offset: 1px;
+}
+
+.periodeReset {
+  height: var(--control-h, 38px);
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tenant-primary, #0b5d43);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.periodeReset:hover {
+  border-color: #d3dbe8;
+  background: #f8fafc;
+}
