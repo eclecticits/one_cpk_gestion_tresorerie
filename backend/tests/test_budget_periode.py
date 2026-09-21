@@ -81,6 +81,25 @@ async def _contexte(db):
     return org, user, recette, depense
 
 
+async def _org_sans_budget(db):
+    """Organisation nue : les tests d'exercices posent eux-mêmes leurs années."""
+    org = Organisation(nom="Exercices", slug=f"ex-{_suffix()}", is_active=True)
+    db.add(org)
+    await db.flush()
+    user = User(
+        id=uuid.uuid4(),
+        email=f"{_suffix()}@example.com",
+        nom="Contrôleur",
+        prenom="Ada",
+        role="admin",
+        organisation_id=org.id,
+        active=True,
+    )
+    db.add(user)
+    await db.flush()
+    return org, user
+
+
 def _note(org, user, poste, montant: Decimal, quand: datetime) -> Encaissement:
     return Encaissement(
         organisation_id=org.id,
@@ -342,3 +361,71 @@ async def test_le_classeur_excel_sort_les_memes_chiffres_que_l_ecran(db_session)
     assert realise[depense.code] == 250.0
     # Et la bande de titre dit sur quoi porte le classeur.
     assert "Période : 01/01/2026 au 20/03/2026" in str(ws["A3"].value)
+
+
+# ---------------------------------------------------------------------------
+# Préparer l'exercice suivant sans geler celui en cours
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ouvrir_l_exercice_suivant_ne_verrouille_pas_l_exercice_en_cours(db_session):
+    """Le budget N+1 se prépare en novembre sans bloquer la saisie de N.
+
+    La règle d'origine ne laissait modifiable que l'exercice le plus récent :
+    créer 2027 verrouillait 2026, y compris sa clôture de fin d'année.
+    """
+    from app.api.v1.endpoints.budget import _is_locked_exercise
+
+    org, user = await _org_sans_budget(db_session)
+    annee_civile = datetime.now(timezone.utc).year
+    exercices = {}
+    for annee in (annee_civile - 1, annee_civile, annee_civile + 1):
+        exercice = BudgetExercice(organisation_id=org.id, annee=annee, statut=StatutBudget.VOTE)
+        db_session.add(exercice)
+        await db_session.flush()
+        exercices[annee] = exercice
+    await db_session.commit()
+
+    # L'exercice en cours reste modifiable, même avec N+1 ouvert au-dessus.
+    assert await _is_locked_exercise(exercices[annee_civile].id, db_session, org.id) is False
+    # L'exercice à venir se prépare.
+    assert await _is_locked_exercise(exercices[annee_civile + 1].id, db_session, org.id) is False
+    # Le passé, lui, ne se réécrit pas.
+    assert await _is_locked_exercise(exercices[annee_civile - 1].id, db_session, org.id) is True
+
+
+@pytest.mark.asyncio
+async def test_un_exercice_cloture_reste_verrouille(db_session):
+    from app.api.v1.endpoints.budget import _is_locked_exercise
+
+    org, _user = await _org_sans_budget(db_session)
+    annee_civile = datetime.now(timezone.utc).year
+    exercice = BudgetExercice(organisation_id=org.id, annee=annee_civile, statut=StatutBudget.CLOTURE)
+    db_session.add(exercice)
+    await db_session.commit()
+
+    assert await _is_locked_exercise(exercice.id, db_session, org.id) is True
+
+
+@pytest.mark.asyncio
+async def test_un_exercice_a_venir_ne_se_cloture_pas(db_session):
+    """Clôturer une année qui n'a rien exécuté n'a pas de sens."""
+    from fastapi import HTTPException
+
+    from app.api.v1.endpoints.budget import close_budget_exercise
+
+    org, user = await _org_sans_budget(db_session)
+    annee_civile = datetime.now(timezone.utc).year
+    futur = BudgetExercice(organisation_id=org.id, annee=annee_civile + 1, statut=StatutBudget.VOTE)
+    passe = BudgetExercice(organisation_id=org.id, annee=annee_civile - 1, statut=StatutBudget.VOTE)
+    db_session.add_all([futur, passe])
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await close_budget_exercise(annee=futur.annee, user=user, tenant_id=org.id, db=db_session)
+    assert exc.value.status_code == 400
+
+    # Un exercice passé resté ouvert, lui, doit pouvoir être refermé.
+    res = await close_budget_exercise(annee=passe.annee, user=user, tenant_id=org.id, db=db_session)
+    assert res["ok"] is True

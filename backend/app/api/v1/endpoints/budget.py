@@ -254,12 +254,18 @@ async def _log_budget_change(
 
 
 async def _is_locked_exercise(exercice_id: int, db: AsyncSession, organisation_id: int) -> bool:
-    max_res = await db.execute(
-        select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == organisation_id)
-    )
-    max_annee = max_res.scalar_one_or_none()
-    if max_annee is None:
-        return False
+    """Un exercice dont les postes ne se modifient plus.
+
+    La règle suit le calendrier, pas le classement : est verrouillé un exercice
+    clôturé — c'est le sens du mot — ou antérieur à l'année civile, parce que le
+    passé ne se réécrit pas. Un exercice à venir, lui, ne verrouille rien.
+
+    Jusqu'ici le seul exercice modifiable était le plus récent
+    (`annee < max(annee)`). Ouvrir le budget N+1 en novembre gelait donc N :
+    plus un poste à ajuster, et même sa clôture de fin d'année était refusée
+    avec « Exercice verrouillé (année antérieure) ». Préparer l'année suivante
+    ne doit pas coûter l'année en cours.
+    """
     ex_res = await db.execute(
         select(BudgetExercice).where(
             BudgetExercice.id == exercice_id,
@@ -269,7 +275,9 @@ async def _is_locked_exercise(exercice_id: int, db: AsyncSession, organisation_i
     exercice = ex_res.scalar_one_or_none()
     if exercice is None:
         return False
-    return exercice.annee < max_annee
+    if exercice.statut == StatutBudget.CLOTURE:
+        return True
+    return exercice.annee < datetime.now(timezone.utc).year
 
 
 async def _resolve_parent_link(
@@ -823,8 +831,14 @@ async def close_budget_exercise(
     exercice = result.scalar_one_or_none()
     if exercice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercice introuvable")
-    if await _is_locked_exercise(exercice.id, db, tenant_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
+    # Clôturer un exercice à venir n'a pas de sens : il n'a rien exécuté. Un
+    # exercice passé resté ouvert, en revanche, doit pouvoir l'être — c'est même
+    # la seule façon de le refermer.
+    if exercice.annee > datetime.now(timezone.utc).year:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"L'exercice {exercice.annee} n'a pas commencé : il ne peut pas être clôturé.",
+        )
     if exercice.statut == StatutBudget.CLOTURE:
         return {"ok": True, "statut": exercice.statut.value}
     exercice.statut = StatutBudget.CLOTURE
@@ -2296,7 +2310,7 @@ async def create_budget_line(
     if exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
     if await _is_locked_exercise(exercice.id, db, tenant_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé : il est clôturé ou antérieur à l'année en cours.")
     if payload.montant_prevu is not None and payload.montant_prevu < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le montant prévu doit être positif")
 
@@ -2677,7 +2691,7 @@ async def update_budget_line(
     if exercice and exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
     if exercice and await _is_locked_exercise(exercice.id, db, tenant_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé : il est clôturé ou antérieur à l'année en cours.")
 
     linked_requisitions = await db.execute(
         select(LigneRequisition.id).where(LigneRequisition.budget_poste_id == line.id).limit(1)
@@ -2843,7 +2857,7 @@ async def delete_budget_line(
     if exercice and exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
     if exercice and await _is_locked_exercise(exercice.id, db, tenant_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé : il est clôturé ou antérieur à l'année en cours.")
     line.is_deleted = True
     line.deleted_at = datetime.now(timezone.utc)
     line.deleted_by = user.id
@@ -2900,7 +2914,7 @@ async def restore_budget_line(
     if exercice and exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
     if exercice and await _is_locked_exercise(exercice.id, db, tenant_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé : il est clôturé ou antérieur à l'année en cours.")
 
     line.is_deleted = False
     line.deleted_at = None

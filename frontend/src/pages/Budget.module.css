@@ -1500,3 +1500,11 @@
   color: #92400e;
   font-size: 0.82rem;
 }
+
+/* Exercice à venir : ni en cours, ni archivé. Il se prépare, donc il se
+   modifie — l'ambre de la consultation dirait le contraire. */
+.exerciceBadgePreparation {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
