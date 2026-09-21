@@ -27,7 +27,6 @@ from app.core.horodatage import resoudre_date_operation
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
-from app.models.cloture_caisse import ClotureCaisse
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.print_settings import PrintSettings
 from app.models.ordre_decaissement import OrdreDecaissement
@@ -100,6 +99,12 @@ from app.services.notifications import (
     resolve_outflow_recipients,
 )
 
+#: ORDRE DES VERROUS — ce module fixe la règle que suivent tous les chemins
+#: d'argent : le poste budgétaire d'abord, la trésorerie (caisse centrale ou
+#: compte bancaire) ensuite. `encaissement_payments` et `retours_caisse` s'y
+#: alignent. Deux chemins qui prendraient ces verrous dans des ordres opposés
+#: s'interbloqueraient dès qu'un caissier encaisse pendant qu'un autre décaisse
+#: sur le même poste, et PostgreSQL tuerait l'une des deux transactions.
 router = APIRouter()
 
 
@@ -689,19 +694,6 @@ async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentr
         res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
         caisse = res.scalar_one()
     return caisse
-
-
-async def _get_last_cloture_date(db: AsyncSession) -> datetime | None:
-    res = await db.execute(
-        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
-    )
-    last = res.scalar_one_or_none()
-    if not last or not last.date_cloture:
-        return None
-    last_dt = last.date_cloture
-    if last_dt.tzinfo is None:
-        last_dt = last_dt.replace(tzinfo=timezone.utc)
-    return last_dt
 
 
 @router.get("", response_model=list[SortieFondsOut] | SortiesFondsListResponse)

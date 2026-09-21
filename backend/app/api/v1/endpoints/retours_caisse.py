@@ -214,6 +214,34 @@ async def create_retour_caisse(
     if date_retour is None:
         date_retour = datetime.now(timezone.utc)
 
+    # ORDRE DES VERROUS : le poste budgétaire d'abord, la trésorerie ensuite —
+    # même ordre que `sorties_fonds` et `encaissement_payments`. Pris à l'envers,
+    # deux opérations concurrentes sur le même poste s'interbloquent et l'une des
+    # deux est tuée par PostgreSQL.
+    # --- Réduire l'imputation budgétaire de la sortie d'origine -----------
+    budget_poste_id = payload.budget_poste_id or sortie.budget_poste_id
+    budget_poste_code: str | None = None
+    budget_poste_libelle: str | None = None
+    # Retenu hors du bloc : le mouvement d'imputation s'écrit plus bas, une fois
+    # le retour enregistré et son identifiant connu.
+    montant_budget: Decimal | None = None
+    ajuste_budget = bool(payload.ajuste_budget) and budget_poste_id is not None
+    if ajuste_budget:
+        res = await db.execute(
+            select(BudgetPoste)
+            .where(BudgetPoste.id == budget_poste_id, BudgetPoste.is_deleted.is_(False))
+            .with_for_update()
+        )
+        budget_poste = res.scalar_one_or_none()
+        if budget_poste is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id invalide")
+        budget_poste_code = budget_poste.code
+        budget_poste_libelle = budget_poste.libelle
+        montant_budget = await _to_budget_currency(
+            db, tenant_id, montant, devise, exchange_rate_snapshot=sortie.exchange_rate_snapshot
+        )
+        budget_poste.montant_paye = max(Decimal("0"), (budget_poste.montant_paye or 0) - montant_budget)
+
     # --- Créditer la trésorerie de destination ----------------------------
     if canal == "CAISSE":
         caisse = await _get_or_create_caisse(db, tenant_id)
@@ -250,30 +278,6 @@ async def create_retour_caisse(
         if (compte_bancaire.account_type or "BANK").upper() != "BANK":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le compte de destination doit être un compte bancaire")
         compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + montant
-
-    # --- Réduire l'imputation budgétaire de la sortie d'origine -----------
-    budget_poste_id = payload.budget_poste_id or sortie.budget_poste_id
-    budget_poste_code: str | None = None
-    budget_poste_libelle: str | None = None
-    # Retenu hors du bloc : le mouvement d'imputation s'écrit plus bas, une fois
-    # le retour enregistré et son identifiant connu.
-    montant_budget: Decimal | None = None
-    ajuste_budget = bool(payload.ajuste_budget) and budget_poste_id is not None
-    if ajuste_budget:
-        res = await db.execute(
-            select(BudgetPoste)
-            .where(BudgetPoste.id == budget_poste_id, BudgetPoste.is_deleted.is_(False))
-            .with_for_update()
-        )
-        budget_poste = res.scalar_one_or_none()
-        if budget_poste is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id invalide")
-        budget_poste_code = budget_poste.code
-        budget_poste_libelle = budget_poste.libelle
-        montant_budget = await _to_budget_currency(
-            db, tenant_id, montant, devise, exchange_rate_snapshot=sortie.exchange_rate_snapshot
-        )
-        budget_poste.montant_paye = max(Decimal("0"), (budget_poste.montant_paye or 0) - montant_budget)
 
     # --- Numéro de document (RET-...) -------------------------------------
     reference_numero = await generate_document_number(db, "RET", tenant_id, service_id=sortie.service_id)

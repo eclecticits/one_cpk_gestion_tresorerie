@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, File, Upl
 from fastapi.responses import FileResponse
 from fastapi.responses import StreamingResponse
 from sqlalchemy import case, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from openpyxl import Workbook
 from openpyxl.styles import Font as XlFont
@@ -589,6 +590,31 @@ async def export_clotures_xlsx(
     )
 
 
+async def _lock_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentrale:
+    """La ligne de caisse, verrouillée jusqu'au commit.
+
+    Ouvrir et clôturer se décident sur `est_ouverte`, et clôturer fige en plus un
+    solde théorique. Sans verrou, deux caissiers qui cliquent ensemble ouvrent —
+    ou clôturent — deux fois, et un versement encaissé pendant le calcul entre au
+    tiroir après que la clôture l'a figé : l'écart ressort au comptage sans que
+    rien ne l'explique. Le verrou fait attendre les encaissements concurrents, qui
+    passent par cette même ligne, le temps de la séance.
+    """
+    await db.execute(
+        pg_insert(CaisseCentrale)
+        .values(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
+        .on_conflict_do_nothing(index_elements=["organisation_id"])
+    )
+    res = await db.execute(
+        select(CaisseCentrale)
+        .where(CaisseCentrale.organisation_id == tenant_id)
+        .limit(1)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return res.scalar_one()
+
+
 @router.post("", response_model=ClotureOut, dependencies=[Depends(has_permission("can_execute_payment"))])
 async def create_cloture(
     payload: ClotureCreateRequest,
@@ -597,18 +623,16 @@ async def create_cloture(
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> ClotureOut:
-    balance = await _compute_balance(db, tenant_id)
-
-    # On ne clôture qu'une caisse ouverte (Modèle B) : une caisse déjà fermée
-    # doit d'abord être rouverte.
-    caisse_guard = (await db.execute(
-        select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
-    )).scalar_one_or_none()
-    if caisse_guard is not None and not caisse_guard.est_ouverte:
+    # Le verrou se prend avant le calcul : ce qui entre en caisse pendant la
+    # séance doit attendre, sinon il tombe hors du solde qu'on vient de figer.
+    caisse = await _lock_caisse(db, tenant_id)
+    if not caisse.est_ouverte:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La caisse est déjà fermée : ouvrez-la avant de la clôturer.",
         )
+
+    balance = await _compute_balance(db, tenant_id)
 
     solde_physique_usd = _decimal(payload.solde_physique_usd)
     solde_physique_cdf = _decimal(payload.solde_physique_cdf)
@@ -668,16 +692,12 @@ async def create_cloture(
     )
 
     # Fin de session : on ferme la caisse. Le solde n'est PAS réaligné sur le
-    # comptage — seules les régularisations ci-dessus peuvent le déplacer.
-    caisse_res = await db.execute(
-        select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
-    )
-    caisse = caisse_res.scalar_one_or_none()
-    if caisse is not None:
-        caisse.est_ouverte = False
-        caisse.ouverte_le = None
-        caisse.ouverte_par_id = None
-        caisse.derniere_maj = datetime.now(timezone.utc)
+    # comptage — seules les régularisations ci-dessus peuvent le déplacer. La
+    # ligne est celle verrouillée à l'entrée, pas une relecture.
+    caisse.est_ouverte = False
+    caisse.ouverte_le = None
+    caisse.ouverte_par_id = None
+    caisse.derniere_maj = datetime.now(timezone.utc)
 
     await log_action(
         db,
@@ -936,14 +956,7 @@ async def open_caisse(
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> OuvertureOut:
-    res = await db.execute(
-        select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
-    )
-    caisse = res.scalar_one_or_none()
-    if caisse is None:
-        caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
-        db.add(caisse)
-        await db.flush()
+    caisse = await _lock_caisse(db, tenant_id)
     if caisse.est_ouverte:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La caisse est déjà ouverte.")
 
@@ -1028,8 +1041,16 @@ async def upload_cloture_pdf(
     cloture_id: int,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> dict:
-    res = await db.execute(select(ClotureCaisse).where(ClotureCaisse.id == cloture_id))
+    # L'identifiant est un entier de séquence, donc devinable : sans le filtre
+    # d'organisation, un tenant remplaçait le PV de clôture d'un autre.
+    res = await db.execute(
+        select(ClotureCaisse).where(
+            ClotureCaisse.id == cloture_id,
+            ClotureCaisse.organisation_id == tenant_id,
+        )
+    )
     cloture = res.scalar_one_or_none()
     if cloture is None:
         raise HTTPException(status_code=404, detail="Clôture introuvable")
@@ -1067,8 +1088,14 @@ async def upload_cloture_pdf(
 async def download_cloture_pdf(
     cloture_id: int,
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
-    res = await db.execute(select(ClotureCaisse).where(ClotureCaisse.id == cloture_id))
+    res = await db.execute(
+        select(ClotureCaisse).where(
+            ClotureCaisse.id == cloture_id,
+            ClotureCaisse.organisation_id == tenant_id,
+        )
+    )
     cloture = res.scalar_one_or_none()
     if cloture is None:
         raise HTTPException(status_code=404, detail="Clôture introuvable")
@@ -1086,8 +1113,14 @@ async def download_cloture_pdf(
 async def get_cloture_pdf_data(
     cloture_id: int,
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> CloturePdfData:
-    res = await db.execute(select(ClotureCaisse).where(ClotureCaisse.id == cloture_id))
+    res = await db.execute(
+        select(ClotureCaisse).where(
+            ClotureCaisse.id == cloture_id,
+            ClotureCaisse.organisation_id == tenant_id,
+        )
+    )
     cloture = res.scalar_one_or_none()
     if cloture is None:
         raise HTTPException(status_code=404, detail="Clôture introuvable")

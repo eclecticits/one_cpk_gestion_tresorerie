@@ -28,6 +28,12 @@ from app.services.mouvements_budgetaires import (
 )
 
 
+#: ORDRE DES VERROUS — règle commune à tous les chemins d'argent : on verrouille
+#: d'abord le poste budgétaire, ensuite la trésorerie (caisse centrale ou compte
+#: bancaire). `sorties_fonds` et `retours_caisse` suivent le même ordre. Deux
+#: chemins qui prennent ces deux verrous dans des ordres opposés s'interbloquent
+#: dès qu'un caissier encaisse pendant qu'un autre décaisse sur le même poste :
+#: PostgreSQL tue alors l'une des deux transactions, et l'opération est perdue.
 PAYMENT_STATUS_ACTIVE = "ACTIF"
 PAYMENT_STATUS_CANCELLED = "ANNULE"
 PAYMENT_COMPTA_NON_APPLICABLE = "NON_APPLICABLE"
@@ -362,14 +368,6 @@ async def record_encaissement_payment(
         encaissement.canal = canal
         encaissement.compte_bancaire_id = compte_bancaire_id
 
-    await _credit_treasury(
-        db,
-        organisation_id=organisation_id,
-        canal=canal,
-        devise=devise,
-        compte_bancaire_id=compte_bancaire_id,
-        montant=montant,
-    )
     # Les articles portent chacun leur poste : un versement se répartit entre
     # eux au prorata. Un encaissement mono-poste — le cas courant — donne une
     # seule part, du montant exact du versement.
@@ -411,6 +409,16 @@ async def record_encaissement_payment(
                 exchange_rate_snapshot=taux_change,
                 created_by=user_id,
             )
+
+    # Trésorerie en dernier : voir ORDRE DES VERROUS en tête de module.
+    await _credit_treasury(
+        db,
+        organisation_id=organisation_id,
+        canal=canal,
+        devise=devise,
+        compte_bancaire_id=compte_bancaire_id,
+        montant=montant,
+    )
 
     integration_mode = await get_accounting_integration_mode(db, organisation_id)
     if integration_mode == "manual":
@@ -529,14 +537,6 @@ async def cancel_encaissement_payment(
         budget_poste_id = encaissement.budget_poste_id
     impact_budgetaire = budget_poste_id is not None
 
-    await _debit_treasury(
-        db,
-        organisation_id=organisation_id,
-        canal=canal,
-        devise=devise,
-        compte_bancaire_id=compte_bancaire_id,
-        montant=montant,
-    )
     if impact_budgetaire:
         cancelled_persisted = await cancel_budget_imputations(
             db,
@@ -552,6 +552,16 @@ async def cancel_encaissement_payment(
                 montant=montant,
                 direction=-1,
             )
+
+    # Trésorerie en dernier : voir ORDRE DES VERROUS en tête de module.
+    await _debit_treasury(
+        db,
+        organisation_id=organisation_id,
+        canal=canal,
+        devise=devise,
+        compte_bancaire_id=compte_bancaire_id,
+        montant=montant,
+    )
 
     await annuler_ecriture_operation(
         db,
