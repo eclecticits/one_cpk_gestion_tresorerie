@@ -67,7 +67,7 @@ const personName = (u?: { prenom?: string | null; nom?: string | null; email?: s
 
 /**
  * Bon d'ordre de sortie directe programmée : document imprimable destiné à
- * la signature physique (programmateur, caisse, bénéficiaire), à l'image du
+ * la signature physique (programmateur, exécutant, bénéficiaire), à l'image du
  * bon produit pour une réquisition classique.
  */
 export const generateOrdreDirectPDF = async (
@@ -89,6 +89,11 @@ export const generateOrdreDirectPDF = async (
   const devise = String(ordre?.devise || 'USD').toUpperCase()
   const montant = toNumber(ordre?.montant || 0)
   const statutRaw = String(ordre?.statut || 'AUTORISE').toUpperCase()
+  // Un ordre direct s'exécute à la caisse OU à la banque (`ordres_decaissement.canal`).
+  // Le bon nomme donc son exécutant d'après le canal, au lieu de supposer la caisse.
+  const estCanalBanque = String(ordre?.canal || 'CAISSE').toUpperCase() === 'BANQUE'
+  const executantLabel = estCanalBanque ? 'la banque' : 'la caisse'
+  const executantNom = estCanalBanque ? 'BANQUE' : 'CAISSE'
   const dateProg = ordre?.autorise_le ? new Date(ordre.autorise_le) : new Date()
   const programmeur = personName(ordre?.autorise_par_user) || '—'
   const payeur = personName(ordre?.paye_par_user)
@@ -154,8 +159,8 @@ export const generateOrdreDirectPDF = async (
   doc.setTextColor(15, 23, 42)
   doc.text('BON DE SORTIE DIRECTE', pageWidth / 2, 33, { align: 'center' })
 
-  // La nature du bon se lit au même endroit que son statut : la caisse doit
-  // savoir d'un coup d'œil si elle paie une dépense ponctuelle ou une collation,
+  // La nature du bon se lit au même endroit que son statut : l'exécutant doit
+  // savoir d'un coup d'œil s'il paie une dépense ponctuelle ou une collation,
   // qui ne répond pas aux mêmes plafonds et ne se contrôle pas de la même façon.
   const estCollation = String((ordre as any)?.type_sortie || '').toUpperCase() === 'COLLATION'
   const natureLabel = estCollation ? 'COLLATION DE RÉUNION' : 'SORTIE DIRECTE SIMPLE'
@@ -169,7 +174,11 @@ export const generateOrdreDirectPDF = async (
   doc.text(natureLabel, margin + natureW / 2, 36, { align: 'center' })
 
   const statusLabel =
-    statutRaw === 'PAYE' ? 'PAYÉ PAR LA CAISSE' : statutRaw === 'ANNULE' ? 'ANNULÉ' : 'EN ATTENTE CAISSE'
+    statutRaw === 'PAYE'
+      ? `PAYÉ PAR LA ${executantNom}`
+      : statutRaw === 'ANNULE'
+      ? 'ANNULÉ'
+      : `EN ATTENTE ${executantNom}`
   const statusColor =
     statutRaw === 'PAYE' ? [22, 163, 74] : statutRaw === 'ANNULE' ? [220, 38, 38] : [245, 158, 11]
   const badgeW = 48
@@ -193,7 +202,7 @@ export const generateOrdreDirectPDF = async (
       ? `Collation de réunion : ${toNumber((ordre as any)?.participants || 0)} participants `
         + `x ${formatAmount(toNumber((ordre as any)?.montant_par_personne || 0))} ${devise} — `
         + `plafonds par personne, par réunion et sur 24 h contrôlés à la programmation.`
-      : 'Dépense plafonnée (équivalent 100 USD) définie en amont — la caisse exécute sans modification.',
+      : `Dépense plafonnée (équivalent 100 USD) définie en amont — ${executantLabel} exécute sans modification.`,
     margin,
     42
   )
@@ -257,7 +266,7 @@ export const generateOrdreDirectPDF = async (
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7.5)
     doc.setTextColor(labelColor[0], labelColor[1], labelColor[2])
-    doc.text('Réf. sortie de caisse', rightX, infoY + 30)
+    doc.text('Réf. sortie de fonds', rightX, infoY + 30)
     doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
     doc.setFontSize(8.5)
     doc.text(String(ordre?.sortie_reference_numero || '-'), rightX + 30, infoY + 30)
@@ -324,7 +333,7 @@ export const generateOrdreDirectPDF = async (
   const sigW = (pageWidth - margin * 2 - sigGap * 2) / 3
   const sigH = 18
   const sigY = pageHeight - 32
-  const sigLabels = ['PROGRAMMÉ PAR (AUTORISATION)', 'LA CAISSE (EXÉCUTION)', 'BÉNÉFICIAIRE']
+  const sigLabels = ['PROGRAMMÉ PAR (AUTORISATION)', `LA ${executantNom} (EXÉCUTION)`, 'BÉNÉFICIAIRE']
   const sigNames = [
     programmeur,
     payeur || '',

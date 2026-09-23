@@ -229,7 +229,7 @@ export const generateSortieFondsPDF = async (
     else circuitSteps.push(examStep)
   }
   if (autorisateurTrancheName) circuitSteps.push({ label: 'Autorisation progressive', name: autorisateurTrancheName })
-  if (etablisseurName !== '—') circuitSteps.push({ label: 'Exécuté (caisse)', name: etablisseurName })
+  if (etablisseurName !== '—') circuitSteps.push({ label: 'Exécuté', name: etablisseurName })
 
   // Signature 3 = signataire PARAMÉTRABLE (ex. Secrétaire Exécutif / Comptable) :
   // libellé et nom viennent des réglages d'impression. L'autorisateur de la tranche
@@ -399,7 +399,7 @@ export const generateSortieFondsPDF = async (
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(15)
   setText(INK)
-  doc.text('BON DE SORTIE DE CAISSE', margin, 41)
+  doc.text('BON DE SORTIE', margin, 41)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
   setText(MUTED)
@@ -606,7 +606,7 @@ export const generateSortieFondsPDF = async (
     doc.text(tauxLabel, wordsX, amountY + amountH - 2.5)
   }
 
-  // --- RETOUR EN CAISSE (affiché uniquement si des fonds ont été rendus) ---
+  // --- RETOUR EN TRÉSORERIE (affiché uniquement si des fonds ont été rendus) ---
   let retourExtra = 0
   if (totalRetourne > 0) {
     const rbY = amountY + amountH + 3
@@ -620,7 +620,7 @@ export const generateSortieFondsPDF = async (
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(7)
     setText(MUTED)
-    doc.text('MONTANT RETOURNÉ EN CAISSE', margin + 9, rbY + 5.5)
+    doc.text('MONTANT RETOURNÉ EN TRÉSORERIE', margin + 9, rbY + 5.5)
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(12)
     setText(INK)
@@ -811,7 +811,7 @@ export const generateSortieFondsPDF = async (
   doc.setFontSize(7.5)
   doc.setTextColor(90)
   doc.text(format(new Date(), 'dd/MM/yyyy HH:mm'), margin, pageHeight - 6)
-  doc.text(orgName ? `Sortie de caisse - ${orgName}` : 'Sortie de caisse', pageWidth / 2, pageHeight - 6, { align: 'center' })
+  doc.text(orgName ? `Bon de sortie - ${orgName}` : 'Bon de sortie', pageWidth / 2, pageHeight - 6, { align: 'center' })
   doc.text('Page 1/1', pageWidth - margin, pageHeight - 6, { align: 'right' })
 
   if (output === 'blob') {
