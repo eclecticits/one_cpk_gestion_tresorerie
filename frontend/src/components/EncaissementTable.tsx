@@ -4,7 +4,7 @@ import { format } from 'date-fns'
 import { MoreVertical, Wallet, Printer, Ban, Eye, Target } from 'lucide-react'
 import { Encaissement } from '../types'
 import { toNumber } from '../utils/amount'
-import { getTypeClientLabel } from '../utils/encaissementHelpers'
+import { actionImprimerDocument, getTypeClientLabel } from '../utils/encaissementHelpers'
 import { estAffectable } from '../api/mouvementsHorsBudget'
 import NatureMouvementBadge from './NatureMouvementBadge'
 import styles from '../pages/Encaissements.module.css'
@@ -276,7 +276,7 @@ export default function EncaissementTable({
                           onClick={() => { setOpenMenuId(null); onPrintReceipt(enc) }}
                         >
                           <Printer size={15} />
-                          <span>Imprimer la note de débit</span>
+                          <span>{actionImprimerDocument(enc)}</span>
                         </button>
                         {canCancelOperation && !enc.is_deleted && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                           <button
@@ -465,7 +465,7 @@ export default function EncaissementTable({
                     onPrintReceipt(enc)
                   }}
                   className={styles.printBtn}
-                  title={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'Imprimer la note de débit annulée' : 'Imprimer la note de débit'}
+                  title={actionImprimerDocument(enc, { annule: (enc.statut_operation || 'ACTIVE') === 'ANNULEE' })}
                 >
                   <Printer size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Imprimer
                 </button>

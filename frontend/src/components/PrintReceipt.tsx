@@ -4,7 +4,13 @@ import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { getPrintSettings, PrintSettings } from '../api/settings'
 import { numberToWords } from '../utils/numberToWords'
-import { getTypeClientLabel } from '../utils/encaissementHelpers'
+import {
+  getTypeClientLabel,
+  libelleDateDocument,
+  libelleDocumentAnnule,
+  libelleDocumentEncaissement,
+  titreDocumentEncaissement,
+} from '../utils/encaissementHelpers'
 import { Money, TypeClient } from '../types'
 import { toNumber } from '../utils/amount'
 import { buildUploadUrl } from '../utils/uploads'
@@ -248,9 +254,9 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
     : [{ libelle: encaissement.libelle || 'Encaissement', quantite: 1, prix_unitaire: totalMontant, montant: totalMontant }]
   const devisePercu = (encaissement.devise_perception || 'USD').toUpperCase()
   const docNumero = isProforma ? encaissement.numero_proforma : encaissement.numero_recu
-  const documentTitle = isProforma ? 'PRO FORMA DE NOTE DE DÉBIT' : 'NOTE DE DÉBIT'
+  const documentTitle = titreDocumentEncaissement(encaissement)
   const datePaiement = encaissement.date_paiement || encaissement.date_encaissement
-  const dateLabel = isProforma ? "Date d'émission" : 'Date de paiement'
+  const dateLabel = libelleDateDocument(encaissement)
   const isCancelled = (encaissement.statut_operation || 'ACTIVE') === 'ANNULEE'
   const operationAuthor = formatUserDisplayName(encaissement.created_by_user, encaissement.created_by)
   const cancellationAuthor = formatUserDisplayName(encaissement.annulee_par_user, encaissement.annulee_par_id)
@@ -281,7 +287,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
     infoRight.push(['Devise perçue', `${montantPercu.toFixed(0)} CDF`])
   }
   if (isCancelled) {
-    infoRight.push(['Statut opération', 'REÇU ANNULÉ'])
+    infoRight.push(['Statut opération', libelleDocumentAnnule(encaissement)])
     if (encaissement.annulee_le) {
       infoRight.push(['Date d’annulation', format(new Date(encaissement.annulee_le), 'dd MMMM yyyy HH:mm', { locale: fr })])
     }
@@ -398,7 +404,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               <h2>{documentTitle}</h2>
               <div className={styles.receiptNumber}>N° {docNumero || '—'}</div>
               {isProforma && <div className={styles.proformaHint}>Document non comptable</div>}
-              {isCancelled && <div className={styles.cancelledBanner}>REÇU ANNULÉ</div>}
+              {isCancelled && <div className={styles.cancelledBanner}>{libelleDocumentAnnule(encaissement)}</div>}
             </div>
 
             <table className={styles.infoTable}>
@@ -517,9 +523,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
                 {format(new Date(), 'dd/MM/yyyy HH:mm')}
               </div>
               <div className={styles.printFooterCenter}>
-                {isProforma
-                  ? `Pro forma de note de débit${settings.organization_name ? ` - ${settings.organization_name}` : ''}`
-                  : `Note de débit${settings.organization_name ? ` - ${settings.organization_name}` : ''}`}
+                {`${libelleDocumentEncaissement(encaissement)}${settings.organization_name ? ` - ${settings.organization_name}` : ''}`}
               </div>
               <div className={styles.printFooterRight}>
                 Page 1/1

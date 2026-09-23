@@ -7,7 +7,11 @@ import { numberToWords } from './numberToWords'
 import { formatAmount, toNumber } from './amount'
 import { normalizeBudgetCode } from './budgetCode'
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
-import { getTypeClientLabel } from './encaissementHelpers'
+import {
+  getTypeClientLabel,
+  libelleDateDocument,
+  titreDocumentEncaissement,
+} from './encaissementHelpers'
 import { getTenantRequestHint } from './tenant'
 import { buildUploadUrl } from './uploads'
 
@@ -272,7 +276,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const stampDataUrl = settings?.show_footer_signature === false ? null : await getStampDataUrl()
   let receiptQrDataUrl: string | null = null
   const isProforma = !!encaissement?.est_proforma
-  const documentTitle = isProforma ? 'PRO FORMA DE NOTE DE DÉBIT' : 'NOTE DE DÉBIT'
+  const documentTitle = titreDocumentEncaissement(encaissement)
   const marginLeft = 0
   const marginRight = 0
   const marginTop = 0
@@ -416,7 +420,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     doc.setTextColor(0)
   }
 
-  const dateLabel = isProforma ? "Date d'émission" : 'Date de paiement'
+  const dateLabel = libelleDateDocument(encaissement)
   const dateValue = encaissement.date_paiement || encaissement.date_encaissement
   const infoBody: Array<[string, string]> = [
     [dateLabel, format(new Date(dateValue), 'dd MMMM yyyy', { locale: fr })],
