@@ -28,6 +28,7 @@ frontend/node_modules/
 *.dump
 uploads/
 app/uploads/
+backups/
 tests/
 diag.txt
 uvicorn.log
