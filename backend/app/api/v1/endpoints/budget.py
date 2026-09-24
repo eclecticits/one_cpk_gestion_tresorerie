@@ -1137,7 +1137,15 @@ async def initialize_next_exercise(
         )
     )
     report_line = report_res.scalar_one_or_none()
-    if report_line:
+    # « I » n'est une ligne de report que dans un plan qui la réserve à cet
+    # usage. Là où « I » est la racine des recettes — I.1, I.2… en dépendent —,
+    # la réécrire renommait toutes les recettes de l'année en « Report N-1 » et
+    # remplaçait leur total par le reliquat des dépenses. On ne touche alors à
+    # rien : mieux vaut pas de ligne de report qu'une racine détournée.
+    racine_des_recettes = report_line is not None and any(
+        item.parent_id == report_line.id for item in tgt_lines
+    )
+    if report_line is not None and not racine_des_recettes:
         report_line.libelle = "Report N-1"
         report_line.parent_id = None
         report_line.parent_code = None
@@ -1145,7 +1153,7 @@ async def initialize_next_exercise(
         report_line.montant_engage = Decimal("0")
         report_line.montant_paye = Decimal("0")
         report_line.active = True
-    else:
+    elif report_line is None:
         db.add(
             BudgetPoste(
                 organisation_id=tenant_id,
