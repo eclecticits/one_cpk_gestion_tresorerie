@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.budget import BudgetPoste
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
-from app.models.encaissement import Encaissement, EncaissementArticle
+from app.models.encaissement import Encaissement
+from app.models.mouvement_budget_imputation import MouvementBudgetImputation
 from app.models.payment_history import PaymentHistory
 from app.modules.comptabilite.services.generation_service import (
     annuler_ecriture_operation,
@@ -26,6 +27,7 @@ from app.services.mouvements_budgetaires import (
     create_budget_imputation,
     encaissement_a_des_imputations,
 )
+from app.services.report_creances import lignes_de_recouvrement, verifier_postes_ouverts
 
 
 #: ORDRE DES VERROUS — règle commune à tous les chemins d'argent : on verrouille
@@ -334,6 +336,30 @@ async def record_encaissement_payment(
         else budget_poste_id is not None
     )
 
+    # Les articles portent chacun leur poste : un versement se répartit entre
+    # eux au prorata. Un encaissement mono-poste — le cas courant — donne une
+    # seule part, du montant exact du versement. Une note reportée à la clôture
+    # se recouvre sur ses postes d'arriérés, dans la proportion reportée.
+    repartition: list[tuple[int, Decimal]] = []
+    if impact_budgetaire:
+        lignes, poste_par_defaut = await lignes_de_recouvrement(
+            db, organisation_id=organisation_id, encaissement=encaissement
+        )
+        repartition = repartir(lignes, montant, poste_par_defaut=poste_par_defaut)
+        await verifier_postes_ouverts(
+            db,
+            organisation_id=organisation_id,
+            poste_ids={poste_id for poste_id, _part in repartition},
+            message=(
+                "L'exercice {annee} est clôturé et le reste dû de cette note (poste {poste}) n'a pas "
+                "été reporté en arriérés. Reportez les créances de {annee} avant d'encaisser."
+            ),
+        )
+        if repartition and poste_par_defaut is None:
+            # Note reportée : le paiement retient le poste d'arriérés qui reçoit
+            # la plus grosse part, et non le poste d'origine, figé avec son exercice.
+            budget_poste_id = max(repartition, key=lambda item: item[1])[0]
+
     payment = PaymentHistory(
         organisation_id=organisation_id,
         encaissement_id=encaissement.id,
@@ -368,26 +394,6 @@ async def record_encaissement_payment(
         encaissement.canal = canal
         encaissement.compte_bancaire_id = compte_bancaire_id
 
-    # Les articles portent chacun leur poste : un versement se répartit entre
-    # eux au prorata. Un encaissement mono-poste — le cas courant — donne une
-    # seule part, du montant exact du versement.
-    articles = (
-        await db.execute(
-            select(EncaissementArticle.budget_poste_id, EncaissementArticle.montant).where(
-                EncaissementArticle.encaissement_id == encaissement.id,
-                EncaissementArticle.organisation_id == organisation_id,
-            )
-        )
-    ).all()
-    repartition = (
-        repartir(
-            [(ligne.budget_poste_id, Decimal(str(ligne.montant or 0))) for ligne in articles],
-            montant,
-            poste_par_defaut=budget_poste_id,
-        )
-        if impact_budgetaire
-        else []
-    )
     if impact_budgetaire:
         for poste_id, part in repartition:
             await _adjust_budget(
@@ -538,6 +544,26 @@ async def cancel_encaissement_payment(
     impact_budgetaire = budget_poste_id is not None
 
     if impact_budgetaire:
+        postes_imputes = set(
+            (
+                await db.execute(
+                    select(MouvementBudgetImputation.budget_poste_id).where(
+                        MouvementBudgetImputation.organisation_id == organisation_id,
+                        MouvementBudgetImputation.payment_history_id == payment.id,
+                        MouvementBudgetImputation.statut == "ACTIVE",
+                    )
+                )
+            ).scalars().all()
+        ) or {budget_poste_id}
+        await verifier_postes_ouverts(
+            db,
+            organisation_id=organisation_id,
+            poste_ids=postes_imputes,
+            message=(
+                "Ce paiement est imputé sur l'exercice {annee}, clôturé (poste {poste}) : "
+                "rouvrez l'exercice {annee} pour l'annuler."
+            ),
+        )
         cancelled_persisted = await cancel_budget_imputations(
             db,
             organisation_id=organisation_id,

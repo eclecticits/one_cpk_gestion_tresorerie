@@ -11,6 +11,9 @@ export interface BudgetPosteSummary {
    *  ignorée de tous les agrégats (report d'exercice antérieur, ligne pour
    *  mémoire). L'exclusion couvre toute la branche du poste. */
   inclure_dans_calculs?: boolean
+  /** Code du poste de l'exercice suivant qui reprend, à la clôture, ce qui
+   *  reste dû sur ce poste (« Cotisation » → « Arriérés de cotisation »). */
+  code_poste_arrieres?: string | null
   montant_prevu: string | number
   montant_engage: string | number
   montant_paye: string | number

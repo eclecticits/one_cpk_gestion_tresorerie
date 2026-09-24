@@ -65,6 +65,11 @@ export interface NoteImpayee {
   tranche: TrancheAnciennete
   statut_paiement: string
   relance_count: number
+  /**
+   * Postes d'arriérés sur lesquels la note se recouvre depuis la clôture de
+   * son exercice. Vide pour une note de l'exercice en cours.
+   */
+  arrieres?: { code: string; libelle: string; annee: number; montant: string }[]
 }
 
 export interface NotesImpayees {

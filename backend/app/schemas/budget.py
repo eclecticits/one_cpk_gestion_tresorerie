@@ -21,6 +21,9 @@ class BudgetPosteSummary(DecimalBaseModel):
     # Ligne comptée dans les totaux et la synthèse. Faux = affichée partout,
     # ignorée de tous les agrégats (cf. BudgetPoste.inclure_dans_calculs).
     inclure_dans_calculs: bool = True
+    #: Code du poste de l'exercice suivant qui reprend, à la clôture, ce qui
+    #: reste dû sur celui-ci (cf. BudgetPoste.code_poste_arrieres).
+    code_poste_arrieres: str | None = None
     montant_prevu: Decimal = Decimal("0")
     montant_engage: Decimal = Decimal("0")
     montant_paye: Decimal = Decimal("0")
@@ -105,7 +108,13 @@ class BudgetPosteCreate(DecimalBaseModel):
     active: bool = True
     is_global: bool = False
     inclure_dans_calculs: bool = True
+    code_poste_arrieres: str | None = None
     montant_prevu: Decimal = Decimal("0")
+
+
+class BudgetPosteArrieresUpdate(DecimalBaseModel):
+    #: Vide ou absent : le poste n'a plus de poste d'arriérés désigné.
+    code_poste_arrieres: str | None = None
 
 
 class BudgetPosteUpdate(DecimalBaseModel):

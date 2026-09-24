@@ -1,8 +1,8 @@
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { lazyWithRetry } from '../utils/lazyWithRetry'
 import { Check, ChevronDown, Columns3, Download, FileText, Globe, MessageSquare, MoreVertical, Plus, Table, X } from 'lucide-react'
-import { closeBudgetExercise, createBudgetCommentaire, updateBudgetCommentaire, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetCommentaireGeneral, getBudgetCommentaires, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, saveBudgetCommentaireGeneral, updateBudgetPoste } from '../api/budget'
-import type { BudgetCommentaire, BudgetCommentaireGeneral } from '../api/budget'
+import { closeBudgetExercise, createBudgetCommentaire, updateBudgetCommentaire, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetCommentaireGeneral, getBudgetCommentaires, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, getReportsCreances, initializeBudgetExercise, reopenBudgetExercise, reporterCreancesExercice, saveBudgetCommentaireGeneral, setPosteArrieres, updateBudgetPoste } from '../api/budget'
+import type { BudgetCommentaire, BudgetCommentaireGeneral, ReportCreancesRefus, ReportCreancesResult, ReportsCreancesPoste } from '../api/budget'
 import { getServices } from '../api/services'
 import { getPrintSettings } from '../api/settings'
 import styles from './Budget.module.css'
@@ -46,6 +46,24 @@ const ImportBudgetPostes = lazyWithRetry(() => import('../components/ImportBudge
 
 type BudgetTypeFilter = 'TOUT' | 'DEPENSE' | 'RECETTE'
 type BudgetPosteNode = BudgetPosteTree
+
+/** Le refus de clôture arrive en objet — un message et les postes à régler —
+ *  que React ne sait pas afficher tel quel. Les autres refus restent du texte. */
+function detailErreur(err: any, repli: string): string {
+  const detail = err?.payload?.detail
+  if (detail && typeof detail === 'object' && 'message' in detail) {
+    const refus = detail as ReportCreancesRefus
+    const postes = (refus.postes || []).map((p) => `${p.code} ${p.libelle} : ${p.raison}`)
+    return postes.length ? `${refus.message} ${postes.join(' ; ')}.` : refus.message
+  }
+  return (typeof detail === 'string' && detail) || err?.message || repli
+}
+
+function resumeReport(report?: ReportCreancesResult | null): string {
+  if (!report || !report.notes_reportees) return 'Aucune note impayée à reporter.'
+  const postes = report.postes.map((p) => `${p.code} ${p.libelle} : ${formatAmount(p.montant)}`).join(' ; ')
+  return `${report.notes_reportees} note(s) impayée(s) passée(s) en arriérés sur ${report.exercice_cible} (${postes}).`
+}
 
 // Part du crédit déjà consommée par un poste. Une seule définition du
 // disponible dans toute l'application : celle que le contrôle de saisie
@@ -161,6 +179,14 @@ export default function Budget() {
   const [collapsedIds, setCollapsedIds] = useState<Set<number>>(() => new Set())
   const [closing, setClosing] = useState(false)
   const [reopening, setReopening] = useState(false)
+  const [reportingCreances, setReportingCreances] = useState(false)
+  const [arrieresLine, setArrieresLine] = useState<BudgetPosteNode | null>(null)
+  const [arrieresCode, setArrieresCode] = useState('')
+  const [arrieresSaving, setArrieresSaving] = useState(false)
+  // Créances passées en arriérés, par poste : celles que l'exercice a reçues de
+  // N-1 (sur ses postes d'arriérés) et celles qu'il a reportées sur N+1.
+  const [reportsRecus, setReportsRecus] = useState<Record<number, ReportsCreancesPoste>>({})
+  const [reportsEmis, setReportsEmis] = useState<Record<number, ReportsCreancesPoste>>({})
   const [initOpen, setInitOpen] = useState(false)
   const [initTargetYear, setInitTargetYear] = useState<number | null>(null)
   const [initCoefficient, setInitCoefficient] = useState(0)
@@ -373,6 +399,27 @@ export default function Budget() {
   useEffect(() => {
     loadBudget()
   }, [loadBudget])
+
+  const loadReportsCreances = useCallback(async () => {
+    if (!selectedYear) {
+      setReportsRecus({})
+      setReportsEmis({})
+      return
+    }
+    try {
+      const res = await getReportsCreances(selectedYear)
+      setReportsRecus(Object.fromEntries(res.recus.map((p) => [p.poste_id, p])))
+      setReportsEmis(Object.fromEntries(res.reportes.map((p) => [p.poste_id, p])))
+    } catch {
+      // Information d'appoint : le budget reste lisible sans elle.
+      setReportsRecus({})
+      setReportsEmis({})
+    }
+  }, [selectedYear])
+
+  useEffect(() => {
+    loadReportsCreances()
+  }, [loadReportsCreances])
 
   const loadExercises = useCallback(async () => {
     try {
@@ -881,7 +928,7 @@ export default function Budget() {
     if (!selectedYear || isClosed) return
     const confirmed = await confirm({
       title: `Clôturer l’exercice ${selectedYear} ?`,
-      description: 'Cette action bloque toutes les modifications pour cette année.',
+      description: `Cette action bloque toutes les modifications pour cette année. Les notes restées impayées passent en arriérés sur ${selectedYear + 1}.`,
       confirmText: 'Clôturer',
       variant: 'danger',
     })
@@ -891,9 +938,13 @@ export default function Budget() {
       const res = await closeBudgetExercise(selectedYear)
       setStatut(res.statut || 'Clôturé')
       await loadBudget()
-      notifySuccess('Exercice clôturé', `L’année ${selectedYear} est maintenant en lecture seule.`)
+      await loadReportsCreances()
+      notifySuccess(
+        'Exercice clôturé',
+        `L’année ${selectedYear} est maintenant en lecture seule. ${resumeReport(res.report)}`,
+      )
     } catch (err: any) {
-      const detail = err?.payload?.detail || err?.message || 'Impossible de clôturer l’exercice.'
+      const detail = detailErreur(err, 'Impossible de clôturer l’exercice.')
       setError(detail)
       notifyError('Clôture impossible', detail)
     } finally {
@@ -914,13 +965,59 @@ export default function Budget() {
       const res = await reopenBudgetExercise(selectedYear)
       setStatut(res.statut || 'Brouillon')
       await loadBudget()
+      await loadReportsCreances()
       notifySuccess('Exercice déverrouillé', `L’année ${selectedYear} est de nouveau modifiable.`)
     } catch (err: any) {
-      const detail = err?.payload?.detail || err?.message || "Impossible de déverrouiller l’exercice."
+      const detail = detailErreur(err, "Impossible de déverrouiller l’exercice.")
       setError(detail)
       notifyError('Déverrouillage impossible', detail)
     } finally {
       setReopening(false)
+    }
+  }
+
+  // Rattrapage des exercices clôturés avant le report : leurs notes impayées
+  // ne s'encaissent plus tant qu'elles ne sont pas passées en arriérés.
+  const handleReporterCreances = async () => {
+    if (!selectedYear || !isClosed) return
+    const confirmed = await confirm({
+      title: `Reporter les créances de ${selectedYear} ?`,
+      description: `Les notes restées impayées passent en arriérés sur ${selectedYear + 1}. Une note déjà reportée ne l’est pas deux fois.`,
+      confirmText: 'Reporter',
+    })
+    if (!confirmed) return
+    try {
+      setReportingCreances(true)
+      const res = await reporterCreancesExercice(selectedYear)
+      await loadReportsCreances()
+      notifySuccess('Créances reportées', resumeReport(res))
+    } catch (err: any) {
+      const detail = detailErreur(err, 'Impossible de reporter les créances.')
+      setError(detail)
+      notifyError('Report impossible', detail)
+    } finally {
+      setReportingCreances(false)
+    }
+  }
+
+  const handleOpenArrieres = (line: BudgetPosteNode) => {
+    setOpenMenuId(null)
+    setArrieresLine(line)
+    setArrieresCode(line.code_poste_arrieres || '')
+  }
+
+  const handleSaveArrieres = async () => {
+    if (!arrieresLine) return
+    const code = arrieresCode.trim() || null
+    try {
+      setArrieresSaving(true)
+      await setPosteArrieres(arrieresLine.id, code)
+      updateLocalLine(arrieresLine.id, { code_poste_arrieres: code })
+      setArrieresLine(null)
+    } catch (err: any) {
+      notifyError('Enregistrement impossible', detailErreur(err, 'Impossible d’enregistrer le poste d’arriérés.'))
+    } finally {
+      setArrieresSaving(false)
     }
   }
 
@@ -1252,6 +1349,25 @@ export default function Budget() {
                     Hors calcul
                   </span>
                 )}
+                {/* Créances d'un exercice clos : ce que le poste d'arriérés a
+                    reçu à recouvrer, ce que le poste d'origine a transmis. Pour
+                    mémoire, à côté du prévu — jamais additionné au réalisé. */}
+                {reportsRecus[line.id] && (
+                  <span
+                    className={styles.arrieresBadge}
+                    title={`${reportsRecus[line.id].notes} note(s) impayée(s) reportée(s) à la clôture de ${selectedYear ? selectedYear - 1 : ''}, à recouvrer sur ce poste`}
+                  >
+                    Reçu de {selectedYear ? selectedYear - 1 : ''} : {formatAmount(reportsRecus[line.id].montant)}
+                  </span>
+                )}
+                {reportsEmis[line.id] && (
+                  <span
+                    className={styles.arrieresBadge}
+                    title={`${reportsEmis[line.id].notes} note(s) restée(s) impayée(s) à la clôture, passée(s) en arriérés sur ${selectedYear ? selectedYear + 1 : ''}`}
+                  >
+                    Reporté sur {selectedYear ? selectedYear + 1 : ''} : {formatAmount(reportsEmis[line.id].montant)}
+                  </span>
+                )}
                 {/* Pastille de commentaires : pas de douzième colonne, la table
                     en compte déjà onze. Le compteur reste visible même à zéro au
                     survol, sinon on ne découvre jamais la fonctionnalité. */}
@@ -1473,6 +1589,19 @@ export default function Budget() {
                   ? 'Réintégrer aux calculs'
                   : 'Exclure des calculs'}
               </button>
+              {/* Réglage de clôture, pas une modification du poste : il reste
+                  ouvert sur un exercice clôturé, dont on rattrape les reports. */}
+              {(line.type || '').toUpperCase() === 'RECETTE' && (
+                <button
+                  className={styles.menuItem}
+                  onClick={() => handleOpenArrieres(line)}
+                  title="Poste de l’exercice suivant qui reprend, à la clôture, ce qui reste dû sur celui-ci"
+                >
+                  {line.code_poste_arrieres
+                    ? `Arriérés : ${line.code_poste_arrieres}`
+                    : 'Désigner le poste d’arriérés'}
+                </button>
+              )}
               <button
                 className={styles.menuItemDanger}
                 onClick={() => handleDelete(line)}
@@ -1785,6 +1914,18 @@ export default function Budget() {
                           disabled={!selectedYear || !isClosed || reopening}
                         >
                           {reopening ? 'Déverrouillage…' : 'Déverrouiller'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            closeMenus()
+                            handleReporterCreances()
+                          }}
+                          disabled={!selectedYear || !isClosed || reportingCreances}
+                          title="Pour un exercice clôturé avant le report automatique des créances"
+                        >
+                          {reportingCreances ? 'Report…' : 'Reporter les créances en arriérés'}
                         </button>
                         <button
                           type="button"
@@ -2275,6 +2416,48 @@ export default function Budget() {
               </button>
               <button className={styles.primaryAction} onClick={handleInitialize} disabled={initLoading}>
                 {initLoading ? 'Initialisation...' : 'Créer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {arrieresLine && (
+        <div className={styles.modal} onClick={() => !arrieresSaving && setArrieresLine(null)}>
+          <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <h3>Poste d’arriérés</h3>
+            <p>
+              À la clôture, ce qui reste dû sur <strong>{arrieresLine.code} {arrieresLine.libelle}</strong> passe
+              sur ce poste de l’exercice suivant. Un poste d’arriérés se désigne lui-même.
+            </p>
+            <div className={styles.formGrid}>
+              <label className={styles.fieldNarrow}>
+                Code du poste
+                <input
+                  list="budget-codes-recette"
+                  value={arrieresCode}
+                  onChange={(e) => setArrieresCode(e.target.value)}
+                  placeholder="Aucun"
+                  disabled={arrieresSaving}
+                  autoFocus
+                />
+                <datalist id="budget-codes-recette">
+                  {flatLines
+                    .filter((l) => (l.type || '').toUpperCase() === 'RECETTE')
+                    .map((l) => (
+                      <option key={l.id} value={l.code}>
+                        {l.libelle}
+                      </option>
+                    ))}
+                </datalist>
+              </label>
+            </div>
+            <div className={styles.modalActions}>
+              <button className={styles.secondaryAction} onClick={() => setArrieresLine(null)} disabled={arrieresSaving}>
+                Annuler
+              </button>
+              <button className={styles.primaryAction} onClick={handleSaveArrieres} disabled={arrieresSaving}>
+                {arrieresSaving ? 'Enregistrement...' : 'Enregistrer'}
               </button>
             </div>
           </div>

@@ -80,12 +80,57 @@ export async function importBudgetPostes(input: {
   return apiRequest('POST', '/budget/postes/import', input)
 }
 
-export async function closeBudgetExercise(annee: number): Promise<{ ok: boolean; statut?: string }> {
+/** Ce qu'une clôture a reporté en arriérés sur l'exercice suivant. */
+export interface ReportCreancesResult {
+  notes_reportees: number
+  montant_reporte: string
+  exercice_cible?: number
+  postes: { poste_id: number; code: string; libelle: string; montant: string }[]
+}
+
+/** Refus de clôture : des notes impayées n'ont nulle part où être reportées. */
+export interface ReportCreancesRefus {
+  code: 'POSTE_ARRIERES_MANQUANT' | 'EXERCICE_SUIVANT_ABSENT'
+  message: string
+  postes: { poste_id: number; code: string; libelle: string; code_poste_arrieres: string | null; reste_du: string; raison: string }[]
+}
+
+export async function closeBudgetExercise(
+  annee: number,
+): Promise<{ ok: boolean; statut?: string; report?: ReportCreancesResult | null }> {
   return apiRequest('POST', `/budget/exercices/${annee}/cloture`)
 }
 
-export async function reopenBudgetExercise(annee: number): Promise<{ ok: boolean; statut?: string }> {
+export async function reopenBudgetExercise(
+  annee: number,
+): Promise<{ ok: boolean; statut?: string; reports_annules?: number }> {
   return apiRequest('POST', `/budget/exercices/${annee}/ouvrir`)
+}
+
+/** Rattrapage : reporte les notes impayées d'un exercice clôturé avant que le
+ *  report n'existe. Se rejoue sans double report. */
+export async function reporterCreancesExercice(annee: number): Promise<ReportCreancesResult> {
+  return apiRequest('POST', `/budget/exercices/${annee}/reporter-creances`)
+}
+
+export interface ReportsCreancesPoste {
+  poste_id: number
+  code: string
+  libelle: string
+  montant: string
+  notes: number
+}
+
+/** Par poste : ce que l'exercice a reporté en arriérés, et ce qu'il en a reçu. */
+export async function getReportsCreances(
+  annee: number,
+): Promise<{ annee: number; reportes: ReportsCreancesPoste[]; recus: ReportsCreancesPoste[] }> {
+  return apiRequest('GET', `/budget/exercices/${annee}/reports-creances`)
+}
+
+/** Désigne le poste de l'exercice suivant qui reprend ce qui reste dû sur ce poste. */
+export async function setPosteArrieres(id: number, codePosteArrieres: string | null): Promise<BudgetPosteSummary> {
+  return apiRequest('PUT', `/budget/postes/${id}/poste-arrieres`, { code_poste_arrieres: codePosteArrieres })
 }
 
 export async function getBudgetSummary(params?: { annee?: number; service_id?: number | null }): Promise<{

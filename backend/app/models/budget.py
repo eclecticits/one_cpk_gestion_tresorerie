@@ -95,6 +95,11 @@ class BudgetPoste(Base):
     inclure_dans_calculs: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )
+    # Code du poste de l'exercice suivant qui reprend, à la clôture, ce qui
+    # reste dû sur ce poste (« Cotisation » → « Arriérés de cotisation »). Un
+    # code et non un id : les postes sont recréés à chaque exercice, leurs codes
+    # restent. Un poste d'arriérés pointe sur lui-même. Voir ReportCreance.
+    code_poste_arrieres: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     montant_prevu: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     montant_engage: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)

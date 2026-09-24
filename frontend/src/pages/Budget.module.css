@@ -1381,6 +1381,19 @@
   white-space: nowrap;
 }
 
+/* Créances reportées d'un exercice clos : information, pas alerte. */
+.arrieresBadge {
+  margin-left: 8px;
+  background: #e0f2fe;
+  color: #075985;
+  border: 1px solid #7dd3fc;
+  font-size: 0.7rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .rowHorsCalcul td {
   background-image: repeating-linear-gradient(
     135deg,

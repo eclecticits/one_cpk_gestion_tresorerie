@@ -36,10 +36,17 @@ from app.services.budget_execution import (
     valider_periode_exercice,
 )
 from app.services.budget_engagement import ecarts_engagement, resynchroniser_engagements
+from app.services.audit_service import log_action
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
+from app.services.report_creances import (
+    annuler_reports_exercice,
+    reporter_creances_exercice,
+    synthese_reports,
+)
 from app.services.service_access import can_view_all_services, get_user_service_ids
 from app.utils.budget_code import cle_tri_code_budget
 from app.schemas.budget import (
+    BudgetPosteArrieresUpdate,
     BudgetAuditLogOut,
     BudgetCommentaireCreate,
     BudgetCommentaireGeneralOut,
@@ -82,6 +89,7 @@ class _BudgetTreeLine:
     active: bool
     is_global: bool
     inclure_dans_calculs: bool = True
+    code_poste_arrieres: str | None = None
     montant_prevu: Decimal = Decimal("0")
     montant_engage: Decimal = Decimal("0")
     montant_paye: Decimal = Decimal("0")
@@ -759,6 +767,7 @@ def _node_to_tree_schema(node: dict) -> BudgetPosteTree:
         active=line.active,
         is_global=line.is_global,
         inclure_dans_calculs=line.inclure_dans_calculs,
+        code_poste_arrieres=line.code_poste_arrieres,
         montant_prevu=totals["montant_prevu"],
         montant_engage=totals["montant_engage"],
         montant_paye=totals["montant_paye"],
@@ -840,10 +849,16 @@ async def close_budget_exercise(
             detail=f"L'exercice {exercice.annee} n'a pas commencé : il ne peut pas être clôturé.",
         )
     if exercice.statut == StatutBudget.CLOTURE:
-        return {"ok": True, "statut": exercice.statut.value}
+        return {"ok": True, "statut": exercice.statut.value, "report": None}
+    # Les notes restées impayées ne tombent pas avec l'exercice : leur reste dû
+    # passe sur les arriérés de N+1, dans la même transaction que la clôture.
+    # S'il manque un poste d'arriérés, rien n'est reporté et rien n'est clôturé.
+    report = await reporter_creances_exercice(
+        db, organisation_id=tenant_id, exercice=exercice, user_id=user.id
+    )
     exercice.statut = StatutBudget.CLOTURE
     await db.commit()
-    return {"ok": True, "statut": exercice.statut.value}
+    return {"ok": True, "statut": exercice.statut.value, "report": report}
 
 
 @router.post("/exercices/{annee}/ouvrir")
@@ -864,9 +879,126 @@ async def reopen_budget_exercise(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercice introuvable")
     if exercice.statut != StatutBudget.CLOTURE:
         return {"ok": True, "statut": exercice.statut.value if exercice.statut else None}
+    # Rouvert, l'exercice reprend ses créances : les reports vers N+1 sont
+    # annulés, et refusés s'ils ont déjà servi à un versement.
+    reports_annules = await annuler_reports_exercice(
+        db, organisation_id=tenant_id, exercice=exercice, user_id=user.id
+    )
     exercice.statut = StatutBudget.VOTE
     await db.commit()
-    return {"ok": True, "statut": exercice.statut.value}
+    return {"ok": True, "statut": exercice.statut.value, "reports_annules": reports_annules}
+
+
+async def _exercice_de_l_annee(db: AsyncSession, *, annee: int, tenant_id: int) -> BudgetExercice:
+    exercice = (
+        await db.execute(
+            select(BudgetExercice).where(
+                BudgetExercice.annee == annee,
+                BudgetExercice.organisation_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if exercice is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercice introuvable")
+    return exercice
+
+
+@router.post("/exercices/{annee}/reporter-creances")
+async def reporter_creances(
+    annee: int,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Reporte en arriérés les notes impayées d'un exercice déjà clôturé.
+
+    La clôture le fait d'elle-même. Cet appel sert aux exercices clôturés avant
+    que le report existe — leurs notes impayées ne peuvent plus être encaissées
+    tant qu'elles n'ont pas été reportées — et se rejoue sans double report.
+    """
+    exercice = await _exercice_de_l_annee(db, annee=annee, tenant_id=tenant_id)
+    if exercice.statut != StatutBudget.CLOTURE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"L'exercice {annee} est ouvert : ses créances seront reportées à sa clôture.",
+        )
+    report = await reporter_creances_exercice(db, organisation_id=tenant_id, exercice=exercice, user_id=user.id)
+    await db.commit()
+    return report
+
+
+@router.get("/exercices/{annee}/reports-creances")
+async def lister_reports_creances(
+    annee: int,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Par poste : ce que l'exercice a reporté en arriérés, et ce qu'il en a reçu."""
+    exercice = await _exercice_de_l_annee(db, annee=annee, tenant_id=tenant_id)
+    return await synthese_reports(db, organisation_id=tenant_id, exercice=exercice)
+
+
+@router.put("/postes/{poste_id}/poste-arrieres", response_model=BudgetPosteSummary)
+async def definir_poste_arrieres(
+    poste_id: int,
+    payload: BudgetPosteArrieresUpdate,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetPosteSummary:
+    """Désigne le poste qui reprend, à la clôture, ce qui reste dû sur celui-ci.
+
+    Séparé de la modification d'un poste, qui est refusée dès qu'un encaissement
+    y est rattaché — c'est-à-dire justement sur les postes qui ont des créances.
+    Ce réglage ne touche ni les montants ni l'historique : il vaut aussi sur un
+    exercice clôturé, dont on rattrape les reports.
+    """
+    line = (
+        await db.execute(
+            select(BudgetPoste).where(
+                BudgetPoste.id == poste_id,
+                BudgetPoste.organisation_id == tenant_id,
+                BudgetPoste.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if line is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ligne budgétaire introuvable")
+    if (line.type or "").upper() != "RECETTE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Seul un poste de recette porte des créances à reporter.",
+        )
+    ancien = line.code_poste_arrieres
+    code = (payload.code_poste_arrieres or "").strip()
+    line.code_poste_arrieres = (_normalize_budget_code(code) or code) if code else None
+    await log_action(
+        db,
+        user_id=user.id,
+        action="BUDGET_POSTE_ARRIERES_DEFINI",
+        target_table="budget_postes",
+        target_id=str(line.id),
+        old_value={"code_poste_arrieres": ancien},
+        new_value={"code_poste_arrieres": line.code_poste_arrieres},
+    )
+    await db.commit()
+    await db.refresh(line)
+    return BudgetPosteSummary(
+        id=line.id,
+        code=line.code,
+        libelle=line.libelle,
+        parent_code=line.parent_code,
+        parent_id=line.parent_id,
+        type=line.type,
+        active=line.active,
+        is_global=line.is_global,
+        inclure_dans_calculs=line.inclure_dans_calculs,
+        code_poste_arrieres=line.code_poste_arrieres,
+        montant_prevu=Decimal(line.montant_prevu or 0),
+        montant_engage=Decimal(line.montant_engage or 0),
+        montant_paye=Decimal(line.montant_paye or 0),
+    )
 
 
 @router.post("/exercices/{annee}/initialiser")
@@ -972,6 +1104,7 @@ async def initialize_next_exercise(
                 libelle=line.libelle,
                 parent_code=line.parent_code,
                 type=line.type,
+                code_poste_arrieres=line.code_poste_arrieres,
                 montant_prevu=nouveau,
                 montant_engage=0,
                 montant_paye=0,
@@ -2002,6 +2135,7 @@ async def list_budget_lines(
                 active=line.active,
                 is_global=line.is_global,
                 inclure_dans_calculs=line.inclure_dans_calculs,
+                code_poste_arrieres=line.code_poste_arrieres,
                 montant_prevu=montant_prevu,
                 montant_engage=montant_engage,
                 montant_paye=montant_paye,
@@ -2127,6 +2261,7 @@ async def list_allowed_budget_lines(
                 active=line.active,
                 is_global=line.is_global,
                 inclure_dans_calculs=line.inclure_dans_calculs,
+                code_poste_arrieres=line.code_poste_arrieres,
                 montant_prevu=montant_prevu,
                 montant_engage=montant_engage,
                 montant_paye=montant_paye,
@@ -2187,6 +2322,7 @@ async def list_budget_lines_tree(
         BudgetPoste.active,
         BudgetPoste.is_global,
         BudgetPoste.inclure_dans_calculs,
+        BudgetPoste.code_poste_arrieres,
         BudgetPoste.montant_prevu,
         BudgetPoste.montant_engage,
         BudgetPoste.montant_paye,
@@ -2214,6 +2350,7 @@ async def list_budget_lines_tree(
             active=row.active,
             is_global=row.is_global,
             inclure_dans_calculs=row.inclure_dans_calculs,
+            code_poste_arrieres=row.code_poste_arrieres,
             montant_prevu=Decimal(row.montant_prevu or 0),
             montant_engage=Decimal(row.montant_engage or 0),
             montant_paye=Decimal(row.montant_paye or 0),
@@ -2334,6 +2471,7 @@ async def create_budget_line(
         active=payload.active,
         is_global=payload.is_global,
         inclure_dans_calculs=payload.inclure_dans_calculs,
+        code_poste_arrieres=(payload.code_poste_arrieres or "").strip() or None,
         montant_prevu=payload.montant_prevu,
     )
     db.add(line)
@@ -2373,6 +2511,7 @@ async def create_budget_line(
         active=line.active,
         is_global=line.is_global,
         inclure_dans_calculs=line.inclure_dans_calculs,
+        code_poste_arrieres=line.code_poste_arrieres,
         montant_prevu=montant_prevu,
         montant_engage=montant_engage,
         montant_paye=montant_paye,
@@ -2804,6 +2943,7 @@ async def update_budget_line(
         active=line.active,
         is_global=line.is_global,
         inclure_dans_calculs=line.inclure_dans_calculs,
+        code_poste_arrieres=line.code_poste_arrieres,
         montant_prevu=montant_prevu,
         montant_engage=montant_engage,
         montant_paye=montant_paye,

@@ -193,6 +193,14 @@ export default function NotesImpayeesPanel({ cible, libelle, onClose, onCreanceC
                     {note.relance_count > 0 && (
                       <> · {note.relance_count} relance{note.relance_count > 1 ? 's' : ''}</>
                     )}
+                    {/* Son exercice est clos : la note se recouvre désormais
+                        sur les arriérés de l'exercice suivant. */}
+                    {note.arrieres && note.arrieres.length > 0 && (
+                      <span title={note.arrieres.map((a) => `${a.code} ${a.libelle} ${a.annee}`).join(' ; ')}>
+                        {' · Reportée en '}
+                        {note.arrieres.map((a) => `${a.libelle} ${a.annee}`).join(', ')}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <span className={styles.montant}>{montant(note.reste_du)}</span>

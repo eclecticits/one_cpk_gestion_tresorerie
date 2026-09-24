@@ -54,6 +54,7 @@ from app.models.transfert_interne import TransfertInterne
 from app.models.fonds_tiers_operation import FondsTiersOperation
 from app.models.mouvement_budget_imputation import MouvementBudgetImputation
 from app.models.regularisation_budgetaire import RegularisationBudgetaire
+from app.models.report_creance import ReportCreance
 from app.models.hr import HRAttendance, HRAttendanceAgent, HRAttendanceAgentCommand, HRAttendanceAgentEnrollment, HRAttendanceAgentRelease, HRAttendanceDevice, HRAttendanceDeviceEmployeeMapping, HRAttendancePunch, HRAttendanceUnmappedPunch, HRContract, HRDocument, HREmployee, HRFunction, HRLeave, HRReference, HRService
 from app.modules.secretariat.models import (
     OAuthConnection,
@@ -331,6 +332,12 @@ def _validate_tenant_relationships(session: Session, obj, tenant_id: int | None)
             _assert_org("sortie imputée", _lookup_org_id(session, SortieFonds, obj.sortie_fonds_id), expected_org_id)
         if obj.retour_caisse_id is not None:
             _assert_org("retour imputé", _lookup_org_id(session, RetourCaisse, obj.retour_caisse_id), expected_org_id)
+        return
+
+    if isinstance(obj, ReportCreance):
+        _assert_org("encaissement reporté", _lookup_org_id(session, Encaissement, obj.encaissement_id), expected_org_id)
+        _assert_org("poste d'origine du report", _lookup_org_id(session, BudgetPoste, obj.poste_source_id), expected_org_id)
+        _assert_org("poste d'arriérés", _lookup_org_id(session, BudgetPoste, obj.poste_cible_id), expected_org_id)
         return
 
     if isinstance(obj, RegularisationBudgetaire):

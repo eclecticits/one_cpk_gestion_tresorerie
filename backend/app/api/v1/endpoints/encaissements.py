@@ -56,6 +56,12 @@ from app.utils.upload_validation import (
 )
 from app.services.client_receipt_email import schedule_client_payment_email
 from app.services.encaissement_payments import record_encaissement_payment, cancel_encaissement_payment
+from app.services.report_creances import (
+    annuler_reports_encaissement,
+    arrieres_des_notes,
+    reports_actifs,
+    verifier_postes_ouverts,
+)
 from app.services.encaissement_tarifs import appliquer_tarifs
 from app.services.fonds_tiers import (
     assert_fonds_tiers_origin_can_be_cancelled,
@@ -380,9 +386,20 @@ async def _adjust_encaissement_budget_impact(
         or (encaissement.statut_operation or "ACTIVE").upper() != "ACTIVE"
     ):
         return
+    if await reports_actifs(db, organisation_id=tenant_id, encaissement_id=encaissement.id):
+        raise HTTPException(
+            status_code=400,
+            detail="Cette note a été reportée en arriérés à la clôture : annulez-la plutôt que de la supprimer.",
+        )
     montant = _clean_money(encaissement.montant_paye or 0)
     if montant <= 0:
         return
+    await verifier_postes_ouverts(
+        db,
+        organisation_id=tenant_id,
+        poste_ids={encaissement.budget_poste_id},
+        message="L'exercice {annee} est clôturé (poste {poste}) : cette note ne peut plus être supprimée ni restaurée.",
+    )
     res = await db.execute(
         select(BudgetPoste)
         .where(
@@ -824,6 +841,15 @@ async def _valider_postes_articles(
             )
         if poste.active is False:
             raise HTTPException(status_code=400, detail=f"Rubrique budgétaire inactive : {poste.code}")
+    await verifier_postes_ouverts(
+        db,
+        organisation_id=tenant_id,
+        poste_ids=set(postes_demandes),
+        message=(
+            "L'exercice {annee} est clôturé : le poste {poste} ne reçoit plus de nouvelle note. "
+            "Choisissez un poste de l'exercice en cours."
+        ),
+    )
 
     if service_id is not None:
         autorises = {
@@ -1387,6 +1413,12 @@ async def lister_notes_impayees(
         )
     ).scalars().all()
 
+    # Une note d'un exercice clôturé ne tombe pas : elle se recouvre sur les
+    # arriérés de l'exercice suivant, et la liste le dit.
+    arrieres = await arrieres_des_notes(
+        db, organisation_id=tenant_id, encaissement_ids=[note.id for note in lignes]
+    )
+
     maintenant = datetime.now(timezone.utc)
     notes = []
     for note in lignes:
@@ -1407,6 +1439,7 @@ async def lister_notes_impayees(
             "tranche": _tranche_anciennete(jours),
             "statut_paiement": note.statut_paiement,
             "relance_count": int(note.relance_count or 0),
+            "arrieres": arrieres.get(note.id, []),
         })
 
     return {
@@ -2155,6 +2188,15 @@ async def create_encaissement(
             raise HTTPException(status_code=400, detail="budget_poste_id invalide (type RECETTE requis)")
         if budget_line.active is False:
             raise HTTPException(status_code=400, detail="Rubrique budgétaire inactive")
+        await verifier_postes_ouverts(
+            db,
+            organisation_id=tenant_id,
+            poste_ids={budget_line.id},
+            message=(
+                "L'exercice {annee} est clôturé : le poste {poste} ne reçoit plus de nouvelle note. "
+                "Choisissez un poste de l'exercice en cours."
+            ),
+        )
         budget_poste_code = budget_line.code
         budget_poste_libelle = budget_line.libelle
         budget_line_id = budget_line.id
@@ -3126,6 +3168,10 @@ async def cancel_encaissement_operation(
         organisation_id=tenant_id,
         encaissement_id=encaissement.id,
         user_id=user.id,
+    )
+    # Une note annulée ne doit plus rien : son reste dû quitte les arriérés.
+    await annuler_reports_encaissement(
+        db, organisation_id=tenant_id, encaissement_id=encaissement.id, user_id=user.id
     )
     if active_payments:
         for payment in active_payments:
