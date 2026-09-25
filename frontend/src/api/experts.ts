@@ -1,6 +1,8 @@
 import { apiRequest } from '../lib/apiClient'
 
 export type CategoryType = 'sec' | 'en_cabinet' | 'independant' | 'salarie'
+// Liste nationale : la catégorie vient de la colonne « Statut » de chaque ligne.
+export type ImportCategoryType = CategoryType | 'liste_nationale'
 
 export interface ExpertComptable {
   id: string
@@ -47,10 +49,13 @@ export interface ExpertImportRow {
   nom_employeur?: string
   raison_sociale?: string
   associe_gerant?: string
+  ville?: string
+  // État lu dans la colonne « Situation » ; absent = non renseigné.
+  active?: boolean
 }
 
 export interface ExpertImportRequest {
-  category: CategoryType
+  category: ImportCategoryType
   filename: string
   rows: ExpertImportRow[]
   file_data?: Record<string, unknown>[]

@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { importExperts, type CategoryType, type ExpertImportRow } from '../api/experts'
+import { importExperts, type ExpertImportRow, type ImportCategoryType } from '../api/experts'
 import ResponsiveModal from './ResponsiveModal'
 import styles from './ImportModules.module.css'
 
-type ImportModule = CategoryType
+type ImportModule = ImportCategoryType
 type ConflictMode = 'add_only' | 'update_existing'
 
 interface ValidationError {
@@ -34,6 +34,8 @@ interface ModuleState {
   rawRows: Record<string, unknown>[]
   rows: PreviewRow[]
   errors: ValidationError[]
+  // Signalements non bloquants : l'import reste possible.
+  warnings: ValidationError[]
   result: ImportResult | null
   preview: ImportResult | null
 }
@@ -60,7 +62,7 @@ const modules: Record<ImportModule, ModuleConfig> = {
     shortTitle: 'SEC',
     description: 'Cabinets et sociétés inscrits au tableau national.',
     required: ["N° d'ordre", 'Dénomination', "Province d'attache", 'Raison sociale', 'Associé gérant'],
-    optional: ['N° de téléphone', 'E-mail'],
+    optional: ['N° de téléphone', 'E-mail', 'Situation'],
     templateName: 'modele_experts_sec.xlsx',
     accent: 'expertAccentSec',
     example: {
@@ -78,7 +80,7 @@ const modules: Record<ImportModule, ModuleConfig> = {
     shortTitle: 'En cabinet',
     description: 'Experts personnes physiques rattachés à un cabinet.',
     required: ["N° d'ordre", 'Noms', 'Sexe', "Province d'attache", "Cabinet d'attache"],
-    optional: ['N° de téléphone', 'E-mail'],
+    optional: ['N° de téléphone', 'E-mail', 'Situation'],
     templateName: 'modele_experts_en_cabinet.xlsx',
     accent: 'expertAccentCabinet',
     example: {
@@ -96,7 +98,7 @@ const modules: Record<ImportModule, ModuleConfig> = {
     shortTitle: 'Indépendants',
     description: 'Experts personnes physiques exerçant à titre indépendant.',
     required: ["N° d'ordre", 'Noms', 'Sexe', "Province d'attache", 'NIF'],
-    optional: ['N° de téléphone', 'E-mail'],
+    optional: ['N° de téléphone', 'E-mail', 'Situation'],
     templateName: 'modele_experts_independants.xlsx',
     accent: 'expertAccentIndependant',
     example: {
@@ -114,7 +116,7 @@ const modules: Record<ImportModule, ModuleConfig> = {
     shortTitle: 'Salariés',
     description: 'Experts personnes physiques salariés d’une organisation.',
     required: ["N° d'ordre", 'Noms', 'Sexe', "Province d'attache", "Nom de l'employeur"],
-    optional: ['N° de téléphone', 'E-mail'],
+    optional: ['N° de téléphone', 'E-mail', 'Situation'],
     templateName: 'modele_experts_salaries.xlsx',
     accent: 'expertAccentSalarie',
     example: {
@@ -127,6 +129,51 @@ const modules: Record<ImportModule, ModuleConfig> = {
       'E-mail': 'jmbala@example.cd',
     },
   },
+  liste_nationale: {
+    title: 'Liste nationale des experts-comptables',
+    shortTitle: 'Liste nationale',
+    description: 'Toutes catégories : le Statut donne la catégorie, la Situation l’état actif ou inactif.',
+    // Liste souvent lacunaire : seuls le numéro et le nom sont exigés.
+    required: ["N° d'ordre", "Nom de l'expert-comptable"],
+    optional: ['Sexe', 'Ville', 'Statut', 'Situation'],
+    templateName: 'modele_experts_liste_nationale.xlsx',
+    accent: 'expertAccentNational',
+    example: {
+      "N° d'ordre": 'EC/18.00003',
+      "Nom de l'expert-comptable": 'ADRUPIAKO TADRI Emmanuel',
+      Sexe: 'M',
+      Ville: 'Kinshasa',
+      Statut: 'en cabinet',
+      Situation: 'Inactif / non publié au Tableau',
+    },
+  },
+}
+
+type StatutCategory = Pick<ExpertImportRow, 'type_ec' | 'categorie_personne' | 'statut_professionnel'>
+
+// Même correspondance que _category_fields_from_statut côté serveur.
+const categoryFromStatut = (statut: string): StatutCategory | null => {
+  const normalized = normalizeHeader(statut).replace(/[_-]/g, ' ').replace(/\s+/g, ' ')
+  if (['sec', 'cabinet', 'societe', "societe d'expertise comptable"].includes(normalized)) {
+    return { type_ec: 'SEC', categorie_personne: 'Personne Morale', statut_professionnel: 'Cabinet' }
+  }
+  const physique: Record<string, string> = {
+    'en cabinet': 'En Cabinet',
+    independant: 'Indépendant',
+    salarie: 'Salarié',
+  }
+  const statutProfessionnel = physique[normalized]
+  return statutProfessionnel
+    ? { type_ec: 'EC', categorie_personne: 'Personne Physique', statut_professionnel: statutProfessionnel }
+    : null
+}
+
+// Même lecture que _situation_to_active côté serveur ; undefined = vide ou illisible.
+const activeFromSituation = (situation: string): boolean | undefined => {
+  const normalized = normalizeHeader(situation)
+  if (normalized.includes('inactif')) return false
+  if (normalized.includes('actif')) return true
+  return undefined
 }
 
 const initialState: ModuleState = {
@@ -134,6 +181,7 @@ const initialState: ModuleState = {
   rawRows: [],
   rows: [],
   errors: [],
+  warnings: [],
   result: null,
   preview: null,
 }
@@ -142,6 +190,8 @@ const normalizeHeader = (raw: unknown): string => {
   if (raw === null || raw === undefined) return ''
   return String(raw)
     .replace(/\u00a0/g, ' ')
+    // La liste nationale écrit « N° d’ordre » avec l’apostrophe typographique.
+    .replace(/[\u2018\u2019]/g, "'")
     .trim()
     .replace(/\s+/g, ' ')
     .toLowerCase()
@@ -232,6 +282,14 @@ const validateRow = (module: ImportModule, row: Record<string, unknown>, index: 
     }
   })
 
+  if (module === 'liste_nationale') {
+    const sexe = getCellValue(row, 'Sexe').toUpperCase()
+    if (sexe && !['M', 'F'].includes(sexe)) {
+      errors.push({ ligne, colonne: 'Sexe', erreur: 'Valeur attendue: M ou F', code: getCellValue(row, "N° d'ordre") })
+    }
+    return errors
+  }
+
   if (module !== 'sec') {
     const sexe = getCellValue(row, 'Sexe').toUpperCase()
     if (sexe && !['M', 'F'].includes(sexe)) {
@@ -247,14 +305,45 @@ const validateRow = (module: ImportModule, row: Record<string, unknown>, index: 
   return errors
 }
 
+const warnRow = (module: ImportModule, row: Record<string, unknown>, index: number): ValidationError[] => {
+  const ligne = typeof row.__rowIndex === 'number' ? row.__rowIndex : index + 2
+  const code = getCellValue(row, "N° d'ordre")
+  const warnings: ValidationError[] = []
+  const situation = getCellValue(row, 'Situation')
+  if (situation && activeFromSituation(situation) === undefined) {
+    warnings.push({ ligne, colonne: 'Situation', erreur: `« ${situation} » non reconnue : état non repris`, code })
+  }
+  const statut = module === 'liste_nationale' ? getCellValue(row, 'Statut') : ''
+  if (statut && !categoryFromStatut(statut)) {
+    warnings.push({ ligne, colonne: 'Statut', erreur: `« ${statut} » non reconnu : importé sans catégorie`, code })
+  }
+  return warnings
+}
+
 const transformToDatabase = (module: ImportModule, row: Record<string, unknown>): PreviewRow => {
   const line = typeof row.__rowIndex === 'number' ? row.__rowIndex : 0
+  const active = activeFromSituation(getCellValue(row, 'Situation'))
+  if (module === 'liste_nationale') {
+    return {
+      __rowIndex: line,
+      active,
+      numero_ordre: getCellValue(row, "N° d'ordre"),
+      nom_denomination: getCellValue(row, "Nom de l'expert-comptable"),
+      sexe: getCellValue(row, 'Sexe').toUpperCase() || undefined,
+      // Le serveur en déduit la province d'attache.
+      ville: getCellValue(row, 'Ville') || undefined,
+      // Sans statut, type_ec vide : une mise à jour ne touche pas à la catégorie.
+      ...(categoryFromStatut(getCellValue(row, 'Statut')) ?? { type_ec: '' }),
+    }
+  }
+
   const baseData = {
     __rowIndex: line,
     numero_ordre: getCellValue(row, "N° d'ordre"),
     email: getCellValue(row, 'E-mail').toLowerCase() || undefined,
     telephone: normalizePhone(getCellValue(row, 'N° de téléphone')),
     province_attache: getCellValue(row, "Province d'attache"),
+    active,
   }
 
   if (module === 'sec') {
@@ -322,6 +411,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
     en_cabinet: { ...initialState },
     independant: { ...initialState },
     salarie: { ...initialState },
+    liste_nationale: { ...initialState },
   })
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -332,7 +422,9 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
     const uniqueNumeros = new Set(activeState.rows.map((row) => row.numero_ordre).filter(Boolean)).size
     const cabinets = activeState.rows.filter((row) => row.type_ec === 'SEC').length
     const physical = activeState.rows.length - cabinets
-    return { total: activeState.rows.length, uniqueNumeros, cabinets, physical }
+    const actifs = activeState.rows.filter((row) => row.active === true).length
+    const inactifs = activeState.rows.filter((row) => row.active === false).length
+    return { total: activeState.rows.length, uniqueNumeros, cabinets, physical, actifs, inactifs }
   }, [activeState.rows])
 
   const updateActiveState = (patch: Partial<ModuleState>) => {
@@ -353,7 +445,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
   }
 
   const downloadErrorsCsv = () => {
-    const errors = activeState.result?.errors.length ? activeState.result.errors : activeState.errors
+    const errors = displayedErrors
     if (!errors.length) return
     const csv = [
       ['ligne', 'code', 'colonne', 'message'],
@@ -386,6 +478,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
           fileName: file.name,
           rawRows,
           rows: [],
+          warnings: [],
           preview: null,
           result: null,
           errors: [{ ligne: 1, colonne: 'entête', erreur: `Colonnes manquantes: ${missingRequired.join(', ')}` }],
@@ -394,6 +487,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
       }
 
       const errors: ValidationError[] = []
+      const warnings: ValidationError[] = []
       const validRows: PreviewRow[] = []
       const seenNumeros = new Map<string, number>()
 
@@ -404,6 +498,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
           return
         }
 
+        warnings.push(...warnRow(activeModule, row, index))
         const transformed = transformToDatabase(activeModule, row)
         if (seenNumeros.has(transformed.numero_ordre)) {
           errors.push({
@@ -450,6 +545,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
         rawRows,
         rows: validRows,
         errors,
+        warnings,
         preview,
         result: null,
       })
@@ -458,6 +554,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
         fileName: file.name,
         rawRows: [],
         rows: [],
+        warnings: [],
         preview: null,
         result: null,
         errors: [{ ligne: 1, colonne: 'fichier', erreur: error?.message || 'Lecture du fichier impossible' }],
@@ -509,7 +606,13 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
     }
   }
 
-  const displayedErrors = activeState.result?.errors.length ? activeState.result.errors : activeState.errors
+  // Les signalements (statut, situation ou ville illisibles, état différent de
+  // celui de l'application) ne bloquent pas l'import mais doivent se voir avant et après.
+  const displayedErrors = activeState.result
+    ? [...activeState.warnings, ...activeState.result.errors]
+    : activeState.errors.length
+      ? activeState.errors
+      : [...activeState.warnings, ...(activeState.preview?.errors ?? [])]
 
   return (
     <ResponsiveModal
@@ -610,6 +713,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
               <span>N° d’ordre uniques<strong>{summary.uniqueNumeros}</strong></span>
               <span>Personnes physiques<strong>{summary.physical}</strong></span>
               <span>Cabinets<strong>{summary.cabinets}</strong></span>
+              <span>Actifs / inactifs<strong>{summary.actifs} / {summary.inactifs}</strong></span>
               <span>Mode conflit<strong>{conflictMode === 'add_only' ? 'Ajout seul' : 'Mise à jour'}</strong></span>
             </div>
             {activeState.preview && (

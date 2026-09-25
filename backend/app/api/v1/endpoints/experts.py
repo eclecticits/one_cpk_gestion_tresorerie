@@ -177,7 +177,8 @@ def _read_excel_rows(file_bytes: bytes) -> list[dict]:
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
         return []
-    headers = [str(h).strip() if h is not None else "" for h in rows[0]]
+    # La liste nationale écrit « N° d’ordre » avec l’apostrophe typographique.
+    headers = [str(h).strip().replace("\u2019", "'") if h is not None else "" for h in rows[0]]
     data_rows: list[dict] = []
     for row in rows[1:]:
         row_dict = {}
@@ -189,12 +190,97 @@ def _read_excel_rows(file_bytes: bytes) -> list[dict]:
     return data_rows
 
 
+# Chefs-lieux des 26 provinces et principales villes, pour rattacher un
+# expert de la liste nationale, qui ne donne que la ville.
+_VILLE_PROVINCE: dict[str, str] = {
+    "kinshasa": "Kinshasa",
+    "matadi": "Kongo-Central",
+    "boma": "Kongo-Central",
+    "muanda": "Kongo-Central",
+    "moanda": "Kongo-Central",
+    "mbanza-ngungu": "Kongo-Central",
+    "kenge": "Kwango",
+    "bandundu": "Kwilu",
+    "kikwit": "Kwilu",
+    "inongo": "Mai-Ndombe",
+    "tshikapa": "Kasaï",
+    "kananga": "Kasaï-Central",
+    "mbuji-mayi": "Kasaï-Oriental",
+    "mbujimayi": "Kasaï-Oriental",
+    "kabinda": "Lomami",
+    "mwene-ditu": "Lomami",
+    "lusambo": "Sankuru",
+    "lodja": "Sankuru",
+    "kindu": "Maniema",
+    "bukavu": "Sud-Kivu",
+    "uvira": "Sud-Kivu",
+    "goma": "Nord-Kivu",
+    "butembo": "Nord-Kivu",
+    "beni": "Nord-Kivu",
+    "bunia": "Ituri",
+    "isiro": "Haut-Uele",
+    "buta": "Bas-Uele",
+    "kisangani": "Tshopo",
+    "boende": "Tshuapa",
+    "lisala": "Mongala",
+    "gbadolite": "Nord-Ubangi",
+    "gemena": "Sud-Ubangi",
+    "mbandaka": "Équateur",
+    "kamina": "Haut-Lomami",
+    "kolwezi": "Lualaba",
+    "lubumbashi": "Haut-Katanga",
+    "likasi": "Haut-Katanga",
+    "kalemie": "Tanganyika",
+}
+
+
+def _province_from_ville(ville: str | None) -> str | None:
+    if not ville:
+        return None
+    key = "-".join(_strip_accents(ville).lower().replace("-", " ").split())
+    return _VILLE_PROVINCE.get(key)
+
+
+def _situation_to_active(situation: Any) -> bool | None:
+    """État actif/inactif lu dans la colonne « Situation » ; None si vide ou illisible."""
+    normalized = _strip_accents(_normalize_value(situation)).lower()
+    if "inactif" in normalized:
+        return False
+    if "actif" in normalized:
+        return True
+    return None
+
+
+def _category_fields_from_statut(statut: str) -> dict[str, str] | None:
+    """Catégorie d'une ligne de la liste nationale, lue dans sa colonne « Statut »."""
+    normalized = " ".join(_strip_accents(statut).lower().replace("_", " ").replace("-", " ").split())
+    if normalized in {"sec", "cabinet", "societe", "societe d'expertise comptable"}:
+        return {"type_ec": "SEC", "categorie_personne": "Personne Morale", "statut_professionnel": "Cabinet"}
+    canonical = _normalize_statut_professionnel(statut)
+    if canonical in {"En Cabinet", "Indépendant", "Salarié"}:
+        return {"type_ec": "EC", "categorie_personne": "Personne Physique", "statut_professionnel": canonical}
+    return None
+
+
 def _row_to_import_row(category: str, row: dict) -> ExpertImportRow:
+    if category == "liste_nationale":
+        # Sans statut, type_ec vide : une mise à jour ne touche pas à la catégorie.
+        fields = _category_fields_from_statut(_normalize_value(row.get("Statut"))) or {"type_ec": ""}
+        return ExpertImportRow(
+            numero_ordre=_normalize_value(row.get("N° d'ordre")),
+            nom_denomination=_normalize_value(row.get("Nom de l'expert-comptable")),
+            sexe=_normalize_value(row.get("Sexe")).upper()[:1],
+            ville=_normalize_value(row.get("Ville")),
+            active=_situation_to_active(row.get("Situation")),
+            **fields,
+        )
+
     base = {
         "numero_ordre": _normalize_value(row.get("N° d'ordre")),
         "email": _normalize_value(row.get("E-mail")),
         "telephone": _normalize_value(row.get("N° de téléphone")),
         "province_attache": _normalize_value(row.get("Province d'attache")),
+        "active": _situation_to_active(row.get("Situation")),
     }
 
     if category == "sec":
@@ -632,11 +718,14 @@ async def _import_experts_payload(
     created_count = 0
     updated_count = 0
     skipped_count = 0
+    state_flag_count = 0
+    national_import = payload.category == "liste_nationale"
     errors: list[dict] = []
     phone_warnings: list[str] = []
     total_rows = len(payload.rows)
     for idx, row in enumerate(payload.rows):
-        row_data = {k: _normalize_value(v) for k, v in row.model_dump().items()}
+        row_active = row.active
+        row_data = {k: _normalize_value(v) for k, v in row.model_dump(exclude={"active"}).items()}
         row_data["statut_professionnel"] = _normalize_statut_professionnel(
             row_data.get("statut_professionnel")
         )
@@ -669,10 +758,35 @@ async def _import_experts_payload(
             email_value = ""
             logger.warning("Import experts: invalid email at line %s (numero_ordre=%s)", idx + 2, numero_ordre)
         row_data["email"] = email_value
+        ville = row_data.pop("ville", "")
+        if ville and not row_data.get("province_attache"):
+            province = _province_from_ville(ville)
+            if province:
+                row_data["province_attache"] = province
+            else:
+                errors.append({
+                    "ligne": idx + 2,
+                    "champ": "ville",
+                    "message": f"Ville « {ville} » non rattachée à une province (province laissée vide)",
+                })
         # Vérifier si l'expert existe déjà (upsert), depuis le lookup en masse
         existing = existing_by_numero.get(numero_ordre)
 
         if existing:
+            # L'import ne change jamais l'état d'un expert existant : un écart
+            # avec la situation du fichier est seulement signalé, à trancher à
+            # la main (désactivation / réactivation depuis la fiche).
+            if row_active is not None and row_active != existing.active:
+                state_flag_count += 1
+                errors.append({
+                    "ligne": idx + 2,
+                    "champ": "situation",
+                    "message": (
+                        "Actif dans l'application, inactif dans le fichier : non désactivé, à vérifier"
+                        if existing.active
+                        else "Inactif dans l'application, actif dans le fichier : non réactivé, à vérifier"
+                    ),
+                })
             if payload.conflict_mode == "add_only":
                 skipped_count += 1
                 errors.append({
@@ -691,6 +805,14 @@ async def _import_experts_payload(
                     existing.import_id = import_record.id
             updated_count += 1
         else:
+            # Liste nationale : sans situation lisible, l'expert n'est pas
+            # publié au Tableau tant que son état n'est pas vérifié.
+            if row_active is None and national_import:
+                errors.append({
+                    "ligne": idx + 2,
+                    "champ": "situation",
+                    "message": "Situation vide ou non reconnue : créé inactif",
+                })
             if not payload.dry_run:
                 new_expert = ExpertComptable(
                     numero_ordre=row_data.get("numero_ordre", ""),
@@ -708,6 +830,7 @@ async def _import_experts_payload(
                     raison_sociale=row_data.get("raison_sociale") or None,
                     associe_gerant=row_data.get("associe_gerant") or None,
                     import_id=import_record.id if import_record else None,
+                    active=row_active if row_active is not None else not national_import,
                 )
                 db.add(new_expert)
             created_count += 1
@@ -750,6 +873,11 @@ async def _import_experts_payload(
         message = f"Import partiel : {imported_count} ligne(s) importée(s), {skipped_count} ignorée(s)"
     else:
         message = f"Import échoué : {skipped_count} ligne(s) ignorée(s), aucune ligne importée"
+    if state_flag_count:
+        message += (
+            f" | {state_flag_count} expert(s) dont la situation diffère de l'application :"
+            " état inchangé, à vérifier"
+        )
     if phone_warnings:
         sample = ", ".join(phone_warnings[:5])
         suffix = f" | Téléphones invalides ignorés: {len(phone_warnings)}"

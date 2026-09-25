@@ -8,6 +8,9 @@ from uuid import UUID
 
 
 CategoryType = Literal["sec", "en_cabinet", "independant", "salarie"]
+# L'import accepte en plus la liste nationale : la catégorie vient alors de la
+# colonne « Statut » de chaque ligne, pas de l'onglet.
+ImportCategoryType = Literal["sec", "en_cabinet", "independant", "salarie", "liste_nationale"]
 ExpertImportConflictMode = Literal["add_only", "update_existing"]
 
 
@@ -88,6 +91,10 @@ class ExpertImportRow(BaseModel):
     telephone: str | None = None
     email: str | None = None
     province_attache: str | None = None
+    # Liste nationale : sert à déduire la province, n'est pas stockée.
+    ville: str | None = None
+    # État lu dans la colonne « Situation » ; None = non renseigné.
+    active: bool | None = None
     nif: str | None = None
     cabinet_attache: str | None = None
     nom_employeur: str | None = None
@@ -96,7 +103,7 @@ class ExpertImportRow(BaseModel):
 
 
 class ExpertImportRequest(BaseModel):
-    category: CategoryType
+    category: ImportCategoryType
     filename: str
     rows: list[ExpertImportRow]
     file_data: list[dict] | None = None  # données brutes pour audit

@@ -934,7 +934,7 @@
 
 .expertModuleTabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   min-width: 0;
 }
@@ -1009,6 +1009,11 @@
 .expertAccentSalarie {
   background: #fef3c7;
   color: #92400e;
+}
+
+.expertAccentNational {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .expertConflictGrid {
