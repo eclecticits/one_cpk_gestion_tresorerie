@@ -427,6 +427,103 @@
   line-height: 1.3;
 }
 
+.destinationContext {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid #bfdbfe;
+  border-left: 5px solid #2563eb;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1e3a5f;
+}
+
+.destinationContext[data-canal="caisse"] {
+  border-color: #bbf7d0;
+  border-left-color: #16a34a;
+  background: #f0fdf4;
+  color: #14532d;
+}
+
+.destinationContextLocked {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.destinationContextCopy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.destinationContextEyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.destinationContextTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.destinationContextCopy p,
+.destinationContextCopy small {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.destinationContextCopy p {
+  font-size: 13px;
+}
+
+.destinationContextCopy small {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.destinationLockBtn,
+.destinationUnlockBtn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: #ffffff;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.destinationLockBtn:hover:not(:disabled),
+.destinationUnlockBtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 2px 5px rgba(15, 23, 42, 0.12);
+}
+
+.destinationLockBtn:focus-visible,
+.destinationUnlockBtn:focus-visible {
+  outline: 2px solid #0f172a;
+  outline-offset: 2px;
+}
+
+.destinationLockBtn:disabled,
+.destinationUnlockBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .natureHelp {
   max-width: 360px;
   margin: 0;
@@ -1633,6 +1730,17 @@
     width: 100%;
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .destinationContext {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .destinationLockBtn,
+  .destinationUnlockBtn {
+    width: 100%;
   }
 
   .compactGrid {

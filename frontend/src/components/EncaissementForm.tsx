@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format } from 'date-fns'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Lock, Unlock } from 'lucide-react'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, NatureMouvement, TypeClient, Service } from '../types'
 import { toNumber } from '../utils/amount'
 import { TYPE_CLIENT_LABELS, libelleNomClient, typeClientDemandeLeSexe } from '../utils/encaissementHelpers'
 import type { ProjetActivite } from '../api/projetsActivites'
+import type { CompteBancaire } from '../types/banque'
 import { uploadEncaissementPiece } from '../api/encaissementPieces'
 import { listerNotesImpayees } from '../api/creances'
 import { listEncaissementTarifs, type EncaissementTarif } from '../api/encaissementTarifs'
@@ -23,7 +24,8 @@ interface EncaissementFormProps {
   user: any
   services: Service[]
   projetsActivites: ProjetActivite[]
-  comptesBancaires: any[]
+  comptesBancaires: CompteBancaire[]
+  comptesBancairesLoading: boolean
   isCashClosed: boolean
   tauxChange: number
   libellePresets: string[]
@@ -47,6 +49,62 @@ const CANAUX = [
   { value: 'CAISSE', libelle: 'Caisse' },
   { value: 'BANQUE', libelle: 'Banque' },
 ] as const
+
+type DestinationLock = {
+  canal: 'CAISSE' | 'BANQUE'
+  compteBancaireId: string | null
+  devise: 'USD' | 'CDF'
+}
+
+const destinationStorageKey = (user: any) => {
+  const identity = `${user?.organisation_id ?? 'organisation'}:${user?.id ?? user?.email ?? 'session'}`
+  return `onec.encaissements.destination.${encodeURIComponent(String(identity))}`
+}
+
+const readDestinationLock = (user: any): DestinationLock | null => {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.sessionStorage.getItem(destinationStorageKey(user))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<DestinationLock>
+    if (parsed.canal === 'CAISSE') {
+      return { canal: 'CAISSE', compteBancaireId: null, devise: 'USD' }
+    }
+    if (
+      parsed.canal === 'BANQUE' &&
+      parsed.compteBancaireId !== null &&
+      parsed.compteBancaireId !== undefined &&
+      (parsed.devise === 'USD' || parsed.devise === 'CDF')
+    ) {
+      return {
+        canal: 'BANQUE',
+        compteBancaireId: String(parsed.compteBancaireId),
+        devise: parsed.devise,
+      }
+    }
+  } catch {
+    // Un stockage indisponible ou une ancienne valeur illisible ne doit jamais
+    // empêcher l'ouverture du formulaire.
+  }
+  return null
+}
+
+const saveDestinationLock = (user: any, destination: DestinationLock): boolean => {
+  try {
+    window.sessionStorage.setItem(destinationStorageKey(user), JSON.stringify(destination))
+    return true
+  } catch {
+    return false
+  }
+}
+
+const removeDestinationLock = (user: any) => {
+  try {
+    window.sessionStorage.removeItem(destinationStorageKey(user))
+  } catch {
+    // L'état React reste déverrouillé même si le navigateur refuse le stockage.
+  }
+}
 
 const roundMoney = (value: number): number => {
   return Math.round((value + Number.EPSILON) * 100) / 100
@@ -82,6 +140,7 @@ export default function EncaissementForm({
   services,
   projetsActivites,
   comptesBancaires,
+  comptesBancairesLoading,
   isCashClosed,
   tauxChange,
   libellePresets,
@@ -98,31 +157,38 @@ export default function EncaissementForm({
   // Antidater un encaissement revient à en réécrire la chronologie : réservé au
   // super administrateur, le serveur applique la même règle et refuse le reste.
   const peutAntidater = String(user?.role || '').toLowerCase() === 'super_admin'
-  const [formData, setFormData] = useState({
-    type_client: 'expert_comptable' as TypeClient,
-    expert_comptable_id: '',
-    client_nom: '',
-    libelle: '',
-    description: '',
-    devise_perception: 'USD',
-    montant: '',
-    montant_paye: '',
-    canal: 'CAISSE' as 'CAISSE' | 'BANQUE',
-    compte_bancaire_id: '',
-    mode_paiement: 'cash' as ModePaiement,
-    reference: '',
-    date_encaissement: format(new Date(), 'yyyy-MM-dd'),
-    budget_poste_id: '',
-    service_id: '',
-    project_activity_id: '',
-    nature_mouvement: 'BUDGETAIRE' as NatureMouvement,
-    // Renseignés uniquement pour un fonds de tiers : de qui vient l'argent, et
-    // pour qui il est gardé.
-    ft_tiers_selection: null as OrganisationAutocompleteValue,
-    ft_tiers_nom_libre: '',
-    ft_payeur_origine: '',
-    ft_motif: '',
-    ft_reference: '',
+  const [destinationLock, setDestinationLock] = useState<DestinationLock | null>(
+    () => readDestinationLock(user),
+  )
+  const [formData, setFormData] = useState(() => {
+    const lockedDestination = readDestinationLock(user)
+    const lockedBank = lockedDestination?.canal === 'BANQUE'
+    return {
+      type_client: 'expert_comptable' as TypeClient,
+      expert_comptable_id: '',
+      client_nom: '',
+      libelle: '',
+      description: '',
+      devise_perception: lockedBank ? lockedDestination.devise : 'USD',
+      montant: '',
+      montant_paye: '',
+      canal: (lockedBank ? 'BANQUE' : 'CAISSE') as 'CAISSE' | 'BANQUE',
+      compte_bancaire_id: lockedBank ? (lockedDestination.compteBancaireId || '') : '',
+      mode_paiement: (lockedBank ? 'virement' : 'cash') as ModePaiement,
+      reference: '',
+      date_encaissement: format(new Date(), 'yyyy-MM-dd'),
+      budget_poste_id: '',
+      service_id: '',
+      project_activity_id: '',
+      nature_mouvement: 'BUDGETAIRE' as NatureMouvement,
+      // Renseignés uniquement pour un fonds de tiers : de qui vient l'argent, et
+      // pour qui il est gardé.
+      ft_tiers_selection: null as OrganisationAutocompleteValue,
+      ft_tiers_nom_libre: '',
+      ft_payeur_origine: '',
+      ft_motif: '',
+      ft_reference: '',
+    }
   })
   const [articles, setArticles] = useState<ArticleDraft[]>([
     { libelle: '', quantite: '1', prix_unitaire: '' },
@@ -160,7 +226,7 @@ export default function EncaissementForm({
   const [budgetSearch, setBudgetSearch] = useState('')
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
-  const [filteredComptes, setFilteredComptes] = useState<any[]>([])
+  const [filteredComptes, setFilteredComptes] = useState<CompteBancaire[]>([])
   const [selectedExpert, setSelectedExpert] = useState<ExpertComptable | null>(null)
   const [justificatifs, setJustificatifs] = useState<File[]>([])
   const submitLockRef = useRef(false)
@@ -352,7 +418,23 @@ export default function EncaissementForm({
     }
   }, [isCashClosed, formData.canal])
 
+  // Une caisse fermée invalide un ancien verrou « Caisse ». Le formulaire suit
+  // alors la règle métier existante (banque uniquement) et n'annonce jamais un
+  // contexte qui ne pourrait pas être enregistré.
   useEffect(() => {
+    if (!isCashClosed || destinationLock?.canal !== 'CAISSE') return
+    removeDestinationLock(user)
+    setDestinationLock(null)
+  }, [destinationLock?.canal, isCashClosed, user])
+
+  useEffect(() => {
+    // À l'ouverture, le verrou bancaire est déjà dans formData alors que les
+    // comptes arrivent encore du serveur. Ne pas l'effacer pendant ce court
+    // chargement est ce qui permet de restaurer exactement le compte choisi.
+    if (comptesBancairesLoading && formData.canal === 'BANQUE') {
+      setFilteredComptes([])
+      return
+    }
     const devise = formData.devise_perception || 'USD'
     const next = formData.canal === 'BANQUE'
       ? comptesBancaires.filter(
@@ -378,7 +460,38 @@ export default function EncaissementForm({
         ? prev
         : { ...prev, compte_bancaire_id: nextCompteId }
     })
-  }, [formData.devise_perception, formData.canal, formData.compte_bancaire_id, comptesBancaires])
+  }, [
+    formData.devise_perception,
+    formData.canal,
+    formData.compte_bancaire_id,
+    comptesBancaires,
+    comptesBancairesLoading,
+  ])
+
+  // Si un compte verrouillé a été désactivé, supprimé ou a changé de devise,
+  // le verrou est abandonné. Conserver seulement « Banque » dans ce cas serait
+  // précisément le raccourci dangereux que cette fonctionnalité doit éviter.
+  useEffect(() => {
+    if (comptesBancairesLoading || destinationLock?.canal !== 'BANQUE') return
+    const compte = comptesBancaires.find(
+      (item) => String(item.id) === destinationLock.compteBancaireId,
+    )
+    const compteValide =
+      compte &&
+      String(compte.account_type || 'BANK').toUpperCase() === 'BANK' &&
+      String(compte.devise || '').toUpperCase() === destinationLock.devise
+    if (compteValide) return
+
+    removeDestinationLock(user)
+    setDestinationLock(null)
+    setFormData((prev) => ({
+      ...prev,
+      canal: isCashClosed ? 'BANQUE' : 'CAISSE',
+      compte_bancaire_id: '',
+      mode_paiement: isCashClosed ? 'virement' : 'cash',
+      reference: isCashClosed ? prev.reference : '',
+    }))
+  }, [comptesBancaires, comptesBancairesLoading, destinationLock, isCashClosed, user])
 
   useEffect(() => {
     if (isServiceUser && userServiceIds.length === 1 && !formData.service_id) {
@@ -605,18 +718,20 @@ export default function EncaissementForm({
   }
 
   const resetForm = () => {
+    const lockedBank = destinationLock?.canal === 'BANQUE'
+    const resetToBank = lockedBank || isCashClosed
     setFormData({
       type_client: 'expert_comptable',
       expert_comptable_id: '',
       client_nom: '',
       libelle: '',
       description: '',
-      devise_perception: 'USD',
+      devise_perception: lockedBank ? destinationLock.devise : 'USD',
       montant: '',
       montant_paye: '',
-      canal: isCashClosed ? 'BANQUE' : 'CAISSE',
-      compte_bancaire_id: '',
-      mode_paiement: isCashClosed ? 'virement' : 'cash',
+      canal: resetToBank ? 'BANQUE' : 'CAISSE',
+      compte_bancaire_id: lockedBank ? (destinationLock.compteBancaireId || '') : '',
+      mode_paiement: resetToBank ? 'virement' : 'cash',
       reference: '',
       date_encaissement: format(new Date(), 'yyyy-MM-dd'),
       budget_poste_id: '',
@@ -994,15 +1109,33 @@ export default function EncaissementForm({
     return item ? `${item.code} - ${item.libelle}` : 'Aucun'
   }, [projetsActivites, formData.project_activity_id])
 
+  const selectedCompte = useMemo(
+    () => comptesBancaires.find(
+      (item) =>
+        String(item.id) === String(formData.compte_bancaire_id) &&
+        String(item.account_type || 'BANK').toUpperCase() === 'BANK' &&
+        String(item.devise || '').toUpperCase() === formData.devise_perception,
+    ) ?? null,
+    [comptesBancaires, formData.compte_bancaire_id, formData.devise_perception],
+  )
+
   const selectedCompteLabel = useMemo(() => {
-    const compte = comptesBancaires.find((item) => String(item.id) === String(formData.compte_bancaire_id))
-    if (!compte) return 'Compte non sélectionné'
-    const numeroCompte = String(compte.numero_compte || '').replace(/\s+/g, '')
+    if (!selectedCompte) {
+      return comptesBancairesLoading && formData.compte_bancaire_id
+        ? 'Chargement du compte…'
+        : 'Compte non sélectionné'
+    }
+    const numeroCompte = String(selectedCompte.numero_compte || '').replace(/\s+/g, '')
     const numeroMasque = numeroCompte ? `••••${numeroCompte.slice(-4)}` : ''
-    return [compte.banque?.nom || 'Banque', compte.devise, numeroMasque, compte.intitule]
+    return [
+      selectedCompte.banque?.nom || 'Banque',
+      selectedCompte.devise,
+      numeroMasque,
+      selectedCompte.intitule,
+    ]
       .filter(Boolean)
       .join(' — ')
-  }, [comptesBancaires, formData.compte_bancaire_id])
+  }, [comptesBancairesLoading, formData.compte_bancaire_id, selectedCompte])
 
   const montantPayeUSD = getMontantPayeUSD()
   const solde = roundMoney(Math.max(0, montantTotalArticles - montantPayeUSD))
@@ -1030,6 +1163,7 @@ export default function EncaissementForm({
         : 'Référence de paiement'
 
   const selectCanal = (nextCanal: 'CAISSE' | 'BANQUE') => {
+    if (destinationLock) return
     setFormData(prev => ({
       ...prev,
       canal: nextCanal,
@@ -1041,6 +1175,89 @@ export default function EncaissementForm({
       reference: nextCanal === 'CAISSE' ? '' : prev.reference,
     }))
   }
+
+  const toggleDestinationLock = () => {
+    if (destinationLock) {
+      removeDestinationLock(user)
+      setDestinationLock(null)
+      return
+    }
+
+    if (formData.canal === 'BANQUE' && !selectedCompte) {
+      onError(
+        'Compte requis',
+        'Sélectionnez le compte bancaire précis avant de verrouiller le mode Banque.',
+      )
+      return
+    }
+
+    const nextLock: DestinationLock = formData.canal === 'CAISSE'
+      ? { canal: 'CAISSE', compteBancaireId: null, devise: 'USD' }
+      : {
+          canal: 'BANQUE',
+          compteBancaireId: String(selectedCompte!.id),
+          devise: String(selectedCompte!.devise).toUpperCase() === 'CDF' ? 'CDF' : 'USD',
+        }
+
+    if (!saveDestinationLock(user, nextLock)) {
+      onError(
+        'Verrouillage indisponible',
+        'Le navigateur ne permet pas de conserver ce mode pour la session en cours.',
+      )
+      return
+    }
+    setDestinationLock(nextLock)
+  }
+
+  const destinationName = formData.canal === 'CAISSE'
+    ? 'CAISSE'
+    : selectedCompte
+      ? `BANQUE — ${selectedCompte.banque?.nom || 'Banque'} — ${selectedCompte.intitule} (${selectedCompte.devise})`
+      : comptesBancairesLoading && formData.compte_bancaire_id
+        ? 'BANQUE — chargement du compte…'
+        : 'BANQUE — compte à sélectionner'
+
+  const destinationMessage = formData.canal === 'CAISSE'
+    ? 'Vous êtes actuellement en mode CAISSE. Cet encaissement sera enregistré dans la caisse.'
+    : selectedCompte
+      ? `Vous êtes actuellement en mode BANQUE — ${selectedCompte.banque?.nom || 'Banque'} — ${selectedCompte.intitule} (${selectedCompte.devise}). Cet encaissement sera enregistré sur ce compte bancaire.`
+      : 'Vous êtes actuellement en mode BANQUE. Sélectionnez le compte bancaire sur lequel cet encaissement sera enregistré.'
+
+  const renderDestinationContext = () => (
+    <div
+      className={`${styles.destinationContext} ${destinationLock ? styles.destinationContextLocked : ''}`}
+      data-canal={formData.canal.toLowerCase()}
+    >
+      <div className={styles.destinationContextCopy} role="status" aria-live="polite">
+        <span className={styles.destinationContextEyebrow}>Destination de l’encaissement</span>
+        <strong className={styles.destinationContextTitle}>
+          {destinationName}
+          {destinationLock && <Lock size={16} aria-label="Mode verrouillé" />}
+        </strong>
+        <p>{destinationMessage}</p>
+        {destinationLock && (
+          <small>Cette destination précise sera reprise pour les prochains encaissements de votre session.</small>
+        )}
+      </div>
+      <button
+        type="button"
+        className={destinationLock ? styles.destinationUnlockBtn : styles.destinationLockBtn}
+        onClick={toggleDestinationLock}
+        disabled={
+          activeSubmitAction !== null ||
+          (!destinationLock && formData.canal === 'BANQUE' && !selectedCompte)
+        }
+        title={
+          !destinationLock && formData.canal === 'BANQUE' && !selectedCompte
+            ? 'Sélectionnez d’abord un compte bancaire précis'
+            : undefined
+        }
+      >
+        {destinationLock ? <Unlock size={16} /> : <Lock size={16} />}
+        {destinationLock ? 'Déverrouiller' : 'Verrouiller ce mode'}
+      </button>
+    </div>
+  )
 
   const renderCanalControl = () => (
     <div className={styles.destinationControlStack}>
@@ -1066,7 +1283,7 @@ export default function EncaissementForm({
                   : styles.segmentedItem
               }
               onClick={() => selectCanal(value)}
-              disabled={value === 'CAISSE' && isCashClosed}
+              disabled={destinationLock !== null || (value === 'CAISSE' && isCashClosed)}
             >
               {libelle}
             </button>
@@ -1188,6 +1405,7 @@ export default function EncaissementForm({
               </div>
             </div>
           )}
+          {renderDestinationContext()}
           <div className={isPage ? styles.createLayout : undefined}>
           <div className={isPage ? styles.createMain : undefined}>
           {estFondsDeTiers && (
@@ -1697,7 +1915,12 @@ export default function EncaissementForm({
               <label>Devise *</label>
               <select
                 value={formData.devise_perception}
-                onChange={(e) => setFormData(prev => ({ ...prev, devise_perception: e.target.value }))}
+                onChange={(e) => setFormData(prev => ({
+                  ...prev,
+                  devise_perception: e.target.value === 'CDF' ? 'CDF' : 'USD',
+                }))}
+                disabled={destinationLock?.canal === 'BANQUE'}
+                title={destinationLock?.canal === 'BANQUE' ? 'Déverrouillez la destination pour changer de devise' : undefined}
               >
                 <option value="USD">USD</option>
                 <option value="CDF">CDF</option>
@@ -1723,6 +1946,7 @@ export default function EncaissementForm({
                 <select
                   value={formData.compte_bancaire_id}
                   onChange={(e) => setFormData(prev => ({ ...prev, compte_bancaire_id: e.target.value }))}
+                  disabled={destinationLock?.canal === 'BANQUE'}
                   required
                 >
                   <option value="">Sélectionner un compte bancaire</option>

@@ -11,6 +11,7 @@ import { listProjetsActivites, ProjetActivite } from '../api/projetsActivites'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { Encaissement, Service } from '../types'
+import type { CompteBancaire } from '../types/banque'
 import { getPrintSettings } from '../api/settings'
 import type { EntreeCaisseLigne } from '../api/clotures'
 import { toNumber } from '../utils/amount'
@@ -94,7 +95,8 @@ export default function Encaissements() {
   const [totalCount, setTotalCount] = useState(0)
   const [summaryTotals, setSummaryTotals] = useState({ totalNotesDebit: 0, totalPaye: 0 })
   const { isCaisseClosed: isCashClosed } = useTreasuryLock()
-  const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
+  const [comptesBancaires, setComptesBancaires] = useState<CompteBancaire[]>([])
+  const [comptesBancairesLoading, setComptesBancairesLoading] = useState(true)
 
   const [proformas, setProformas] = useState<Encaissement[]>([])
   // Entrées de caisse qui ne passent pas par une note de débit : aujourd'hui les
@@ -348,10 +350,12 @@ export default function Encaissements() {
   useEffect(() => {
     const loadComptes = async () => {
       try {
-        const res = await apiRequest('GET', '/comptes-bancaires', { params: { active: true } })
+        const res = await apiRequest<CompteBancaire[]>('GET', '/comptes-bancaires', { params: { active: true } })
         setComptesBancaires(Array.isArray(res) ? res : [])
       } catch {
         setComptesBancaires([])
+      } finally {
+        setComptesBancairesLoading(false)
       }
     }
     loadComptes()
@@ -847,6 +851,7 @@ export default function Encaissements() {
       services={services}
       projetsActivites={projetsActivites}
       comptesBancaires={comptesBancaires}
+      comptesBancairesLoading={comptesBancairesLoading}
       isCashClosed={isCashClosed}
       tauxChange={tauxChange}
       libellePresets={libellePresets}
