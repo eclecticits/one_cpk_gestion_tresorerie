@@ -30,3 +30,10 @@ ALL_MENUS = list(MODULE_PERMISSION_MAP.keys())
 
 def resolve_permission_code(permission_code: str) -> str:
     return MODULE_PERMISSION_MAP.get(permission_code, permission_code)
+
+
+# Terminer ou rejeter l'examen d'une réquisition ou d'un dossier. L'écran des
+# permissions propose « Dossiers d'examen → Valider un dossier d'examen » : sans
+# ce code, la case s'enregistrait sans rien ouvrir, et seul « Validation → Avis
+# technique » donnait réellement le droit.
+EXAMEN_VALIDATION_PERMISSIONS: tuple[str, ...] = ("can_verify_technical", "treso.validation_examens.validate")

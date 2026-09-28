@@ -17,6 +17,7 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_tenant_id, get_current_tenant_uuid, has_permission, has_any_permission
+from app.core.permissions import EXAMEN_VALIDATION_PERMISSIONS
 from app.db.session import get_db
 from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
@@ -1953,7 +1954,7 @@ async def validate_requisition_examen(
     payload: RequisitionExamenPayload,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("can_verify_technical")),
+    user: User = Depends(has_any_permission(EXAMEN_VALIDATION_PERMISSIONS)),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> Any:
     try:
@@ -1986,7 +1987,7 @@ async def reject_requisition_examen(
     requisition_id: str,
     payload: RequisitionExamenPayload,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("can_verify_technical")),
+    user: User = Depends(has_any_permission(EXAMEN_VALIDATION_PERMISSIONS)),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> Any:
     try:

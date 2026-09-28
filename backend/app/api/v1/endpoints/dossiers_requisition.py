@@ -9,7 +9,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, get_current_user, get_db, has_permission
+from app.api.deps import get_current_tenant_id, get_current_user, get_db, has_any_permission, has_permission
+from app.core.permissions import EXAMEN_VALIDATION_PERMISSIONS
 from app.models.dossier_requisition import DossierRequisition
 from app.models.requisition import Requisition
 from app.models.requisition_annexe import RequisitionAnnexe
@@ -846,7 +847,7 @@ async def validate_examen_dossier(
     payload: DossierRequisitionUpdate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("can_verify_technical")),
+    user: User = Depends(has_any_permission(EXAMEN_VALIDATION_PERMISSIONS)),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     try:
@@ -923,7 +924,7 @@ async def reject_examen_dossier(
     dossier_id: str,
     payload: DossierRequisitionUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("can_verify_technical")),
+    user: User = Depends(has_any_permission(EXAMEN_VALIDATION_PERMISSIONS)),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     try:
