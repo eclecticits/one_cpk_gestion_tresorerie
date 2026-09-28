@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+import tempfile
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -83,6 +84,32 @@ setup_metrics(app)
 UPLOAD_DIR = settings.upload_dir or os.path.join(os.path.dirname(__file__), "uploads")
 UPLOAD_DIR = os.path.abspath(UPLOAD_DIR)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def _verifier_ecriture_uploads() -> None:
+    """Signale au démarrage un dossier de fichiers où le backend ne peut écrire.
+
+    Le conteneur tourne sous l'utilisateur `app`. Quand le dossier monté
+    n'existe pas sur l'hôte, Docker le crée root:root 755 : chaque bon et chaque
+    annexe échouait alors en 500, un par un, sans que rien ne désigne la cause —
+    pdf_path restait NULL et les mails partaient sans pièce jointe. On essaie
+    une vraie écriture plutôt que os.access, qui ignore les ACL et les montages
+    en lecture seule.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(dir=UPLOAD_DIR, prefix=".write-check-"):
+            pass
+    except OSError as exc:
+        logger.error(
+            "UPLOAD_DIR non accessible en écriture (%s) : bons, annexes et pièces "
+            "jointes des mails échoueront. Donner le dossier à l'utilisateur du "
+            "conteneur (uid=%s). Erreur : %s",
+            UPLOAD_DIR,
+            os.getuid(),
+            exc,
+        )
+    else:
+        logger.info("UPLOAD_DIR accessible en écriture : %s", UPLOAD_DIR)
 if settings.serve_uploads_publicly:
     app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
@@ -94,6 +121,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.on_event("startup")
 async def startup_event() -> None:
     log_pool_configuration()
+    _verifier_ecriture_uploads()
     await init_redis()
     if settings.schedulers_in_worker:
         # Délégués au conteneur exports-worker. La trace est explicite : sans

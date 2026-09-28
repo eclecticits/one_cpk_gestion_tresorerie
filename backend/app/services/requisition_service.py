@@ -55,6 +55,7 @@ from app.services.historical_snapshots import (
     ensure_requisition_historical_snapshot,
 )
 from app.services.fonds_tiers import validate_fonds_tiers_identity
+from app.services.official_pdf import ensure_requisition_official_pdf
 
 async def _should_snapshot(status_value: str | None) -> bool:
     if not status_value:
@@ -669,6 +670,33 @@ async def create_requisition_logic(
 
     return req
 
+async def figer_bon_officiel(db: AsyncSession, req: Requisition) -> None:
+    """Génère le PDF officiel d'une réquisition qui vient de passer APPROUVEE.
+
+    C'est le moment prévu pour figer la pièce : le snapshot historique vient
+    d'être écrit, et `generate_requisition_official_pdf` refuse justement de
+    rendre une pièce finalisée sans lui. Plus tôt — à la soumission à l'examen
+    par exemple — la réquisition peut encore être rejetée ou amendée.
+
+    Le PDF remplace dans `pdf_path` le bon produit par le navigateur. Son échec
+    ne défait jamais l'approbation, déjà commitée : on le journalise et on
+    rend la session propre à l'appelant.
+    """
+    if (req.status or "").upper() != "APPROUVEE":
+        return
+    try:
+        await ensure_requisition_official_pdf(db, req, regenerate=True)
+        await db.commit()
+    except Exception:
+        logger.exception(
+            "PDF officiel non généré pour la réquisition approuvée %s (%s)",
+            req.numero_requisition,
+            req.id,
+        )
+        await db.rollback()
+    await db.refresh(req)
+
+
 async def validate_requisition_logic(
     *,
     db: AsyncSession,
@@ -755,6 +783,7 @@ async def validate_requisition_logic(
     
     await db.commit()
     await db.refresh(req)
+    await figer_bon_officiel(db, req)
     
     if request:
         await check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
@@ -1127,6 +1156,7 @@ async def vise_requisition_logic(
     
     await db.commit()
     await db.refresh(req)
+    await figer_bon_officiel(db, req)
     
     if request:
         await check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
