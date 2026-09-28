@@ -1950,7 +1950,7 @@ async def construire_classeur_budget(
     return await anyio.to_thread.run_sync(_build_workbook)
 
 
-@router.get("/budget")
+@router.get("/budget", dependencies=[Depends(has_permission("treso.budget.export"))])
 async def export_budget(
     annee: int | None = Query(default=None),
     type: str | None = Query(default=None),
@@ -2536,7 +2536,7 @@ async def construire_classeur_encaissements(
     return await anyio.to_thread.run_sync(_build_workbook)
 
 
-@router.get("/encaissements", dependencies=[Depends(has_permission("menu_encaissements"))])
+@router.get("/encaissements", dependencies=[Depends(has_permission("treso.encaissements.export"))])
 async def export_encaissements(
     date_debut: str | None = Query(default=None),
     date_fin: str | None = Query(default=None),
@@ -3142,7 +3142,7 @@ async def construire_classeur_sorties_fonds(
     return await anyio.to_thread.run_sync(_build_workbook)
 
 
-@router.get("/sorties-fonds", dependencies=[Depends(has_permission("sorties_fonds"))])
+@router.get("/sorties-fonds", dependencies=[Depends(has_permission("treso.sorties_fonds.export"))])
 async def export_sorties_fonds(
     date_debut: str | None = Query(default=None),
     date_fin: str | None = Query(default=None),
@@ -3539,7 +3539,7 @@ async def construire_classeur_requisitions(
     return await anyio.to_thread.run_sync(_build_workbook)
 
 
-@router.get("/requisitions", dependencies=[Depends(has_permission("requisitions"))])
+@router.get("/requisitions", dependencies=[Depends(has_permission("treso.requisitions.export"))])
 async def export_requisitions(
     date_debut: str | None = Query(default=None),
     date_fin: str | None = Query(default=None),

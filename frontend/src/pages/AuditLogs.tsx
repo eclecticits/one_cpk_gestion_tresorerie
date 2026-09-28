@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getAuditLogs, getAuditActions, getAuditUsers, AuditLog, AuditLogFilters, AuditUser } from '../api/auditLogs'
 import { ApiError, API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { useToast } from '../hooks/useToast'
+import { usePermissions } from '../hooks/usePermissions'
 // jsPDF est lourd : chargement dynamique au moment de l'export.
 type AuditExportModule = typeof import('../utils/auditExport')
 let _auditExportModulePromise: Promise<AuditExportModule> | null = null
@@ -155,6 +156,8 @@ const getChangedFields = (oldValue: any, newValue: any) => {
 
 export default function AuditLogs() {
   const { notifyError } = useToast()
+  const { hasPermission } = usePermissions()
+  const peutExporter = hasPermission('treso.audit_logs.export')
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [actions, setActions] = useState<string[]>([])
   const [users, setUsers] = useState<AuditUser[]>([])
@@ -418,7 +421,7 @@ export default function AuditLogs() {
             type="button"
             className={styles.secondary}
             onClick={() => downloadCsv(logs)}
-            disabled={loading || logs.length === 0}
+            disabled={!peutExporter || loading || logs.length === 0}
           >
             Export CSV
           </button>
@@ -426,7 +429,7 @@ export default function AuditLogs() {
             type="button"
             className={styles.secondary}
             onClick={handleServerExport}
-            disabled={loading || exporting}
+            disabled={!peutExporter || loading || exporting}
           >
             {exporting ? 'Export...' : 'Export CSV (serveur)'}
           </button>
@@ -434,7 +437,7 @@ export default function AuditLogs() {
             type="button"
             className={styles.secondary}
             onClick={handleServerExportXlsx}
-            disabled={loading || exporting}
+            disabled={!peutExporter || loading || exporting}
           >
             {exporting ? 'Export...' : 'Export XLSX (serveur)'}
           </button>
@@ -442,7 +445,7 @@ export default function AuditLogs() {
             type="button"
             className={styles.secondary}
             onClick={() => exportAuditToPDF(logs, { userLabelMap })}
-            disabled={loading || logs.length === 0}
+            disabled={!peutExporter || loading || logs.length === 0}
           >
             Export PDF
           </button>

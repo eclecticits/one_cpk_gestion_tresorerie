@@ -2,10 +2,14 @@ import { Building2, CheckCircle2, Pencil, Plus, Power, ShieldCheck } from 'lucid
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { createService, getServices, updateService } from '../api/services'
+import { usePermissions } from '../hooks/usePermissions'
 import type { Service } from '../types'
 import styles from './ServiceAdminPanel.module.css'
 
 export default function ServiceAdminPanel({ onUpdated }: { onUpdated?: () => void | Promise<void> }) {
+  const { hasPermission } = usePermissions()
+  const peutCreer = hasPermission('treso.services.create')
+  const peutModifier = hasPermission('treso.services.update')
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -108,7 +112,7 @@ export default function ServiceAdminPanel({ onUpdated }: { onUpdated?: () => voi
               <button
                 type="submit"
                 className={styles.addBtn}
-                disabled={createLoading || !createCode.trim() || !createLibelle.trim()}
+                disabled={!peutCreer || createLoading || !createCode.trim() || !createLibelle.trim()}
               >
                 <Plus size={16} />
                 <span>{createLoading ? 'Création…' : 'Ajouter'}</span>
@@ -192,6 +196,7 @@ export default function ServiceAdminPanel({ onUpdated }: { onUpdated?: () => voi
                           <button
                             type="button"
                             className={styles.secondaryBtn}
+                            disabled={!peutModifier}
                             onClick={() => {
                               setEditingId(service.id)
                               setEditCode(service.code)
@@ -204,6 +209,7 @@ export default function ServiceAdminPanel({ onUpdated }: { onUpdated?: () => voi
                           <button
                             type="button"
                             className={service.is_active ? styles.dangerSoftBtn : styles.successBtn}
+                            disabled={!peutModifier}
                             onClick={async () => {
                               try {
                                 await updateService(service.id, { is_active: !service.is_active })
@@ -286,6 +292,7 @@ export default function ServiceAdminPanel({ onUpdated }: { onUpdated?: () => voi
                         <button
                           type="button"
                           className={styles.secondaryBtn}
+                          disabled={!peutModifier}
                           onClick={() => {
                             setEditingId(service.id)
                             setEditCode(service.code)
@@ -298,6 +305,7 @@ export default function ServiceAdminPanel({ onUpdated }: { onUpdated?: () => voi
                         <button
                           type="button"
                           className={service.is_active ? styles.dangerSoftBtn : styles.successBtn}
+                          disabled={!peutModifier}
                           onClick={async () => {
                             try {
                               await updateService(service.id, { is_active: !service.is_active })

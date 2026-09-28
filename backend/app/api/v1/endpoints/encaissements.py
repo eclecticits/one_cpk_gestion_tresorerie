@@ -1717,7 +1717,7 @@ async def list_encaissements(
     )
 
 
-@router.post("/proformas", response_model=EncaissementResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/proformas", response_model=EncaissementResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("treso.encaissements.create"))])
 async def create_proforma(
     payload: EncaissementCreate,
     user: User = Depends(get_current_user),
@@ -2044,7 +2044,7 @@ async def _resolve_or_create_client(
     return client.id
 
 
-@router.post("", response_model=EncaissementResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=EncaissementResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("treso.encaissements.create"))])
 async def create_encaissement(
     payload: EncaissementCreate,
     background_tasks: BackgroundTasks,
@@ -2603,7 +2603,7 @@ async def upload_piece_justificative(
     }
 
 
-@router.post("/{encaissement_id}/convertir", response_model=EncaissementResponse)
+@router.post("/{encaissement_id}/convertir", response_model=EncaissementResponse, dependencies=[Depends(has_permission("treso.encaissements.create"))])
 async def convertir_proforma(
     encaissement_id: str,
     payload: ProformaConversion,
@@ -2949,7 +2949,7 @@ async def get_encaissement(
     return await _encaissement_response(db, encaissement)
 
 
-@router.post("/{encaissement_id}/soft-delete", response_model=EncaissementResponse)
+@router.post("/{encaissement_id}/soft-delete", response_model=EncaissementResponse, dependencies=[Depends(has_permission("treso.encaissements.delete"))])
 async def soft_delete_encaissement(
     encaissement_id: str,
     request: Request,
@@ -3005,7 +3005,7 @@ async def soft_delete_encaissement(
     return await _encaissement_response(db, encaissement)
 
 
-@router.post("/{encaissement_id}/restore", response_model=EncaissementResponse)
+@router.post("/{encaissement_id}/restore", response_model=EncaissementResponse, dependencies=[Depends(has_permission("treso.encaissements.delete"))])
 async def restore_encaissement(
     encaissement_id: str,
     request: Request,

@@ -3530,6 +3530,8 @@ function AttendanceBatchForm({ employees, onSaved }: { employees: HREmployee[]; 
 const MONTH_LABELS_SHORT = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc']
 
 function PayrollView({ entries, employeeById, onChanged }: { entries: HRPayrollEntry[]; employeeById: Map<number, HREmployee>; onChanged: () => Promise<void> }) {
+  const { hasPermission } = usePermissions()
+  const canGenerateSlips = hasPermission('rh.payslips.generate')
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [slips, setSlips] = useState<HRSalarySlip[]>([])
   const [loadingSlips, setLoadingSlips] = useState(false)
@@ -3575,6 +3577,7 @@ function PayrollView({ entries, employeeById, onChanged }: { entries: HRPayrollE
                         className={styles.secondaryButton}
                         style={{ fontSize: 12, padding: '4px 10px' }}
                         onClick={async (e) => { e.stopPropagation(); await generateSalarySlips(entry.id); await onChanged() }}
+                        disabled={!canGenerateSlips}
                       >
                         Générer bulletins
                       </button>

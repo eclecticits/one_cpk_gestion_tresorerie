@@ -242,11 +242,16 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_experts_comptables',
         tasks: [
           { code: 'menu_experts_comptables', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.experts_comptables.read', label: 'Consulter les experts-comptables', kind: 'read' },
+          // Masqués : ces deux cases ne peuvent rien retirer. L'annuaire se lit
+          // depuis l'encaissement et le remboursement de transport, qui ne
+          // peuvent pas en dépendre ; l'export est réservé par rôle aux
+          // administrateurs experts (require_expert_admin), qui passent outre
+          // toute case.
+          { code: 'treso.experts_comptables.read', label: 'Consulter les experts-comptables', kind: 'read', hidden: true },
           { code: 'treso.experts_comptables.create', label: 'Créer un expert-comptable', kind: 'create', deferred: true },
           { code: 'treso.experts_comptables.update', label: 'Modifier un expert-comptable', kind: 'update', deferred: true },
           { code: 'treso.experts_comptables.delete', label: 'Supprimer un expert-comptable', kind: 'delete', deferred: true },
-          { code: 'treso.experts_comptables.export', label: 'Exporter la liste des experts', kind: 'export' },
+          { code: 'treso.experts_comptables.export', label: 'Exporter la liste des experts', kind: 'export', hidden: true },
         ],
       },
       {

@@ -12,6 +12,7 @@ import type { BudgetExerciseSummary, BudgetPosteSummary, BudgetPosteTree } from 
 import type { Service } from '../types'
 import { ApiError } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { downloadExcel } from '../utils/download'
 
 // `budget` est le premier type ouvert a la file (EXPORT_ASYNC_TYPES, phase 1
@@ -268,6 +269,14 @@ export default function Budget() {
   const revealTreeBranch = useTreeBranchReveal()
   const { user } = useAuth()
   const isSuperAdmin = (user?.role || '').toLowerCase() === 'super_admin'
+  // « Accès au menu » ouvre la lecture ; chaque écriture a sa case dans l'écran
+  // Rôles, exigée aussi par l'API (treso.budget.*).
+  const { hasPermission } = usePermissions()
+  const peutCreer = hasPermission('treso.budget.create')
+  const peutModifier = hasPermission('treso.budget.update')
+  const peutSupprimer = hasPermission('treso.budget.delete')
+  const peutValider = hasPermission('treso.budget.validate')
+  const peutExporter = hasPermission('treso.budget.export')
   const hasExercises = exercices.length > 0
   const hasSelectedExercise = selectedYear !== null
   const closeMenus = () => {
@@ -696,7 +705,7 @@ export default function Budget() {
     : emptyStateMessage
 
   const handleAddDraft = () => {
-    if (!selectedYear || isReadOnly) return
+    if (!selectedYear || isReadOnly || !peutCreer) return
     const newDraftId = draftId - 1
     setDraftId(newDraftId)
     setLines((prev) => [
@@ -720,7 +729,7 @@ export default function Budget() {
   }
 
   const handleAddChild = (parent: BudgetPosteNode) => {
-    if (!selectedYear || isReadOnly) return
+    if (!selectedYear || isReadOnly || !peutCreer) return
     setSubParent(parent)
     setSubCode('')
     setSubLibelle('')
@@ -793,6 +802,7 @@ export default function Budget() {
 
   const handlePersist = async (line: BudgetPosteNode) => {
     if (!selectedYear || isReadOnly) return
+    if (!(line.id < 0 ? peutCreer : peutModifier)) return
     if (!line.code || !line.libelle) return
     const hasChildren = line.children && line.children.length > 0
     try {
@@ -866,6 +876,7 @@ export default function Budget() {
       setLines((prev) => removeTreeNode(prev, line.id))
       return
     }
+    if (!peutSupprimer) return
     const confirmed = await confirm({
       title: 'Supprimer le poste budgétaire ?',
       description: `${line.code} - ${line.libelle}`,
@@ -885,7 +896,7 @@ export default function Budget() {
   }
 
   const handleDeleteSelection = async () => {
-    if (isReadOnly) return
+    if (isReadOnly || !peutSupprimer) return
     const ids = Array.from(selectedLeafIds)
     if (ids.length === 0) return
     const selectedLines = flattenTree(lines).filter((line) => ids.includes(line.id))
@@ -1283,6 +1294,8 @@ export default function Budget() {
             : `Manque ${formatAmount(Math.abs(ecart))}`
       const prevPrevu = prevYearTotalsByCode.get(normalizeCode(line.code))
       const ecartValue = prevPrevu === undefined ? null : totals.prevu - prevPrevu
+      // Un brouillon (id négatif) n'existe pas encore : l'enregistrer, c'est créer.
+      const ligneEditable = line.id < 0 ? peutCreer : peutModifier
 
       return (
         <Fragment key={line.id}>
@@ -1309,7 +1322,7 @@ export default function Budget() {
                 onChange={(e) => updateLocalLine(line.id, { code: e.target.value })}
                 onBlur={() => handlePersist(line)}
                 placeholder="Code"
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={isReadOnly || !ligneEditable || (line.is_global && !isSuperAdmin)}
               />
             </td>
             <td className={styles.colLabel}>
@@ -1325,7 +1338,7 @@ export default function Budget() {
                   onChange={(e) => updateLocalLine(line.id, { libelle: e.target.value })}
                   onBlur={() => handlePersist(line)}
                   placeholder="Poste budgétaire"
-                  disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                  disabled={isReadOnly || !ligneEditable || (line.is_global && !isSuperAdmin)}
                 />
                 {line.is_global && (
                   <span className={styles.globalBadge}>
@@ -1412,7 +1425,7 @@ export default function Budget() {
                   value={toNumber(line.montant_prevu)}
                   onChange={(e) => updateLocalLine(line.id, { montant_prevu: Number(e.target.value) })}
                   onBlur={() => handlePersist(line)}
-                  disabled={isReadOnly}
+                  disabled={isReadOnly || !ligneEditable}
                 />
               )}
             </td>
@@ -1530,7 +1543,7 @@ export default function Budget() {
                     className={`${styles.menuButton} ${styles.iconBtn}`}
                     onClick={() => setOpenMenuId(openMenuId === line.id ? null : line.id)}
                     aria-label="Actions"
-                    disabled={isReadOnly}
+                    disabled={isReadOnly || !(peutModifier || peutCreer || peutSupprimer)}
                   >
                     <MoreVertical size={16} />
                   </button>
@@ -1550,7 +1563,7 @@ export default function Budget() {
                   updateLocalLine(line.id, { active: nextActive })
                   handlePersist({ ...line, active: nextActive })
                 }}
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={isReadOnly || !ligneEditable || (line.is_global && !isSuperAdmin)}
                 title={
                   line.active === false
                     ? 'Le poste redevient disponible à la saisie des réquisitions'
@@ -1562,7 +1575,7 @@ export default function Budget() {
               <button
                 className={styles.menuItem}
                 onClick={() => handleAddChild(line)}
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={isReadOnly || !peutCreer || (line.is_global && !isSuperAdmin)}
               >
                 Ajouter un sous-poste
               </button>
@@ -1578,7 +1591,7 @@ export default function Budget() {
                   updateLocalLine(line.id, { inclure_dans_calculs: inclure })
                   handlePersist({ ...line, inclure_dans_calculs: inclure })
                 }}
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={isReadOnly || !ligneEditable || (line.is_global && !isSuperAdmin)}
                 title={
                   hasChildren
                     ? 'Le changement s’applique aussi à tous les sous-postes'
@@ -1595,6 +1608,7 @@ export default function Budget() {
                 <button
                   className={styles.menuItem}
                   onClick={() => handleOpenArrieres(line)}
+                  disabled={!peutModifier}
                   title="Poste de l’exercice suivant qui reprend, à la clôture, ce qui reste dû sur celui-ci"
                 >
                   {line.code_poste_arrieres
@@ -1605,7 +1619,7 @@ export default function Budget() {
               <button
                 className={styles.menuItemDanger}
                 onClick={() => handleDelete(line)}
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={isReadOnly || (line.id > 0 && !peutSupprimer) || (line.is_global && !isSuperAdmin)}
               >
                         Supprimer
                       </button>
@@ -1667,7 +1681,7 @@ export default function Budget() {
                   type="button"
                   className={styles.secondaryAction}
                   onClick={handleOpenCreateExercise}
-                  disabled={createExerciseLoading}
+                  disabled={createExerciseLoading || !peutCreer}
                 >
                   {createExerciseLoading ? 'Création...' : 'Créer un exercice budgétaire'}
                 </button>
@@ -1746,7 +1760,7 @@ export default function Budget() {
                     </span>
                   )
                 )}
-                <button className={styles.primaryAction} onClick={handleAddDraft} disabled={!hasActiveEditableExercise}>
+                <button className={styles.primaryAction} onClick={handleAddDraft} disabled={!hasActiveEditableExercise || !peutCreer}>
                   <Plus size={16} />
                   Nouveau poste budgétaire
                 </button>
@@ -1809,7 +1823,7 @@ export default function Budget() {
                             closeMenus()
                             handleExportExcel()
                           }}
-                          disabled={!selectedYear || exporting === 'excel'}
+                          disabled={!peutExporter || !selectedYear || exporting === 'excel'}
                         >
                           <Table size={14} />
                           {exporting === 'excel' ? 'Export Excel…' : 'Export Excel'}
@@ -1821,7 +1835,7 @@ export default function Budget() {
                             closeMenus()
                             handleExportPDF()
                           }}
-                          disabled={!selectedYear || exporting === 'pdf'}
+                          disabled={!peutExporter || !selectedYear || exporting === 'pdf'}
                         >
                           <FileText size={14} />
                           {exporting === 'pdf' ? 'Export PDF…' : 'Export PDF'}
@@ -1837,7 +1851,7 @@ export default function Budget() {
                             closeMenus()
                             handleExportPDF(true)
                           }}
-                          disabled={!selectedYear || exporting === 'pdf' || commentairesByCode.size === 0}
+                          disabled={!peutExporter || !selectedYear || exporting === 'pdf' || commentairesByCode.size === 0}
                           title={
                             commentairesByCode.size === 0
                               ? 'Aucune ligne commentée sur cet exercice'
@@ -1854,7 +1868,7 @@ export default function Budget() {
                             closeMenus()
                             handleExportServiceExcel()
                           }}
-                          disabled={!selectedYear || !selectedServiceId || exporting === 'excel'}
+                          disabled={!peutExporter || !selectedYear || !selectedServiceId || exporting === 'excel'}
                           title={!selectedServiceId ? 'Sélectionnez un service' : undefined}
                         >
                           <Table size={14} />
@@ -1867,7 +1881,7 @@ export default function Budget() {
                             closeMenus()
                             handlePrintServiceReport()
                           }}
-                          disabled={!selectedYear || !selectedServiceId}
+                          disabled={!peutExporter || !selectedYear || !selectedServiceId}
                           title={!selectedServiceId ? 'Sélectionnez un service' : undefined}
                         >
                           <FileText size={14} />
@@ -1900,7 +1914,7 @@ export default function Budget() {
                             closeMenus()
                             handleCloseExercise()
                           }}
-                          disabled={!hasSelectedExercise || isClosed || closing || isFutureExercise}
+                          disabled={!peutValider || !hasSelectedExercise || isClosed || closing || isFutureExercise}
                         >
                           {closing ? 'Clôture…' : 'Clôturer l’année'}
                         </button>
@@ -1911,7 +1925,7 @@ export default function Budget() {
                             closeMenus()
                             handleReopenExercise()
                           }}
-                          disabled={!selectedYear || !isClosed || reopening}
+                          disabled={!peutValider || !selectedYear || !isClosed || reopening}
                         >
                           {reopening ? 'Déverrouillage…' : 'Déverrouiller'}
                         </button>
@@ -1922,7 +1936,7 @@ export default function Budget() {
                             closeMenus()
                             handleReporterCreances()
                           }}
-                          disabled={!selectedYear || !isClosed || reportingCreances}
+                          disabled={!peutValider || !selectedYear || !isClosed || reportingCreances}
                           title="Pour un exercice clôturé avant le report automatique des créances"
                         >
                           {reportingCreances ? 'Report…' : 'Reporter les créances en arriérés'}
@@ -1934,7 +1948,7 @@ export default function Budget() {
                             closeMenus()
                             handleOpenInit()
                           }}
-                          disabled={!hasActiveEditableExercise || initLoading}
+                          disabled={!peutCreer || !hasActiveEditableExercise || initLoading}
                         >
                           Initialiser année suivante
                         </button>
@@ -1949,7 +1963,7 @@ export default function Budget() {
                             closeMenus()
                             setImportOpen(true)
                           }}
-                          disabled={!canImport}
+                          disabled={!canImport || !peutCreer}
                         >
                           Importer Excel
                         </button>
@@ -1960,7 +1974,7 @@ export default function Budget() {
                             closeMenus()
                             handleDeleteSelection()
                           }}
-                          disabled={isReadOnly || selectedLeafIds.size === 0}
+                          disabled={isReadOnly || !peutSupprimer || selectedLeafIds.size === 0}
                         >
                           Supprimer sélection ({selectedLeafIds.size})
                         </button>

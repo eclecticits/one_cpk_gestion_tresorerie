@@ -339,7 +339,7 @@ async def _filter_dossiers_for_user(
     return [d for d in dossiers if d.id in allowed_ids]
 
 
-@router.post("", response_model=DossierRequisitionOut)
+@router.post("", response_model=DossierRequisitionOut, dependencies=[Depends(has_permission("treso.validation_examens.create"))])
 async def create_dossier_requisition(
     payload: DossierRequisitionCreate,
     db: AsyncSession = Depends(get_db),
@@ -443,7 +443,7 @@ async def list_draft_dossiers(
     ]
 
 
-@router.post("/{dossier_id}/submit-examen", response_model=DossierRequisitionOut)
+@router.post("/{dossier_id}/submit-examen", response_model=DossierRequisitionOut, dependencies=[Depends(has_permission("treso.validation_examens.update"))])
 async def submit_examen_dossier(
     dossier_id: str,
     background_tasks: BackgroundTasks,
@@ -508,7 +508,7 @@ async def submit_examen_dossier(
     return await _build_dossier_out(db, dossier, requisitions)
 
 
-@router.post("/{dossier_id}/add-requisitions", response_model=DossierRequisitionOut)
+@router.post("/{dossier_id}/add-requisitions", response_model=DossierRequisitionOut, dependencies=[Depends(has_permission("treso.validation_examens.update"))])
 async def add_requisitions_to_dossier(
     dossier_id: str,
     payload: DossierRequisitionAdd,
@@ -580,7 +580,7 @@ async def add_requisitions_to_dossier(
     return await _build_dossier_out(db, dossier, dossier_reqs)
 
 
-@router.post("/{dossier_id}/remove-requisitions", response_model=DossierRequisitionOut)
+@router.post("/{dossier_id}/remove-requisitions", response_model=DossierRequisitionOut, dependencies=[Depends(has_permission("treso.validation_examens.update"))])
 async def remove_requisitions_from_dossier(
     dossier_id: str,
     payload: DossierRequisitionRemove,
@@ -655,7 +655,7 @@ async def remove_requisitions_from_dossier(
     return await _build_dossier_out(db, dossier, dossier_reqs)
 
 
-@router.delete("/{dossier_id}", response_model=dict)
+@router.delete("/{dossier_id}", response_model=dict, dependencies=[Depends(has_permission("treso.validation_examens.delete"))])
 async def delete_dossier_requisition(
     dossier_id: str,
     db: AsyncSession = Depends(get_db),
@@ -804,7 +804,7 @@ async def list_dossiers_requisition(
     ]
 
 
-@router.patch("/{dossier_id}", response_model=DossierRequisitionOut)
+@router.patch("/{dossier_id}", response_model=DossierRequisitionOut, dependencies=[Depends(has_permission("treso.validation_examens.update"))])
 async def update_dossier_requisition(
     dossier_id: str,
     payload: DossierRequisitionUpdate,

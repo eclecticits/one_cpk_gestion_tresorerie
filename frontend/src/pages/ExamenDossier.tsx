@@ -34,6 +34,7 @@ import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/downl
 import { refreshRequisitionBonBeforeExamen } from '../utils/requisitionBon'
 import type { Requisition } from '../types'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './ExamenDossier.module.css'
 
@@ -68,6 +69,7 @@ export default function ExamenDossier() {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const { user } = useAuth()
+  const { hasPermission } = usePermissions()
   const [loading, setLoading] = useState(true)
   const [dossier, setDossier] = useState<Dossier | null>(null)
   const [commentaire, setCommentaire] = useState('')
@@ -628,6 +630,7 @@ export default function ExamenDossier() {
               <h2>Détails de {getDocumentTypeLabel(selectedReqDetail).toLowerCase()} {getDocumentReference(selectedReqDetail)}</h2>
               <div className={styles.modalHeaderActions}>
                 {!isTransportDocument(selectedReqDetail) &&
+                  hasPermission('treso.requisitions.update') &&
                   peutModifierRequisition(selectedReqDetail as any, user?.id) && (
                     <button
                       type="button"

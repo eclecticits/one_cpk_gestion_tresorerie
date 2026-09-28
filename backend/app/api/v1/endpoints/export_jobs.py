@@ -65,15 +65,16 @@ MOTIF_ARTEFACT = re.compile(
 # ce que la porte principale lui refuse. Le cloisonnement multi-tenant ne couvre
 # pas ce cas — il sépare les organisations, pas les rôles.
 #
-# `None` = aucune permission particulière, l'authentification suffit : c'est le
-# régime de `GET /exports/budget`, qui n'a pas de dépendance de permission.
+# `None` = aucune permission particulière, l'authentification suffit. Plus aucun
+# type n'en relève : `GET /exports/budget`, longtemps ouvert à tout utilisateur
+# connecté, exige désormais `treso.budget.export`.
 # Les clés reprennent EXACTEMENT les dépendances déclarées sur les routes
 # correspondantes de `exports.py` ; toute divergence est un trou.
 PERMISSION_PAR_TYPE: dict[str, str | None] = {
-    "budget": None,
-    "encaissements": "menu_encaissements",
-    "sorties-fonds": "sorties_fonds",
-    "requisitions": "requisitions",
+    "budget": "treso.budget.export",
+    "encaissements": "treso.encaissements.export",
+    "sorties-fonds": "treso.sorties_fonds.export",
+    "requisitions": "treso.requisitions.export",
     # `experts-comptables` ne se garde pas par une permission mais par un RÔLE
     # (`require_expert_admin` : super-admin, ou admin de l'organisation
     # nationale). Il ne peut donc pas figurer dans cette table, dont les valeurs

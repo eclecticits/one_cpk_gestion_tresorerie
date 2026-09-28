@@ -915,7 +915,7 @@ export default function Encaissements() {
                 Enregistrer l’encaissement
               </button>
             </div>
-          ) : hasPermission('encaissements') && (
+          ) : hasPermission('encaissements') && hasPermission('treso.encaissements.create') && (
             <div className={styles.headerActions}>
               <Link to="/clients" className={styles.secondaryBtn}>
                 Gérer les clients
@@ -1008,6 +1008,7 @@ export default function Encaissements() {
         resetFilters={resetFilters}
         totalCount={totalCount}
         exportToExcel={exportToExcel}
+        canExport={hasPermission('treso.encaissements.export')}
         exportAvecAnnulations={exportAvecAnnulations}
         setExportAvecAnnulations={setExportAvecAnnulations}
         exportToPDF={exportToPDF}
@@ -1065,6 +1066,7 @@ export default function Encaissements() {
                       <div className={styles.actionBtns}>
                         <button
                           onClick={() => handleConvertProforma(pro)}
+                          disabled={!hasPermission('treso.encaissements.create')}
                           className={`${styles.paymentBtn} ${styles.actionIconBtn}`}
                           title="Confirmer le paiement"
                           aria-label="Confirmer le paiement"

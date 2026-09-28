@@ -1173,7 +1173,7 @@ export default function RemboursementTransport() {
     }
   }
 
-  const canCreate = hasPermission('requisitions')
+  const canCreate = hasPermission('requisitions') && hasPermission('treso.remboursement_transport.create')
 
   if (loading || permissionsLoading) {
     return <div className={styles.loading}>Chargement...</div>
@@ -1778,7 +1778,7 @@ export default function RemboursementTransport() {
             {selectedRemboursementIds.length > 1 ? 's' : ''}
           </div>
           <div className={styles.groupingActions}>
-            {canCreateDossier && (
+            {canCreateDossier && hasPermission('treso.validation_examens.create') && (
               <button type="button" className={styles.groupingPrimary} onClick={handleCreateDossier}>
                 Créer un dossier
               </button>
@@ -1974,7 +1974,7 @@ export default function RemboursementTransport() {
                             ? 'Envoi...'
                             : getSubmitExamenLabel(r)}
                         </button>
-                        {canDeleteRemboursement(r) && (
+                        {canDeleteRemboursement(r) && hasPermission('treso.requisitions.delete') && (
                           <button
                             type="button"
                             onClick={() => handleDeleteRemboursement(r)}

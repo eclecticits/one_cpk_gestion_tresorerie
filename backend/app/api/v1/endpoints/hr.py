@@ -962,7 +962,7 @@ async def create_payroll_entry(payload: HRPayrollEntryCreate, db: AsyncSession =
     return entry
 
 
-@router.post("/payroll-entries/{entry_id}/generate-slips", response_model=list[HRSalarySlipOut], dependencies=[Depends(has_permission("rh.payroll.prepare"))])
+@router.post("/payroll-entries/{entry_id}/generate-slips", response_model=list[HRSalarySlipOut], dependencies=[Depends(has_permission("rh.payslips.generate"))])
 async def generate_salary_slips(entry_id: int, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> list[HRSalarySlip]:
     entry_res = await db.execute(select(HRPayrollEntry).where(HRPayrollEntry.tenant_id == tenant_id, HRPayrollEntry.id == entry_id))
     entry = entry_res.scalar_one_or_none()

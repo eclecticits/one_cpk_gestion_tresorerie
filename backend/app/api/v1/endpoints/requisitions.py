@@ -1842,7 +1842,7 @@ async def create_requisition(
     return _requisition_out(req)
 
 
-@router.put("/{requisition_id}", response_model=RequisitionOut)
+@router.put("/{requisition_id}", response_model=RequisitionOut, dependencies=[Depends(has_permission("treso.requisitions.update"))])
 async def update_requisition(
     requisition_id: str,
     payload: RequisitionUpdate,
@@ -2125,7 +2125,7 @@ async def reject_requisition(
     return _requisition_out(req)
 
 
-@router.post("/{requisition_id}/soft-delete", response_model=RequisitionOut)
+@router.post("/{requisition_id}/soft-delete", response_model=RequisitionOut, dependencies=[Depends(has_permission("treso.requisitions.delete"))])
 async def soft_delete_requisition(
     requisition_id: str,
     request: Request,
@@ -2207,7 +2207,7 @@ async def soft_delete_requisition(
     return _requisition_out(req)
 
 
-@router.post("/{requisition_id}/restore", response_model=RequisitionOut)
+@router.post("/{requisition_id}/restore", response_model=RequisitionOut, dependencies=[Depends(has_permission("treso.requisitions.delete"))])
 async def restore_requisition(
     requisition_id: str,
     request: Request,

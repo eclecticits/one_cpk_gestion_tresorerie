@@ -1312,7 +1312,7 @@ async def _controler_brouillon(
     return canal, devise, requisition_uid, date_paiement
 
 
-@router.post("/drafts", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
+@router.post("/drafts", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("treso.sorties_fonds.create"))])
 async def create_sortie_fonds_draft(
     payload: SortieFondsDraftCreate,
     request: Request,
@@ -1368,7 +1368,7 @@ async def create_sortie_fonds_draft(
     return _sortie_out(sortie, creator=user)
 
 
-@router.put("/{sortie_id}/brouillon", response_model=SortieFondsOut)
+@router.put("/{sortie_id}/brouillon", response_model=SortieFondsOut, dependencies=[Depends(has_permission("treso.sorties_fonds.create"))])
 async def update_sortie_fonds_draft(
     sortie_id: str,
     payload: SortieFondsDraftCreate,
@@ -1540,7 +1540,7 @@ async def _deleguer_transfert_interne(
     return projection
 
 
-@router.post("", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("treso.sorties_fonds.create"))])
 async def create_sortie_fonds(
     payload: SortieFondsCreate,
     request: Request,

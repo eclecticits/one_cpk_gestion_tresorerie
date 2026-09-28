@@ -35,6 +35,7 @@ import { peutModifierRequisition } from '../utils/requisitionLock'
 import { refreshRequisitionBonBeforeExamen } from '../utils/requisitionBon'
 import type { Service } from '../types'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { useConfirm } from '../contexts/ConfirmContext'
 import RowActionsMenu, { type ActionLigne } from '../components/RowActionsMenu'
 import PageHeader from '../components/PageHeader'
@@ -130,6 +131,7 @@ export default function DossiersExamen() {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const { user } = useAuth()
+  const { hasPermission } = usePermissions()
   const [loading, setLoading] = useState(true)
   const [dossiers, setDossiers] = useState<Dossier[]>([])
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
@@ -1528,6 +1530,7 @@ export default function DossiersExamen() {
               <h2>Détails de {getDocumentTypeLabel(selectedReqDetail).toLowerCase()} {getDocumentReference(selectedReqDetail)}</h2>
               <div className={styles.modalHeaderActions}>
                 {!isTransportDocument(selectedReqDetail) &&
+                  hasPermission('treso.requisitions.update') &&
                   peutModifierRequisition(selectedReqDetail as any, user?.id) && (
                     <button
                       type="button"

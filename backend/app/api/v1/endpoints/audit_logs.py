@@ -161,7 +161,7 @@ async def list_audit_users(
     return users
 
 
-@router.get("/export", dependencies=[Depends(has_permission("audit_logs"))])
+@router.get("/export", dependencies=[Depends(has_permission("treso.audit_logs.export"))])
 async def export_audit_logs(
     action: str | None = Query(default=None),
     user_id: str | None = Query(default=None),
@@ -234,7 +234,7 @@ async def export_audit_logs(
     )
 
 
-@router.get("/export-xlsx", dependencies=[Depends(has_permission("audit_logs"))])
+@router.get("/export-xlsx", dependencies=[Depends(has_permission("treso.audit_logs.export"))])
 async def export_audit_logs_xlsx(
     action: str | None = Query(default=None),
     user_id: str | None = Query(default=None),

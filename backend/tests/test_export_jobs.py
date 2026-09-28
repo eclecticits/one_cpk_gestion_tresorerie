@@ -355,7 +355,8 @@ class _SessionFiltrante:
     """Session minimale qui honore le filtre de type et le LIMIT du SELECT.
 
     Elle refuse toute permission (aucune ligne de rôle) : l'utilisateur de ce
-    test n'a donc droit qu'aux types sans permission — `budget`.
+    test n'a donc droit qu'aux types que lui ouvrent ses propres codes —
+    `budget`, par `treso.budget.export`.
     """
 
     def __init__(self, jobs):
@@ -415,7 +416,12 @@ async def test_la_liste_ne_perd_pas_les_jobs_visibles_derriere_une_page_de_jobs_
     ] + [_job(type="budget", created_at=base - timedelta(days=1, minutes=i)) for i in range(3)]
 
     utilisateur = AuthUser(
-        id=uuid.uuid4(), role="agent", role_id=3, organisation_id=7, active=True
+        id=uuid.uuid4(),
+        role="agent",
+        role_id=3,
+        organisation_id=7,
+        active=True,
+        permission_codes=frozenset({"treso.budget.export"}),
     )
     session = _SessionFiltrante(jobs)
 

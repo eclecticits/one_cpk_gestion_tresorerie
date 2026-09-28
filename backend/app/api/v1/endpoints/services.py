@@ -405,7 +405,7 @@ async def get_service(
 async def create_service(
     payload: ServiceCreate,
     db: AsyncSession = Depends(get_db),
-    user: object = Depends(has_permission("budget")),
+    user: object = Depends(has_permission("treso.services.create")),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceOut:
     code = _normalize_service_code(payload.code)
@@ -496,7 +496,7 @@ async def update_service(
     service_id: int,
     payload: ServiceUpdate,
     db: AsyncSession = Depends(get_db),
-    user: object = Depends(has_permission("budget")),
+    user: object = Depends(has_permission("treso.services.update")),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceOut:
     res = await db.execute(

@@ -27,6 +27,7 @@ const generateCloturePDF: PdfClotureGeneratorModule['generateCloturePDF'] = asyn
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import styles from './ClotureCaisse.module.css'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import ClotureFields from '../components/Treasury/ClotureFields'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import EcartsCaisseEnAttente from '../components/Treasury/EcartsCaisseEnAttente'
@@ -39,6 +40,7 @@ const formatMoneyCdf = (value: number) =>
 
 export default function ClotureCaisse() {
   const { user } = useAuth()
+  const { hasPermission } = usePermissions()
   const { notifyError, notifySuccess } = useToast()
   const [balance, setBalance] = useState<ClotureBalance | null>(null)
   const [loading, setLoading] = useState(false)
@@ -630,7 +632,7 @@ export default function ClotureCaisse() {
         <button type="button" className={styles.secondary} onClick={handlePrint} disabled={!lastCloture}>
           Imprimer PV
         </button>
-        <button type="button" className={styles.secondary} onClick={handleExportHistory} disabled={exporting}>
+        <button type="button" className={styles.secondary} onClick={handleExportHistory} disabled={exporting || !hasPermission('treso.cloture_caisse.export')}>
           {exporting ? 'Export...' : 'Export historique'}
         </button>
       </div>

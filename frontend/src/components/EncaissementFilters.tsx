@@ -41,6 +41,8 @@ interface EncaissementFiltersProps {
   resetFilters: () => void
   totalCount: number
   exportToExcel: () => void
+  /** Case « Exporter les encaissements » de l'écran Rôles. */
+  canExport: boolean
   exportAvecAnnulations: boolean
   setExportAvecAnnulations: (val: boolean) => void
   exportToPDF: () => void
@@ -88,6 +90,7 @@ export default function EncaissementFilters({
   resetFilters,
   totalCount,
   exportToExcel,
+  canExport,
   exportAvecAnnulations,
   setExportAvecAnnulations,
   exportToPDF,
@@ -359,10 +362,10 @@ export default function EncaissementFilters({
                 onChange={setExportAvecAnnulations}
               />
             )}
-            <button onClick={exportToExcel} className={styles.excelBtn}>
+            <button onClick={exportToExcel} className={styles.excelBtn} disabled={!canExport}>
               Exporter Excel
             </button>
-            <button onClick={exportToPDF} className={styles.pdfBtn}>
+            <button onClick={exportToPDF} className={styles.pdfBtn} disabled={!canExport}>
               Exporter PDF
             </button>
           </>

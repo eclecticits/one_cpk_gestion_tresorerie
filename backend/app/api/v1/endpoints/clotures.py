@@ -503,7 +503,7 @@ async def list_cloture_caissiers(
     return users
 
 
-@router.get("/export-xlsx", dependencies=[Depends(has_permission("cloture_caisse"))])
+@router.get("/export-xlsx", dependencies=[Depends(has_permission("treso.cloture_caisse.export"))])
 async def export_clotures_xlsx(
     limit: int = Query(default=5000, ge=1, le=50000),
     offset: int = Query(default=0, ge=0),

@@ -1897,6 +1897,8 @@ export default function SortiesFonds() {
   }
 
   const canCreate = hasPermission('sorties_fonds')
+  // Case « Créer une sortie de fonds » : exigée aussi par l'API, brouillons compris.
+  const peutCreerSortie = canCreate && hasPermission('treso.sorties_fonds.create')
 
   const filteredSorties = sortiesList
   const totalSorties = totalMontantSorties
@@ -2138,9 +2140,11 @@ export default function SortiesFonds() {
               <Link to="/cloture-caisse" className={styles.secondaryBtn}>
                 {isCashClosed ? 'Ouvrir la caisse' : 'Clôture de la journée'}
               </Link>
-              <Link to="/sorties-fonds/nouvelle" className={styles.primaryBtn}>
-                + Nouvelle sortie
-              </Link>
+              {peutCreerSortie && (
+                <Link to="/sorties-fonds/nouvelle" className={styles.primaryBtn}>
+                  + Nouvelle sortie
+                </Link>
+              )}
             </div>
           )
         }
@@ -2148,7 +2152,7 @@ export default function SortiesFonds() {
 
       <CaisseSessionBanner />
 
-      {!isCreatePage && canCreate && requisitionsApprouvees.length > 0 && (
+      {!isCreatePage && peutCreerSortie && requisitionsApprouvees.length > 0 && (
         <div className={styles.infoBox}>
           {requisitionsApprouvees.length > 0 && (
             <p className={styles.infoBoxText}>
@@ -2276,7 +2280,7 @@ export default function SortiesFonds() {
             <button
               onClick={exportToExcel}
               className={styles.exportBtn}
-              disabled={exportExcelEnCours}
+              disabled={exportExcelEnCours || !hasPermission('treso.sorties_fonds.export')}
             >
               {exportExcelEnCours ? '📊 Export en cours…' : '📊 Exporter Excel'}
             </button>
@@ -2285,6 +2289,7 @@ export default function SortiesFonds() {
             <button
               onClick={exportToPDF}
               className={styles.exportBtn}
+              disabled={!hasPermission('treso.sorties_fonds.export')}
             >
               📄 Exporter PDF
             </button>
@@ -3616,7 +3621,7 @@ export default function SortiesFonds() {
                             <Undo2 size={16} /><span className={styles.printLabel}>Retour</span>
                           </button>
                         )}
-                        {String((sortie as any)?.statut || '').toUpperCase() === 'BROUILLON' && canCreate && (
+                        {String((sortie as any)?.statut || '').toUpperCase() === 'BROUILLON' && peutCreerSortie && (
                           <button
                             type="button"
                             className={`${styles.actionBtn} ${styles.actionIconBtn}`}

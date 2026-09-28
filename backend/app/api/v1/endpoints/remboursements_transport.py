@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, get_current_tenant_uuid, get_current_user, has_any_permission
+from app.api.deps import get_current_tenant_id, get_current_tenant_uuid, get_current_user, has_any_permission, has_permission
 from app.db.session import get_db
 from app.models.requisition import Requisition
 from app.models.requisition_annexe import RequisitionAnnexe
@@ -306,7 +306,7 @@ async def list_remboursements_transport(
     return responses
 
 
-@router.post("", response_model=RemboursementTransportResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=RemboursementTransportResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("treso.remboursement_transport.create"))])
 async def create_remboursement_transport(
     payload: RemboursementTransportCreate,
     user: User = Depends(has_any_permission(["remboursement_transport", "menu_services"])),

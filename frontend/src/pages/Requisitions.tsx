@@ -1974,6 +1974,7 @@ export default function Requisitions() {
   }
 
   const canDeleteRequisition = (req: Requisition) => {
+    if (!hasPermission('treso.requisitions.delete')) return false
     return String((req as any).examen_status ?? '').toUpperCase() === 'NON_EXAMINE'
   }
 
@@ -2447,6 +2448,7 @@ export default function Requisitions() {
                             type="button"
                             className={styles.actionBtn}
                             onClick={() => openEditDossier(dossier)}
+                            disabled={!hasPermission('treso.validation_examens.update')}
                           >
                             Modifier description
                           </button>
@@ -2454,6 +2456,7 @@ export default function Requisitions() {
                             type="button"
                             className={styles.groupingPrimary}
                             onClick={() => handleSubmitDossier(dossier.id)}
+                            disabled={!hasPermission('treso.validation_examens.update')}
                           >
                             Soumettre à l'examen
                           </button>
@@ -2461,6 +2464,7 @@ export default function Requisitions() {
                             type="button"
                             className={styles.groupingSecondary}
                             onClick={() => handleDeleteDossier(dossier.id)}
+                            disabled={!hasPermission('treso.validation_examens.delete')}
                           >
                             Supprimer
                           </button>
@@ -2639,11 +2643,15 @@ export default function Requisitions() {
               <button
                 onClick={exportToExcel}
                 className={`${styles.exportBtn} ${styles.exportExcel}`}
-                disabled={exportExcelEnCours}
+                disabled={exportExcelEnCours || !hasPermission('treso.requisitions.export')}
               >
                 {exportExcelEnCours ? 'Export en cours…' : 'Exporter Excel'}
               </button>
-              <button onClick={exportToPDF} className={`${styles.exportBtn} ${styles.exportPDF}`}>
+              <button
+                onClick={exportToPDF}
+                className={`${styles.exportBtn} ${styles.exportPDF}`}
+                disabled={!hasPermission('treso.requisitions.export')}
+              >
                 Exporter PDF
               </button>
             </>
@@ -3515,7 +3523,7 @@ export default function Requisitions() {
             {selectedIds.length > 1 ? 's' : ''}
           </div>
           <div className={styles.groupingActions}>
-            {canCreateDossier && (
+            {canCreateDossier && hasPermission('treso.validation_examens.create') && (
               <button type="button" className={styles.groupingPrimary} onClick={handleCreateDossier}>
                 Créer un dossier
               </button>
@@ -3916,6 +3924,7 @@ export default function Requisitions() {
                   type="button"
                   className={styles.editReqBtn}
                   onClick={() => setRequisitionAModifier(selectedRequisition)}
+                  disabled={!hasPermission('treso.requisitions.update')}
                 >
                   <Pencil size={14} aria-hidden="true" />
                   {peutModifierRequisition(selectedRequisition as any, user?.id)
