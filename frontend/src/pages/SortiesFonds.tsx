@@ -389,7 +389,13 @@ export default function SortiesFonds() {
   const sorties = sortiesQuery.data?.sorties ?? []
   const requisitionsApprouvees = sortiesQuery.data?.requisitionsApprouvees ?? []
   const services = sortiesQuery.data?.services ?? []
-  const loading = sortiesQuery.isFetching
+  // Le squelette pleine page ne couvre que le PREMIER chargement d'une clé.
+  // Branché sur isFetching, il remplaçait la page à chaque rechargement — à
+  // l'ouverture de « Nouvelle sortie » dès que le cache avait 30 s, après une
+  // reconnexion réseau, après une invalidation — et démontait au passage le
+  // formulaire en cours de saisie, dont le contenu était perdu. Les
+  // rechargements se font désormais en arrière-plan, sur les données en cache.
+  const loading = sortiesQuery.isPending
   const totalCount = sortiesQuery.data?.totalCount ?? 0
   const totalMontantSorties = sortiesQuery.data?.totalMontantSorties ?? 0
   const totalDepensesReelles = sortiesQuery.data?.totalDepensesReelles ?? 0
