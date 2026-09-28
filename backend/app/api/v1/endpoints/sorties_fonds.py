@@ -3025,16 +3025,23 @@ async def update_sortie_statut(
         )
 
     now = datetime.now(timezone.utc)
+    annulation_tardive = False
     if statut == "ANNULEE":
         reference_time = sortie.created_at or sortie.date_paiement
         if reference_time is not None:
             if reference_time.tzinfo is None:
                 reference_time = reference_time.replace(tzinfo=timezone.utc)
             if now - reference_time > timedelta(minutes=30):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Annulation impossible après 30 minutes",
-                )
+                # Passé 30 minutes, qui porte `cancel_sortie_fonds` (vérifié en
+                # tête de route) peut encore annuler : une erreur découverte tard
+                # n'avait sinon aucune correction possible. Le motif devient
+                # obligatoire et l'annulation est marquée tardive dans l'audit.
+                if not (payload.motif_annulation or "").strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Motif obligatoire pour annuler une sortie après 30 minutes",
+                    )
+                annulation_tardive = True
         if previous_statut == "ANNULEE" and sortie.annulee_le:
             annulee_le = sortie.annulee_le
             if annulee_le.tzinfo is None:
@@ -3389,6 +3396,7 @@ async def update_sortie_statut(
             "statut": sortie.statut,
             "motif_annulation": sortie.motif_annulation,
             "annulee_par_id": str(sortie.annulee_par_id) if sortie.annulee_par_id else None,
+            "annulation_tardive": annulation_tardive,
         },
         ip_address=get_request_ip(request),
     )

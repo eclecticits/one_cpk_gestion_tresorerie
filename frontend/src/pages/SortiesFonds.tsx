@@ -1927,6 +1927,11 @@ export default function SortiesFonds() {
     return diffMs <= 30 * 60 * 1000
   }
 
+  // Passé 30 minutes, qui a le droit d'annuler le peut encore (motif
+  // obligatoire, annulation marquée tardive dans l'audit) : le backend applique
+  // la même règle.
+  const peutAnnuler = (sortie: SortieFonds) => isCancelable(sortie) || canUpdateStatut
+
   const canEditAnnulationMotif = (sortie: SortieFonds) => {
     const statut = String((sortie as any)?.statut || '').toUpperCase()
     if (statut !== 'ANNULEE') return true
@@ -1946,8 +1951,8 @@ export default function SortiesFonds() {
     const statut = String((sortie as any)?.statut || '').toUpperCase()
     if (estContrepassable(sortie)) return statut === 'CONTREPASSE'
     return statut === 'ANNULEE'
-      ? !isCancelable(sortie) || !canEditAnnulationMotif(sortie)
-      : !isCancelable(sortie)
+      ? !peutAnnuler(sortie) || !canEditAnnulationMotif(sortie)
+      : !peutAnnuler(sortie)
   }
 
   const statutActionTitle = (sortie: SortieFonds) => {
@@ -1958,11 +1963,12 @@ export default function SortiesFonds() {
         : 'Contre-passer : l’opération reste, un transfert inverse la compense'
     }
     if (statut === 'ANNULEE') {
-      if (!isCancelable(sortie)) return 'Annulation impossible après 30 minutes'
+      if (!peutAnnuler(sortie)) return 'Annulation impossible après 30 minutes'
       if (!canEditAnnulationMotif(sortie)) return 'Motif non modifiable après 5 minutes'
       return 'Modifier le motif'
     }
-    return !isCancelable(sortie) ? 'Annulation impossible après 30 minutes' : 'Annuler'
+    if (!peutAnnuler(sortie)) return 'Annulation impossible après 30 minutes'
+    return isCancelable(sortie) ? 'Annuler' : 'Annuler hors délai (motif obligatoire)'
   }
 
   const getTypeBadgeClass = (typeSortie: string) => {
