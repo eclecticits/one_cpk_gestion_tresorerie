@@ -35,6 +35,7 @@ import { refreshRequisitionBonBeforeExamen } from '../utils/requisitionBon'
 import type { Requisition } from '../types'
 import { useAuth } from '../contexts/AuthContext'
 import { useConfirm } from '../contexts/ConfirmContext'
+import { useToast } from '../hooks/useToast'
 import styles from './ExamenDossier.module.css'
 
 type Dossier = {
@@ -67,6 +68,7 @@ export default function ExamenDossier() {
   const { dossierId } = useParams()
   const navigate = useNavigate()
   const confirm = useConfirm()
+  const { notifySuccess } = useToast()
   const { user } = useAuth()
   const [loading, setLoading] = useState(true)
   const [dossier, setDossier] = useState<Dossier | null>(null)
@@ -165,6 +167,7 @@ export default function ExamenDossier() {
         commentaires_examen: commentaire || null,
       })
       setDossier(res)
+      notifySuccess('Examen validé', `Dossier ${res?.reference ?? dossier?.reference ?? ''}`.trim())
     } catch (error) {
       // Le serveur dit pourquoi il refuse (statut, dossier, droits) : ce motif
       // vaut mieux qu'un message unique pour l'examinateur.
@@ -192,6 +195,7 @@ export default function ExamenDossier() {
         commentaires_examen: commentaire || null,
       })
       setDossier(res)
+      notifySuccess('Examen rejeté', `Dossier ${res?.reference ?? dossier?.reference ?? ''}`.trim())
     } catch (error) {
       console.error('Error rejecting exam:', error)
       const motif = error instanceof Error && error.message ? error.message : ''

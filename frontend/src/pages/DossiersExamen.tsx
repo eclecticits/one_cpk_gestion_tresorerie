@@ -36,6 +36,7 @@ import { refreshRequisitionBonBeforeExamen } from '../utils/requisitionBon'
 import type { Service } from '../types'
 import { useAuth } from '../contexts/AuthContext'
 import { useConfirm } from '../contexts/ConfirmContext'
+import { useToast } from '../hooks/useToast'
 import RowActionsMenu, { type ActionLigne } from '../components/RowActionsMenu'
 import PageHeader from '../components/PageHeader'
 import BackButton from '../components/BackButton'
@@ -129,6 +130,7 @@ const ACTIONABLE_EXAM_STATUS = 'EN_EXAMEN'
 export default function DossiersExamen() {
   const navigate = useNavigate()
   const confirm = useConfirm()
+  const { notifySuccess } = useToast()
   const { user } = useAuth()
   const [loading, setLoading] = useState(true)
   const [dossiers, setDossiers] = useState<Dossier[]>([])
@@ -404,6 +406,12 @@ export default function DossiersExamen() {
       } else {
         await apiRequest('POST', `/requisitions/${commentReq.id}/reject-examen`, { commentaire })
       }
+      // Sans ce retour, la pièce quittait simplement la liste : l'examinateur ne
+      // savait pas si son examen avait abouti.
+      notifySuccess(
+        commentMode === 'validate' ? 'Examen validé' : 'Examen rejeté',
+        `${getDocumentTypeLabel(commentReq)} ${getDocumentReference(commentReq)}`,
+      )
       closeCommentModal()
       await loadDossiers()
     } catch (error) {
@@ -993,6 +1001,11 @@ export default function DossiersExamen() {
           apiRequest('POST', `/requisitions/${id}/${bulkAction}-examen`, { commentaire })
         ),
       ])
+      const total = dossierIds.length + requisitionIds.length
+      notifySuccess(
+        bulkAction === 'validate' ? 'Examens validés' : 'Examens rejetés',
+        `${total} élément${total > 1 ? 's' : ''} traité${total > 1 ? 's' : ''}.`,
+      )
       closeBulkAction()
       await loadDossiers()
     } catch (error) {
