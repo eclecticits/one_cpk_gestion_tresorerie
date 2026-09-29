@@ -37,6 +37,11 @@ ECRITURES = [
     ("POST", "/exercices/{annee}/cloture", "validate"),
     ("POST", "/exercices/{annee}/ouvrir", "validate"),
     ("POST", "/exercices/{annee}/reporter-creances", "validate"),
+    # Versés au dossier et repris dans les exports : écrire un commentaire,
+    # c'est modifier le budget.
+    ("POST", "/commentaires", "update"),
+    ("PUT", "/commentaires/{commentaire_id}", "update"),
+    ("PUT", "/commentaire-general", "update"),
 ]
 
 
@@ -77,9 +82,8 @@ def test_toute_route_d_ecriture_du_budget_porte_une_garde_fine():
     gardees = {(m, c) for m, c, _ in ECRITURES}
     for route in budget.router.routes:
         for methode in getattr(route, "methods", set()) - {"GET", "HEAD", "OPTIONS"}:
-            if route.path.startswith("/commentaire") or route.path.startswith("/engagements"):
-                # Commentaires : annotation, aucun montant touché. Réconciliation :
-                # déjà réservée aux administrateurs dans la route.
+            if route.path.startswith("/engagements"):
+                # Réconciliation : déjà réservée aux administrateurs dans la route.
                 continue
             assert (methode, route.path) in gardees, f"{methode} {route.path} sans droit d'action"
 

@@ -1721,6 +1721,9 @@ async def list_budget_commentaires(
     "/commentaires",
     response_model=BudgetCommentaireOut,
     status_code=status.HTTP_201_CREATED,
+    # Un commentaire ne touche aucun montant, mais il est versé au dossier du
+    # budget et repris dans ses exports : l'écrire, c'est modifier le budget.
+    dependencies=[Depends(has_permission("treso.budget.update"))],
 )
 async def create_budget_commentaire(
     payload: BudgetCommentaireCreate,
@@ -1790,7 +1793,7 @@ async def create_budget_commentaire(
     )
 
 
-@router.put("/commentaires/{commentaire_id}", response_model=BudgetCommentaireOut)
+@router.put("/commentaires/{commentaire_id}", response_model=BudgetCommentaireOut, dependencies=[Depends(has_permission("treso.budget.update"))])
 async def update_budget_commentaire(
     commentaire_id: int,
     payload: BudgetCommentaireUpdate,
@@ -1894,7 +1897,7 @@ async def get_budget_commentaire_general(
     return _commentaire_general_out(exercice)
 
 
-@router.put("/commentaire-general", response_model=BudgetCommentaireGeneralOut)
+@router.put("/commentaire-general", response_model=BudgetCommentaireGeneralOut, dependencies=[Depends(has_permission("treso.budget.update"))])
 async def update_budget_commentaire_general(
     payload: BudgetCommentaireGeneralUpdate,
     user: User = Depends(get_current_user),

@@ -594,7 +594,7 @@ export default function Budget() {
   const commentGeneralDirty = commentGeneralDraft.trim() !== commentGeneralTexte.trim()
 
   const handleSaveCommentGeneral = async () => {
-    if (!selectedYear) return
+    if (!selectedYear || !peutModifier) return
     try {
       setCommentGeneralSaving(true)
       const res = await saveBudgetCommentaireGeneral({
@@ -622,7 +622,7 @@ export default function Budget() {
 
   const handleUpdateCommentaire = async (id: number) => {
     const texte = commentEditDraft.trim()
-    if (!texte) return
+    if (!texte || !peutModifier) return
     try {
       setCommentSaving(true)
       await updateBudgetCommentaire(id, { texte })
@@ -638,7 +638,7 @@ export default function Budget() {
 
   const handleAddCommentaire = async () => {
     const texte = commentDraft.trim()
-    if (!texte || !commentPanelCode || !selectedYear) return
+    if (!texte || !commentPanelCode || !selectedYear || !peutModifier) return
     try {
       setCommentSaving(true)
       await createBudgetCommentaire({ annee: selectedYear, code: commentPanelCode, texte })
@@ -1391,7 +1391,7 @@ export default function Budget() {
                   title={
                     commentairesDuPoste(line.code).length > 0
                       ? `${commentairesDuPoste(line.code).length} commentaire(s) — cliquer pour lire`
-                      : 'Ajouter un commentaire'
+                      : peutModifier ? 'Ajouter un commentaire' : 'Aucun commentaire'
                   }
                   onClick={(event) => {
                     event.stopPropagation()
@@ -2185,10 +2185,12 @@ export default function Budget() {
             className={styles.generalCommentInput}
             value={commentGeneralDraft}
             onChange={(e) => setCommentGeneralDraft(e.target.value)}
-            disabled={!commentGeneralModifiable || commentGeneralSaving}
+            disabled={!commentGeneralModifiable || !peutModifier || commentGeneralSaving}
             rows={4}
             placeholder={
-              commentGeneralModifiable
+              !peutModifier
+                ? 'Aucun commentaire général.'
+                : commentGeneralModifiable
                 ? "Cadrage de l'exercice, hypothèses retenues, arbitrages… Ce texte accompagne le budget exporté."
                 : 'Exercice clôturé : le commentaire général est figé.'
             }
@@ -2199,7 +2201,12 @@ export default function Budget() {
                 Exercice clôturé : lecture seule.
               </span>
             )}
-            {commentGeneralModifiable && (
+            {commentGeneralModifiable && !peutModifier && (
+              <span className={styles.commentHint}>
+                Consultation seule : vos droits ne permettent pas de commenter le budget.
+              </span>
+            )}
+            {commentGeneralModifiable && peutModifier && (
               <>
                 <button
                   type="button"
@@ -2311,7 +2318,7 @@ export default function Budget() {
                   ) : (
                     <>
                       <p>{c.texte}</p>
-                      {c.modifiable && (
+                      {c.modifiable && peutModifier && (
                         <button
                           type="button"
                           className={styles.commentEditLink}
@@ -2329,6 +2336,11 @@ export default function Budget() {
               ))}
             </div>
 
+            {!peutModifier ? (
+              <p className={styles.commentHint}>
+                Consultation seule : vos droits ne permettent pas de commenter le budget.
+              </p>
+            ) : (
             <div className={styles.commentComposer}>
               <textarea
                 value={commentDraft}
@@ -2356,6 +2368,7 @@ export default function Budget() {
                 </button>
               </div>
             </div>
+            )}
           </aside>
         </div>
       )}
