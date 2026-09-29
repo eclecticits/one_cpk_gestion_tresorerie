@@ -122,6 +122,7 @@ const RECIPIENT_STATUS_KINDS: Record<string, StatusKind> = {
 const SAMPLE_VALUES: Record<string, string> = {
   organisation: 'ONEC — Conseil Provincial de Kinshasa',
   nom: 'Jeanne Kabeya',
+  salutation: 'Bonjour Madame Jeanne Kabeya,',
   fonction: 'Trésorière',
   reference: 'SF-2026-0184',
   date: '24/08/2026 à 10:32',

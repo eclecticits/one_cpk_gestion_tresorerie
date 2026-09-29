@@ -114,7 +114,13 @@ async def create_payment(
     # Note de débit par email au client : montant payé cumulé et reste à payer.
     if encaissement is not None and not getattr(payment, "_idempotent_replay", False):
         await schedule_client_payment_email(
-            db, background_tasks, encaissement, encaissement.organisation_id
+            db,
+            background_tasks,
+            encaissement,
+            encaissement.organisation_id,
+            montant_recu=payment.montant,
+            mode_paiement_recu=payment.mode_paiement,
+            date_recu=payment.date_paiement,
         )
 
         # Même accusé de réception par WhatsApp. `entity_id` porte l'identifiant

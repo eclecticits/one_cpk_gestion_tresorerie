@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from decimal import Decimal
 
 import anyio
 from fastapi import BackgroundTasks
@@ -19,8 +21,52 @@ from app.services.system_settings_service import get_system_settings
 logger = logging.getLogger("onec_cpk_api.client_receipt_email")
 
 
+MODE_PAIEMENT_LABELS = {
+    "cash": "Espèces",
+    "mobile_money": "Mobile money",
+    "virement": "Virement bancaire",
+    "card": "Carte bancaire",
+    "cheque": "Chèque",
+}
+
+
 def _fmt_usd(amount: float) -> str:
-    return f"{amount:,.2f}".replace(",", " ") + " $"
+    # Usage français : espace pour les milliers, virgule décimale (1 250,00 $).
+    return f"{amount:,.2f}".replace(",", " ").replace(".", ",") + " $"
+
+
+def salutation_lignes(
+    type_client: str | None,
+    nom: str | None,
+    *,
+    sexe: str | None = None,
+    associe_gerant: str | None = None,
+) -> list[str]:
+    """Formule d'appel d'un message au client, selon ce qu'il est.
+
+    - SEC : « Madame, Monsieur, » puis l'associé gérant, qui la représente ;
+    - personne morale : « Madame, Monsieur, » à l'attention de la société ;
+    - personne (expert-comptable, personne physique…) : « Monsieur » si le
+      sexe est M, « Madame » s'il est F, le nom seul s'il n'est pas renseigné.
+
+    Partagée par l'email et WhatsApp : les deux canaux saluent de même.
+    """
+    nom = (nom or "").strip()
+    if type_client == "sec":
+        gerant = (associe_gerant or "").strip()
+        if gerant and nom:
+            return ["Madame, Monsieur,", f"À l'attention de {gerant}, associé gérant de {nom}."]
+        return ["Madame, Monsieur,"] + ([f"À l'attention de {nom}."] if nom else [])
+    if type_client == "personne_morale":
+        return ["Madame, Monsieur,"] + ([f"À l'attention de {nom}."] if nom else [])
+    if not nom:
+        return ["Madame, Monsieur,"]
+    civilite = {"M": "Monsieur ", "F": "Madame "}.get((sexe or "").strip().upper(), "")
+    return [f"Bonjour {civilite}{nom},"]
+
+
+def signature_ligne(organisation_name: str | None) -> str:
+    return f"La Trésorerie – {organisation_name}" if organisation_name else "La Trésorerie"
 
 
 async def schedule_client_payment_email(
@@ -31,9 +77,16 @@ async def schedule_client_payment_email(
     *,
     relance: bool = False,
     send_now: bool = False,
+    montant_recu: Decimal | float | None = None,
+    mode_paiement_recu: str | None = None,
+    date_recu: datetime | None = None,
 ) -> str | None:
     """Envoie au client (expert-comptable ou client externe) la confirmation
     de son paiement, avec le reste à payer s'il y en a un.
+
+    `montant_recu`, `mode_paiement_recu`, `date_recu` décrivent le versement
+    qui déclenche l'envoi : sans eux, un complément n'annoncerait que le cumul
+    payé, et le client ne saurait pas ce qui vient d'être reçu.
 
     Avec relance=True, envoie un rappel de solde restant (recouvrement).
     Avec send_now=True, l'email est envoyé de façon synchrone : le résultat
@@ -47,6 +100,8 @@ async def schedule_client_payment_email(
     try:
         email: str | None = None
         client_name = (encaissement.client_nom or "").strip()
+        sexe: str | None = None
+        associe_gerant: str | None = None
 
         if encaissement.type_client in TYPES_CLIENT_EXPERT and encaissement.expert_comptable_id:
             res = await db.execute(
@@ -56,12 +111,15 @@ async def schedule_client_payment_email(
             if expert is not None:
                 email = (expert.email or "").strip() or None
                 client_name = expert.nom_denomination or client_name
+                sexe = expert.sexe
+                associe_gerant = expert.associe_gerant
         elif getattr(encaissement, "client_id", None):
             res = await db.execute(select(Client).where(Client.id == encaissement.client_id))
             client = res.scalar_one_or_none()
             if client is not None:
                 email = (client.email or "").strip() or None
                 client_name = client.nom or client_name
+                sexe = client.sexe
 
         if not email:
             logger.info(
@@ -85,40 +143,64 @@ async def schedule_client_payment_email(
         paye = float(encaissement.montant_paye or 0)
         reste = round(total - paye, 2)
         numero = encaissement.numero_recu or encaissement.numero_proforma or "—"
+        objet = (encaissement.libelle or "").strip()
+        salutation = salutation_lignes(
+            encaissement.type_client, client_name, sexe=sexe, associe_gerant=associe_gerant
+        )
+        signature = ["Merci de votre confiance.", signature_ligne(org_name)]
 
         if relance:
             title = "Rappel de solde restant"
             subject = f"Rappel - Note de débit {numero} : solde restant de {_fmt_usd(reste)}"
             body_lines = [
-                f"Bonjour {client_name or 'cher client'},",
-                f"Sauf erreur de notre part, un solde reste dû sur votre dossier — {encaissement.libelle or ''}.",
+                *salutation,
+                "",
+                "Sauf erreur de notre part, un solde reste dû sur votre note de débit.",
+                "",
+                *([f"Objet : {objet}"] if objet else []),
                 f"Note de débit N° : {numero}",
                 f"Montant total : {_fmt_usd(total)}",
                 f"Montant déjà payé : {_fmt_usd(paye)}",
                 f"Reste à payer : {_fmt_usd(reste)}",
+                "",
                 "Nous vous invitons à passer à la caisse pour régulariser ce solde.",
                 "Si vous avez déjà effectué ce paiement, merci de ne pas tenir compte de ce rappel.",
+                "",
+                *signature,
             ]
         else:
+            date_paiement = date_recu or encaissement.date_paiement or encaissement.date_encaissement
+            recu_ligne: list[str] = []
+            if montant_recu is not None:
+                mode = MODE_PAIEMENT_LABELS.get((mode_paiement_recu or "").strip().lower(), "")
+                recu_ligne = [
+                    f"Montant reçu : {_fmt_usd(float(montant_recu))}" + (f" ({mode.lower()})" if mode else "")
+                ]
             body_lines = [
-                f"Bonjour {client_name or 'cher client'},",
-                f"Nous confirmons la réception de votre paiement — {encaissement.libelle or ''}.",
+                *salutation,
+                "",
+                "Nous accusons réception de votre paiement"
+                + (f" du {date_paiement.strftime('%d/%m/%Y')}." if date_paiement else "."),
+                "",
+                *([f"Objet : {objet}"] if objet else []),
                 f"Note de débit N° : {numero}",
-                f"Montant total : {_fmt_usd(total)}",
-                f"Montant payé à ce jour : {_fmt_usd(paye)}",
+                *recu_ligne,
+                f"Montant total de la note : {_fmt_usd(total)}",
+                f"Total payé à ce jour : {_fmt_usd(paye)}",
             ]
             if reste > 0.009:
                 title = "Paiement reçu — solde restant"
-                subject = f"Note de débit {numero} : paiement reçu, reste à payer {_fmt_usd(reste)}"
-                body_lines.append(f"Reste à payer : {_fmt_usd(reste)}")
-                body_lines.append(
-                    "Nous vous invitons à régulariser le solde à votre meilleure convenance."
-                )
+                subject = f"Paiement reçu – Note de débit {numero} – reste {_fmt_usd(reste)}"
+                body_lines += [
+                    f"Reste à payer : {_fmt_usd(reste)}",
+                    "",
+                    "Nous vous invitons à régler le solde à votre meilleure convenance.",
+                ]
             else:
                 title = "Paiement reçu — soldé"
-                subject = f"Note de débit {numero} : paiement complet, merci"
-                body_lines.append("Votre paiement est complet : aucun solde restant.")
-        body_lines.append("Merci de votre confiance.")
+                subject = f"Paiement reçu – Note de débit {numero} – soldée"
+                body_lines += ["", "Votre note de débit est entièrement réglée."]
+            body_lines += ["", *signature]
 
         email_kwargs = dict(
             smtp_host=smtp_cfg.host,

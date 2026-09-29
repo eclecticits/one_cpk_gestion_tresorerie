@@ -165,9 +165,15 @@ async def queue_whatsapp(
 
     for recipient in recipients:
         normalized = normalize_phone(recipient.phone)
+        nom = recipient.name or base_variables.get("nom", "")
         message = templates.render(
             template,
-            {**base_variables, "nom": recipient.name or base_variables.get("nom", ""),
+            {**base_variables, "nom": nom,
+             # Les gabarits de paiement saluent par {{salutation}} ; un appelant
+             # qui ne la calcule pas retombe sur l'ancienne formule plutôt que
+             # d'envoyer un message sans destinataire nommé.
+             "salutation": base_variables.get("salutation")
+             or (f"Bonjour {nom}," if nom else "Madame, Monsieur,"),
              "fonction": recipient.role or ""},
         )
 

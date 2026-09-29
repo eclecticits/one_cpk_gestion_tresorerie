@@ -54,7 +54,11 @@ from app.utils.upload_validation import (
     matches_declared_type,
     read_upload_limited,
 )
-from app.services.client_receipt_email import schedule_client_payment_email
+from app.services.client_receipt_email import (
+    MODE_PAIEMENT_LABELS,
+    salutation_lignes,
+    schedule_client_payment_email,
+)
 from app.services.encaissement_payments import record_encaissement_payment, cancel_encaissement_payment
 from app.services.report_creances import (
     annuler_reports_encaissement,
@@ -176,13 +180,6 @@ PIECE_FORMAT_DETAIL = "Format non autorisé. Formats acceptés : PDF, JPG, JPEG,
 NOTIF_ENTITY_ENCAISSEMENT = "encaissement"
 
 #: Libellés lisibles des modes de paiement, pour les gabarits WhatsApp.
-MODE_PAIEMENT_LABELS = {
-    "cash": "Espèces",
-    "mobile_money": "Mobile money",
-    "virement": "Virement bancaire",
-    "card": "Carte bancaire",
-    "cheque": "Chèque",
-}
 
 
 def _fmt_montant(value: Any) -> str:
@@ -285,6 +282,17 @@ async def _notify_paiement_whatsapp(
             or (encaissement.client_nom or "")
         )
 
+        # Même formule d'appel que l'email : « Monsieur » / « Madame » selon le
+        # sexe de la fiche, « Madame, Monsieur » pour une SEC ou une société.
+        salutation = "\n".join(
+            salutation_lignes(
+                encaissement.type_client,
+                nom_affiche,
+                sexe=getattr(expert, "sexe", None) or getattr(client, "sexe", None),
+                associe_gerant=getattr(expert, "associe_gerant", None),
+            )
+        )
+
         await notify_whatsapp(
             db,
             background_tasks,
@@ -295,6 +303,7 @@ async def _notify_paiement_whatsapp(
             recipients=[recipient],
             variables={
                 "nom": str(nom_affiche).strip(),
+                "salutation": salutation,
                 "reference": encaissement.numero_recu or encaissement.numero_proforma or "",
                 "date": date_operation.strftime("%d/%m/%Y") if date_operation else "",
                 # `montant` = ce qui vient d'être encaissé ; à défaut, le
@@ -2445,7 +2454,14 @@ async def create_encaissement(
     # Note de débit par email au client (expert-comptable ou client externe), avec le
     # reste à payer le cas échéant.
     if montant_paye > 0:
-        await schedule_client_payment_email(db, background_tasks, encaissement, tenant_id)
+        await schedule_client_payment_email(
+            db,
+            background_tasks,
+            encaissement,
+            tenant_id,
+            montant_recu=montant_paye,
+            mode_paiement_recu=payload.mode_paiement,
+        )
 
     expert = None
     if expert_uid:
@@ -2780,7 +2796,14 @@ async def convertir_proforma(
         expert = res.scalar_one_or_none()
 
     # Note de débit par email au client, avec le reste à payer le cas échéant.
-    await schedule_client_payment_email(db, background_tasks, encaissement, tenant_id)
+    await schedule_client_payment_email(
+        db,
+        background_tasks,
+        encaissement,
+        tenant_id,
+        montant_recu=montant_paye,
+        mode_paiement_recu=mode_paiement,
+    )
 
     # WhatsApp : le bloc artisanal qui vivait ici est absorbé par le service.
     # Trois différences voulues — le client non-expert n'est plus ignoré, la clé

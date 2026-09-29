@@ -25,6 +25,7 @@ _PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
 TEMPLATE_VARIABLES: dict[str, str] = {
     "organisation": "Nom de l'organisation",
     "nom": "Nom du destinataire",
+    "salutation": "Formule d'appel : Monsieur / Madame selon le sexe, « Madame, Monsieur » pour une SEC ou une société",
     "fonction": "Fonction du destinataire (Président, Trésorier…)",
     "reference": "Référence de la pièce",
     "date": "Date de l'opération",
@@ -78,7 +79,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
     events.PAYMENT_RECEIVED: (
         "{{organisation}}\n"
         "\n"
-        "Bonjour {{nom}},\n"
+        "{{salutation}}\n"
         "Nous accusons réception de votre paiement.\n"
         "\n"
         "Référence : {{reference}}\n"
@@ -91,7 +92,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
     events.PAYMENT_PROFORMA_CONVERTED: (
         "{{organisation}}\n"
         "\n"
-        "Bonjour {{nom}},\n"
+        "{{salutation}}\n"
         "Votre pro forma a été convertie en note de débit après paiement.\n"
         "\n"
         "Référence : {{reference}}\n"
@@ -104,7 +105,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
     events.PAYMENT_COMPLEMENT: (
         "{{organisation}}\n"
         "\n"
-        "Bonjour {{nom}},\n"
+        "{{salutation}}\n"
         "Nous accusons réception de votre paiement complémentaire.\n"
         "\n"
         "Référence : {{reference}}\n"
@@ -118,7 +119,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
     events.PAYMENT_REMINDER: (
         "{{organisation}}\n"
         "\n"
-        "Bonjour {{nom}},\n"
+        "{{salutation}}\n"
         "Nous vous rappelons qu'un règlement reste attendu.\n"
         "\n"
         "Référence : {{reference}}\n"
