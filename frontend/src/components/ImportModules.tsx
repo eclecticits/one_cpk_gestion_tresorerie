@@ -135,7 +135,7 @@ const modules: Record<ImportModule, ModuleConfig> = {
     description: 'Toutes catégories : le Statut donne la catégorie, la Situation l’état actif ou inactif.',
     // Liste souvent lacunaire : seuls le numéro et le nom sont exigés.
     required: ["N° d'ordre", "Nom de l'expert-comptable"],
-    optional: ['Sexe', 'Ville', 'Statut', 'Situation'],
+    optional: ['Sexe', 'Ville', 'Statut', 'Situation', 'N° de téléphone', 'E-mail'],
     templateName: 'modele_experts_liste_nationale.xlsx',
     accent: 'expertAccentNational',
     example: {
@@ -145,6 +145,8 @@ const modules: Record<ImportModule, ModuleConfig> = {
       Ville: 'Kinshasa',
       Statut: 'en cabinet',
       Situation: 'Inactif / non publié au Tableau',
+      'N° de téléphone': '+243 000 000 000',
+      'E-mail': 'eadrupiako@example.cd',
     },
   },
 }
@@ -282,14 +284,6 @@ const validateRow = (module: ImportModule, row: Record<string, unknown>, index: 
     }
   })
 
-  if (module === 'liste_nationale') {
-    const sexe = getCellValue(row, 'Sexe').toUpperCase()
-    if (sexe && !['M', 'F'].includes(sexe)) {
-      errors.push({ ligne, colonne: 'Sexe', erreur: 'Valeur attendue: M ou F', code: getCellValue(row, "N° d'ordre") })
-    }
-    return errors
-  }
-
   if (module !== 'sec') {
     const sexe = getCellValue(row, 'Sexe').toUpperCase()
     if (sexe && !['M', 'F'].includes(sexe)) {
@@ -332,6 +326,8 @@ const transformToDatabase = (module: ImportModule, row: Record<string, unknown>)
       sexe: getCellValue(row, 'Sexe').toUpperCase() || undefined,
       // Le serveur en déduit la province d'attache.
       ville: getCellValue(row, 'Ville') || undefined,
+      email: getCellValue(row, 'E-mail').toLowerCase() || undefined,
+      telephone: normalizePhone(getCellValue(row, 'N° de téléphone')),
       // Sans statut, type_ec vide : une mise à jour ne touche pas à la catégorie.
       ...(categoryFromStatut(getCellValue(row, 'Statut')) ?? { type_ec: '' }),
     }

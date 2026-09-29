@@ -271,6 +271,8 @@ def _row_to_import_row(category: str, row: dict) -> ExpertImportRow:
             nom_denomination=_normalize_value(row.get("Nom de l'expert-comptable")),
             sexe=_normalize_value(row.get("Sexe")).upper()[:1],
             ville=_normalize_value(row.get("Ville")),
+            email=_normalize_value(row.get("E-mail")),
+            telephone=_normalize_value(row.get("N° de téléphone")),
             active=_situation_to_active(row.get("Situation")),
             **fields,
         )

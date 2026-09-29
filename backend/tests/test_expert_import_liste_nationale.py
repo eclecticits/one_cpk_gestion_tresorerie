@@ -74,6 +74,8 @@ def test_row_to_import_row_lit_la_liste_nationale():
             "Ville": "Kinshasa",
             "Statut": "en cabinet",
             "Situation": "Inactif / non publié au Tableau",
+            "N° de téléphone": "0812345678",
+            "E-mail": "eadrupiako@example.cd",
         },
     )
     assert row.numero_ordre == "EC/18.00003"
@@ -81,6 +83,8 @@ def test_row_to_import_row_lit_la_liste_nationale():
     assert row.categorie_personne == "Personne Physique"
     assert row.ville == "Kinshasa"
     assert row.active is False
+    assert row.telephone == "0812345678"
+    assert row.email == "eadrupiako@example.cd"
 
 
 def test_situation_facultative_dans_les_autres_onglets():
