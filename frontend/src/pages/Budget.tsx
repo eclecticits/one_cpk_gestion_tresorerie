@@ -12,6 +12,7 @@ import type { BudgetExerciseSummary, BudgetPosteSummary, BudgetPosteTree } from 
 import type { Service } from '../types'
 import { ApiError } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { downloadExcel } from '../utils/download'
 
 // `budget` est le premier type ouvert a la file (EXPORT_ASYNC_TYPES, phase 1
@@ -267,6 +268,14 @@ export default function Budget() {
   const { notifyError, notifySuccess, notifyInfo } = useToast()
   const revealTreeBranch = useTreeBranchReveal()
   const { user } = useAuth()
+  // Ouvrir l'écran (`menu_budget`) ne donne que la consultation. Chaque
+  // écriture demande son droit d'action, comme au serveur qui les refuse.
+  const { hasPermission } = usePermissions()
+  const peutCreer = hasPermission('treso.budget.create')
+  const peutModifier = hasPermission('treso.budget.update')
+  const peutSupprimer = hasPermission('treso.budget.delete')
+  const peutValider = hasPermission('treso.budget.validate')
+  const consultationSeule = !peutCreer && !peutModifier && !peutSupprimer && !peutValider
   const isSuperAdmin = (user?.role || '').toLowerCase() === 'super_admin'
   const hasExercises = exercices.length > 0
   const hasSelectedExercise = selectedYear !== null
@@ -685,9 +694,13 @@ export default function Budget() {
   const anneeCivile = new Date().getFullYear()
   const isOlderYearLocked = selectedYear !== null && selectedYear < anneeCivile
   const isFutureExercise = selectedYear !== null && selectedYear > anneeCivile
-  const isReadOnly = isClosed || isOlderYearLocked
-  const hasActiveEditableExercise = hasSelectedExercise && !isReadOnly
-  const canImport = hasActiveEditableExercise && filter !== 'TOUT'
+  // Verrou du calendrier (exercice clôturé ou passé), distinct des droits.
+  const verrouExercice = isClosed || isOlderYearLocked
+  /** Une ligne encore en brouillon se crée, une ligne enregistrée se modifie. */
+  const ligneVerrouillee = (line: { id: number }) =>
+    verrouExercice || (line.id < 0 ? !peutCreer : !peutModifier)
+  const hasActiveEditableExercise = hasSelectedExercise && !verrouExercice
+  const canImport = hasActiveEditableExercise && peutCreer && filter !== 'TOUT'
   const emptyStateMessage = hasExercises
     ? "Aucun exercice budgétaire actif. Veuillez créer ou sélectionner un exercice avant d’ajouter des postes budgétaires."
     : "Aucun exercice budgétaire actif. Veuillez créer ou sélectionner un exercice avant d’ajouter des postes budgétaires."
@@ -696,7 +709,7 @@ export default function Budget() {
     : emptyStateMessage
 
   const handleAddDraft = () => {
-    if (!selectedYear || isReadOnly) return
+    if (!selectedYear || verrouExercice || !peutCreer) return
     const newDraftId = draftId - 1
     setDraftId(newDraftId)
     setLines((prev) => [
@@ -720,7 +733,7 @@ export default function Budget() {
   }
 
   const handleAddChild = (parent: BudgetPosteNode) => {
-    if (!selectedYear || isReadOnly) return
+    if (!selectedYear || verrouExercice || !peutCreer) return
     setSubParent(parent)
     setSubCode('')
     setSubLibelle('')
@@ -792,7 +805,7 @@ export default function Budget() {
   }
 
   const handlePersist = async (line: BudgetPosteNode) => {
-    if (!selectedYear || isReadOnly) return
+    if (!selectedYear || ligneVerrouillee(line)) return
     if (!line.code || !line.libelle) return
     const hasChildren = line.children && line.children.length > 0
     try {
@@ -861,7 +874,7 @@ export default function Budget() {
   }
 
   const handleDelete = async (line: BudgetPosteNode) => {
-    if (isReadOnly) return
+    if (verrouExercice || (line.id >= 0 && !peutSupprimer)) return
     if (line.id < 0) {
       setLines((prev) => removeTreeNode(prev, line.id))
       return
@@ -885,7 +898,7 @@ export default function Budget() {
   }
 
   const handleDeleteSelection = async () => {
-    if (isReadOnly) return
+    if (verrouExercice || !peutSupprimer) return
     const ids = Array.from(selectedLeafIds)
     if (ids.length === 0) return
     const selectedLines = flattenTree(lines).filter((line) => ids.includes(line.id))
@@ -925,7 +938,7 @@ export default function Budget() {
   }
 
   const handleCloseExercise = async () => {
-    if (!selectedYear || isClosed) return
+    if (!selectedYear || isClosed || !peutValider) return
     const confirmed = await confirm({
       title: `Clôturer l’exercice ${selectedYear} ?`,
       description: `Cette action bloque toutes les modifications pour cette année. Les notes restées impayées passent en arriérés sur ${selectedYear + 1}.`,
@@ -953,7 +966,7 @@ export default function Budget() {
   }
 
   const handleReopenExercise = async () => {
-    if (!selectedYear || !isClosed) return
+    if (!selectedYear || !isClosed || !peutValider) return
     const confirmed = await confirm({
       title: `Déverrouiller l’exercice ${selectedYear} ?`,
       description: 'Cette action rouvre la modification des postes budgétaires.',
@@ -979,7 +992,7 @@ export default function Budget() {
   // Rattrapage des exercices clôturés avant le report : leurs notes impayées
   // ne s'encaissent plus tant qu'elles ne sont pas passées en arriérés.
   const handleReporterCreances = async () => {
-    if (!selectedYear || !isClosed) return
+    if (!selectedYear || !isClosed || !peutValider) return
     const confirmed = await confirm({
       title: `Reporter les créances de ${selectedYear} ?`,
       description: `Les notes restées impayées passent en arriérés sur ${selectedYear + 1}. Une note déjà reportée ne l’est pas deux fois.`,
@@ -1007,7 +1020,7 @@ export default function Budget() {
   }
 
   const handleSaveArrieres = async () => {
-    if (!arrieresLine) return
+    if (!arrieresLine || !peutModifier) return
     const code = arrieresCode.trim() || null
     try {
       setArrieresSaving(true)
@@ -1022,7 +1035,7 @@ export default function Budget() {
   }
 
   const handleOpenInit = () => {
-    if (!selectedYear) return
+    if (!selectedYear || !peutCreer) return
     setInitTargetYear(selectedYear + 1)
     setInitCoefficient(0)
     setInitOverwrite(false)
@@ -1038,6 +1051,7 @@ export default function Budget() {
   }
 
   const handleCreateExercise = async () => {
+    if (!peutCreer) return
     if (!Number.isFinite(createExerciseYear) || createExerciseYear <= 0) {
       notifyError('Création impossible', "L'année de l'exercice est invalide.")
       return
@@ -1060,7 +1074,7 @@ export default function Budget() {
   }
 
   const handleInitialize = async () => {
-    if (!selectedYear || !initTargetYear) return
+    if (!selectedYear || !initTargetYear || !peutCreer) return
     try {
       setInitLoading(true)
       await initializeBudgetExercise({
@@ -1215,7 +1229,7 @@ export default function Budget() {
 
 
   const handleCreateSubRubrique = async () => {
-    if (!selectedYear || !subParent) return
+    if (!selectedYear || !subParent || !peutCreer) return
     if (!subCode.trim() || !subLibelle.trim()) return
     try {
       setSubSaving(true)
@@ -1309,7 +1323,7 @@ export default function Budget() {
                 onChange={(e) => updateLocalLine(line.id, { code: e.target.value })}
                 onBlur={() => handlePersist(line)}
                 placeholder="Code"
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={ligneVerrouillee(line) || (line.is_global && !isSuperAdmin)}
               />
             </td>
             <td className={styles.colLabel}>
@@ -1325,7 +1339,7 @@ export default function Budget() {
                   onChange={(e) => updateLocalLine(line.id, { libelle: e.target.value })}
                   onBlur={() => handlePersist(line)}
                   placeholder="Poste budgétaire"
-                  disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                  disabled={ligneVerrouillee(line) || (line.is_global && !isSuperAdmin)}
                 />
                 {line.is_global && (
                   <span className={styles.globalBadge}>
@@ -1412,7 +1426,7 @@ export default function Budget() {
                   value={toNumber(line.montant_prevu)}
                   onChange={(e) => updateLocalLine(line.id, { montant_prevu: Number(e.target.value) })}
                   onBlur={() => handlePersist(line)}
-                  disabled={isReadOnly}
+                  disabled={ligneVerrouillee(line)}
                 />
               )}
             </td>
@@ -1530,7 +1544,7 @@ export default function Budget() {
                     className={`${styles.menuButton} ${styles.iconBtn}`}
                     onClick={() => setOpenMenuId(openMenuId === line.id ? null : line.id)}
                     aria-label="Actions"
-                    disabled={isReadOnly}
+                    disabled={verrouExercice || !(peutCreer || peutModifier || peutSupprimer)}
                   >
                     <MoreVertical size={16} />
                   </button>
@@ -1550,7 +1564,7 @@ export default function Budget() {
                   updateLocalLine(line.id, { active: nextActive })
                   handlePersist({ ...line, active: nextActive })
                 }}
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={ligneVerrouillee(line) || (line.is_global && !isSuperAdmin)}
                 title={
                   line.active === false
                     ? 'Le poste redevient disponible à la saisie des réquisitions'
@@ -1562,7 +1576,7 @@ export default function Budget() {
               <button
                 className={styles.menuItem}
                 onClick={() => handleAddChild(line)}
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={verrouExercice || !peutCreer || (line.is_global && !isSuperAdmin)}
               >
                 Ajouter un sous-poste
               </button>
@@ -1578,7 +1592,7 @@ export default function Budget() {
                   updateLocalLine(line.id, { inclure_dans_calculs: inclure })
                   handlePersist({ ...line, inclure_dans_calculs: inclure })
                 }}
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={ligneVerrouillee(line) || (line.is_global && !isSuperAdmin)}
                 title={
                   hasChildren
                     ? 'Le changement s’applique aussi à tous les sous-postes'
@@ -1595,6 +1609,7 @@ export default function Budget() {
                 <button
                   className={styles.menuItem}
                   onClick={() => handleOpenArrieres(line)}
+                  disabled={!peutModifier}
                   title="Poste de l’exercice suivant qui reprend, à la clôture, ce qui reste dû sur celui-ci"
                 >
                   {line.code_poste_arrieres
@@ -1605,7 +1620,7 @@ export default function Budget() {
               <button
                 className={styles.menuItemDanger}
                 onClick={() => handleDelete(line)}
-                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                disabled={verrouExercice || (line.id >= 0 && !peutSupprimer) || (line.is_global && !isSuperAdmin)}
               >
                         Supprimer
                       </button>
@@ -1631,7 +1646,7 @@ export default function Budget() {
                       return next
                     })
                   }}
-                  disabled={isReadOnly}
+                  disabled={verrouExercice || !peutSupprimer}
                 />
               )}
             </td>
@@ -1663,6 +1678,7 @@ export default function Budget() {
                     </option>
                   ))}
                 </select>
+                {peutCreer && (
                 <button
                   type="button"
                   className={styles.secondaryAction}
@@ -1671,6 +1687,7 @@ export default function Budget() {
                 >
                   {createExerciseLoading ? 'Création...' : 'Créer un exercice budgétaire'}
                 </button>
+                )}
                 <select
                   className={`${styles.yearSelect} ${styles.serviceSelect}`}
                   aria-label="Filtrer par service"
@@ -1746,7 +1763,7 @@ export default function Budget() {
                     </span>
                   )
                 )}
-                <button className={styles.primaryAction} onClick={handleAddDraft} disabled={!hasActiveEditableExercise}>
+                <button className={styles.primaryAction} onClick={handleAddDraft} disabled={!hasActiveEditableExercise || !peutCreer}>
                   <Plus size={16} />
                   Nouveau poste budgétaire
                 </button>
@@ -1900,7 +1917,7 @@ export default function Budget() {
                             closeMenus()
                             handleCloseExercise()
                           }}
-                          disabled={!hasSelectedExercise || isClosed || closing || isFutureExercise}
+                          disabled={!hasSelectedExercise || isClosed || closing || isFutureExercise || !peutValider}
                         >
                           {closing ? 'Clôture…' : 'Clôturer l’année'}
                         </button>
@@ -1911,7 +1928,7 @@ export default function Budget() {
                             closeMenus()
                             handleReopenExercise()
                           }}
-                          disabled={!selectedYear || !isClosed || reopening}
+                          disabled={!selectedYear || !isClosed || reopening || !peutValider}
                         >
                           {reopening ? 'Déverrouillage…' : 'Déverrouiller'}
                         </button>
@@ -1922,7 +1939,7 @@ export default function Budget() {
                             closeMenus()
                             handleReporterCreances()
                           }}
-                          disabled={!selectedYear || !isClosed || reportingCreances}
+                          disabled={!selectedYear || !isClosed || reportingCreances || !peutValider}
                           title="Pour un exercice clôturé avant le report automatique des créances"
                         >
                           {reportingCreances ? 'Report…' : 'Reporter les créances en arriérés'}
@@ -1934,7 +1951,7 @@ export default function Budget() {
                             closeMenus()
                             handleOpenInit()
                           }}
-                          disabled={!hasActiveEditableExercise || initLoading}
+                          disabled={!hasActiveEditableExercise || !peutCreer || initLoading}
                         >
                           Initialiser année suivante
                         </button>
@@ -1960,7 +1977,7 @@ export default function Budget() {
                             closeMenus()
                             handleDeleteSelection()
                           }}
-                          disabled={isReadOnly || selectedLeafIds.size === 0}
+                          disabled={verrouExercice || !peutSupprimer || selectedLeafIds.size === 0}
                         >
                           Supprimer sélection ({selectedLeafIds.size})
                         </button>
@@ -2043,6 +2060,7 @@ export default function Budget() {
             Les recettes sont des objectifs à atteindre ou dépasser.
             {selectedService ? ` Filtre service : ${selectedService.code}.` : ''}
             {!hasSelectedExercise ? ` ${selectionHint}` : ''}
+            {consultationSeule ? ' Consultation seule : vos droits ne permettent pas de modifier le budget.' : ''}
             {prevYearLoading ? ' Comparaison N-1 en cours…' : ''}
           </span>
         ) : (
@@ -2051,6 +2069,7 @@ export default function Budget() {
             {selectedService ? ` Filtre service : ${selectedService.code}.` : ''}
             {!hasSelectedExercise ? ` ${selectionHint}` : ''}
             {isClosed ? ' Exercice clôturé (lecture seule).' : ''}
+            {consultationSeule ? ' Consultation seule : vos droits ne permettent pas de modifier le budget.' : ''}
             {isOlderYearLocked ? ' Exercice antérieur verrouillé.' : ''}
             {isFutureExercise ? ' Exercice à venir : en préparation.' : ''}
             {prevYearLoading ? ' Comparaison N-1 en cours…' : ''}
@@ -2062,11 +2081,13 @@ export default function Budget() {
         <section className={styles.emptyState}>
           <h3>Aucun exercice budgétaire actif</h3>
           <p>{emptyStateMessage}</p>
+          {peutCreer && (
           <div className={styles.emptyStateActions}>
             <button type="button" className={styles.primaryAction} onClick={handleOpenCreateExercise}>
               Créer un exercice budgétaire
             </button>
           </div>
+          )}
         </section>
       )}
 

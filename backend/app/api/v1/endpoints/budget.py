@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.api.deps import get_current_tenant_id, get_current_user
+from app.api.deps import get_current_tenant_id, get_current_user, has_permission
 from app.db.session import get_db
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.budget_audit_log import BudgetAuditLog
@@ -824,7 +824,7 @@ async def reconcilier_engagements(
     return {"postes_ajustes": ajustes, "ecarts_corriges": ecarts}
 
 
-@router.post("/exercices/{annee}/cloture")
+@router.post("/exercices/{annee}/cloture", dependencies=[Depends(has_permission("treso.budget.validate"))])
 async def close_budget_exercise(
     annee: int,
     user: User = Depends(get_current_user),
@@ -861,7 +861,7 @@ async def close_budget_exercise(
     return {"ok": True, "statut": exercice.statut.value, "report": report}
 
 
-@router.post("/exercices/{annee}/ouvrir")
+@router.post("/exercices/{annee}/ouvrir", dependencies=[Depends(has_permission("treso.budget.validate"))])
 async def reopen_budget_exercise(
     annee: int,
     user: User = Depends(get_current_user),
@@ -903,7 +903,7 @@ async def _exercice_de_l_annee(db: AsyncSession, *, annee: int, tenant_id: int) 
     return exercice
 
 
-@router.post("/exercices/{annee}/reporter-creances")
+@router.post("/exercices/{annee}/reporter-creances", dependencies=[Depends(has_permission("treso.budget.validate"))])
 async def reporter_creances(
     annee: int,
     user: User = Depends(get_current_user),
@@ -939,7 +939,7 @@ async def lister_reports_creances(
     return await synthese_reports(db, organisation_id=tenant_id, exercice=exercice)
 
 
-@router.put("/postes/{poste_id}/poste-arrieres", response_model=BudgetPosteSummary)
+@router.put("/postes/{poste_id}/poste-arrieres", response_model=BudgetPosteSummary, dependencies=[Depends(has_permission("treso.budget.update"))])
 async def definir_poste_arrieres(
     poste_id: int,
     payload: BudgetPosteArrieresUpdate,
@@ -1001,7 +1001,7 @@ async def definir_poste_arrieres(
     )
 
 
-@router.post("/exercices/{annee}/initialiser")
+@router.post("/exercices/{annee}/initialiser", dependencies=[Depends(has_permission("treso.budget.create"))])
 async def initialize_next_exercise(
     annee: int,
     annee_cible: int | None = None,
@@ -1192,7 +1192,7 @@ async def list_budget_exercices(
     return BudgetExercisesResponse(exercices=exercices)
 
 
-@router.post("/exercices", response_model=BudgetExerciseSummary, status_code=status.HTTP_201_CREATED)
+@router.post("/exercices", response_model=BudgetExerciseSummary, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("treso.budget.create"))])
 async def create_budget_exercise(
     payload: BudgetExerciseCreate,
     user: User = Depends(get_current_user),
@@ -2436,7 +2436,7 @@ async def list_budget_lines_tree(
     )
 
 
-@router.post("/lines", response_model=BudgetLineSummary, status_code=status.HTTP_201_CREATED)
+@router.post("/lines", response_model=BudgetLineSummary, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("treso.budget.create"))])
 async def create_budget_line(
     payload: BudgetLineCreate,
     user: User = Depends(get_current_user),
@@ -2528,7 +2528,7 @@ async def create_budget_line(
     )
 
 
-@router.post("/postes", response_model=BudgetPosteSummary, status_code=status.HTTP_201_CREATED)
+@router.post("/postes", response_model=BudgetPosteSummary, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("treso.budget.create"))])
 async def create_budget_poste(
     payload: BudgetPosteCreate,
     user: User = Depends(get_current_user),
@@ -2538,7 +2538,7 @@ async def create_budget_poste(
     return await create_budget_line(payload=payload, user=user, tenant_id=tenant_id, db=db)
 
 
-@router.post("/postes/import", response_model=BudgetPosteImportResponse)
+@router.post("/postes/import", response_model=BudgetPosteImportResponse, dependencies=[Depends(has_permission("treso.budget.create"))])
 async def import_budget_postes(
     payload: BudgetPosteImportRequest,
     user: User = Depends(get_current_user),
@@ -2805,7 +2805,7 @@ async def import_budget_postes(
     )
 
 
-@router.put("/lines/{line_id}", response_model=BudgetLineSummary)
+@router.put("/lines/{line_id}", response_model=BudgetLineSummary, dependencies=[Depends(has_permission("treso.budget.update"))])
 async def update_budget_line(
     line_id: int,
     payload: BudgetLineUpdate,
@@ -2960,7 +2960,7 @@ async def update_budget_line(
     )
 
 
-@router.put("/postes/{poste_id}", response_model=BudgetPosteSummary)
+@router.put("/postes/{poste_id}", response_model=BudgetPosteSummary, dependencies=[Depends(has_permission("treso.budget.update"))])
 async def update_budget_poste(
     poste_id: int,
     payload: BudgetPosteUpdate,
@@ -2971,7 +2971,7 @@ async def update_budget_poste(
     return await update_budget_line(line_id=poste_id, payload=payload, user=user, tenant_id=tenant_id, db=db)
 
 
-@router.delete("/lines/{line_id}")
+@router.delete("/lines/{line_id}", dependencies=[Depends(has_permission("treso.budget.delete"))])
 async def delete_budget_line(
     line_id: int,
     user: User = Depends(get_current_user),
@@ -3025,7 +3025,7 @@ async def delete_budget_line(
     return {"ok": True}
 
 
-@router.delete("/postes/{poste_id}")
+@router.delete("/postes/{poste_id}", dependencies=[Depends(has_permission("treso.budget.delete"))])
 async def delete_budget_poste(
     poste_id: int,
     user: User = Depends(get_current_user),
@@ -3035,7 +3035,7 @@ async def delete_budget_poste(
     return await delete_budget_line(line_id=poste_id, user=user, tenant_id=tenant_id, db=db)
 
 
-@router.post("/lines/{line_id}/restore")
+@router.post("/lines/{line_id}/restore", dependencies=[Depends(has_permission("treso.budget.delete"))])
 async def restore_budget_line(
     line_id: int,
     user: User = Depends(get_current_user),
@@ -3083,7 +3083,7 @@ async def restore_budget_line(
     return {"ok": True}
 
 
-@router.post("/postes/{poste_id}/restore")
+@router.post("/postes/{poste_id}/restore", dependencies=[Depends(has_permission("treso.budget.delete"))])
 async def restore_budget_poste(
     poste_id: int,
     user: User = Depends(get_current_user),

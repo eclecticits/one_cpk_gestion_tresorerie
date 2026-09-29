@@ -2985,7 +2985,7 @@ async def _annuler_transfert_delegue(
 #: permission dédiée rendue inopérante par une liste de rôles mal orthographiée.
 #: Nommer le droit une seule fois, au bon endroit, vaut mieux que le dire deux
 #: fois dont une faux.
-@router.post("/{sortie_id}/affecter-budget", dependencies=[Depends(has_permission("budget"))])
+@router.post("/{sortie_id}/affecter-budget", dependencies=[Depends(has_permission("treso.budget.update"))])
 async def affecter_sortie_budget(
     sortie_id: str,
     payload: AffecterBudgetPayload,

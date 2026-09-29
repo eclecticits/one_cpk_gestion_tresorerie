@@ -1157,7 +1157,7 @@ export default function Encaissements() {
         onCancelOperation={handleCancelEncaissement}
         canCancelOperation={hasPermission('cancel_encaissement')}
         onAffecterBudget={setAffectationEncaissement}
-        canAffecterBudget={hasPermission('budget')}
+        canAffecterBudget={hasPermission('treso.budget.update')}
       />
 
       {affectationEncaissement && (

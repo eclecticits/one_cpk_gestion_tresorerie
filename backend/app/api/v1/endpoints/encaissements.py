@@ -2451,7 +2451,7 @@ async def create_encaissement(
     return await _encaissement_response(db, encaissement, expert)
 
 
-@router.post("/{encaissement_id}/affecter-budget", dependencies=[Depends(has_permission("budget"))])
+@router.post("/{encaissement_id}/affecter-budget", dependencies=[Depends(has_permission("treso.budget.update"))])
 async def affecter_encaissement_budget(
     encaissement_id: str,
     payload: AffecterBudgetPayload,

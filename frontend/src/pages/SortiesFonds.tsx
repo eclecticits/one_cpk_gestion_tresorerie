@@ -1137,9 +1137,9 @@ export default function SortiesFonds() {
   // Un retour en caisse n'a de sens que sur une vraie dépense valide (pas un
   // transfert interne). La permission de paiement est vérifiée côté backend.
   /** Une dépense payée hors budget attend encore sa décision d'imputation.
-   *  Le droit demandé est celui du budget : c'est lui qu'on vient consommer. */
+   *  Le droit demandé est celui de modifier le budget : c'est lui qu'on vient consommer. */
   const peutAffecterAuBudget = (sortie: SortieFonds): boolean =>
-    hasPermission('budget') && estAffectable(sortie)
+    hasPermission('treso.budget.update') && estAffectable(sortie)
 
   /** Reste à imputer : le montant payé moins ce qu'une régularisation partielle
    *  a déjà affecté. Le serveur retranche le même déjà-affecté et tranche. */
