@@ -3,6 +3,7 @@ import { Money, toNumber } from './amount'
 
 export const TYPE_CLIENT_LABELS: Record<TypeClient, string> = {
   expert_comptable: 'Expert-comptable',
+  sec: "Société d'expertise comptable (SEC)",
   personne_physique: 'Personne physique',
   personne_morale: 'Personne morale',
   partenaire: 'Partenaire',
@@ -11,6 +12,16 @@ export const TYPE_CLIENT_LABELS: Record<TypeClient, string> = {
 
 export function getTypeClientLabel(typeClient: TypeClient): string {
   return TYPE_CLIENT_LABELS[typeClient] || typeClient
+}
+
+/**
+ * Types dont le client se choisit dans le référentiel des experts, et non dans
+ * celui des clients. Même liste que TYPES_CLIENT_EXPERT côté serveur.
+ */
+export const TYPES_CLIENT_EXPERT: TypeClient[] = ['expert_comptable', 'sec']
+
+export function estTypeClientExpert(typeClient: TypeClient): boolean {
+  return TYPES_CLIENT_EXPERT.includes(typeClient)
 }
 
 /**

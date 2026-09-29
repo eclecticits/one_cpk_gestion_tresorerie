@@ -42,7 +42,7 @@ from app.models.rbac import Permission, role_permissions
 from app.modules.comptabilite.models import ComptaEcriture
 from app.modules.comptabilite.services.generation_service import annuler_ecriture_operation
 from app.modules.comptabilite.services.integration_mode import is_accounting_automatic  # compatibility for existing tests
-from app.schemas.client import TYPES_CLIENT, TYPES_CLIENT_AVEC_SEXE
+from app.schemas.client import TYPES_CLIENT, TYPES_CLIENT_AVEC_SEXE, TYPES_CLIENT_EXPERT
 from app.schemas.payment import AffecterBudgetPayload, EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
 from app.services.entrees_caisse import list_entrees_internes_caisse
@@ -466,7 +466,7 @@ def _build_duplicate_identity(
     montant_paye: Decimal,
     date_encaissement: datetime,
 ) -> str:
-    if payload.type_client == "expert_comptable" and payload.expert_comptable_id:
+    if payload.type_client in TYPES_CLIENT_EXPERT and payload.expert_comptable_id:
         client_key = f"expert:{payload.expert_comptable_id}"
     else:
         client_key = f"client:{_normalize_text(payload.client_nom)}"
@@ -485,6 +485,33 @@ def _build_duplicate_identity(
             date_encaissement.date().isoformat(),
         ]
     )
+
+
+async def _expert_du_client(db: AsyncSession, payload: EncaissementCreate) -> uuid.UUID:
+    """Vérifie l'expert choisi et que le type de client lui correspond.
+
+    Une SEC se saisit en « sec », un expert-comptable en « expert_comptable » :
+    c'est la fiche de l'expert (type_ec) qui tranche, pour que les totaux par
+    type de client ne mêlent pas les deux.
+    """
+    if not payload.expert_comptable_id:
+        raise HTTPException(status_code=400, detail="expert_comptable_id requis")
+    res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == payload.expert_comptable_id))
+    expert = res.scalar_one_or_none()
+    if expert is None:
+        raise HTTPException(status_code=404, detail="Expert-comptable non trouvé")
+    est_sec = expert.type_ec == "SEC"
+    if est_sec and payload.type_client != "sec":
+        raise HTTPException(
+            status_code=400,
+            detail=f"{expert.nom_denomination} est une société d'expertise comptable : choisissez le type « SEC »",
+        )
+    if not est_sec and payload.type_client == "sec":
+        raise HTTPException(
+            status_code=400,
+            detail=f"{expert.nom_denomination} n'est pas une société d'expertise comptable : choisissez le type « Expert-comptable »",
+        )
+    return expert.id
 
 
 def _advisory_lock_key(identity: str) -> int:
@@ -526,7 +553,7 @@ async def _find_duplicate_encaissement(
     else:
         query = query.where(Encaissement.service_id == service_id)
 
-    if payload.type_client == "expert_comptable":
+    if payload.type_client in TYPES_CLIENT_EXPERT:
         query = query.where(Encaissement.expert_comptable_id == payload.expert_comptable_id)
     else:
         query = query.where(Encaissement.client_nom == payload.client_nom)
@@ -536,10 +563,10 @@ async def _find_duplicate_encaissement(
     expected_libelle = _normalize_text(payload.libelle)
     for enc in existing:
         same_client = (
-            payload.type_client == "expert_comptable"
+            payload.type_client in TYPES_CLIENT_EXPERT
             and enc.expert_comptable_id == payload.expert_comptable_id
         ) or (
-            payload.type_client != "expert_comptable"
+            payload.type_client not in TYPES_CLIENT_EXPERT
             and _normalize_text(enc.client_nom) == expected_client
         )
         if same_client and _normalize_text(enc.libelle) == expected_libelle:
@@ -1804,13 +1831,8 @@ async def create_proforma(
         raise HTTPException(status_code=400, detail="Un encaissement ne crée pas un transfert interne")
 
     expert_uid: uuid.UUID | None = None
-    if payload.type_client == "expert_comptable":
-        if not payload.expert_comptable_id:
-            raise HTTPException(status_code=400, detail="expert_comptable_id requis")
-        expert_uid = payload.expert_comptable_id
-        res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
-        if not res.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Expert-comptable non trouvé")
+    if payload.type_client in TYPES_CLIENT_EXPERT:
+        expert_uid = await _expert_du_client(db, payload)
     elif nature_mouvement != "FONDS_DE_TIERS":
         if not payload.client_id and (not payload.client_nom or not payload.client_nom.strip()):
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
@@ -1906,7 +1928,7 @@ async def create_proforma(
         organisation_id=tenant_id,
         type_client=payload.type_client,
         expert_comptable_id=expert_uid,
-        client_nom=None if payload.type_client == "expert_comptable" else payload.client_nom,
+        client_nom=None if payload.type_client in TYPES_CLIENT_EXPERT else payload.client_nom,
         client_id=proforma_client_id,
         libelle=payload.libelle.strip(),
         description=payload.description,
@@ -1983,9 +2005,9 @@ async def _resolve_or_create_client(
       email/téléphone sont fournis et absents de la fiche).
     - sinon, get-or-create sur lower(nom) : un client qui revient après des
       mois est retrouvé au lieu d'être dupliqué.
-    Ne s'applique pas aux experts-comptables (référentiel séparé).
+    Ne s'applique pas aux experts-comptables ni aux SEC (référentiel séparé).
     """
-    if payload.type_client == "expert_comptable":
+    if payload.type_client in TYPES_CLIENT_EXPERT:
         return None
     email = (payload.client_email or "").strip() or None
     telephone = (payload.client_telephone or "").strip() or None
@@ -2148,13 +2170,8 @@ async def create_encaissement(
         statut_paiement = "non_paye"
 
     expert_uid: uuid.UUID | None = None
-    if payload.type_client == "expert_comptable":
-        if not payload.expert_comptable_id:
-            raise HTTPException(status_code=400, detail="expert_comptable_id requis")
-        expert_uid = payload.expert_comptable_id
-        res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
-        if not res.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Expert-comptable non trouvé")
+    if payload.type_client in TYPES_CLIENT_EXPERT:
+        expert_uid = await _expert_du_client(db, payload)
     elif nature_mouvement != "FONDS_DE_TIERS":
         if not payload.client_id and (not payload.client_nom or not payload.client_nom.strip()):
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
@@ -2309,7 +2326,7 @@ async def create_encaissement(
             organisation_id=tenant_id,
             type_client=payload.type_client,
             expert_comptable_id=expert_uid,
-            client_nom=None if payload.type_client == "expert_comptable" else payload.client_nom,
+            client_nom=None if payload.type_client in TYPES_CLIENT_EXPERT else payload.client_nom,
             client_id=client_id,
             libelle=payload.libelle.strip(),
             description=payload.description,

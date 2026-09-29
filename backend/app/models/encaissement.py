@@ -33,7 +33,7 @@ class Encaissement(Base):
         CheckConstraint("montant_total >= 0", name="ck_encaissements_montant_total_nonneg"),
         CheckConstraint("montant_paye >= 0", name="ck_encaissements_montant_paye_nonneg"),
         CheckConstraint(
-            "type_client IN ('expert_comptable','personne_physique','personne_morale','partenaire','autre')",
+            "type_client IN ('expert_comptable','sec','personne_physique','personne_morale','partenaire','autre')",
             name="ck_encaissements_type_client",
         ),
         CheckConstraint(
@@ -58,8 +58,8 @@ class Encaissement(Base):
         ),
         CheckConstraint(
             "(nature_mouvement = 'FONDS_DE_TIERS') OR "
-            "(type_client = 'expert_comptable' AND expert_comptable_id IS NOT NULL) OR "
-            "(type_client <> 'expert_comptable' AND client_nom IS NOT NULL AND length(trim(client_nom)) > 0)",
+            "(type_client IN ('expert_comptable','sec') AND expert_comptable_id IS NOT NULL) OR "
+            "(type_client NOT IN ('expert_comptable','sec') AND client_nom IS NOT NULL AND length(trim(client_nom)) > 0)",
             name="ck_encaissements_client_ref",
         ),
     )

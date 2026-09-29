@@ -114,6 +114,8 @@ export default function EncaissementTable({
                         background:
                           enc.type_client === 'expert_comptable'
                             ? '#dbeafe'
+                            : enc.type_client === 'sec'
+                            ? '#e0e7ff'
                             : enc.type_client === 'personne_morale'
                             ? '#d1fae5'
                             : enc.type_client === 'partenaire'
@@ -122,6 +124,8 @@ export default function EncaissementTable({
                         color:
                           enc.type_client === 'expert_comptable'
                             ? '#1e40af'
+                            : enc.type_client === 'sec'
+                            ? '#3730a3'
                             : enc.type_client === 'personne_morale'
                             ? '#065f46'
                             : enc.type_client === 'partenaire'

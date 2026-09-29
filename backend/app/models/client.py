@@ -41,7 +41,7 @@ class Client(Base):
         CheckConstraint("sexe IS NULL OR sexe IN ('M', 'F')", name="ck_clients_sexe"),
         CheckConstraint(
             "type_client IS NULL OR type_client IN "
-            "('expert_comptable','personne_physique','personne_morale','partenaire','autre')",
+            "('expert_comptable','sec','personne_physique','personne_morale','partenaire','autre')",
             name="ck_clients_type_client",
         ),
     )

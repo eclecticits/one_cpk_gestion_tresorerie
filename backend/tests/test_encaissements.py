@@ -422,6 +422,62 @@ async def test_create_and_list_encaissement_with_expert(db_session, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_une_sec_se_saisit_en_type_sec(db_session, monkeypatch):
+    """Le type de client suit la fiche : SEC en « sec », expert en « expert_comptable »."""
+    org = await _enc_org(db_session, name="Encaissement SEC")
+    poste = await _enc_budget_poste(db_session, org)
+    user = await _enc_user(db_session, org)
+    await _allow_budget_poste_for_user_service(db_session, user, poste)
+    db_session.add(CaisseCentrale(organisation_id=org.id, est_ouverte=True))
+    sec = ExpertComptable(numero_ordre=f"SEC-{_suffix()}", nom_denomination="Cabinet Beta SARL", type_ec="SEC", active=True)
+    expert = ExpertComptable(numero_ordre=f"EC-{_suffix()}", nom_denomination="KALALA Marie", type_ec="EC", active=True)
+    db_session.add_all([sec, expert])
+    await db_session.commit()
+
+    async def fake_generate_numero_recu(*args, **kwargs):
+        return f"REC-{_suffix()}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_generate_numero_recu)
+
+    def _payload(type_client: str, expert_id: uuid.UUID) -> EncaissementCreate:
+        return EncaissementCreate(
+            type_client=type_client,
+            expert_comptable_id=str(expert_id),
+            libelle="Cotisation annuelle",
+            montant=100,
+            montant_total=100,
+            montant_paye=100,
+            statut_paiement="complet",
+            mode_paiement="cash",
+            budget_poste_id=poste.id,
+            date_encaissement=datetime(2026, 1, 27, tzinfo=timezone.utc),
+        )
+
+    async def _creer(type_client: str, expert_id: uuid.UUID):
+        return await create_encaissement(
+            payload=_payload(type_client, expert_id),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db_session,
+        )
+
+    with pytest.raises(HTTPException) as refus_sec:
+        await _creer("expert_comptable", sec.id)
+    assert refus_sec.value.status_code == 400
+    assert "SEC" in refus_sec.value.detail
+
+    with pytest.raises(HTTPException) as refus_expert:
+        await _creer("sec", expert.id)
+    assert refus_expert.value.status_code == 400
+
+    created = await _creer("sec", sec.id)
+    assert created["type_client"] == "sec"
+    assert created["client_nom"] is None
+    assert created["expert_comptable"]["nom_denomination"] == "Cabinet Beta SARL"
+
+
+@pytest.mark.asyncio
 async def test_filters_and_pagination(db_session, monkeypatch):
     org = Organisation(nom="Encaissement List", slug=f"enc-list-{uuid.uuid4().hex[:8]}", is_active=True)
     db_session.add(org)

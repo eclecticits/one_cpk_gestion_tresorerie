@@ -29,8 +29,11 @@ def _normalize_optional_email(value: str | None) -> str | None:
 # institution et organisation ont été fondus dedans (migration
 # 20260918_types_client) : la liste disait la même chose sous trop de noms, et
 # l'on y rangeait une personne sous « Organisation ».
+# La SEC (société d'expertise comptable) a son propre type depuis la migration
+# 20260930_type_client_sec : elle n'est pas un expert-comptable.
 TYPES_CLIENT: tuple[str, ...] = (
     "expert_comptable",
+    "sec",
     "personne_physique",
     "personne_morale",
     "partenaire",
@@ -39,6 +42,10 @@ TYPES_CLIENT: tuple[str, ...] = (
 
 # Seule la personne physique a un sexe, et il est alors obligatoire.
 TYPES_CLIENT_AVEC_SEXE = frozenset({"personne_physique"})
+
+# Types dont le client se choisit dans le référentiel des experts
+# (expert_comptable_id) et non dans celui des clients (client_nom).
+TYPES_CLIENT_EXPERT = frozenset({"expert_comptable", "sec"})
 
 
 def normalize_optional_type_client(value: str | None) -> str | None:

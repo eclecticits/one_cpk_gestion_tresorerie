@@ -11,6 +11,7 @@ from app.models.client import Client
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
+from app.schemas.client import TYPES_CLIENT_EXPERT
 from app.services.email_config import resolve_smtp_config
 from app.services.mailer import send_requisition_workflow_email
 from app.services.system_settings_service import get_system_settings
@@ -47,7 +48,7 @@ async def schedule_client_payment_email(
         email: str | None = None
         client_name = (encaissement.client_nom or "").strip()
 
-        if encaissement.type_client == "expert_comptable" and encaissement.expert_comptable_id:
+        if encaissement.type_client in TYPES_CLIENT_EXPERT and encaissement.expert_comptable_id:
             res = await db.execute(
                 select(ExpertComptable).where(ExpertComptable.id == encaissement.expert_comptable_id)
             )

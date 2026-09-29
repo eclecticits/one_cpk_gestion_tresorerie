@@ -4,7 +4,7 @@ import { AlertTriangle, Lock, Unlock } from 'lucide-react'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, NatureMouvement, TypeClient, Service } from '../types'
 import { toNumber } from '../utils/amount'
-import { TYPE_CLIENT_LABELS, libelleNomClient, typeClientDemandeLeSexe } from '../utils/encaissementHelpers'
+import { TYPE_CLIENT_LABELS, estTypeClientExpert, libelleNomClient, typeClientDemandeLeSexe } from '../utils/encaissementHelpers'
 import type { ProjetActivite } from '../api/projetsActivites'
 import type { CompteBancaire } from '../types/banque'
 import { uploadEncaissementPiece } from '../api/encaissementPieces'
@@ -242,6 +242,7 @@ export default function EncaissementForm({
   // Un mouvement de fonds de tiers force type_client à 'autre' : il ne
   // designe personne, la question ne se pose donc pas non plus.
   const demandeLeSexe = !estFondsDeTiers && typeClientDemandeLeSexe(formData.type_client)
+  const estSec = formData.type_client === 'sec'
   // « Autre tiers » ouvre un champ de saisie libre à côté du sélecteur.
   const ftTiersLibre = formData.ft_tiers_selection === ORGANISATION_OTHER_VALUE
   // Largeurs de l'affectation comptable : le poste budgétaire disparaît hors
@@ -515,10 +516,19 @@ export default function EncaissementForm({
       setFilteredExperts([])
       return
     }
+    // Chaque type ne cherche que ses fiches : une SEC (type_ec 'SEC') n'est
+    // proposée qu'en « SEC », un expert-comptable qu'en « Expert-comptable ».
+    const typeEc = formData.type_client === 'sec' ? 'SEC' : 'EC'
     const timer = window.setTimeout(async () => {
       try {
         setIsSearchingExperts(true)
-        const res = await apiRequest<ExpertComptable[]>('GET', `/experts-comptables?q=${searchEC.trim()}&active=true&limit=20`)
+        // Inactifs compris : la liste nationale crée ses experts inactifs tant
+        // que leur situation n'est pas vérifiée, et ils doivent pouvoir payer.
+        // Le badge « Inactif » de la liste signale le cas à la sélection.
+        const res = await apiRequest<ExpertComptable[]>(
+          'GET',
+          `/experts-comptables?q=${encodeURIComponent(searchEC.trim())}&type_ec=${typeEc}&include_inactive=true&limit=20`,
+        )
         setFilteredExperts(Array.isArray(res) ? res : [])
       } catch (error) {
         console.error('Error searching experts:', error)
@@ -528,7 +538,7 @@ export default function EncaissementForm({
       }
     }, 300)
     return () => window.clearTimeout(timer)
-  }, [searchEC])
+  }, [searchEC, formData.type_client])
 
   const selectExpert = (expert: ExpertComptable) => {
     setFormData((prev) => ({ ...prev, expert_comptable_id: expert.id, client_nom: '' }))
@@ -551,7 +561,7 @@ export default function EncaissementForm({
   // Recherche de clients existants pendant la saisie (anti-doublons) :
   // un client revenu après des mois est proposé au lieu d'être recréé.
   useEffect(() => {
-    if (formData.type_client === 'expert_comptable') return
+    if (estTypeClientExpert(formData.type_client)) return
     const term = formData.client_nom.trim()
     if (clientId || term.length < 2) {
       setClientSuggestions([])
@@ -586,10 +596,11 @@ export default function EncaissementForm({
       ...prev,
       client_nom: c.nom,
       // Reprendre automatiquement le type défini du client sélectionné dans le
-      // référentiel (hors expert_comptable, géré via son propre sélecteur). Si
-      // le client n'a pas de type enregistré, on conserve le type courant.
+      // référentiel (hors expert-comptable et SEC, gérés via leur propre
+      // sélecteur). Si le client n'a pas de type enregistré, on conserve le
+      // type courant.
       type_client:
-        c.type_client && c.type_client !== 'expert_comptable'
+        c.type_client && !estTypeClientExpert(c.type_client)
           ? (c.type_client as TypeClient)
           : prev.type_client,
     }))
@@ -830,11 +841,11 @@ export default function EncaissementForm({
 
       const created = await apiRequest<any>('POST', '/encaissements', {
         type_client: estFondsDeTiers ? 'autre' : formData.type_client,
-        expert_comptable_id: !estFondsDeTiers && formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
-        client_nom: !estFondsDeTiers && formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
-        client_id: !estFondsDeTiers && formData.type_client !== 'expert_comptable' && clientId ? clientId : null,
-        client_email: !estFondsDeTiers && formData.type_client !== 'expert_comptable' ? (clientEmail.trim() || null) : null,
-        client_telephone: !estFondsDeTiers && formData.type_client !== 'expert_comptable' ? (clientTelephone.trim() || null) : null,
+        expert_comptable_id: !estFondsDeTiers && estTypeClientExpert(formData.type_client) ? formData.expert_comptable_id : null,
+        client_nom: !estFondsDeTiers && !estTypeClientExpert(formData.type_client) ? formData.client_nom.trim() : null,
+        client_id: !estFondsDeTiers && !estTypeClientExpert(formData.type_client) && clientId ? clientId : null,
+        client_email: !estFondsDeTiers && !estTypeClientExpert(formData.type_client) ? (clientEmail.trim() || null) : null,
+        client_telephone: !estFondsDeTiers && !estTypeClientExpert(formData.type_client) ? (clientTelephone.trim() || null) : null,
         client_sexe: demandeLeSexe ? (clientSexe || null) : null,
         libelle: getMainLibelle(),
         description: formData.description || null,
@@ -908,11 +919,11 @@ export default function EncaissementForm({
 
       const created = await apiRequest<any>('POST', '/encaissements/proformas', {
         type_client: formData.type_client,
-        expert_comptable_id: formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
-        client_nom: formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
-        client_id: formData.type_client !== 'expert_comptable' && clientId ? clientId : null,
-        client_email: formData.type_client !== 'expert_comptable' ? (clientEmail.trim() || null) : null,
-        client_telephone: formData.type_client !== 'expert_comptable' ? (clientTelephone.trim() || null) : null,
+        expert_comptable_id: estTypeClientExpert(formData.type_client) ? formData.expert_comptable_id : null,
+        client_nom: !estTypeClientExpert(formData.type_client) ? formData.client_nom.trim() : null,
+        client_id: !estTypeClientExpert(formData.type_client) && clientId ? clientId : null,
+        client_email: !estTypeClientExpert(formData.type_client) ? (clientEmail.trim() || null) : null,
+        client_telephone: !estTypeClientExpert(formData.type_client) ? (clientTelephone.trim() || null) : null,
         client_sexe: demandeLeSexe ? (clientSexe || null) : null,
         libelle: getMainLibelle(),
         description: formData.description || null,
@@ -959,11 +970,14 @@ export default function EncaissementForm({
       )
       return false
     }
-    if (!estFondsDeTiers && formData.type_client === 'expert_comptable' && !formData.expert_comptable_id) {
-      onError('Expert-comptable non sélectionné', 'Veuillez sélectionner un expert-comptable depuis la liste.')
+    if (!estFondsDeTiers && estTypeClientExpert(formData.type_client) && !formData.expert_comptable_id) {
+      onError(
+        estSec ? 'SEC non sélectionnée' : 'Expert-comptable non sélectionné',
+        estSec ? "Veuillez sélectionner une société d'expertise comptable depuis la liste." : 'Veuillez sélectionner un expert-comptable depuis la liste.',
+      )
       return false
     }
-    if (!estFondsDeTiers && formData.type_client !== 'expert_comptable' && !formData.client_nom.trim()) {
+    if (!estFondsDeTiers && !estTypeClientExpert(formData.type_client) && !formData.client_nom.trim()) {
       onError('Nom du client requis', 'Veuillez saisir le nom complet du client.')
       return false
     }
@@ -972,7 +986,7 @@ export default function EncaissementForm({
       return false
     }
     if (
-      !estFondsDeTiers && formData.type_client !== 'expert_comptable' &&
+      !estFondsDeTiers && !estTypeClientExpert(formData.type_client) &&
       clientEmail.trim() &&
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim())
     ) {
@@ -1144,8 +1158,8 @@ export default function EncaissementForm({
     : montantPayeUSD > 0
       ? 'Partiel'
       : 'Non payé'
-  const clientSummary = formData.type_client === 'expert_comptable'
-    ? selectedExpert?.nom_denomination || searchEC || 'Expert-comptable non sélectionné'
+  const clientSummary = estTypeClientExpert(formData.type_client)
+    ? selectedExpert?.nom_denomination || searchEC || (estSec ? 'SEC non sélectionnée' : 'Expert-comptable non sélectionné')
     : formData.client_nom || 'Client non renseigné'
   const modePaiementLabel: Record<ModePaiement, string> = {
     cash: 'Espèces',
@@ -1503,15 +1517,15 @@ export default function EncaissementForm({
             </select>
           </div>
 
-          {formData.type_client === 'expert_comptable' ? (
+          {estTypeClientExpert(formData.type_client) ? (
             <div className={`${styles.field} ${styles.col4}`}>
-              <label>Expert-Comptable *</label>
+              <label>{estSec ? "Société d'expertise comptable *" : 'Expert-Comptable *'}</label>
               <div style={{ position: 'relative' }}>
                 <input
                   type="text"
                   value={searchEC}
                   onChange={(e) => setSearchEC(e.target.value)}
-                  placeholder="Rechercher par numéro d'ordre ou nom"
+                  placeholder={estSec ? "Rechercher par numéro d'ordre ou dénomination" : "Rechercher par numéro d'ordre ou nom"}
                   style={{ borderColor: formData.expert_comptable_id ? '#10b981' : undefined }}
                 />
                 {formData.expert_comptable_id && <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#10b981', fontWeight: 'bold' }}>✓</span>}
@@ -1521,13 +1535,23 @@ export default function EncaissementForm({
                   {filteredExperts.map(expert => (
                     <div key={expert.id} onClick={() => selectExpert(expert)} className={styles.dropdownItem}>
                       <strong>{expert.numero_ordre}</strong> - {expert.nom_denomination}
+                      {!estSec && expert.statut_professionnel && (
+                        <span className={styles.parentBadge}>{expert.statut_professionnel}</span>
+                      )}
+                      {expert.active === false && <span className={styles.inactiveBadge}>Inactif</span>}
+                      {estSec && expert.associe_gerant && (
+                        <small className={styles.dropdownDetail}>Associé gérant : {expert.associe_gerant}</small>
+                      )}
                     </div>
                   ))}
                 </div>
               )}
+              {selectedExpert?.active === false && (
+                <small>Expert inactif : non publié au Tableau.</small>
+              )}
               {banniereCreance(
                 creanceExpert,
-                'Cet expert-comptable',
+                estSec ? 'Cette SEC' : 'Cet expert-comptable',
                 { expert_comptable_id: formData.expert_comptable_id },
                 selectedExpert?.nom_denomination || 'cet expert-comptable',
               )}
