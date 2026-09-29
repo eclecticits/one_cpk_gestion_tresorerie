@@ -1411,3 +1411,259 @@ async def test_maj_fonds_tiers_ne_revalide_le_tiers_que_s_il_change(db_session):
         )
     assert exc.value.status_code == 400
     assert "inactive" in str(exc.value.detail).lower()
+
+
+async def _encaisser_fonds_tiers(db, org, user, banque, montant, fonds_tiers):
+    from app.api.v1.endpoints.encaissements import create_encaissement
+
+    enc = await create_encaissement(
+        payload=EncaissementCreate(
+            type_client="autre",
+            client_nom=None,
+            client_id=None,
+            libelle="Fonds reçus pour compte de tiers",
+            montant=montant,
+            montant_total=montant,
+            montant_paye=montant,
+            nature_mouvement="FONDS_DE_TIERS",
+            mode_paiement="virement",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            fonds_tiers=fonds_tiers,
+        ),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    return (
+        await db.execute(
+            select(FondsTiersOperation).where(
+                FondsTiersOperation.organisation_id == org.id,
+                FondsTiersOperation.encaissement_id == uuid.UUID(str(enc["id"])),
+            )
+        )
+    ).scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_versement_groupe_de_plusieurs_fonds_vers_une_autre_instance(db_session, monkeypatch):
+    """Plusieurs fonds cochés, un seul versement, à l'instance choisie.
+
+    Le destinataire n'est pas forcément le tiers enregistré à l'encaissement :
+    c'est la réquisition approuvée, qui nomme les fonds un à un, qui fonde le
+    lien. Chaque paiement se répartit sur ces fonds dans l'ordre retenu, et
+    l'annulation rend à chacun sa part.
+    """
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds, update_sortie_statut
+    from app.models.fonds_tiers_versement import RequisitionFondsTiers, SortieFondsTiers
+    from app.schemas.requisition import FondsTiersLigneIn
+    from app.services.fonds_tiers import fonds_tiers_amounts
+    from app.services.requisition_service import _controler_fonds_tiers_lignes
+
+    db = db_session
+    org = await _org(db, "ft-multi")
+    tiers_a = await _other_org(db, "CP Kasaï")
+    destination = await _other_org(db, "Conseil National")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    async def fake_num(*_args, **_kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    op1 = await _encaisser_fonds_tiers(
+        db, org, user, banque, Decimal("300"), FondsTiersCreate(tiers_organisation_id=tiers_a.id)
+    )
+    op2 = await _encaisser_fonds_tiers(
+        db, org, user, banque, Decimal("200"), FondsTiersCreate(tiers_nom_libre="Association ABC")
+    )
+
+    # La somme des parts doit faire le montant de la réquisition.
+    with pytest.raises(HTTPException) as exc:
+        await _controler_fonds_tiers_lignes(
+            db,
+            tenant_id=org.id,
+            nature="FONDS_DE_TIERS",
+            lignes=[FondsTiersLigneIn(fonds_tiers_operation_id=op1.id, montant=Decimal("300"))],
+            devise="USD",
+            montant_total=Decimal("500"),
+        )
+    assert exc.value.status_code == 400
+    # Une part ne dépasse pas ce qui reste à reverser sur son fonds.
+    with pytest.raises(HTTPException):
+        await _controler_fonds_tiers_lignes(
+            db,
+            tenant_id=org.id,
+            nature="FONDS_DE_TIERS",
+            lignes=[FondsTiersLigneIn(fonds_tiers_operation_id=op2.id, montant=Decimal("201"))],
+            devise="USD",
+            montant_total=Decimal("201"),
+        )
+    lignes = await _controler_fonds_tiers_lignes(
+        db,
+        tenant_id=org.id,
+        nature="FONDS_DE_TIERS",
+        lignes=[
+            FondsTiersLigneIn(fonds_tiers_operation_id=op1.id, montant=Decimal("300")),
+            FondsTiersLigneIn(fonds_tiers_operation_id=op2.id, montant=Decimal("200")),
+        ],
+        devise="USD",
+        montant_total=Decimal("500"),
+    )
+    assert [op for op, _ in lignes] == [op1.id, op2.id]
+
+    # Destinataire : une autre instance que les tiers des deux fonds.
+    req = await _requisition_approuvee(
+        db,
+        org,
+        nature="FONDS_DE_TIERS",
+        montant=Decimal("500"),
+        mode_paiement="virement",
+        tiers_organisation_id=destination.id,
+    )
+    for rang, (operation_id, montant) in enumerate(lignes):
+        db.add(
+            RequisitionFondsTiers(
+                organisation_id=org.id,
+                requisition_id=req.id,
+                fonds_tiers_operation_id=operation_id,
+                montant=montant,
+            )
+        )
+        await db.flush()
+
+    async def payer(montant):
+        return await create_sortie_fonds(
+            payload=SortieFondsCreate(
+                type_sortie="remboursement_fonds_tiers",
+                requisition_id=req.id,
+                nature_mouvement="FONDS_DE_TIERS",
+                montant_paye=montant,
+                mode_paiement="virement",
+                devise="USD",
+                canal="BANQUE",
+                compte_bancaire_id=banque.id,
+                motif="Versement groupé",
+            ),
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+
+    premiere = await payer(Decimal("350"))
+    # Plusieurs fonds : la sortie n'en porte aucun en propre, sa répartition fait foi.
+    assert premiere.fonds_tiers_operation_id is None
+    assert premiere.beneficiaire == "Conseil National"
+    parts = {
+        row.fonds_tiers_operation_id: row.montant
+        for row in (
+            await db.execute(select(SortieFondsTiers).where(SortieFondsTiers.sortie_fonds_id == premiere.id))
+        ).scalars()
+    }
+    assert parts == {op1.id: Decimal("300.00"), op2.id: Decimal("50.00")}
+    await db.refresh(op1)
+    await db.refresh(op2)
+    assert op1.statut == "REGULARISE"
+    assert op2.statut == "PARTIELLEMENT_REMBOURSE"
+
+    # Au-delà de ce que la réquisition destine aux fonds : refusé.
+    with pytest.raises(HTTPException):
+        await payer(Decimal("151"))
+
+    seconde = await payer(Decimal("150"))
+    assert seconde.fonds_tiers_operation_id == op2.id
+    await db.refresh(op2)
+    assert op2.statut == "REGULARISE"
+    await db.refresh(banque)
+    assert banque.solde_actuel == Decimal("0")
+
+    # Annuler le premier versement rend à chaque fonds sa part.
+    await update_sortie_statut(
+        sortie_id=str(premiere.id),
+        payload=SortieFondsStatusUpdate(statut="ANNULEE", motif_annulation="Erreur de saisie"),
+        request=_FakeRequest(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    await db.refresh(op1)
+    await db.refresh(op2)
+    assert op1.statut == "OUVERT"
+    assert op2.statut == "PARTIELLEMENT_REMBOURSE"
+    _recu, _devise, rembourse, solde = await fonds_tiers_amounts(db, organisation_id=org.id, operation=op2)
+    assert (rembourse, solde) == (Decimal("150.00"), Decimal("50.00"))
+
+
+@pytest.mark.asyncio
+async def test_un_fonds_retenu_par_une_requisition_en_cours_n_est_plus_disponible(db_session, monkeypatch):
+    """Deux réquisitions ne se disputent pas le même fonds.
+
+    Tant qu'une réquisition non close retient une part d'un fonds, cette part
+    est affichée comme réservée et refusée à une seconde. Rejetée, elle libère
+    le fonds.
+    """
+    from app.api.v1.endpoints.fonds_tiers import list_fonds_tiers
+    from app.models.fonds_tiers_versement import RequisitionFondsTiers
+    from app.schemas.requisition import FondsTiersLigneIn
+    from app.services.requisition_service import _controler_fonds_tiers_lignes
+
+    db = db_session
+    org = await _org(db, "ft-resa")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+    op = await _encaisser_fonds_tiers(
+        db, org, user, banque, Decimal("300"), FondsTiersCreate(tiers_nom_libre="CP Équateur")
+    )
+
+    req = await _requisition_approuvee(
+        db, org, nature="FONDS_DE_TIERS", montant=Decimal("200"), tiers_nom_libre="CP Équateur", status="EN_ATTENTE"
+    )
+    db.add(
+        RequisitionFondsTiers(
+            organisation_id=org.id, requisition_id=req.id, fonds_tiers_operation_id=op.id, montant=Decimal("200")
+        )
+    )
+    await db.flush()
+
+    [out] = await list_fonds_tiers(statut=None, tenant_id=org.id, db=db)
+    assert out.montant_reserve == Decimal("200.00")
+    assert out.disponible == Decimal("100.00")
+    assert out.requisitions_en_cours == [req.numero_requisition]
+
+    async def proposer(montant):
+        return await _controler_fonds_tiers_lignes(
+            db,
+            tenant_id=org.id,
+            nature="FONDS_DE_TIERS",
+            lignes=[FondsTiersLigneIn(fonds_tiers_operation_id=op.id, montant=montant)],
+            devise="USD",
+            montant_total=montant,
+        )
+
+    with pytest.raises(HTTPException) as exc:
+        await proposer(Decimal("150"))
+    assert exc.value.status_code == 409
+    assert req.numero_requisition in str(exc.value.detail)
+    assert await proposer(Decimal("100")) == [(op.id, Decimal("100.00"))]
+
+    # La réquisition qui retenait le fonds est rejetée : il redevient libre.
+    req.status = "REJETEE"
+    await db.flush()
+    [out] = await list_fonds_tiers(statut=None, tenant_id=org.id, db=db)
+    assert out.montant_reserve == Decimal("0.00")
+    assert await proposer(Decimal("300")) == [(op.id, Decimal("300.00"))]

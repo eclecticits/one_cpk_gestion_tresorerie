@@ -27,6 +27,8 @@ from app.models.dossier_requisition import DossierRequisition
 from app.models.commission_member import CommissionMember
 from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
+from app.models.fonds_tiers_operation import FondsTiersOperation
+from app.models.fonds_tiers_versement import RequisitionFondsTiers
 from app.models.remboursement_transport import RemboursementTransport
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
@@ -65,6 +67,7 @@ from app.schemas.pdf_requisition import (
 # parse_requisition_pdf est importé dans la vue : il tire pdfplumber (10 Mo de
 # RSS par worker) pour un seul endpoint d'OCR. Même motif que treasury.py.
 from app.services.official_pdf import ensure_remboursement_official_pdf
+from app.services.fonds_tiers import resolve_fonds_tiers_display_names
 from app.services.reglement import calculer_volets
 from app.services.requisition_service import (
     update_requisition_logic,
@@ -470,6 +473,45 @@ def _annexe_payload(annexe: RequisitionAnnexe) -> dict[str, Any]:
     }
 
 
+async def _fonds_tiers_lignes_map(
+    db: AsyncSession,
+    tenant_id: int,
+    requisitions: list[Requisition],
+) -> dict[uuid.UUID, list[dict[str, Any]]]:
+    """Fonds de tiers nommés par chaque réquisition FONDS_DE_TIERS, en une
+    lecture pour tout le lot : la caisse en a besoin pour savoir ce qu'elle
+    reverse, sans le ressaisir."""
+    ids = [
+        r.id for r in requisitions if (getattr(r, "nature_requisition", None) or "").upper() == "FONDS_DE_TIERS"
+    ]
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(RequisitionFondsTiers, FondsTiersOperation)
+            .join(FondsTiersOperation, FondsTiersOperation.id == RequisitionFondsTiers.fonds_tiers_operation_id)
+            .where(
+                RequisitionFondsTiers.organisation_id == tenant_id,
+                RequisitionFondsTiers.requisition_id.in_(ids),
+            )
+            .order_by(RequisitionFondsTiers.created_at, RequisitionFondsTiers.id)
+        )
+    ).all()
+    if not rows:
+        return {}
+    noms = await resolve_fonds_tiers_display_names(db, [op for _, op in rows])
+    result: dict[uuid.UUID, list[dict[str, Any]]] = {}
+    for ligne, op in rows:
+        result.setdefault(ligne.requisition_id, []).append(
+            {
+                "fonds_tiers_operation_id": str(op.id),
+                "montant": ligne.montant,
+                "tiers_display_name": noms[op.id][0],
+            }
+        )
+    return result
+
+
 def _requisition_out(
     req: Requisition,
     *,
@@ -483,6 +525,7 @@ def _requisition_out(
     lignes_count: int | None = None,
     remboursement_transport: Any | None = None,
     volets_reglement: list[Any] | None = None,
+    fonds_tiers_lignes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     base = {
         "id": str(req.id),
@@ -520,6 +563,7 @@ def _requisition_out(
         "instance_beneficiaire": req.instance_beneficiaire,
         "tiers_organisation_id": getattr(req, "tiers_organisation_id", None),
         "tiers_nom_libre": getattr(req, "tiers_nom_libre", None),
+        "fonds_tiers_lignes": fonds_tiers_lignes,
         "notes_a_valoir": req.notes_a_valoir,
         "req_titre_officiel_hist": req.req_titre_officiel_hist,
         "req_label_gauche_hist": req.req_label_gauche_hist,
@@ -1118,6 +1162,7 @@ async def list_requisitions(
                     "lieu": t.lieu,
                 }
 
+    fonds_tiers_map = await _fonds_tiers_lignes_map(db, tenant_id, list(requisitions))
     return [
         _requisition_out(
             r,
@@ -1130,6 +1175,7 @@ async def list_requisitions(
             montant_deja_paye=montant_paye_map.get(r.id) if needs_montant_paye else None,
             lignes_count=lignes_count_map.get(r.id) if needs_lignes_count else None,
             remboursement_transport=transports_map.get(r.id),
+            fonds_tiers_lignes=fonds_tiers_map.get(r.id),
         )
         for r in requisitions
     ]
@@ -1240,6 +1286,7 @@ async def list_my_requisitions(
                     "lieu": t.lieu,
                 }
 
+    fonds_tiers_map = await _fonds_tiers_lignes_map(db, tenant_id, list(requisitions))
     return [
         _requisition_out(
             r,
@@ -1252,6 +1299,7 @@ async def list_my_requisitions(
             montant_deja_paye=montant_paye_map.get(r.id, 0),
             lignes_count=lignes_count_map.get(r.id, 0),
             remboursement_transport=transports_map.get(r.id),
+            fonds_tiers_lignes=fonds_tiers_map.get(r.id),
         )
         for r in requisitions
     ]

@@ -9,6 +9,19 @@ from app.services.reglement import MODE_PAIEMENT_MIXTE, MODES_PAIEMENT
 from uuid import UUID
 
 
+class FondsTiersLigneIn(DecimalBaseModel):
+    """Un fonds de tiers que la réquisition fait reverser, et pour combien."""
+
+    fonds_tiers_operation_id: UUID
+    montant: Decimal = Field(gt=0)
+
+
+class FondsTiersLigneOut(DecimalBaseModel):
+    fonds_tiers_operation_id: UUID
+    montant: Decimal
+    tiers_display_name: str | None = None
+
+
 class LigneRequisitionInline(DecimalBaseModel):
     """Ligne fournie à la création de la réquisition (pas encore d'identifiant
     de réquisition à référencer : les deux sont écrits dans la même
@@ -68,6 +81,9 @@ class RequisitionCreate(DecimalBaseModel):
     instance_beneficiaire: str | None = None
     tiers_organisation_id: int | None = None
     tiers_nom_libre: str | None = Field(default=None, max_length=255)
+    # Fonds de tiers reversés par ce seul versement (FONDS_DE_TIERS). Absents :
+    # réquisition historique, le fonds se choisit alors en caisse.
+    fonds_tiers_lignes: list[FondsTiersLigneIn] | None = None
     notes_a_valoir: str | None = None
     # Lignes créées avec la réquisition. Absentes = création nue (parcours
     # historiques : remboursement transport, imports).
@@ -121,6 +137,7 @@ class RequisitionCreate(DecimalBaseModel):
         else:
             self.tiers_organisation_id = None
             self.tiers_nom_libre = None
+            self.fonds_tiers_lignes = None
         if self.beneficiaire is not None:
             self.beneficiaire = self.beneficiaire.strip() or None
         # Un mouvement hors budget n'a ni ligne ni poste : le bénéficiaire est
@@ -159,6 +176,7 @@ class RequisitionUpdate(DecimalBaseModel):
     instance_beneficiaire: str | None = None
     tiers_organisation_id: int | None = None
     tiers_nom_libre: str | None = Field(default=None, max_length=255)
+    fonds_tiers_lignes: list[FondsTiersLigneIn] | None = None
     notes_a_valoir: str | None = None
     updated_at: datetime | None = None
 
@@ -240,6 +258,7 @@ class RequisitionOut(DecimalBaseModel):
     instance_beneficiaire: str | None = None
     tiers_organisation_id: int | None = None
     tiers_nom_libre: str | None = None
+    fonds_tiers_lignes: list[FondsTiersLigneOut] | None = None
     notes_a_valoir: str | None = None
     req_titre_officiel_hist: str | None = None
     req_label_gauche_hist: str | None = None

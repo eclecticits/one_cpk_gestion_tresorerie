@@ -27,6 +27,11 @@ export interface FondsTiersOperation {
   devise: 'USD' | 'CDF'
   montant_rembourse: Money
   solde_restant: Money
+  /** Part du solde déjà promise par des réquisitions en cours. */
+  montant_reserve?: Money
+  /** Ce qui reste libre pour un nouveau versement. */
+  disponible?: Money
+  requisitions_en_cours?: string[]
   created_by?: string | null
   created_at: string
   updated_at: string
@@ -80,6 +85,14 @@ export function estAffectable(mouvement: {
   if ((mouvement.nature_mouvement || 'BUDGETAIRE') !== 'HORS_BUDGET_A_REGULARISER') return false
   const statut = String(mouvement.statut_operation ?? mouvement.statut ?? 'ACTIVE').toUpperCase()
   return statut !== 'ANNULEE'
+}
+
+/** Libre pour un nouveau versement : le solde moins ce que d'autres
+ *  réquisitions en cours ont déjà promis. */
+export function fondsTiersDisponible(op: FondsTiersOperation): number {
+  const solde = Number(op.solde_restant) || 0
+  if (op.disponible === undefined || op.disponible === null) return solde
+  return Math.max(0, Number(op.disponible) || 0)
 }
 
 export async function listFondsTiers(statut?: string): Promise<FondsTiersOperation[]> {

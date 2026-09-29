@@ -11,18 +11,24 @@ from app.api.deps import get_current_tenant_id, has_any_permission
 from app.db.session import get_db
 from app.models.fonds_tiers_operation import FondsTiersOperation
 from app.schemas.fonds_tiers import FondsTiersOut
-from app.services.fonds_tiers import fonds_tiers_amounts, resolve_fonds_tiers_display_name
+from app.services.fonds_tiers import fonds_tiers_amounts, fonds_tiers_reservations, resolve_fonds_tiers_display_name
 
 
 router = APIRouter()
 
 
-async def _to_out(db: AsyncSession, tenant_id: int, operation: FondsTiersOperation) -> FondsTiersOut:
+async def _to_out(
+    db: AsyncSession,
+    tenant_id: int,
+    operation: FondsTiersOperation,
+    reservation: tuple[Decimal, list[str]] | None = None,
+) -> FondsTiersOut:
     montant_recu, devise, montant_rembourse, solde = await fonds_tiers_amounts(
         db,
         organisation_id=tenant_id,
         operation=operation,
     )
+    reserve, requisitions_en_cours = reservation or (Decimal("0.00"), [])
     tiers_display_name, tiers_type = await resolve_fonds_tiers_display_name(db, operation)
     return FondsTiersOut(
         id=operation.id,
@@ -43,6 +49,9 @@ async def _to_out(db: AsyncSession, tenant_id: int, operation: FondsTiersOperati
         devise=devise,  # type: ignore[arg-type]
         montant_rembourse=Decimal(str(montant_rembourse)),
         solde_restant=Decimal(str(solde)),
+        montant_reserve=reserve,
+        disponible=max(Decimal("0.00"), Decimal(str(solde)) - reserve),
+        requisitions_en_cours=requisitions_en_cours,
         created_by=operation.created_by,
         created_at=operation.created_at,
         updated_at=operation.updated_at,
@@ -64,7 +73,11 @@ async def list_fonds_tiers(
         stmt = stmt.where(FondsTiersOperation.statut == statut.strip().upper())
     stmt = stmt.order_by(FondsTiersOperation.created_at.desc()).limit(500)
     res = await db.execute(stmt)
-    return [await _to_out(db, tenant_id, operation) for operation in res.scalars().all()]
+    operations = res.scalars().all()
+    reservations = await fonds_tiers_reservations(
+        db, organisation_id=tenant_id, operation_ids=[op.id for op in operations]
+    )
+    return [await _to_out(db, tenant_id, operation, reservations.get(operation.id)) for operation in operations]
 
 
 @router.get(
@@ -90,4 +103,5 @@ async def get_fonds_tiers(
     operation = res.scalar_one_or_none()
     if operation is None:
         raise HTTPException(status_code=404, detail="Fonds de tiers introuvable")
-    return await _to_out(db, tenant_id, operation)
+    reservations = await fonds_tiers_reservations(db, organisation_id=tenant_id, operation_ids=[operation.id])
+    return await _to_out(db, tenant_id, operation, reservations.get(operation.id))

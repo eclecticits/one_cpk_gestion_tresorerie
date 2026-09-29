@@ -423,3 +423,90 @@
     transition: none;
   }
 }
+
+/* Versement groupé : barre de sélection au-dessus du tableau. */
+.selectionBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.selectionInfo {
+  flex: 1 1 240px;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.primaryBtn,
+.secondaryBtn {
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primaryBtn {
+  border: 1px solid var(--tenant-primary, #295f55);
+  background: var(--tenant-primary, #295f55);
+  color: var(--tenant-button-text, #fff);
+}
+
+.primaryBtn:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.secondaryBtn {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+}
+
+.secondaryBtn:hover {
+  background: #f1f5f9;
+}
+
+.primaryBtn:focus-visible,
+.secondaryBtn:focus-visible,
+.rowCheck:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--tenant-primary, #295f55) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.tiersCell {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.rowCheck {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--tenant-primary, #295f55);
+  cursor: pointer;
+}
+
+.rowCheck:disabled {
+  cursor: not-allowed;
+}
+
+/* Part du fonds déjà promise par une réquisition en cours. */
+.reserve {
+  margin-top: 2px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #92400e;
+}

@@ -66,6 +66,7 @@ from app.services.recherche_documents import condition_numero
 from app.models.retour_caisse import RetourCaisse
 from app.models.user import User
 from app.models.fonds_tiers_operation import FondsTiersOperation
+from app.models.fonds_tiers_versement import SortieFondsTiers
 from app.services.fonds_tiers import resolve_fonds_tiers_display_names
 from app.utils.budget_code import cle_tri_code_budget
 
@@ -2809,6 +2810,45 @@ async def construire_classeur_sorties_fonds(
             r_query = r_query.where(Requisition.numero_requisition.ilike(f"%{requisition_numero}%"))
         retours_rows = (await db.execute(r_query)).all()
 
+    # Un versement groupé solde plusieurs fonds et ne porte donc aucun
+    # `fonds_tiers_operation_id` : ses tiers se lisent dans sa répartition.
+    tiers_par_sortie: dict[Any, str] = {}
+    sorties_ids = [sortie.id for sortie, _, _, _ in rows if getattr(sortie, "fonds_tiers_operation_id", None) is None]
+    sorties_ids += [
+        sortie_orig.id
+        for _, sortie_orig, _ in retours_rows
+        if getattr(sortie_orig, "fonds_tiers_operation_id", None) is None
+    ]
+    if sorties_ids:
+        repartitions: list[tuple[Any, FondsTiersOperation]] = []
+        for lot in _par_lots(sorties_ids):
+            repartitions.extend(
+                (
+                    await db.execute(
+                        select(SortieFondsTiers.sortie_fonds_id, FondsTiersOperation)
+                        .join(FondsTiersOperation, FondsTiersOperation.id == SortieFondsTiers.fonds_tiers_operation_id)
+                        .where(
+                            SortieFondsTiers.organisation_id == organisation_id,
+                            SortieFondsTiers.sortie_fonds_id.in_(lot),
+                        )
+                        .order_by(SortieFondsTiers.created_at)
+                    )
+                ).all()
+            )
+        if repartitions:
+            noms_repartis = await resolve_fonds_tiers_display_names(db, [op for _, op in repartitions])
+            groupes: dict[Any, list[str]] = {}
+            for sortie_id, op in repartitions:
+                nom = noms_repartis[op.id][0]
+                if nom not in groupes.setdefault(sortie_id, []):
+                    groupes[sortie_id].append(nom)
+            tiers_par_sortie = {sortie_id: ", ".join(noms) for sortie_id, noms in groupes.items()}
+
+    def _tiers_de_sortie(sortie: Any) -> str:
+        if getattr(sortie, "fonds_tiers_operation_id", None) is not None:
+            return fonds_tiers_par_operation.get(sortie.fonds_tiers_operation_id, "")
+        return tiers_par_sortie.get(sortie.id, "")
+
     auteurs_annulation = await _noms_utilisateurs(
         db,
         organisation_id,
@@ -2926,7 +2966,7 @@ async def construire_classeur_sorties_fonds(
                     rubrique_value,
                     _nature_budgetaire_label(sortie),
                     _impact_budgetaire_label(sortie),
-                    fonds_tiers_par_operation.get(sortie.fonds_tiers_operation_id, ""),
+                    _tiers_de_sortie(sortie),
                     _hors_budget_status_label(sortie),
                     sortie.beneficiaire or "",
                     sortie.motif or "",
@@ -3028,7 +3068,7 @@ async def construire_classeur_sorties_fonds(
                     # Un retour suit la nature de la sortie qu'il corrige.
                     _nature_budgetaire_label(sortie_orig),
                     _impact_budgetaire_label(sortie_orig),
-                    fonds_tiers_par_operation.get(sortie_orig.fonds_tiers_operation_id, ""),
+                    _tiers_de_sortie(sortie_orig),
                     _hors_budget_status_label(sortie_orig),
                     sortie_orig.beneficiaire or "",
                     retour.motif or f"Reliquat rendu ({retour.type_retour})",

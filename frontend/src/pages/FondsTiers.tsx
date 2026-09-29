@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import {
   FONDS_TIERS_STATUT_LABELS,
+  fondsTiersDisponible,
   listFondsTiers,
   type FondsTiersOperation,
 } from '../api/mouvementsHorsBudget'
 import { toNumber } from '../utils/amount'
+import { usePermissions } from '../hooks/usePermissions'
 import styles from './FondsTiers.module.css'
 
 /**
@@ -26,11 +28,21 @@ const formatMontant = (valeur: unknown, devise: string) =>
 
 type FiltreStatut = 'A_REVERSER' | 'TOUS' | FondsTiersOperation['statut']
 
+const estAReverser = (op: FondsTiersOperation) =>
+  (op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE') && fondsTiersDisponible(op) > 0
+
 export default function FondsTiers() {
   const [operations, setOperations] = useState<FondsTiersOperation[]>([])
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState<string | null>(null)
   const [filtre, setFiltre] = useState<FiltreStatut>('A_REVERSER')
+  // Fonds cochés pour un versement groupé. Le versement passe par une
+  // réquisition « Fonds de tiers » qui les nomme ; c'est elle qui désigne
+  // l'instance destinataire, pas forcément celle pour qui l'argent a été reçu.
+  const [selection, setSelection] = useState<Set<string>>(() => new Set())
+  const navigate = useNavigate()
+  const { hasPermission } = usePermissions()
+  const peutVerser = hasPermission('requisitions') || hasPermission('services')
 
   const charger = useCallback(async () => {
     setChargement(true)
@@ -48,6 +60,42 @@ export default function FondsTiers() {
   useEffect(() => {
     charger()
   }, [charger])
+
+  // Un fonds soldé ou disparu au rechargement ne reste pas coché en silence.
+  useEffect(() => {
+    setSelection((prev) => {
+      const valides = new Set(operations.filter(estAReverser).map((op) => String(op.id)))
+      const next = new Set([...prev].filter((id) => valides.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [operations])
+
+  const selectionnes = useMemo(
+    () => operations.filter((op) => selection.has(String(op.id))),
+    [operations, selection],
+  )
+  // Un versement ne mélange pas les devises : la première cochée l'impose.
+  const deviseSelection = selectionnes[0]?.devise ?? null
+  const totalSelection = useMemo(
+    () => selectionnes.reduce((sum, op) => sum + fondsTiersDisponible(op), 0),
+    [selectionnes],
+  )
+
+  const basculer = (op: FondsTiersOperation) => {
+    const id = String(op.id)
+    setSelection((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const verserSelection = () => {
+    if (selectionnes.length === 0) return
+    const ids = selectionnes.map((op) => op.id).join(',')
+    navigate(`/requisitions/nouvelle?fonds_tiers=${encodeURIComponent(ids)}`)
+  }
 
   const visibles = useMemo(() => {
     if (filtre === 'TOUS') return operations
@@ -135,6 +183,29 @@ export default function FondsTiers() {
 
       {erreur && <div className={styles.error} role="alert">{erreur}</div>}
 
+      {peutVerser && (
+        <div className={styles.selectionBar} aria-live="polite">
+          <span className={styles.selectionInfo}>
+            {selectionnes.length === 0
+              ? 'Cochez un ou plusieurs fonds pour les verser en une fois à une instance.'
+              : `${selectionnes.length} fonds sélectionné${selectionnes.length > 1 ? 's' : ''} · ${formatMontant(totalSelection, deviseSelection || 'USD')}`}
+          </span>
+          {selectionnes.length > 0 && (
+            <button type="button" className={styles.secondaryBtn} onClick={() => setSelection(new Set())}>
+              Effacer
+            </button>
+          )}
+          <button
+            type="button"
+            className={styles.primaryBtn}
+            onClick={verserSelection}
+            disabled={selectionnes.length === 0}
+          >
+            Verser la sélection
+          </button>
+        </div>
+      )}
+
       <div className={styles.tableWrap} aria-busy={chargement}>
         <table className={styles.table}>
           <caption className={styles.srOnly}>Opérations de fonds détenus pour le compte de tiers</caption>
@@ -168,6 +239,23 @@ export default function FondsTiers() {
               visibles.map((op) => (
                 <tr key={op.id}>
                   <td data-label="Tiers">
+                    <div className={styles.tiersCell}>
+                    {peutVerser && estAReverser(op) && (
+                      <input
+                        type="checkbox"
+                        className={styles.rowCheck}
+                        checked={selection.has(String(op.id))}
+                        disabled={!!deviseSelection && op.devise !== deviseSelection && !selection.has(String(op.id))}
+                        onChange={() => basculer(op)}
+                        aria-label={`Sélectionner les fonds de ${op.tiers_display_name} pour un versement`}
+                        title={
+                          deviseSelection && op.devise !== deviseSelection
+                            ? `Fonds en ${op.devise} : versement séparé`
+                            : undefined
+                        }
+                      />
+                    )}
+                    <div>
                     <strong>{op.tiers_display_name}</strong>
                     <div className={styles.sub}>
                       {op.tiers_type === 'ORGANISATION'
@@ -177,6 +265,14 @@ export default function FondsTiers() {
                           : 'Historique'}
                     </div>
                     {op.motif && <div className={styles.sub}>{op.motif}</div>}
+                    {toNumber(op.montant_reserve) > 0 && (
+                      <div className={styles.reserve}>
+                        Réservé {formatMontant(op.montant_reserve, op.devise)}
+                        {op.requisitions_en_cours?.length ? ` · ${op.requisitions_en_cours.join(', ')}` : ''}
+                      </div>
+                    )}
+                    </div>
+                    </div>
                   </td>
                   <td data-label="Bénéficiaire réel">{op.beneficiaire_reel || '—'}</td>
                   <td data-label="Payeur d'origine">{op.payeur_origine || '—'}</td>

@@ -22,6 +22,7 @@ from app.models.sortie_fonds import SortieFonds
 from app.models.retour_caisse import RetourCaisse
 from app.models.requisition import Requisition
 from app.models.fonds_tiers_operation import FondsTiersOperation
+from app.models.fonds_tiers_versement import SortieFondsTiers
 from app.schemas.dashboard import (
     DashboardDailyStats,
     DashboardStats,
@@ -756,9 +757,13 @@ async def stats(
             reverse = Decimal(
                 (
                     await db.execute(
-                        select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).where(
-                            SortieFonds.organisation_id == org_id,
-                            SortieFonds.fonds_tiers_operation_id.in_(operation_ids),
+                        # Part imputée sur ces fonds, pas le montant entier
+                        # d'une sortie qui en solde aussi d'autres.
+                        select(func.coalesce(func.sum(SortieFondsTiers.montant), 0))
+                        .join(SortieFonds, SortieFonds.id == SortieFondsTiers.sortie_fonds_id)
+                        .where(
+                            SortieFondsTiers.organisation_id == org_id,
+                            SortieFondsTiers.fonds_tiers_operation_id.in_(operation_ids),
                             SortieFonds.statut == "VALIDE",
                         )
                     )

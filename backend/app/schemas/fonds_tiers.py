@@ -27,6 +27,11 @@ class FondsTiersOut(DecimalBaseModel):
     devise: Literal["USD", "CDF"]
     montant_rembourse: Decimal
     solde_restant: Decimal
+    # Part du solde déjà promise par des réquisitions en cours, et ce qui
+    # reste libre pour un nouveau versement.
+    montant_reserve: Decimal = Decimal("0.00")
+    disponible: Decimal = Decimal("0.00")
+    requisitions_en_cours: list[str] = []
     created_by: UUID | None = None
     created_at: datetime
     updated_at: datetime

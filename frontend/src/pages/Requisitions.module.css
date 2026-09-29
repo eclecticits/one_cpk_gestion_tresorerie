@@ -3587,3 +3587,84 @@
   border-color: #dc2626;
   color: #ffffff;
 }
+
+/* Reversement groupé : liste des fonds de tiers cochables, part par fonds. */
+.fondsTiersPicker {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.fondsTiersList {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 6px;
+}
+
+.fondsTiersRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 130px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border, #dbe3ee);
+}
+
+.fondsTiersRow:last-child {
+  border-bottom: 0;
+}
+
+.fondsTiersRowActive {
+  background: color-mix(in srgb, var(--tenant-primary, #0d9488) 7%, transparent);
+}
+
+.fondsTiersCheck {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 36px;
+  cursor: pointer;
+  font-weight: 400;
+}
+
+.fondsTiersCheck input {
+  width: 16px;
+  min-height: 0;
+  padding: 0;
+  margin-top: 3px;
+  accent-color: var(--tenant-primary, #0d9488);
+}
+
+.fondsTiersCheck span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.fondsTiersSolde {
+  font-size: 12px;
+  color: #5b6674;
+  white-space: nowrap;
+}
+
+.field input.fondsTiersMontant {
+  min-height: 32px;
+  padding: 4px 8px;
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .fondsTiersRow {
+    grid-template-columns: minmax(0, 1fr) 110px;
+  }
+
+  .fondsTiersSolde {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+}

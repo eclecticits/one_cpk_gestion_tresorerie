@@ -817,6 +817,23 @@ export default function SortiesFonds() {
     () => fondsTiersOuverts.find((op) => String(op.id) === String(formData.fonds_tiers_operation_id)) || null,
     [fondsTiersOuverts, formData.fonds_tiers_operation_id],
   )
+  // Versement groupé : la réquisition approuvée nomme déjà ses fonds et la
+  // part de chacun. La caisse n'a rien à choisir, le serveur répartit.
+  const fondsTiersDeRequisition = useMemo(
+    () => (isRemboursementFondsTiers ? selectedRequisition?.fonds_tiers_lignes ?? [] : []),
+    [isRemboursementFondsTiers, selectedRequisition],
+  )
+  const versementGroupe = fondsTiersDeRequisition.length > 0
+
+  useEffect(() => {
+    if (!versementGroupe) return
+    const devise = String(selectedRequisition?.devise || '').toUpperCase()
+    setFormData((prev) => {
+      const next = { ...prev, fonds_tiers_operation_id: '' }
+      if (devise) next.devise = devise
+      return prev.fonds_tiers_operation_id === '' && (!devise || prev.devise === devise) ? prev : next
+    })
+  }, [versementGroupe, selectedRequisition?.devise])
 
   useEffect(() => {
     if (!fondsTiersSelectionne || !isRemboursementFondsTiers) return
@@ -1523,7 +1540,7 @@ export default function SortiesFonds() {
       return
     }
 
-    if (isRemboursementFondsTiers && !formData.fonds_tiers_operation_id) {
+    if (isRemboursementFondsTiers && !versementGroupe && !formData.fonds_tiers_operation_id) {
       notifyWarning('Fonds de tiers requis', 'Indiquez quels fonds sont reversés.')
       return
     }
@@ -1652,7 +1669,7 @@ export default function SortiesFonds() {
 
       sortieInsert.nature_mouvement = natureMouvement === 'TRANSFERT_INTERNE' ? 'BUDGETAIRE' : natureMouvement
       if (isRemboursementFondsTiers) {
-        sortieInsert.fonds_tiers_operation_id = formData.fonds_tiers_operation_id || null
+        sortieInsert.fonds_tiers_operation_id = versementGroupe ? null : formData.fonds_tiers_operation_id || null
       }
 
       if (!isTransfertInterne && !sansImpactBudgetaire) {
@@ -2862,7 +2879,27 @@ export default function SortiesFonds() {
               </div>
               )}
 
-              {isRemboursementFondsTiers && (
+              {isRemboursementFondsTiers && versementGroupe && (
+              <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
+                <label>Fonds de tiers reversés (définis par la réquisition)</label>
+                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px' }}>
+                  <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: '6px' }}>
+                    <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />
+                    {fondsTiersDeRequisition.length} fonds en un seul versement — le montant payé se répartit dans cet ordre.
+                  </div>
+                  <div style={{ display: 'grid', gap: '4px' }}>
+                    {fondsTiersDeRequisition.map((ligne) => (
+                      <div key={ligne.fonds_tiers_operation_id} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px' }}>
+                        <span>{ligne.tiers_display_name || 'Fonds de tiers'}</span>
+                        <strong>{toNumber(ligne.montant).toFixed(2)} {selectedRequisition?.devise || formData.devise}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              )}
+
+              {isRemboursementFondsTiers && !versementGroupe && (
               <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
                 <label>Fonds de tiers à rembourser *</label>
                 <select

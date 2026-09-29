@@ -79,7 +79,17 @@ from app.services.mailer import send_sortie_notification
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
 from app.services.audit_service import get_request_ip, log_action
-from app.services.fonds_tiers import assert_fonds_tiers_refundable, get_fonds_tiers_locked, refresh_fonds_tiers_status, resolve_fonds_tiers_display_name
+from app.services.fonds_tiers import (
+    assert_fonds_tiers_refundable,
+    enregistrer_versement_fonds_tiers,
+    fonds_tiers_de_sortie,
+    get_fonds_tiers_locked,
+    lignes_fonds_tiers_requisition,
+    nom_destinataire_fonds_tiers,
+    refresh_fonds_tiers_status,
+    repartir_versement_fonds_tiers,
+    resolve_fonds_tiers_display_name,
+)
 from app.services.regularisations_budgetaires import affecter_sortie_hors_budget
 from app.services.mouvements_budgetaires import (
     cancel_budget_imputations,
@@ -1631,6 +1641,10 @@ async def create_sortie_fonds(
     if getattr(payload, "impact_budgetaire", None) is not None and bool(payload.impact_budgetaire) != impact_budgetaire:
         raise HTTPException(status_code=400, detail="impact_budgetaire incompatible avec nature_mouvement")
     fonds_tiers_operation = None
+    # Fonds que la réquisition désigne explicitement (versement groupé), et
+    # part de ce paiement imputée sur chacun.
+    fonds_tiers_lignes_req: list[Any] = []
+    fonds_tiers_repartition: list[tuple[Any, Decimal]] = []
     # Reversement de fonds de tiers : qui a signé la décharge en caisse. Le
     # tiers créancier, lui, reste porté par `fonds_tiers_operation_id`.
     beneficiaire_fonds_tiers: str | None = None
@@ -1860,7 +1874,17 @@ async def create_sortie_fonds(
         impact_budgetaire = impact_for_nature(nature_mouvement)
         if nature_mouvement != "FONDS_DE_TIERS" and payload.fonds_tiers_operation_id is not None:
             raise HTTPException(status_code=400, detail="fonds_tiers_operation_id réservé aux remboursements FONDS_DE_TIERS")
-        if nature_mouvement == "FONDS_DE_TIERS" and payload.fonds_tiers_operation_id is None:
+        if nature_mouvement == "FONDS_DE_TIERS":
+            fonds_tiers_lignes_req = await lignes_fonds_tiers_requisition(
+                db, organisation_id=tenant_id, requisition_id=req.id
+            )
+        # Une réquisition qui nomme ses fonds dit déjà ce qui est reversé ; les
+        # plus anciennes, muettes sur ce point, le laissent choisir en caisse.
+        if (
+            nature_mouvement == "FONDS_DE_TIERS"
+            and not fonds_tiers_lignes_req
+            and payload.fonds_tiers_operation_id is None
+        ):
             raise HTTPException(status_code=400, detail="fonds_tiers_operation_id requis")
         if not impact_budgetaire:
             payload.budget_poste_id = None
@@ -2077,7 +2101,33 @@ async def create_sortie_fonds(
                 # sert ici à ventiler l'impact ligne par ligne, pas à éclater le
                 # poste. `multi_poste` reste faux, la sortie garde son poste.
                 repartition_postes = [(locked_budget_id, montant_paye)]
-        if nature_mouvement == "FONDS_DE_TIERS":
+        if nature_mouvement == "FONDS_DE_TIERS" and fonds_tiers_lignes_req:
+            # Versement groupé : les fonds et leurs parts viennent de la
+            # réquisition, le destinataire aussi — il peut être une autre
+            # instance que le tiers enregistré à l'encaissement, puisque c'est
+            # la réquisition approuvée, non le nom du tiers, qui fonde le lien.
+            fonds_designes = {ligne.fonds_tiers_operation_id for ligne in fonds_tiers_lignes_req}
+            if payload.fonds_tiers_operation_id is not None and payload.fonds_tiers_operation_id not in fonds_designes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Ce fonds de tiers n'est pas désigné par la réquisition",
+                )
+            fonds_tiers_repartition = await repartir_versement_fonds_tiers(
+                db,
+                organisation_id=tenant_id,
+                requisition_id=req.id,
+                montant=montant_paye,
+                devise=devise,
+            )
+            if len(fonds_tiers_repartition) == 1:
+                fonds_tiers_operation = fonds_tiers_repartition[0][0]
+            beneficiaire_fonds_tiers = (
+                (payload.beneficiaire or "").strip()
+                or (getattr(req, "beneficiaire", None) or "").strip()
+                or await nom_destinataire_fonds_tiers(db, req)
+            )
+            payload.beneficiaire = beneficiaire_fonds_tiers
+        elif nature_mouvement == "FONDS_DE_TIERS":
             fonds_tiers_operation = await assert_fonds_tiers_refundable(
                 db,
                 organisation_id=tenant_id,
@@ -2105,6 +2155,7 @@ async def create_sortie_fonds(
                 or fonds_tiers_beneficiaire
             )
             payload.beneficiaire = beneficiaire_fonds_tiers
+            fonds_tiers_repartition = [(fonds_tiers_operation, montant_paye)]
     elif not is_transfert_interne and ordre is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -2595,12 +2646,21 @@ async def create_sortie_fonds(
             "nature_mouvement": sortie.nature_mouvement,
             "impact_budgetaire": sortie.impact_budgetaire,
             "fonds_tiers_operation_id": str(sortie.fonds_tiers_operation_id) if sortie.fonds_tiers_operation_id else None,
+            "fonds_tiers_repartition": [
+                {"fonds_tiers_operation_id": str(operation.id), "montant": float(part)}
+                for operation, part in fonds_tiers_repartition
+            ] or None,
             "requisition_id": str(sortie.requisition_id) if sortie.requisition_id else None,
         },
         ip_address=get_request_ip(request),
     )
-    if fonds_tiers_operation is not None:
-        await refresh_fonds_tiers_status(db, organisation_id=tenant_id, operation=fonds_tiers_operation)
+    if fonds_tiers_repartition:
+        await enregistrer_versement_fonds_tiers(
+            db,
+            organisation_id=tenant_id,
+            sortie=sortie,
+            repartition=fonds_tiers_repartition,
+        )
 
     # Solde après opération, capturé AVANT le commit. `solde_disponible` a été
     # lu sous verrou (FOR UPDATE) au moment du contrôle de provision, et
@@ -3378,13 +3438,20 @@ async def update_sortie_statut(
         and (getattr(sortie, "nature_mouvement", "") or "BUDGETAIRE").upper() != "BUDGETAIRE"
     ):
         sortie.hors_budget_status = "ANNULE"
-    if previous_statut == "VALIDE" and statut == "ANNULEE" and sortie.fonds_tiers_operation_id is not None:
-        fonds_tiers_operation = await get_fonds_tiers_locked(
-            db,
-            organisation_id=tenant_id,
-            operation_id=sortie.fonds_tiers_operation_id,
+    if previous_statut == "VALIDE" and statut == "ANNULEE":
+        # Chaque fonds que la sortie soldait retrouve son reste à reverser.
+        operation_ids = set(
+            await fonds_tiers_de_sortie(db, organisation_id=tenant_id, sortie_id=sortie.id)
         )
-        await refresh_fonds_tiers_status(db, organisation_id=tenant_id, operation=fonds_tiers_operation)
+        if sortie.fonds_tiers_operation_id is not None:
+            operation_ids.add(sortie.fonds_tiers_operation_id)
+        for operation_id in sorted(operation_ids, key=str):
+            fonds_tiers_operation = await get_fonds_tiers_locked(
+                db,
+                organisation_id=tenant_id,
+                operation_id=operation_id,
+            )
+            await refresh_fonds_tiers_status(db, organisation_id=tenant_id, operation=fonds_tiers_operation)
     await log_action(
         db,
         user_id=user.id,

@@ -56,6 +56,7 @@ import PageHeader from '../components/PageHeader'
 import PlanDecaissement from '../components/PlanDecaissement'
 import ExportAnnulationsToggle from '../components/ExportAnnulationsToggle'
 import OrganisationAutocomplete from '../components/OrganisationAutocomplete'
+import { fondsTiersDisponible, listFondsTiers, type FondsTiersOperation } from '../api/mouvementsHorsBudget'
 
 // Résumé calculé par le backend quand les lignes ne s'accordent pas sur leur
 // règlement. Ce n'est jamais un mode saisissable : il n'apparaît qu'en lecture.
@@ -454,6 +455,16 @@ export default function Requisitions() {
     notes_a_valoir: ''
   })
   const [instanceBeneficiaireSelection, setInstanceBeneficiaireSelection] = useState<number | null>(null)
+  // Reversement groupé : fonds encore dus, et part de chacun retenue par cette
+  // réquisition (identifiant -> montant saisi). Un seul versement peut en
+  // solder plusieurs ; leur somme fait le montant autorisé.
+  const [fondsTiersDisponibles, setFondsTiersDisponibles] = useState<FondsTiersOperation[]>([])
+  const [chargementFondsTiers, setChargementFondsTiers] = useState(false)
+  const [erreurFondsTiers, setErreurFondsTiers] = useState<string | null>(null)
+  const [fondsTiersChoisis, setFondsTiersChoisis] = useState<Record<string, string>>({})
+  // Fonds cochés depuis l'écran « Fonds de tiers » (?fonds_tiers=id1,id2) : ils
+  // ne sont appliqués qu'une fois, à l'arrivée de la liste.
+  const fondsTiersParamRef = useRef<string | null>(searchParams.get('fonds_tiers'))
   const [annexeFile, setAnnexeFile] = useState<File | null>(null)
   const [annexeError, setAnnexeError] = useState('')
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
@@ -506,6 +517,123 @@ export default function Requisitions() {
     if (!isCreatePage) return
     setFormData((prev) => ({ ...prev, type_requisition: activeTab }))
   }, [activeTab, isCreatePage])
+
+  useEffect(() => {
+    if (isCreatePage && fondsTiersParamRef.current) {
+      setFormData((prev) => ({ ...prev, nature_requisition: 'FONDS_DE_TIERS' }))
+    }
+  }, [isCreatePage])
+
+  const estFondsDeTiers = formData.nature_requisition === 'FONDS_DE_TIERS'
+  useEffect(() => {
+    if (!isCreatePage || !estFondsDeTiers) return
+    let annule = false
+    setChargementFondsTiers(true)
+    setErreurFondsTiers(null)
+    listFondsTiers()
+      .then((ops) => {
+        if (annule) return
+        const ouverts = ops.filter(
+          (op) => (op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE') && fondsTiersDisponible(op) > 0,
+        )
+        setFondsTiersDisponibles(ouverts)
+        const demandes = (fondsTiersParamRef.current || '').split(',').filter(Boolean)
+        fondsTiersParamRef.current = null
+        if (demandes.length > 0) {
+          const retenus = ouverts.filter((op) => demandes.includes(String(op.id)))
+          // Une seule devise par versement : la première cochée l'impose.
+          const devise = retenus[0]?.devise
+          const choix: Record<string, string> = {}
+          retenus
+            .filter((op) => op.devise === devise)
+            .forEach((op) => {
+              choix[String(op.id)] = String(fondsTiersDisponible(op))
+            })
+          setFondsTiersChoisis(choix)
+        }
+      })
+      .catch((error) => {
+        if (annule) return
+        setFondsTiersDisponibles([])
+        setErreurFondsTiers(error instanceof Error && error.message ? error.message : 'Impossible de charger les fonds de tiers.')
+      })
+      .finally(() => {
+        if (!annule) setChargementFondsTiers(false)
+      })
+    return () => {
+      annule = true
+    }
+  }, [isCreatePage, estFondsDeTiers])
+
+  const fondsTiersSelection = useMemo(
+    () => fondsTiersDisponibles.filter((op) => String(op.id) in fondsTiersChoisis),
+    [fondsTiersDisponibles, fondsTiersChoisis],
+  )
+  const deviseFondsTiers = fondsTiersSelection[0]?.devise ?? null
+  const totalFondsTiers = useMemo(
+    () =>
+      Math.round(
+        fondsTiersSelection.reduce((sum, op) => sum + toNumber(fondsTiersChoisis[String(op.id)]), 0) * 100,
+      ) / 100,
+    [fondsTiersSelection, fondsTiersChoisis],
+  )
+  const versementGroupe = estFondsDeTiers && fondsTiersSelection.length > 0
+
+  // Le montant autorisé d'un versement groupé est la somme des parts : il ne
+  // se saisit pas, il se lit.
+  useEffect(() => {
+    if (!versementGroupe) return
+    const total = String(totalFondsTiers)
+    setFormData((prev) => (prev.montant_autorise === total ? prev : { ...prev, montant_autorise: total }))
+  }, [versementGroupe, totalFondsTiers])
+
+  // Destinataire proposé : le tiers commun aux fonds cochés, tant que rien
+  // n'a été choisi. Il reste modifiable — le versement peut aller à une autre
+  // instance que celle pour qui l'argent a été reçu.
+  useEffect(() => {
+    if (fondsTiersSelection.length === 0) return
+    setFormData((prev) => {
+      if (prev.tiers_organisation_id || prev.tiers_nom_libre.trim()) return prev
+      const orgs = new Set(fondsTiersSelection.map((op) => op.tiers_organisation_id ?? null))
+      if (orgs.size === 1 && fondsTiersSelection[0].tiers_organisation_id) {
+        return {
+          ...prev,
+          tiers_organisation_id: fondsTiersSelection[0].tiers_organisation_id,
+          beneficiaire: prev.beneficiaire || fondsTiersSelection[0].tiers_display_name,
+        }
+      }
+      const noms = new Set(fondsTiersSelection.map((op) => op.tiers_display_name))
+      if (noms.size === 1 && fondsTiersSelection.every((op) => op.tiers_type !== 'ORGANISATION')) {
+        return {
+          ...prev,
+          tiers_nom_libre: fondsTiersSelection[0].tiers_display_name,
+          beneficiaire: prev.beneficiaire || fondsTiersSelection[0].tiers_display_name,
+        }
+      }
+      return prev
+    })
+    setFormData((prev) =>
+      prev.objet.trim()
+        ? prev
+        : {
+            ...prev,
+            objet:
+              fondsTiersSelection.length === 1
+                ? `Reversement de fonds de tiers — ${fondsTiersSelection[0].tiers_display_name}`
+                : `Reversement groupé de ${fondsTiersSelection.length} fonds de tiers`,
+          },
+    )
+  }, [fondsTiersSelection])
+
+  const basculerFondsTiers = (op: FondsTiersOperation) => {
+    const id = String(op.id)
+    setFondsTiersChoisis((prev) => {
+      const next = { ...prev }
+      if (id in next) delete next[id]
+      else next[id] = String(fondsTiersDisponible(op))
+      return next
+    })
+  }
 
   useEffect(() => {
     if (formData.mode_paiement !== 'virement') {
@@ -1209,6 +1337,22 @@ export default function Requisitions() {
       return
     }
 
+    if (versementGroupe) {
+      const partInvalide = fondsTiersSelection.find((op) => {
+        const part = toNumber(fondsTiersChoisis[String(op.id)])
+        return !(part > 0) || part > fondsTiersDisponible(op)
+      })
+      if (partInvalide) {
+        setNotification({
+          show: true,
+          type: 'error',
+          title: 'Montant à reverser invalide',
+          message: `La part de « ${partInvalide.tiers_display_name} » doit être positive et ne pas dépasser ce qui reste disponible (${fondsTiersDisponible(partInvalide).toFixed(2)} ${partInvalide.devise}).`
+        })
+        return
+      }
+    }
+
     if (formData.nature_requisition === 'FONDS_DE_TIERS' && !formData.tiers_organisation_id && !formData.tiers_nom_libre.trim()) {
       setNotification({
         show: true,
@@ -1246,8 +1390,12 @@ export default function Requisitions() {
           : null,
         type_requisition: 'classique',
         nature_requisition: formData.nature_requisition,
-        montant_total: isNatureBudgetaire ? calculateTotalUsd() : toNumber(formData.montant_autorise),
-        devise: 'USD',
+        montant_total: isNatureBudgetaire
+          ? calculateTotalUsd()
+          : versementGroupe ? totalFondsTiers : toNumber(formData.montant_autorise),
+        // Un versement groupé part dans la devise de ses fonds : ils ont été
+        // encaissés ainsi et se reversent ainsi.
+        devise: versementGroupe && deviseFondsTiers ? deviseFondsTiers : 'USD',
         status: 'BROUILLON',
         service_id: Number(formData.service_id),
         created_by: user?.id,
@@ -1255,6 +1403,12 @@ export default function Requisitions() {
         tiers_organisation_id: formData.nature_requisition === 'FONDS_DE_TIERS' ? formData.tiers_organisation_id : null,
         tiers_nom_libre: formData.nature_requisition === 'FONDS_DE_TIERS' && !formData.tiers_organisation_id
           ? formData.tiers_nom_libre
+          : null,
+        fonds_tiers_lignes: versementGroupe
+          ? fondsTiersSelection.map((op) => ({
+              fonds_tiers_operation_id: op.id,
+              montant: toNumber(fondsTiersChoisis[String(op.id)]),
+            }))
           : null,
         a_valoir: formData.a_valoir,
         decaissement_progressif: formData.decaissement_progressif,
@@ -1365,6 +1519,7 @@ export default function Requisitions() {
       notes_a_valoir: ''
     })
     setInstanceBeneficiaireSelection(null)
+    setFondsTiersChoisis({})
     const groupId = makeDraftId('poste')
     setGroupesDepense([{
       id: groupId,
@@ -2815,13 +2970,80 @@ export default function Requisitions() {
                             step="0.01"
                             value={formData.montant_autorise}
                             onChange={(e) => setFormData({ ...formData, montant_autorise: e.target.value })}
+                            readOnly={versementGroupe}
+                            aria-describedby={versementGroupe ? 'req-montant-autorise-aide' : undefined}
                             required
                           />
+                          {versementGroupe && (
+                            <small id="req-montant-autorise-aide" className={styles.fieldHint}>
+                              Somme des fonds sélectionnés, en {deviseFondsTiers}.
+                            </small>
+                          )}
                         </div>
                       )}
 
                       {formData.nature_requisition === 'FONDS_DE_TIERS' && (
                         <>
+                          <fieldset className={`${styles.field} ${styles.fondsTiersPicker}`}>
+                            <legend className={styles.fieldLabel}>Fonds à reverser</legend>
+                            <p className={styles.fieldHint}>
+                              Cochez un ou plusieurs fonds : ils partiront en un seul versement. Une même devise par versement.
+                            </p>
+                            {chargementFondsTiers ? (
+                              <p className={styles.fieldHint}>Chargement des fonds de tiers…</p>
+                            ) : erreurFondsTiers ? (
+                              <p className={styles.fieldHint} role="alert">{erreurFondsTiers}</p>
+                            ) : fondsTiersDisponibles.length === 0 ? (
+                              <p className={styles.fieldHint}>Aucun fonds de tiers en attente de reversement.</p>
+                            ) : (
+                              <div className={styles.fondsTiersList}>
+                                {fondsTiersDisponibles.map((op) => {
+                                  const id = String(op.id)
+                                  const coche = id in fondsTiersChoisis
+                                  const autreDevise = !!deviseFondsTiers && op.devise !== deviseFondsTiers
+                                  return (
+                                    <div key={id} className={`${styles.fondsTiersRow} ${coche ? styles.fondsTiersRowActive : ''}`}>
+                                      <label className={styles.fondsTiersCheck} title={autreDevise ? `Fonds en ${op.devise} : versement séparé` : undefined}>
+                                        <input
+                                          type="checkbox"
+                                          checked={coche}
+                                          disabled={autreDevise}
+                                          onChange={() => basculerFondsTiers(op)}
+                                        />
+                                        <span>
+                                          <strong>{op.tiers_display_name}</strong>
+                                          <small className={styles.fieldHint}>
+                                            {[op.reference, op.motif, new Date(op.created_at).toLocaleDateString('fr-FR')]
+                                              .filter(Boolean)
+                                              .join(' · ')}
+                                          </small>
+                                        </span>
+                                      </label>
+                                      <span className={styles.fondsTiersSolde}>
+                                        {toNumber(op.montant_reserve) > 0 ? 'Disponible' : 'Reste'} {fondsTiersDisponible(op).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} {op.devise}
+                                      </span>
+                                      <input
+                                        type="number"
+                                        min="0.01"
+                                        step="0.01"
+                                        max={fondsTiersDisponible(op)}
+                                        className={styles.fondsTiersMontant}
+                                        aria-label={`Montant à reverser sur ${op.tiers_display_name}`}
+                                        value={coche ? fondsTiersChoisis[id] : ''}
+                                        disabled={!coche}
+                                        onChange={(e) => setFondsTiersChoisis((prev) => ({ ...prev, [id]: e.target.value }))}
+                                      />
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                            {versementGroupe && (
+                              <p className={styles.fieldHint} aria-live="polite">
+                                {fondsTiersSelection.length} fonds · total {totalFondsTiers.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} {deviseFondsTiers}
+                              </p>
+                            )}
+                          </fieldset>
                           <div className={styles.field}>
                             <label htmlFor="req-tiers-org">Tiers concerné</label>
                             <OrganisationAutocomplete
@@ -2837,6 +3059,9 @@ export default function Requisitions() {
                               }}
                               placeholder="Sélectionnez l'organisation tiers"
                             />
+                            <small className={styles.fieldHint}>
+                              Instance qui recevra le versement : celle pour qui l'argent a été reçu, ou une autre instance.
+                            </small>
                           </div>
                           <div className={styles.field}>
                             <label htmlFor="req-tiers-libre">Tiers externe</label>

@@ -279,6 +279,7 @@ export interface Requisition {
   statut: StatutRequisition
   mode_paiement: ModePaiement
   montant_total: Money
+  devise?: string | null
   /** Date métier de la réquisition (antidatable). Repli sur created_at si absente. */
   date_requisition?: string | null
   montant_deja_paye?: Money
@@ -307,6 +308,12 @@ export interface Requisition {
   beneficiaire?: string | null
   instance_beneficiaire?: string
   tiers_organisation_id?: number | null
+  // Fonds de tiers reversés par cette réquisition (versement groupé), part par part.
+  fonds_tiers_lignes?: Array<{
+    fonds_tiers_operation_id: string
+    montant: Money
+    tiers_display_name?: string | null
+  }> | null
   tiers_nom_libre?: string | null
   notes_a_valoir?: string
   req_titre_officiel_hist?: string

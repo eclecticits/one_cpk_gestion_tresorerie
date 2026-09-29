@@ -54,7 +54,12 @@ from app.services.historical_snapshots import (
     requisition_examinee,
     ensure_requisition_historical_snapshot,
 )
-from app.services.fonds_tiers import validate_fonds_tiers_identity
+from app.services.fonds_tiers import (
+    lignes_fonds_tiers_requisition,
+    remplacer_fonds_tiers_requisition,
+    valider_fonds_tiers_requisition,
+    validate_fonds_tiers_identity,
+)
 from app.services.official_pdf import ensure_requisition_official_pdf
 
 async def _should_snapshot(status_value: str | None) -> bool:
@@ -530,6 +535,40 @@ def _stamp_skipped_steps(req: Requisition, snapshot: dict, *, user_id, amount: f
         req.examen_status = "EXAMINE"
 
 
+async def _controler_fonds_tiers_lignes(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    nature: str | None,
+    lignes: Any,
+    devise: str,
+    montant_total: Any,
+    requisition_id: uuid.UUID | None = None,
+) -> list[tuple[uuid.UUID, Decimal]]:
+    """Fonds qu'une réquisition FONDS_DE_TIERS fait reverser en un versement.
+
+    Le montant de la réquisition est la somme des parts : un écart voudrait
+    dire soit un reliquat que la caisse ne saurait sur quel fonds imputer,
+    soit une part promise que rien n'autorise.
+    """
+    if (nature or "").upper() != "FONDS_DE_TIERS" or not lignes:
+        return []
+    valides = await valider_fonds_tiers_requisition(
+        db,
+        organisation_id=tenant_id,
+        devise=devise,
+        lignes=[(ligne.fonds_tiers_operation_id, ligne.montant) for ligne in lignes],
+        exclure_requisition_id=requisition_id,
+    )
+    total = sum((montant for _op, montant in valides), Decimal("0.00"))
+    if total != Decimal(str(montant_total or 0)).quantize(Decimal("0.01")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Le montant de la réquisition ({montant_total}) doit égaler la somme des fonds reversés ({total})",
+        )
+    return valides
+
+
 async def create_requisition_logic(
     *,
     db: AsyncSession,
@@ -594,6 +633,14 @@ async def create_requisition_logic(
     # sont sautées).
     snapshot = await _load_workflow_config(db, tenant_id)
     req_devise = (getattr(payload, "devise", None) or "USD").upper()
+    fonds_tiers_lignes = await _controler_fonds_tiers_lignes(
+        db,
+        tenant_id=tenant_id,
+        nature=payload.nature_requisition,
+        lignes=payload.fonds_tiers_lignes,
+        devise=req_devise,
+        montant_total=payload.montant_total,
+    )
     # Montant converti depuis la devise de la réquisition vers la devise pivot
     # (référence) pour comparer au seuil éventuel.
     amount = await _pivot_amount(db, tenant_id, float(payload.montant_total or 0), req_devise)
@@ -630,6 +677,11 @@ async def create_requisition_logic(
     )
     _stamp_skipped_steps(req, snapshot, user_id=created_by or user.id, amount=amount)
     db.add(req)
+    if fonds_tiers_lignes:
+        await db.flush()
+        await remplacer_fonds_tiers_requisition(
+            db, organisation_id=tenant_id, requisition_id=req.id, lignes=fonds_tiers_lignes
+        )
 
     # Les lignes sont écrites dans la même transaction que la réquisition : si
     # l'une d'elles est refusée (rubrique non autorisée, dépassement…), rien
@@ -886,6 +938,36 @@ async def update_requisition_logic(
     req.tiers_nom_libre = target_tiers_nom_libre
     if payload.montant_total is not None:
         req.montant_total = payload.montant_total
+    if target_nature != "FONDS_DE_TIERS":
+        # Plus un reversement : les fonds qu'il visait sont libérés.
+        await remplacer_fonds_tiers_requisition(
+            db, organisation_id=tenant_id, requisition_id=req.id, lignes=[]
+        )
+    elif "fonds_tiers_lignes" in payload_values:
+        fonds_tiers_lignes = await _controler_fonds_tiers_lignes(
+            db,
+            tenant_id=tenant_id,
+            nature=target_nature,
+            lignes=payload.fonds_tiers_lignes,
+            devise=(payload.devise or req.devise or "USD"),
+            montant_total=req.montant_total,
+            requisition_id=req.id,
+        )
+        await remplacer_fonds_tiers_requisition(
+            db, organisation_id=tenant_id, requisition_id=req.id, lignes=fonds_tiers_lignes
+        )
+    elif payload.montant_total is not None:
+        # Montant corrigé sans toucher aux fonds : il doit rester leur somme.
+        existantes = await lignes_fonds_tiers_requisition(
+            db, organisation_id=tenant_id, requisition_id=req.id
+        )
+        if existantes:
+            total = sum((Decimal(str(ligne.montant)) for ligne in existantes), Decimal("0.00"))
+            if total != Decimal(str(req.montant_total or 0)).quantize(Decimal("0.01")):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Le montant de la réquisition doit égaler la somme des fonds reversés ({total})",
+                )
     
     if payload.service_id is not None:
         if not await _can_use_any_service(db, user):
