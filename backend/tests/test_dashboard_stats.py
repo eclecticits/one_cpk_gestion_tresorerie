@@ -9,6 +9,7 @@ from app.api.v1.endpoints.dashboard import stats as dashboard_stats
 from app.api.v1.endpoints.encaissements import create_encaissement
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.caisse_centrale import CaisseCentrale
+from app.models.compte_bancaire import CompteBancaire
 from app.models.encaissement import Encaissement
 from app.models.organisation import Organisation
 from app.models.retour_caisse import RetourCaisse
@@ -243,3 +244,88 @@ async def test_dashboard_stats_deduit_retours_des_sorties_du_jour(db_session, mo
     assert res.stats.total_sorties_nettes_jour == Decimal("75.00")
     assert res.stats.total_sorties_jour == Decimal("75.00")
     assert res.stats.solde_jour == Decimal("-75.00")
+
+
+@pytest.mark.asyncio
+async def test_dashboard_stats_filtre_caisse_retient_operations_sans_compte(db_session, monkeypatch):
+    # En caisse, le compte n'est pas exigé : les opérations n'en portent pas.
+    # Choisir « Caisse USD » dans le filtre ne doit pas pour autant tout mettre à 0.
+    await _disable_dashboard_cache(monkeypatch)
+    org = Organisation(nom="Dashboard Caisse", slug=f"dash-caisse-{uuid.uuid4().hex[:8]}", is_active=True)
+    db_session.add(org)
+    await db_session.flush()
+    user = User(id=uuid.uuid4(), email=f"dash-caisse-{uuid.uuid4().hex[:6]}@example.com", role="caissier", organisation_id=org.id)
+    db_session.add(user)
+    db_session.add(CaisseCentrale(organisation_id=org.id, solde_usd=Decimal("0"), est_ouverte=True))
+    caisse_usd = CompteBancaire(
+        organisation_id=org.id, intitule="Caisse USD", numero_compte="CAISSE-USD", devise="USD", account_type="CASH"
+    )
+    caisse_cdf = CompteBancaire(
+        organisation_id=org.id, intitule="Caisse CDF", numero_compte="CAISSE-CDF", devise="CDF", account_type="CASH"
+    )
+    db_session.add_all([caisse_usd, caisse_cdf])
+    await db_session.flush()
+    op_date = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
+
+    def _recette(montant: str, devise: str) -> Encaissement:
+        return Encaissement(
+            organisation_id=org.id,
+            type_client="personne_physique",
+            client_nom="Client caisse",
+            libelle="Recette caisse",
+            montant=Decimal(montant),
+            montant_total=Decimal(montant),
+            montant_paye=Decimal(montant),
+            montant_percu=Decimal(montant),
+            devise_perception=devise,
+            canal="CAISSE",
+            compte_bancaire_id=None,
+            statut_paiement="complet",
+            mode_paiement="cash",
+            est_proforma=False,
+            is_deleted=False,
+            statut_operation="ACTIVE",
+            date_encaissement=op_date,
+        )
+
+    db_session.add_all([
+        _recette("500.00", "USD"),
+        _recette("20000.00", "CDF"),
+        SortieFonds(
+            organisation_id=org.id,
+            type_sortie="autre",
+            montant_paye=Decimal("100.00"),
+            mode_paiement="cash",
+            devise="USD",
+            canal="CAISSE",
+            compte_bancaire_id=None,
+            motif="Sortie caisse",
+            beneficiaire="Fournisseur",
+            statut="VALIDE",
+            date_paiement=op_date,
+            created_by=user.id,
+            reference_numero=f"PAY-{uuid.uuid4().hex[:8]}",
+        ),
+    ])
+    await db_session.commit()
+
+    async def _stats(compte: CompteBancaire):
+        return await dashboard_stats(
+            period_type="month",
+            date_debut="2026-08-01",
+            date_fin="2026-08-31",
+            canal="CAISSE",
+            compte_bancaire_id=compte.id,
+            devise=compte.devise,
+            tenant_id=org.id,
+            user=user,
+            db=db_session,
+        )
+
+    res_usd = await _stats(caisse_usd)
+    assert res_usd.stats.total_encaissements_period == Decimal("500.00")
+    assert res_usd.stats.total_sorties_brutes_period == Decimal("100.00")
+
+    res_cdf = await _stats(caisse_cdf)
+    assert res_cdf.stats.total_encaissements_period == Decimal("20000.00")
+    assert res_cdf.stats.total_sorties_brutes_period == Decimal("0")

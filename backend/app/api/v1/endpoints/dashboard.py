@@ -7,7 +7,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func, or_
+from sqlalchemy import and_, select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_tenant_id, get_current_user
@@ -160,6 +160,21 @@ async def stats(
         canal_value = canal_value or compte_canal
         compte_id_value = compte_bancaire_id
 
+    # Une opération de caisse n'exige pas de compte : la plupart n'en portent
+    # aucun. Choisir une caisse revient alors à filtrer sur sa devise, sinon
+    # le filtre ne retient que les rares lignes rattachées et tout tombe à 0.
+    cash_compte_devise: str | None = None
+    if compte_selected is not None and (compte_selected.account_type or "").upper() == "CASH":
+        cash_compte_devise = (compte_selected.devise or "").upper()
+
+    def _compte_condition(compte_col, devise_col):
+        if cash_compte_devise is None:
+            return compte_col == compte_id_value
+        return or_(
+            compte_col == compte_id_value,
+            and_(compte_col.is_(None), devise_col == cash_compte_devise),
+        )
+
     # Best-effort real stats (works only after the DB schema/data is imported)
     try:
         enc_filters = [
@@ -173,7 +188,7 @@ async def stats(
         if canal_value:
             enc_filters.append(Encaissement.canal == canal_value)
         if compte_id_value:
-            enc_filters.append(Encaissement.compte_bancaire_id == compte_id_value)
+            enc_filters.append(_compte_condition(Encaissement.compte_bancaire_id, Encaissement.devise_perception))
         if devise_value:
             enc_filters.append(Encaissement.devise_perception == devise_value)
 
@@ -245,7 +260,7 @@ async def stats(
     if canal_value:
         sorties_filters.append(SortieFonds.canal == canal_value)
     if compte_id_value:
-        sorties_filters.append(SortieFonds.compte_bancaire_id == compte_id_value)
+        sorties_filters.append(_compte_condition(SortieFonds.compte_bancaire_id, SortieFonds.devise))
     if devise_value:
         sorties_filters.append(SortieFonds.devise == devise_value)
 
@@ -265,7 +280,7 @@ async def stats(
         if canal_value:
             filters.append(RetourCaisse.canal == canal_value)
         if compte_id_value:
-            filters.append(RetourCaisse.compte_bancaire_id == compte_id_value)
+            filters.append(_compte_condition(RetourCaisse.compte_bancaire_id, RetourCaisse.devise))
         if devise_value:
             filters.append(RetourCaisse.devise == devise_value)
         return filters
@@ -723,7 +738,7 @@ async def stats(
         if canal_value:
             ft_filters.append(Encaissement.canal == canal_value)
         if compte_id_value:
-            ft_filters.append(Encaissement.compte_bancaire_id == compte_id_value)
+            ft_filters.append(_compte_condition(Encaissement.compte_bancaire_id, Encaissement.devise_perception))
 
         ft_rows = (
             await db.execute(
