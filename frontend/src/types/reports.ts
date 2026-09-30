@@ -9,7 +9,13 @@ export interface ReportPeriod {
 export interface ReportDailyStats {
   date: string
   encaissements: Money
+  /** Sorties brutes, transferts internes sortants compris. */
   sorties: Money
+  retours?: Money
+  sorties_nettes?: Money
+  transferts_internes?: Money
+  entrees_internes?: Money
+  /** Flux net du jour. Nom historique conservé pour compatibilité. */
   solde: Money
 }
 
@@ -23,6 +29,12 @@ export interface ReportDeviseTotals {
   depenses_reelles: Money
   transferts_internes: Money
   entrees_internes: Money
+  /** Entrés en trésorerie sans être des recettes (fonds de tiers, hors budget
+   *  à régulariser) : comptés dans le solde, pas dans `encaissements_total`. */
+  encaissements_hors_budget?: Money
+  retours_total?: Money
+  sorties_nettes?: Money
+  flux_periode?: Money
   solde_initial: Money
   solde: Money
 }
@@ -36,6 +48,12 @@ export interface ReportTotals {
    *  approvisionnements en caisse) ; les deux jambes en vue consolidée, où
    *  elles se compensent. Pas une recette. */
   entrees_internes?: Money
+  /** Entrés en trésorerie sans être des recettes (fonds de tiers, hors budget
+   *  à régulariser) : comptés dans le solde, pas dans `encaissements_total`. */
+  encaissements_hors_budget?: Money
+  retours_total?: Money
+  sorties_nettes?: Money
+  flux_periode?: Money
   solde_initial: Money
   solde: Money
   solde_final: Money

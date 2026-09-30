@@ -584,6 +584,43 @@ export default function Rapports() {
         const transfertsInternes = toNumber(totals.transferts_internes ?? 0)
         const depensesReelles = toNumber(totals.depenses_reelles ?? (totalSorties - transfertsInternes))
         const entreesInternes = toNumber(totals.entrees_internes ?? 0)
+        const retoursCaisse = toNumber(totals.retours_total ?? 0)
+        const sortiesNettes = toNumber(totals.sorties_nettes ?? (totalSorties - retoursCaisse))
+        // Entrés en trésorerie sans être des recettes (fonds de tiers, hors
+        // budget à régulariser) : dans le solde, hors « Total encaissements ».
+        const encaissementsHorsBudget = toNumber(totals.encaissements_hors_budget ?? 0)
+        const fluxPeriode = toNumber(
+          totals.flux_periode
+            ?? totalEncaissements + encaissementsHorsBudget + entreesInternes + retoursCaisse - totalSorties
+        )
+        const dailyStats = (Array.isArray(summary.daily_stats) ? summary.daily_stats : [])
+          .map((row: any) => {
+            const encaissements = toNumber(row.encaissements ?? 0)
+            const sorties = toNumber(row.sorties ?? 0)
+            const retours = toNumber(row.retours ?? 0)
+            const entrees = toNumber(row.entrees_internes ?? 0)
+            return {
+              date: String(row.date || ''),
+              encaissements,
+              sorties,
+              retours,
+              sortiesNettes: toNumber(row.sorties_nettes ?? sorties - retours),
+              transfertsInternes: toNumber(row.transferts_internes ?? 0),
+              entreesInternes: entrees,
+              // `solde` est le contrat historique. Le repli garde les anciens
+              // serveurs compatibles, sans adopter le renommage de main.
+              flux: toNumber(row.solde ?? encaissements + entrees + retours - sorties),
+            }
+          })
+          // Le serveur sert un point par jour de la période : on ne garde que
+          // les jours mouvementés, sinon un rapport annuel noie ses flux sous
+          // des centaines de lignes à zéro.
+          .filter(
+            (row: any) =>
+              row.date &&
+              (row.encaissements !== 0 || row.sorties !== 0 || row.retours !== 0 || row.entreesInternes !== 0)
+          )
+          .sort((a: any, b: any) => a.date.localeCompare(b.date))
         // Ventilation sans conversion : seule vue exacte dès qu'USD et CDF
         // coexistent, les champs plats les additionnant tels quels.
         const parDevise = (Array.isArray(totals.par_devise) ? totals.par_devise : []).map(
@@ -594,12 +631,26 @@ export default function Rapports() {
             depensesReelles: toNumber(ligne.depenses_reelles ?? 0),
             transfertsInternes: toNumber(ligne.transferts_internes ?? 0),
             entreesInternes: toNumber(ligne.entrees_internes ?? 0),
+            encaissementsHorsBudget: toNumber(ligne.encaissements_hors_budget ?? 0),
+            retoursCaisse: toNumber(ligne.retours_total ?? 0),
+            sortiesNettes: toNumber(
+              ligne.sorties_nettes
+                ?? toNumber(ligne.sorties_total ?? 0) - toNumber(ligne.retours_total ?? 0)
+            ),
+            fluxPeriode: toNumber(
+              ligne.flux_periode
+                ?? toNumber(ligne.encaissements_total ?? 0)
+                  + toNumber(ligne.encaissements_hors_budget ?? 0)
+                  + toNumber(ligne.entrees_internes ?? 0)
+                  + toNumber(ligne.retours_total ?? 0)
+                  - toNumber(ligne.sorties_total ?? 0)
+            ),
             soldeInitial: toNumber(ligne.solde_initial ?? 0),
             solde: toNumber(ligne.solde ?? 0),
           })
         )
         const soldeInitial = toNumber(totals.solde_initial ?? 0)
-        const solde = toNumber(totals.solde ?? totalEncaissements + entreesInternes - totalSorties)
+        const solde = toNumber(totals.solde ?? soldeInitial + fluxPeriode)
         const soldeFinal = toNumber(totals.solde_final ?? solde)
 
         const nombreEncaissements = parStatutPaiement.reduce(
@@ -651,6 +702,11 @@ export default function Rapports() {
           depensesReelles,
           transfertsInternes,
           entreesInternes,
+          encaissementsHorsBudget,
+          retoursCaisse,
+          sortiesNettes,
+          fluxPeriode,
+          dailyStats,
           parDevise,
           soldeInitial,
           solde,
@@ -757,6 +813,15 @@ export default function Rapports() {
         nextRapport = {
           totalEncaissements,
           totalSorties,
+          depensesReelles: totalSorties,
+          transfertsInternes: 0,
+          entreesInternes: 0,
+          encaissementsHorsBudget: 0,
+          retoursCaisse: 0,
+          sortiesNettes: totalSorties,
+          fluxPeriode: totalEncaissements - totalSorties,
+          dailyStats: [],
+          parDevise: [],
           soldeInitial: 0,
           solde: totalEncaissements - totalSorties,
           soldeFinal: totalEncaissements - totalSorties,
@@ -778,7 +843,9 @@ export default function Rapports() {
         !!nextRapport &&
         (nextRapport.nombreEncaissements > 0 ||
           nextRapport.nombreSorties > 0 ||
-          nextRapport.nombreRequisitions > 0)
+          nextRapport.nombreRequisitions > 0 ||
+          toNumber(nextRapport.retoursCaisse ?? 0) !== 0 ||
+          toNumber(nextRapport.fluxPeriode ?? 0) !== 0)
 
       return { rapport: nextRapport, emptyMessage: hasData ? null : 'Aucune donnée trouvée pour la période sélectionnée.' }
     } catch (error: any) {
@@ -793,6 +860,21 @@ export default function Rapports() {
 
   const rapport = rapportQuery.data?.rapport ?? null
   const loading = rapportQuery.isFetching
+  const dailyStats = rapport?.dailyStats ?? []
+  // Colonnes du détail par devise qui n'apparaissent que si elles portent un
+  // montant : le tableau garde sa forme habituelle tant qu'il n'y a ni retour
+  // ni encaissement hors budget.
+  const parDeviseRetours = (rapport?.parDevise ?? []).some((l: any) => toNumber(l.retoursCaisse) !== 0)
+  const parDeviseHorsBudget = (rapport?.parDevise ?? []).some(
+    (l: any) => toNumber(l.encaissementsHorsBudget) !== 0
+  )
+  const dailyMaxAbs = useMemo(
+    () => dailyStats.reduce(
+      (max: number, day: any) => Math.max(max, Math.abs(toNumber(day?.flux ?? 0))),
+      1
+    ),
+    [dailyStats]
+  )
 
   const loadRapport = () => {
     setErrorMessage(null)
@@ -1114,9 +1196,13 @@ export default function Rapports() {
         ['Canal', reportCanal === 'ALL' ? 'Tous canaux' : reportCanal],
         ['Devise', reportDevise === 'ALL' ? 'Toutes (cumulées, non converties)' : reportDevise],
         ['Total Encaissements', formatCurrency(rapport.totalEncaissements)],
+        ['Encaissements hors budget', formatCurrency(rapport.encaissementsHorsBudget ?? 0)],
         [transfertsRecusLabel, formatCurrency(rapport.entreesInternes ?? 0)],
         ['Total Sorties', formatCurrency(rapport.totalSorties)],
         ['dont transferts internes', formatCurrency(rapport.transfertsInternes ?? 0)],
+        ['Retours en trésorerie', formatCurrency(rapport.retoursCaisse ?? 0)],
+        ['Sorties nettes', formatCurrency(rapport.sortiesNettes ?? rapport.totalSorties)],
+        ['Flux net de la période', formatCurrency(rapport.fluxPeriode ?? 0)],
         [`Solde au ${dateDebut}`, formatCurrency(rapport.soldeInitial ?? 0)],
         ['Solde final', formatCurrency(rapport.soldeFinal ?? rapport.solde)],
         ["Nombre d'encaissements", rapport.nombreEncaissements],
@@ -1133,18 +1219,26 @@ export default function Rapports() {
                 'Devise',
                 'Solde initial',
                 'Encaissements',
+                'Encaissements hors budget',
                 'Transferts reçus',
                 'Sorties',
                 'dont dépenses réelles',
+                'Retours en trésorerie',
+                'Sorties nettes',
+                'Flux net de la période',
                 'Solde',
               ],
               ...rapport.parDevise.map((ligne: any) => [
                 ligne.devise,
                 ligne.soldeInitial,
                 ligne.encaissements,
+                ligne.encaissementsHorsBudget,
                 ligne.entreesInternes,
                 ligne.sorties,
                 ligne.depensesReelles,
+                ligne.retoursCaisse,
+                ligne.sortiesNettes,
+                ligne.fluxPeriode,
                 ligne.solde,
               ]),
             ]
@@ -1742,6 +1836,14 @@ export default function Rapports() {
                 {formatCurrency(rapport.totalEncaissements)}
               </div>
               <div className={styles.statSubtext}>{rapport.nombreEncaissements} opérations</div>
+              {toNumber(rapport.encaissementsHorsBudget) > 0 && (
+                <div style={{ marginTop: '8px', fontSize: '12px', lineHeight: 1.5, color: '#1d4ed8' }}>
+                  Encaissements hors budget : <strong>{formatCurrency(rapport.encaissementsHorsBudget)}</strong>
+                  <div style={{ color: '#6b7280' }}>
+                    Fonds de tiers et hors budget à régulariser : comptés dans le solde, pas dans ce total.
+                  </div>
+                </div>
+              )}
               {toNumber(rapport.entreesInternes) > 0 && (
                 <div style={{ marginTop: '8px', fontSize: '12px', lineHeight: 1.5, color: '#1d4ed8' }}>
                   Transferts internes reçus : <strong>{formatCurrency(rapport.entreesInternes)}</strong>
@@ -1756,6 +1858,16 @@ export default function Rapports() {
                 {formatCurrency(rapport.totalSorties)}
               </div>
               <div className={styles.statSubtext}>{rapport.nombreSorties} paiements</div>
+              {toNumber(rapport.retoursCaisse) > 0 && (
+                <div style={{ marginTop: '8px', fontSize: '12px', lineHeight: 1.5 }}>
+                  <div style={{ color: '#15803d' }}>
+                    Retours en trésorerie : <strong>{formatCurrency(rapport.retoursCaisse)}</strong>
+                  </div>
+                  <div style={{ color: '#b91c1c' }}>
+                    Sorties nettes : <strong>{formatCurrency(rapport.sortiesNettes)}</strong>
+                  </div>
+                </div>
+              )}
               {toNumber(rapport.transfertsInternes) > 0 && (
                 <div style={{ marginTop: '8px', fontSize: '12px', lineHeight: 1.5 }}>
                   <div style={{ color: '#b91c1c' }}>
@@ -1775,6 +1887,9 @@ export default function Rapports() {
               </div>
               <div className={styles.statSubtext}>
                 Solde au {dateDebut} : {formatCurrency(rapport.soldeInitial ?? 0)}
+              </div>
+              <div className={styles.statSubtext}>
+                Flux net de la période : <strong>{formatCurrency(rapport.fluxPeriode ?? 0)}</strong>
               </div>
               <div className={styles.statBadge}>Solde initial inclus</div>
               <div className={styles.statSubtext}>
@@ -1807,9 +1922,13 @@ export default function Rapports() {
                       <th>Devise</th>
                       <th>Solde initial</th>
                       <th>Encaissements</th>
+                      {parDeviseHorsBudget && <th>Encaissements hors budget</th>}
                       <th>Transferts reçus</th>
                       <th>Sorties</th>
                       <th>dont dépenses réelles</th>
+                      {parDeviseRetours && <th>Retours en trésorerie</th>}
+                      {parDeviseRetours && <th>Sorties nettes</th>}
+                      <th>Flux net de la période</th>
                       <th>Solde</th>
                     </tr>
                   </thead>
@@ -1819,9 +1938,19 @@ export default function Rapports() {
                         <td><strong>{ligne.devise}</strong></td>
                         <td>{formatMoneyDevise(ligne.soldeInitial, ligne.devise)}</td>
                         <td>{formatMoneyDevise(ligne.encaissements, ligne.devise)}</td>
+                        {parDeviseHorsBudget && (
+                          <td>{formatMoneyDevise(ligne.encaissementsHorsBudget, ligne.devise)}</td>
+                        )}
                         <td>{formatMoneyDevise(ligne.entreesInternes, ligne.devise)}</td>
                         <td>{formatMoneyDevise(ligne.sorties, ligne.devise)}</td>
                         <td>{formatMoneyDevise(ligne.depensesReelles, ligne.devise)}</td>
+                        {parDeviseRetours && (
+                          <td>{formatMoneyDevise(ligne.retoursCaisse, ligne.devise)}</td>
+                        )}
+                        {parDeviseRetours && (
+                          <td>{formatMoneyDevise(ligne.sortiesNettes, ligne.devise)}</td>
+                        )}
+                        <td>{formatMoneyDevise(ligne.fluxPeriode, ligne.devise)}</td>
                         <td>
                           <strong>{formatMoneyDevise(ligne.solde, ligne.devise)}</strong>
                         </td>
@@ -1845,6 +1974,36 @@ export default function Rapports() {
           )}
 
           <div className={styles.chartsGrid}>
+            <div className={`${styles.chartCard} ${styles.dailyChartCard}`}>
+              <h3>Flux journaliers</h3>
+              <p className={styles.dailyFormula}>
+                Encaissements (hors budget compris) + transferts reçus + retours en trésorerie − sorties
+              </p>
+              <div className={styles.dailyChart}>
+                {dailyStats.length === 0 && (
+                  <div className={styles.dailyEmpty}>Aucune donnée journalière</div>
+                )}
+                {dailyStats.map((day: any) => {
+                  const value = toNumber(day.flux ?? 0)
+                  const width = Math.min(100, Math.round((Math.abs(value) / dailyMaxAbs) * 100))
+                  return (
+                    <div key={day.date} className={styles.dailyRow}>
+                      <div className={styles.dailyDate}>{formatReportDate(day.date, 'dd/MM')}</div>
+                      <div className={styles.dailyBarWrap}>
+                        <div
+                          className={`${styles.dailyBar} ${
+                            value >= 0 ? styles.dailyBarPositive : styles.dailyBarNegative
+                          }`}
+                          style={{ width: `${width}%` }}
+                        />
+                      </div>
+                      <div className={styles.dailyValue}>{formatCurrency(value)}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
             <div className={styles.chartCard}>
               <h3>Encaissements par poste budgétaire</h3>
               <div className={`${styles.chartContent} ${styles.chartContentScrollable} ${styles.chartRows5}`}>

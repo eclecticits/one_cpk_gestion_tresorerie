@@ -1264,8 +1264,15 @@ export const generateGlobalReportPDF = async (
   const totalSorties =
     toNumber(rapport?.totalSorties) ||
     sorties.reduce((sum: number, s: any) => sum + toNumber(s.montant_paye ?? 0), 0)
+  const retoursCaisse = toNumber(rapport?.retoursCaisse ?? 0)
+  const sortiesNettes = toNumber(rapport?.sortiesNettes ?? totalSorties - retoursCaisse)
+  const encHorsBudget = toNumber(rapport?.encaissementsHorsBudget ?? 0)
+  const fluxPeriode = toNumber(
+    rapport?.fluxPeriode ?? totalEnc + encHorsBudget + entreesInternes + retoursCaisse - totalSorties
+  )
+  const soldeInitial = toNumber(rapport?.soldeInitial ?? 0)
   const soldeNet = toNumber(
-    rapport?.soldeFinal ?? rapport?.solde ?? totalEnc + entreesInternes - totalSorties
+    rapport?.soldeFinal ?? rapport?.solde ?? soldeInitial + fluxPeriode
   )
   const showEntreesInternes = entreesInternes > 0 || transfertsRecus.length > 0
 
@@ -1285,8 +1292,16 @@ export const generateGlobalReportPDF = async (
   const uniteSorties = devisesMelangees ? '' : ` ${deviseVue === 'ALL' ? [...devisesSorties][0] || 'USD' : deviseVue}`
   const uniteSolde = uniteSorties
 
+  // Les lignes « hors budget » et « retours » n'apparaissent que si elles
+  // portent un montant : sans elles, le résumé garde sa forme habituelle.
+  const showHorsBudget = encHorsBudget > 0
+  const showRetours = retoursCaisse > 0
   const summaryLines =
-    3 + (showEntreesInternes ? 1 : 0) + (devisesMelangees ? 2 + parDevise.length * 2 : 0)
+    5 +
+    (showHorsBudget ? 1 : 0) +
+    (showEntreesInternes ? 1 : 0) +
+    (showRetours ? 2 : 0) +
+    (devisesMelangees ? 2 + parDevise.length * 2 : 0)
   if (currentY + 14 + summaryLines * 6 > pageHeight - 20) {
     doc.addPage()
     currentY = 20
@@ -1309,6 +1324,14 @@ export const generateGlobalReportPDF = async (
     currentY + 16
   )
   let summaryOffset = 22
+  if (showHorsBudget) {
+    doc.text(
+      `Encaissements hors budget : ${formatAmount(encHorsBudget)}${uniteSorties}`,
+      summaryX,
+      currentY + summaryOffset
+    )
+    summaryOffset += 6
+  }
   if (showEntreesInternes) {
     doc.text(
       `Transferts reçus : ${formatAmount(entreesInternes)}${uniteSorties}`,
@@ -1318,6 +1341,20 @@ export const generateGlobalReportPDF = async (
     summaryOffset += 6
   }
   doc.text(`Total sorties : ${formatAmount(totalSorties)}${uniteSorties}`, summaryX, currentY + summaryOffset)
+  summaryOffset += 6
+  if (showRetours) {
+    doc.text(
+      `Retours en trésorerie : ${formatAmount(retoursCaisse)}${uniteSorties}`,
+      summaryX,
+      currentY + summaryOffset
+    )
+    summaryOffset += 6
+    doc.text(`Sorties nettes : ${formatAmount(sortiesNettes)}${uniteSorties}`, summaryX, currentY + summaryOffset)
+    summaryOffset += 6
+  }
+  doc.text(`Flux net de la période : ${formatAmount(fluxPeriode)}${uniteSolde}`, summaryX, currentY + summaryOffset)
+  summaryOffset += 6
+  doc.text(`Solde initial : ${formatAmount(soldeInitial)}${uniteSolde}`, summaryX, currentY + summaryOffset)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(textMain[0], textMain[1], textMain[2])
   doc.text(`Solde net : ${formatAmount(soldeNet)}${uniteSolde}`, summaryX, currentY + summaryOffset + 8)
@@ -1348,7 +1385,11 @@ export const generateGlobalReportPDF = async (
       parDevise.forEach((ligne: any) => {
         const devise = String(ligne.devise || 'USD').toUpperCase()
         doc.text(
-          `${devise} — entrées ${formatAmount(toNumber(ligne.encaissements))}, ` +
+          // « entrées » : tout ce qui est entré, hors budget compris, pour que
+          // la ligne retombe sur son solde.
+          `${devise} — entrées ${formatAmount(
+            toNumber(ligne.encaissements) + toNumber(ligne.encaissementsHorsBudget ?? 0)
+          )}, ` +
             `transferts ${formatAmount(toNumber(ligne.entreesInternes))},`,
           summaryX,
           detailY
