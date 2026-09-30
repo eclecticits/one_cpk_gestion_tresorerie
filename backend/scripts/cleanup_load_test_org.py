@@ -77,9 +77,12 @@ async def delete_load_test_data(org_id: int) -> None:
             await db.execute(text("delete from roles where code like 'load_test_%'"))
             await db.execute(text("delete from experts_comptables where numero_ordre like 'LT/%'"))
 
+            # Les imputations pointent vers les versements, encaissements et postes : avant eux.
+            await db.execute(text("delete from mouvement_budget_imputations where organisation_id = :org_id"), {"org_id": org_id})
             await db.execute(text("delete from encaissement_articles where encaissement_id in (select id from encaissements where organisation_id = :org_id)"), {"org_id": org_id})
             await db.execute(text("delete from payment_history where encaissement_id in (select id from encaissements where organisation_id = :org_id)"), {"org_id": org_id})
             await db.execute(text("delete from encaissements where organisation_id = :org_id"), {"org_id": org_id})
+            await db.execute(text("delete from clients where organisation_id = :org_id"), {"org_id": org_id})
 
             await db.execute(text("delete from lignes_requisition where organisation_id = :org_id"), {"org_id": org_id})
             await db.execute(text("delete from requisition_annexes where organisation_id = :org_id"), {"org_id": org_id})
