@@ -24,7 +24,7 @@ from app.models.payment_history import PaymentHistory
 PAYMENT_STATUS_ACTIVE = "ACTIF"
 
 
-def _encaissements_retenus(organisation_id: int):
+def encaissements_retenus(organisation_id: int):
     """Encaissements qui pèsent en trésorerie : ni pro forma, ni annulés, ni supprimés."""
     return (
         Encaissement.organisation_id == organisation_id,
@@ -41,8 +41,8 @@ def flux_encaissements(organisation_id: int):
     """Sous-requête des entrées d'argent, une ligne par versement encaissé.
 
     Colonnes : `encaissement_id`, `canal`, `compte_bancaire_id`, `devise`,
-    `montant` (dans la devise de perception) et `date_flux` (la date à laquelle
-    l'argent est entré, pas celle de la note).
+    `mode_paiement`, `montant` (dans la devise de perception) et `date_flux`
+    (la date à laquelle l'argent est entré, pas celle de la note).
     """
     versements = (
         select(
@@ -50,6 +50,7 @@ def flux_encaissements(organisation_id: int):
             PaymentHistory.canal.label("canal"),
             PaymentHistory.compte_bancaire_id.label("compte_bancaire_id"),
             PaymentHistory.devise.label("devise"),
+            PaymentHistory.mode_paiement.label("mode_paiement"),
             PaymentHistory.montant.label("montant"),
             func.coalesce(PaymentHistory.date_paiement, PaymentHistory.created_at).label("date_flux"),
         )
@@ -57,7 +58,7 @@ def flux_encaissements(organisation_id: int):
         .where(
             PaymentHistory.organisation_id == organisation_id,
             PaymentHistory.statut == PAYMENT_STATUS_ACTIVE,
-            *_encaissements_retenus(organisation_id),
+            *encaissements_retenus(organisation_id),
         )
     )
 
@@ -77,6 +78,7 @@ def flux_encaissements(organisation_id: int):
         func.coalesce(Encaissement.canal, "CAISSE").label("canal"),
         Encaissement.compte_bancaire_id.label("compte_bancaire_id"),
         func.coalesce(Encaissement.devise_perception, "USD").label("devise"),
+        Encaissement.mode_paiement.label("mode_paiement"),
         case(
             (
                 Encaissement.devise_perception == "CDF",
@@ -86,7 +88,7 @@ def flux_encaissements(organisation_id: int):
         ).label("montant"),
         Encaissement.date_encaissement.label("date_flux"),
     ).where(
-        *_encaissements_retenus(organisation_id),
+        *encaissements_retenus(organisation_id),
         sans_versement,
         or_(
             func.coalesce(Encaissement.montant_paye, 0) > 0,

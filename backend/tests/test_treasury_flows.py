@@ -30,8 +30,12 @@ from app.models.compte_bancaire import CompteBancaire
 from app.models.encaissement import Encaissement
 from app.models.ligne_requisition import LigneRequisition
 from app.models.organisation import Organisation
+from app.models.payment_history import PaymentHistory
 from app.models.requisition import Requisition
+from app.models.retour_caisse import RetourCaisse
 from app.models.service import Service
+from app.models.sortie_fonds import SortieFonds
+from app.models.transfert_interne import TransfertInterne
 from app.models.user import User
 from app.schemas.sortie_fonds import SortieFondsCreate
 
@@ -1051,6 +1055,382 @@ async def test_summary_solde_ouverture_ne_melange_pas_caisse_et_banque(db_sessio
     for res, attendu in ((banque, Decimal("500")), (caisse, Decimal("30")), (tous, Decimal("530"))):
         usd = next(l for l in res.stats.totals.par_devise if l.devise == "USD")
         assert Decimal(usd.solde_initial) == attendu
+
+
+@pytest.mark.asyncio
+async def test_summary_flux_global_et_journalier_partagent_le_meme_perimetre(
+    db_session, monkeypatch
+):
+    """Verrouille la convention financière du résumé et du graphique.
+
+    Le scénario combine les deux moteurs de transfert, un paiement fractionné,
+    un retour, les exclusions d'encaissement et un second tenant. La somme des
+    flux journaliers doit être exactement le flux global, sans changer le nom
+    historique ``daily_stats[].solde``.
+    """
+
+    db = db_session
+    org = await _org(db)
+    other_org = await _org(db)
+    banque = await _banque(db, org, solde=Decimal("0"))
+    other_banque = await _banque(db, other_org, solde=Decimal("0"))
+    user = await _admin(db, org)
+    mouvement_at = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
+    outside_at = datetime(2026, 9, 16, 0, tzinfo=timezone.utc)
+
+    async def no_cache(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.reports.cache_get", no_cache)
+    monkeypatch.setattr("app.api.v1.endpoints.reports.cache_set", no_cache)
+
+    def encaissement(
+        organisation_id: int,
+        montant: Decimal,
+        *,
+        at: datetime = mouvement_at,
+        est_proforma: bool = False,
+        is_deleted: bool = False,
+        statut_operation: str = "ACTIVE",
+    ) -> Encaissement:
+        row = Encaissement(
+            organisation_id=organisation_id,
+            numero_recu=f"REC-{uuid.uuid4().hex[:10]}",
+            type_client="autre",
+            client_nom="Client test",
+            libelle="Encaissement rapport",
+            montant=montant,
+            montant_total=montant,
+            montant_paye=montant,
+            montant_percu=montant,
+            devise_perception="USD",
+            taux_change_applique=Decimal("1"),
+            canal="CAISSE",
+            statut_paiement="complet",
+            statut_operation=statut_operation,
+            mode_paiement="cash",
+            date_encaissement=at,
+            est_proforma=est_proforma,
+            is_deleted=is_deleted,
+        )
+        db.add(row)
+        return row
+
+    # L'en-tête est en caisse, mais les versements font foi : 30 en caisse et
+    # 70 en banque. Le graphique doit utiliser ces destinations et dates réelles.
+    enc = encaissement(org.id, Decimal("100"))
+    await db.flush()
+    db.add_all(
+        [
+            PaymentHistory(
+                organisation_id=org.id,
+                encaissement_id=enc.id,
+                montant=Decimal("30"),
+                devise="USD",
+                canal="CAISSE",
+                mode_paiement="cash",
+                date_paiement=mouvement_at,
+                statut="ACTIF",
+            ),
+            PaymentHistory(
+                organisation_id=org.id,
+                encaissement_id=enc.id,
+                montant=Decimal("70"),
+                devise="USD",
+                canal="BANQUE",
+                compte_bancaire_id=banque.id,
+                mode_paiement="virement",
+                date_paiement=mouvement_at,
+                statut="ACTIF",
+            ),
+        ]
+    )
+
+    # Toutes ces lignes doivent rester hors du rapport.
+    encaissement(org.id, Decimal("901"), est_proforma=True)
+    encaissement(org.id, Decimal("902"), is_deleted=True)
+    encaissement(org.id, Decimal("903"), statut_operation="ANNULEE")
+    encaissement(org.id, Decimal("17"), at=outside_at)
+    encaissement(other_org.id, Decimal("904"))
+
+    depense = SortieFonds(
+        organisation_id=org.id,
+        type_sortie="autre",
+        montant_paye=Decimal("60"),
+        date_paiement=mouvement_at,
+        mode_paiement="cash",
+        devise="USD",
+        canal="CAISSE",
+        statut="VALIDE",
+        motif="Dépense réelle",
+        beneficiaire="Fournisseur",
+    )
+    transfert_legacy = SortieFonds(
+        organisation_id=org.id,
+        type_sortie="versement_banque",
+        montant_paye=Decimal("40"),
+        date_paiement=mouvement_at,
+        mode_paiement="cash",
+        devise="USD",
+        canal="CAISSE",
+        statut="VALIDE",
+        motif="Ancien transfert",
+        beneficiaire="Banque",
+    )
+    sortie_annulee = SortieFonds(
+        organisation_id=org.id,
+        type_sortie="autre",
+        montant_paye=Decimal("905"),
+        date_paiement=mouvement_at,
+        mode_paiement="cash",
+        devise="USD",
+        canal="CAISSE",
+        statut="ANNULEE",
+        motif="Sortie annulée",
+        beneficiaire="Personne",
+    )
+    sortie_autre_tenant = SortieFonds(
+        organisation_id=other_org.id,
+        type_sortie="autre",
+        montant_paye=Decimal("906"),
+        date_paiement=mouvement_at,
+        mode_paiement="virement",
+        devise="USD",
+        canal="BANQUE",
+        compte_bancaire_id=other_banque.id,
+        statut="VALIDE",
+        motif="Autre tenant",
+        beneficiaire="Personne",
+    )
+    db.add_all([depense, transfert_legacy, sortie_annulee, sortie_autre_tenant])
+    await db.flush()
+    db.add_all(
+        [
+            RetourCaisse(
+                organisation_id=org.id,
+                sortie_fonds_id=depense.id,
+                type_retour="reliquat_avance",
+                montant=Decimal("10"),
+                devise="USD",
+                canal="CAISSE",
+                mode="cash",
+                date_retour=mouvement_at,
+                statut="VALIDE",
+            ),
+            TransfertInterne(
+                organisation_id=org.id,
+                source_type="CAISSE",
+                source_id=None,
+                destination_type="BANQUE",
+                destination_id=banque.id,
+                montant=Decimal("25"),
+                devise="USD",
+                reference=f"TR-{uuid.uuid4().hex[:10]}",
+                date_transfert=mouvement_at,
+                statut="EXECUTE",
+            ),
+        ]
+    )
+
+    # Une seule agrégation groupée doit fournir total, attente, approbation et
+    # ventilation. Une réquisition supprimée et celle de l'autre tenant sortent.
+    for status, deleted, organisation in (
+        ("EN_ATTENTE", False, org),
+        ("APPROUVEE", False, org),
+        ("PAYEE", False, org),
+        ("EN_ATTENTE", True, org),
+        ("APPROUVEE", False, other_org),
+    ):
+        db.add(
+            Requisition(
+                organisation_id=organisation.id,
+                numero_requisition=f"REQ-{uuid.uuid4().hex[:8]}",
+                reference_numero=f"REF-{uuid.uuid4().hex[:8]}",
+                objet="Statistiques rapport",
+                mode_paiement="cash",
+                type_requisition="classique",
+                status=status,
+                montant_total=Decimal("1"),
+                devise="USD",
+                created_at=mouvement_at,
+                is_deleted=deleted,
+            )
+        )
+    await db.commit()
+
+    from app.api.v1.endpoints.reports import summary
+
+    result = await summary(
+        date_debut="2026-09-15",
+        date_fin="2026-09-15",
+        devise="USD",
+        user=user,
+        db=db,
+        tenant_id=org.id,
+    )
+    totals = result.stats.totals
+    assert Decimal(totals.encaissements_total) == Decimal("100")
+    assert Decimal(totals.sorties_total) == Decimal("125")
+    assert Decimal(totals.transferts_internes) == Decimal("65")
+    assert Decimal(totals.depenses_reelles) == Decimal("60")
+    assert Decimal(totals.entrees_internes) == Decimal("65")
+    assert Decimal(totals.retours_total) == Decimal("10")
+    assert Decimal(totals.sorties_nettes) == Decimal("115")
+    assert Decimal(totals.flux_periode) == Decimal("50")
+    assert Decimal(totals.solde) == Decimal(totals.solde_initial) + Decimal("50")
+
+    assert len(result.daily_stats) == 1
+    day = result.daily_stats[0]
+    assert Decimal(day.encaissements) == Decimal("100")
+    assert Decimal(day.sorties) == Decimal("125")
+    assert Decimal(day.retours) == Decimal("10")
+    assert Decimal(day.sorties_nettes) == Decimal("115")
+    assert Decimal(day.transferts_internes) == Decimal("65")
+    assert Decimal(day.entrees_internes) == Decimal("65")
+    assert Decimal(day.solde) == Decimal(totals.flux_periode)
+    assert sum(Decimal(line.solde) for line in result.daily_stats) == Decimal(
+        totals.flux_periode
+    )
+
+    reqs = result.stats.breakdowns.requisitions
+    assert (reqs.total, reqs.en_attente, reqs.approuvees) == (3, 2, 2)
+    assert {
+        item.key: item.count
+        for item in result.stats.breakdowns.par_statut_requisition
+    } == {"APPROUVEE": 1, "EN_ATTENTE": 1, "PAYEE": 1}
+    assert {
+        item.key: Decimal(item.total)
+        for item in result.stats.breakdowns.par_mode_paiement.encaissements
+    } == {"cash": Decimal("30"), "virement": Decimal("70")}
+
+    # Le contrat existant reste présent, les nouveaux champs sont additifs.
+    payload = result.model_dump(mode="json")
+    assert "solde" in payload["daily_stats"][0]
+    assert "solde_journalier" not in payload["daily_stats"][0]
+
+    caisse = await summary(
+        date_debut="2026-09-15",
+        date_fin="2026-09-15",
+        canal="CAISSE",
+        devise="USD",
+        user=user,
+        db=db,
+        tenant_id=org.id,
+    )
+    banque_result = await summary(
+        date_debut="2026-09-15",
+        date_fin="2026-09-15",
+        canal="BANQUE",
+        devise="USD",
+        user=user,
+        db=db,
+        tenant_id=org.id,
+    )
+    assert Decimal(caisse.stats.totals.flux_periode) == Decimal("-85")
+    assert Decimal(banque_result.stats.totals.flux_periode) == Decimal("135")
+    assert (
+        Decimal(caisse.stats.totals.flux_periode)
+        + Decimal(banque_result.stats.totals.flux_periode)
+        == Decimal(totals.flux_periode)
+    )
+
+    # Les bornes inversées sont normalisées pour les totaux comme pour le
+    # journal ; elles ne peuvent plus produire un résumé vide et un graphe plein.
+    reversed_dates = await summary(
+        date_debut="2026-09-15",
+        date_fin="2026-09-14",
+        devise="USD",
+        user=user,
+        db=db,
+        tenant_id=org.id,
+    )
+    assert Decimal(reversed_dates.stats.totals.flux_periode) == Decimal("50")
+    assert sum(Decimal(line.solde) for line in reversed_dates.daily_stats) == Decimal("50")
+
+
+@pytest.mark.asyncio
+async def test_summary_garde_les_recettes_a_part_et_les_notes_impayees_visibles(
+    db_session, monkeypatch
+):
+    """Deux règles que le passage aux versements ne doit pas emporter.
+
+    - « Total encaissements » est une recette : un fonds de tiers reçu entre en
+      caisse, donc dans le solde, mais pas dans ce total (il est servi à part).
+    - La ventilation par statut compte les notes, payées ou non : une note
+      impayée n'a aucun versement et ne doit pas disparaître pour autant.
+    """
+
+    db = db_session
+    org = await _org(db)
+    user = await _admin(db, org)
+    jour = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
+
+    async def no_cache(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.reports.cache_get", no_cache)
+    monkeypatch.setattr("app.api.v1.endpoints.reports.cache_set", no_cache)
+
+    def encaissement(montant_paye: Decimal, statut: str, **extra) -> Encaissement:
+        row = Encaissement(
+            organisation_id=org.id,
+            numero_recu=f"REC-{uuid.uuid4().hex[:10]}",
+            type_client="autre",
+            client_nom="Client test",
+            libelle="Encaissement rapport",
+            montant=Decimal("100"),
+            montant_total=Decimal("100"),
+            montant_paye=montant_paye,
+            montant_percu=montant_paye,
+            devise_perception="USD",
+            taux_change_applique=Decimal("1"),
+            canal="CAISSE",
+            statut_paiement=statut,
+            mode_paiement="cash",
+            date_encaissement=jour,
+            **extra,
+        )
+        db.add(row)
+        return row
+
+    encaissement(Decimal("100"), "complet")
+    encaissement(Decimal("0"), "non_paye")
+    encaissement(
+        Decimal("40"),
+        "complet",
+        nature_mouvement="FONDS_DE_TIERS",
+        impact_budgetaire=False,
+    )
+    await db.commit()
+
+    from app.api.v1.endpoints.reports import summary
+
+    result = await summary(
+        date_debut="2026-09-15",
+        date_fin="2026-09-15",
+        devise="USD",
+        user=user,
+        db=db,
+        tenant_id=org.id,
+    )
+    totals = result.stats.totals
+    assert Decimal(totals.encaissements_total) == Decimal("100")
+    assert Decimal(totals.encaissements_hors_budget) == Decimal("40")
+    assert Decimal(totals.flux_periode) == Decimal("140")
+    assert Decimal(totals.solde) == Decimal(totals.solde_initial) + Decimal("140")
+
+    # Les lignes par devise se recomposent en les champs plats.
+    usd = next(line for line in totals.par_devise if line.devise == "USD")
+    assert Decimal(usd.encaissements_total) == Decimal("100")
+    assert Decimal(usd.encaissements_hors_budget) == Decimal("40")
+    assert Decimal(usd.flux_periode) == Decimal("140")
+
+    # Le journal porte tout ce qui est entré : sa somme reste le flux global.
+    assert sum(Decimal(line.solde) for line in result.daily_stats) == Decimal("140")
+
+    assert {
+        item.key: item.count for item in result.stats.breakdowns.par_statut_paiement
+    } == {"complet": 2, "non_paye": 1}
 
 
 # ---------------------------------------------------------------------------

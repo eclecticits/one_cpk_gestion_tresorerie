@@ -17,7 +17,15 @@ class PeriodInfo(DecimalBaseModel):
 class ReportDailyStats(DecimalBaseModel):
     date: date
     encaissements: Decimal = Decimal("0")
+    # Contrat historique : `sorties` reste le montant brut sorti du périmètre,
+    # transferts internes sortants compris.
     sorties: Decimal = Decimal("0")
+    retours: Decimal = Decimal("0")
+    sorties_nettes: Decimal = Decimal("0")
+    transferts_internes: Decimal = Decimal("0")
+    entrees_internes: Decimal = Decimal("0")
+    # Flux net du jour : encaissements + entrées internes + retours - sorties.
+    # Le nom `solde` est conservé pour la rétrocompatibilité de l'API.
     solde: Decimal = Decimal("0")
 
 
@@ -42,12 +50,18 @@ class ReportDeviseTotals(DecimalBaseModel):
     depenses_reelles: Decimal = Decimal("0")
     transferts_internes: Decimal = Decimal("0")
     entrees_internes: Decimal = Decimal("0")
+    encaissements_hors_budget: Decimal = Decimal("0")
+    retours_total: Decimal = Decimal("0")
+    sorties_nettes: Decimal = Decimal("0")
+    flux_periode: Decimal = Decimal("0")
     solde_initial: Decimal = Decimal("0")
     solde: Decimal = Decimal("0")
 
 
 class ReportTotals(DecimalBaseModel):
     encaissements_total: Decimal = Decimal("0")
+    # Contrat historique : montant BRUT sorti du périmètre. Ne pas changer sa
+    # sémantique ; les champs additifs ci-dessous portent le net des retours.
     sorties_total: Decimal = Decimal("0")
     # Détail des sorties : dépenses réelles vs transferts internes caisse<->banque.
     depenses_reelles: Decimal = Decimal("0")
@@ -57,6 +71,16 @@ class ReportTotals(DecimalBaseModel):
     # où ils compensent exactement `transferts_internes`. Ce n'est PAS une recette :
     # à afficher à part de `encaissements_total`.
     entrees_internes: Decimal = Decimal("0")
+    # Encaissements sans impact budgétaire (fonds de tiers, hors-budget à
+    # régulariser) : entrés en trésorerie, donc dans le solde, mais PAS des
+    # recettes — d'où leur absence de `encaissements_total`.
+    encaissements_hors_budget: Decimal = Decimal("0")
+    # Retours validés vers le même canal / la même devise que le rapport.
+    retours_total: Decimal = Decimal("0")
+    sorties_nettes: Decimal = Decimal("0")
+    # encaissements (recettes + hors budget) + entrées internes + retours
+    # - sorties brutes.
+    flux_periode: Decimal = Decimal("0")
     solde_initial: Decimal = Decimal("0")
     solde: Decimal = Decimal("0")
     solde_final: Decimal = Decimal("0")
