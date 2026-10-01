@@ -102,9 +102,9 @@ async def test_comparison_detects_duplicate_historical_number_without_silent_ove
 
 
 @pytest.mark.asyncio
-async def test_comparison_statistics_invariants(db_session, test_admin_user):
-    await import_source_snapshot(db_session, test_admin_user, test_admin_user.organisation_id, "stats-prep.xlsx", _xlsx(["N° Ordre", "Nom", "Statut"], [["EC/18.00209", "A", "indépendant"]]), "personnes_physiques", "2026", date(2026, 9, 1))
-    historical = await _historical(db_session, test_admin_user, organisation_id=test_admin_user.organisation_id, numero="EC/18.00210", nom="H")
-    result = await compare_preparatory_to_historical(db_session, test_admin_user.organisation_id, date(2026, 9, 1), historical.id)
+async def test_comparison_statistics_invariants(db_session, admin_isole):
+    await import_source_snapshot(db_session, admin_isole, admin_isole.organisation_id, "stats-prep.xlsx", _xlsx(["N° Ordre", "Nom", "Statut"], [["EC/18.00209", "A", "indépendant"]]), "personnes_physiques", "2026", date(2026, 9, 1))
+    historical = await _historical(db_session, admin_isole, organisation_id=admin_isole.organisation_id, numero="EC/18.00210", nom="H")
+    result = await compare_preparatory_to_historical(db_session, admin_isole.organisation_id, date(2026, 9, 1), historical.id)
     assert result.total_matched + result.total_preparatory_only == result.total_preparatory
     assert result.total_matched + result.total_historical_only == result.total_historical

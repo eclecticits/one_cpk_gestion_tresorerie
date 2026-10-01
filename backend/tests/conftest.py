@@ -184,6 +184,48 @@ async def test_admin_user(async_engine: AsyncEngine, test_organisation):
         return user
 
 
+@pytest_asyncio.fixture(loop_scope="session")
+async def admin_isole(async_engine: AsyncEngine):
+    """Administrateur d'une organisation NEUVE, propre au test.
+
+    `test_admin_user` partage son organisation avec toute la session, et les
+    tests y valident leurs données : un test qui raisonne sur « tout ce que
+    l'organisation contient » (dernier import, base consolidée d'un exercice)
+    voit alors les données des autres, et son résultat dépend de l'ordre
+    d'exécution. Ces tests-là prennent cette fixture.
+    """
+    import uuid as _uuid
+
+    from app.models.organisation import Organisation
+    from app.models.user import User
+
+    async with AsyncSession(async_engine) as session:
+        org = Organisation(
+            nom="Organisation isolée",
+            slug=f"iso-{_uuid.uuid4().hex[:10]}",
+            is_active=True,
+            plan_type="STANDARD",
+            status_abonnement="ACTIVE",
+        )
+        session.add(org)
+        await session.flush()
+        user = User(
+            email=f"iso-{_uuid.uuid4().hex[:10]}@example.com",
+            nom="Admin",
+            prenom="Isolé",
+            role="admin",
+            organisation_id=org.id,
+            active=True,
+            is_email_verified=True,
+            is_first_login=False,
+            must_change_password=False,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def admin_access_token(app_client: AsyncClient, test_admin_user) -> str:
     """Connecte l'admin et retourne l'access token (session-scoped, lecture seule)."""

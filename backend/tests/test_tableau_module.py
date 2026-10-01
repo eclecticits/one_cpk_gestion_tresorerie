@@ -707,12 +707,12 @@ class TestBaseTableauConsolidee:
         assert sorted(float(d.heures_forco) for d in nationale["dossiers"]) == [60.0, 100.0]
 
     @pytest.mark.asyncio
-    async def test_sans_exercice_precise_la_base_prend_le_dernier_import(self, db_session, test_admin_user):
-        org = test_admin_user.organisation_id
-        await import_excel(db_session, test_admin_user, org, "vieux.xlsx", _make_import_bytes(
+    async def test_sans_exercice_precise_la_base_prend_le_dernier_import(self, db_session, admin_isole):
+        org = admin_isole.organisation_id
+        await import_excel(db_session, admin_isole, org, "vieux.xlsx", _make_import_bytes(
             {"numero_ordre": "EC/18.10060"},
         ), "2037")
-        await import_excel(db_session, test_admin_user, org, "recent.xlsx", _make_import_bytes(
+        await import_excel(db_session, admin_isole, org, "recent.xlsx", _make_import_bytes(
             {"numero_ordre": "EC/18.10061"},
         ), "2038")
 
@@ -1192,17 +1192,17 @@ class TestAnalyseSurBaseConsolidee:
         assert dossier_juin.conclusion == V.INSCRIT
 
     @pytest.mark.asyncio
-    async def test_l_analyse_de_la_base_couvre_les_membres_absents_du_dernier_fichier(self, db_session, test_admin_user):
-        org = test_admin_user.organisation_id
-        mars = await import_excel(db_session, test_admin_user, org, "mars.xlsx", _make_import_bytes(
+    async def test_l_analyse_de_la_base_couvre_les_membres_absents_du_dernier_fichier(self, db_session, admin_isole):
+        org = admin_isole.organisation_id
+        mars = await import_excel(db_session, admin_isole, org, "mars.xlsx", _make_import_bytes(
             {"numero_ordre": "EC/18.50010", "nom": "ALPHA Jean", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
             {"numero_ordre": "EC/18.50011", "nom": "BETA Marie", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
         ), "2071", date_situation=date(2071, 3, 15))
-        await import_excel(db_session, test_admin_user, org, "juin.xlsx", _make_import_bytes(
+        await import_excel(db_session, admin_isole, org, "juin.xlsx", _make_import_bytes(
             {"numero_ordre": "EC/18.50010", "nom": "ALPHA Jean", "heures": 200, "cotisation": "OUI", "assurance": "OUI"},
         ), "2071", date_situation=date(2071, 6, 20))
 
-        analyse = await run_analyse_base(db_session, test_admin_user, org, exercice="2071")
+        analyse = await run_analyse_base(db_session, admin_isole, org, exercice="2071")
         beta = (await db_session.execute(
             select(TableauDossier).where(
                 TableauDossier.import_id == mars.imp.id,
