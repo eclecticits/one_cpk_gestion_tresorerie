@@ -13,10 +13,13 @@ import textwrap
 from datetime import datetime
 from email.message import EmailMessage
 from typing import Any, Callable, TypeVar
+from zoneinfo import ZoneInfo
 
 import anyio
 
 from app.core.config import settings
+# Même mention pour l'e-mail et WhatsApp : une seule source.
+from app.services.notifications.templates import AUTOMATIC_MESSAGE_NOTICE
 
 
 logger = logging.getLogger("onec_cpk_api.mailer")
@@ -352,6 +355,58 @@ def _count_message_attachments(msg: EmailMessage) -> int:
     return sum(1 for part in msg.iter_attachments())
 
 
+# AUTOMATIC_MESSAGE_NOTICE est portée par TOUT e-mail émis automatiquement par
+# l'application. Un modèle qui l'affiche déjà dans son propre pied de page
+# (décision du Bureau, sortie de fonds, rapports de trésorerie) n'en reçoit pas
+# une seconde.
+def _automatic_message_sent_at() -> str:
+    tz_name = (settings.weekly_report_timezone or "UTC").strip() or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    return datetime.now(tz).strftime("%d/%m/%Y à %H:%M")
+
+
+def mark_as_automatic_message(msg: EmailMessage) -> None:
+    """Signale l'e-mail comme automatique, pour le lecteur et pour les serveurs.
+
+    - un pied de page « Message automatique émis par ONEC Smart », daté, sous
+      chaque corps texte et HTML (pas dans les pièces jointes) ;
+    - `Auto-Submitted: auto-generated` (RFC 3834) et
+      `X-Auto-Response-Suppress` (Exchange/Outlook) : sans eux, chaque
+      réponse d'absence du destinataire revient dans la boîte expéditrice.
+    """
+    if msg.get("Auto-Submitted") is None:
+        msg["Auto-Submitted"] = "auto-generated"
+    if msg.get("X-Auto-Response-Suppress") is None:
+        msg["X-Auto-Response-Suppress"] = "All"
+
+    sent_at = _automatic_message_sent_at()
+    text_footer = f"\n\n—\n{AUTOMATIC_MESSAGE_NOTICE}\nEnvoyé le {sent_at}.\n"
+    html_footer = (
+        '<div style="margin:24px auto 0; max-width:680px; padding:12px 16px; border-top:1px solid #e5e7eb; '
+        'color:#9ca3af; font-family:Arial, sans-serif; font-size:11px; text-align:center;">'
+        f"{html.escape(AUTOMATIC_MESSAGE_NOTICE)}<br />Envoyé le {html.escape(sent_at)}."
+        "</div>"
+    )
+    for part in msg.walk():
+        if part.is_multipart() or part.get_content_disposition() == "attachment":
+            continue
+        subtype = part.get_content_subtype()
+        if part.get_content_maintype() != "text" or subtype not in {"plain", "html"}:
+            continue
+        content = part.get_content()
+        if AUTOMATIC_MESSAGE_NOTICE in content:
+            continue
+        if subtype == "plain":
+            content = content.rstrip() + text_footer
+        else:
+            index = content.lower().rfind("</body>")
+            content = content + html_footer if index < 0 else content[:index] + html_footer + content[index:]
+        part.set_content(content, subtype=subtype, charset="utf-8")
+
+
 def _send_email_message(
     *,
     smtp_host: str,
@@ -360,6 +415,7 @@ def _send_email_message(
     smtp_password: str,
     msg: EmailMessage,
 ) -> None:
+    mark_as_automatic_message(msg)
     port = int(smtp_port)
     require_tls = bool(getattr(settings, "smtp_require_tls", True))
     context = ssl.create_default_context()

@@ -155,6 +155,21 @@ def render(template: str, variables: dict[str, object] | None = None) -> str:
     return _strip_empty_fields(rendered)
 
 
+#: Mention ajoutée sous TOUT message WhatsApp, au rendu et non dans les gabarits :
+#: un tenant qui personnalise son gabarit ne peut pas la retirer par mégarde.
+#: Même texte que le pied de page des e-mails (`mailer.AUTOMATIC_MESSAGE_NOTICE`),
+#: en italique WhatsApp.
+AUTOMATIC_MESSAGE_NOTICE = "Message automatique émis par ONEC Smart. Merci de ne pas y répondre."
+
+
+def with_automatic_notice(message: str) -> str:
+    """Ajoute la mention « message automatique », sauf si le texte la porte déjà."""
+    text = (message or "").rstrip()
+    if not text or AUTOMATIC_MESSAGE_NOTICE in text:
+        return text
+    return f"{text}\n\n_{AUTOMATIC_MESSAGE_NOTICE}_"
+
+
 def resolve(event_type: str, overrides: dict | None = None) -> str:
     """Gabarit du tenant s'il existe et n'est pas vide, sinon celui par défaut."""
     if overrides:

@@ -54,6 +54,10 @@ def _send_alert_email_sync(subject: str, body: str) -> None:
     msg["From"] = smtp_user
     msg["To"] = smtp_user
     msg.set_content(body)
+    # Import local : app.core ne dépend pas des services au chargement.
+    from app.services.mailer import mark_as_automatic_message
+
+    mark_as_automatic_message(msg)
 
     try:
         port = int(smtp_port)

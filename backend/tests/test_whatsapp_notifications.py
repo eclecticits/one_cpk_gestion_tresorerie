@@ -550,7 +550,12 @@ async def test_le_gabarit_du_tenant_prime_sur_celui_par_defaut(
     )
 
     _, message = RecordingProvider.calls[0]
-    assert message == "Décaissement SOR-2026-0142 de 1 500,00 USD."
+    # Le gabarit du tenant, suivi de la mention ajoutée à tout envoi : un
+    # gabarit personnalisé ne peut pas la faire disparaître.
+    assert message == (
+        "Décaissement SOR-2026-0142 de 1 500,00 USD.\n\n"
+        "_Message automatique émis par ONEC Smart. Merci de ne pas y répondre._"
+    )
 
 
 async def test_un_champ_absent_ne_laisse_pas_de_ligne_orpheline(

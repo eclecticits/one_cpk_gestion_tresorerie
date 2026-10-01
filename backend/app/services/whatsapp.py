@@ -63,10 +63,11 @@ async def send_whatsapp_message(api_url: str, api_key: str, number: str, message
 
     from app.services.notifications.providers.base import ProviderConfig
     from app.services.notifications.providers.evolution import EvolutionWhatsAppProvider
+    from app.services.notifications.templates import with_automatic_notice
 
     provider = EvolutionWhatsAppProvider(ProviderConfig(api_url=api_url, api_key=api_key))
     try:
-        result = await provider.send_message(to=number, text=message)
+        result = await provider.send_message(to=number, text=with_automatic_notice(message))
     except Exception:  # pragma: no cover - le provider ne lève pas, filet de sécurité
         logger.exception("WhatsApp send failed for %s", number)
         return
