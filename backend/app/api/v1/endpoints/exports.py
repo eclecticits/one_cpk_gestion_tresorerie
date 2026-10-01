@@ -49,6 +49,7 @@ from app.models.client import Client
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
+from app.services.encaissement_flux import nature_versement, versements_numerotes
 from app.services.entrees_caisse import list_entrees_internes_caisse, list_entrees_internes_banque
 from app.services.tenant_identity import tenant_display_name
 from app.services.tranches_decaissement import libelle_tranche, tranches_par_sortie
@@ -2099,8 +2100,11 @@ async def construire_classeur_encaissements(
     if end_dt:
         query = query.where(Encaissement.date_encaissement <= end_dt)
 
+    # Filtres qui portent sur la NOTE et pas sur sa date : la feuille des
+    # versements les reprend, pour ne pas contredire la liste qu'elle complète.
+    filtres_note: list = []
     if statut_paiement:
-        query = query.where(Encaissement.statut_paiement == statut_paiement)
+        filtres_note.append(Encaissement.statut_paiement == statut_paiement)
     if numero_recu:
         # Même règle que l'écran : le classeur doit rendre ce que la recherche a
         # montré. Une normalisation d'un seul côté ferait diverger l'export de la
@@ -2109,11 +2113,11 @@ async def construire_classeur_encaissements(
             numero_recu, Encaissement.numero_recu, Encaissement.numero_proforma
         )
         if condition_numero_recu is not None:
-            query = query.where(condition_numero_recu)
+            filtres_note.append(condition_numero_recu)
     if budget_poste_id:
-        query = query.where(Encaissement.budget_poste_id == budget_poste_id)
+        filtres_note.append(Encaissement.budget_poste_id == budget_poste_id)
     if type_client:
-        query = query.where(Encaissement.type_client == type_client)
+        filtres_note.append(Encaissement.type_client == type_client)
     if mode_paiement:
         query = query.where(Encaissement.mode_paiement == mode_paiement)
     if deleted_filter == "active":
@@ -2132,16 +2136,18 @@ async def construire_classeur_encaissements(
             exp_uid = uuid.UUID(expert_comptable_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid expert_comptable_id UUID")
-        query = query.where(Encaissement.expert_comptable_id == exp_uid)
+        filtres_note.append(Encaissement.expert_comptable_id == exp_uid)
 
     if client:
-        query = query.where(
+        filtres_note.append(
             or_(
                 Encaissement.client_nom.ilike(f"%{client}%"),
                 ExpertComptable.nom_denomination.ilike(f"%{client}%"),
                 ExpertComptable.numero_ordre.ilike(f"%{client}%"),
             )
         )
+
+    query = query.where(*filtres_note)
 
     query = query.order_by(Encaissement.date_encaissement.desc())
 
@@ -2175,6 +2181,30 @@ async def construire_classeur_encaissements(
         operations = ft_res.scalars().all()
         noms = await resolve_fonds_tiers_display_names(db, operations)
         fonds_tiers_par_encaissement = {op.encaissement_id: noms[op.id][0] for op in operations}
+
+    # Versements de la période, quelle que soit la date de leur note : la liste
+    # ci-dessus range chaque note à SA date avec son cumul payé, si bien qu'un
+    # complément versé des jours après l'acompte n'apparaissait nulle part à
+    # son jour. Cette feuille montre l'argent le jour où il est entré.
+    versements_periode: list = []
+    if not annulees_seules and est_proforma is not True:
+        v = versements_numerotes(organisation_id)
+        versements_query = (
+            select(v, Encaissement, ExpertComptable)
+            .select_from(v)
+            .join(Encaissement, Encaissement.id == v.c.encaissement_id)
+            .outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
+            .where(*filtres_note)
+        )
+        if start_dt:
+            versements_query = versements_query.where(v.c.date_flux >= start_dt)
+        if end_dt:
+            versements_query = versements_query.where(v.c.date_flux <= end_dt)
+        if mode_paiement:
+            versements_query = versements_query.where(v.c.mode_paiement == mode_paiement)
+        versements_periode = (
+            await db.execute(versements_query.order_by(v.c.date_flux.desc(), v.c.rang.desc()))
+        ).all()
 
     # Entrées internes (approvisionnements banque -> caisse et versements
     # caisse -> banque) : préchargées ici
@@ -2526,6 +2556,77 @@ async def construire_classeur_encaissements(
             chart_value_col=2,
             organisation=organisation,
         )
+        if versements_periode:
+            ws_versements = wb.create_sheet("Versements")
+            lignes_versements: list[list[Any]] = []
+            total_verse_usd = Decimal("0")
+            for ligne in versements_periode:
+                enc = ligne.Encaissement
+                expert = ligne.ExpertComptable
+                montant_total = _round_money(enc.montant_total or enc.montant or Decimal("0"))
+                cumul = _round_money(ligne.cumul or Decimal("0"))
+                montant = _round_money(ligne.montant or Decimal("0"))
+                devise = (ligne.devise or "USD").upper()
+                if devise == "USD":
+                    total_verse_usd += montant
+                lignes_versements.append([
+                    ligne.date_flux.strftime("%d/%m/%Y") if ligne.date_flux else "",
+                    _format_operation_time(ligne.date_flux, None),
+                    enc.numero_recu or "",
+                    enc.date_encaissement.strftime("%d/%m/%Y") if enc.date_encaissement else "",
+                    (
+                        f"{expert.numero_ordre} - {expert.nom_denomination}"
+                        if expert is not None
+                        else (enc.client_nom or "")
+                    ),
+                    enc.libelle or "",
+                    f"{nature_versement(int(ligne.rang or 1), montant_total, cumul)} "
+                    f"({int(ligne.rang or 1)}/{int(ligne.nombre or 1)})",
+                    _financial_source_columns("Encaissement", ligne.canal, None)[1],
+                    _format_mode_paiement(ligne.mode_paiement),
+                    ligne.reference or "",
+                    devise,
+                    float(montant),
+                    float(montant_total),
+                    float(cumul),
+                    float(max(montant_total - cumul, Decimal("0"))),
+                ])
+            _build_list_sheet(
+                ws_versements,
+                title="VERSEMENTS DE LA PÉRIODE",
+                subtitle=(
+                    f"Période : {periode}  |  Une ligne par versement, à la date où l'argent "
+                    "est entré, y compris les compléments de notes émises avant la période"
+                ),
+                headers=[
+                    "Date du versement",
+                    "Heure",
+                    "N° Note de débit",
+                    "Date de la note",
+                    "Client",
+                    "Libellé",
+                    "Nature du versement",
+                    "Canal",
+                    "Mode de paiement",
+                    "Référence",
+                    "Devise",
+                    "Montant versé",
+                    "Montant total de la note",
+                    "Cumul payé après versement",
+                    "Reste après versement",
+                ],
+                data_rows=lignes_versements,
+                # Index 1-based, comme la feuille principale (« Montant versé » = 12).
+                money_cols=(12, 13, 14, 15),
+                total_values={12: float(total_verse_usd)},
+                organisation=organisation,
+                note_totaux=(
+                    "Total : versements en USD seulement"
+                    if any((l.devise or "USD").upper() != "USD" for l in versements_periode)
+                    else None
+                ),
+            )
+
         if inclure_annulations or traces:
             _build_journal_annulations(wb, traces, organisation=organisation, sujet="ENCAISSEMENTS")
 

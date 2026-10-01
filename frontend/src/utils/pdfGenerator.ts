@@ -1205,8 +1205,10 @@ export const generateGlobalReportPDF = async (
   // le montant réellement perçu : en vue CDF, c'est le second qu'il faut, sans
   // quoi le détail afficherait des dollars sous un total en francs. Les sorties,
   // elles, sont stockées dans LEUR devise, d'où leur colonne Devise plus bas.
+  // Une ligne par versement (GET /reports/versements) : la date est celle où
+  // l'argent est entré, un complément apparaît donc à son jour.
   const encRows = encaissements.map((e: any) => [
-    formatPdfDate(e.date_encaissement),
+    formatPdfDate(e.date_versement ?? e.date_encaissement),
     e.numero_recu || '-',
     e.expert_comptable?.nom_denomination || e.client_nom || '-',
     formatAmount(

@@ -10,12 +10,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_tenant_id
 from app.core.cache import cache_get, cache_set
-from app.services.encaissement_flux import encaissements_retenus, flux_encaissements
+from app.services.encaissement_flux import (
+    encaissements_retenus,
+    flux_encaissements,
+    nature_versement,
+    versements_numerotes,
+)
 from app.services.report_cache import report_summary_cache_key
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 from app.models.encaissement import Encaissement
+from app.models.expert_comptable import ExpertComptable
 from app.models.compte_bancaire import CompteBancaire
 from app.models.banque import Banque
 from app.models.transfert_interne import TransfertInterne
@@ -43,6 +49,7 @@ from app.schemas.reports import (
     ReportAnnualMonth,
     ReportAnnualCanalSplit,
     ReportTopExpense,
+    ReportVersementLine,
 )
 from app.schemas.sortie_fonds import SortieFondsOut
 from app.utils.formatters import calculer_journal_avec_solde
@@ -1361,6 +1368,113 @@ async def top_depenses(
     return [ReportTopExpense(motif=row.motif, total=row.total) for row in res.all()]
 
 
+@router.get("/versements", response_model=list[ReportVersementLine])
+async def versements(
+    date_debut: str | None = None,
+    date_fin: str | None = None,
+    canal: str | None = None,
+    devise: str | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> list[ReportVersementLine]:
+    """Détail des encaissements du rapport : une ligne par versement, à sa date.
+
+    La liste des notes (`GET /encaissements`) filtre sur la date de la NOTE et
+    montre son cumul payé : le complément versé cinq jours après l'acompte n'y
+    apparaissait pas à son jour, et le jour de l'acompte affichait de l'argent
+    pas encore reçu. Le détail divergeait ainsi du total du résumé, lui calculé
+    au versement. Cette liste reprend exactement le périmètre de ce total
+    (mêmes bornes, même filtre de statut) : sa somme lui est égale.
+    """
+    date_start = _parse_date_value(date_debut)
+    date_end = _parse_date_value(date_fin)
+    if date_start and date_end and date_start > date_end:
+        date_start, date_end = date_end, date_start
+    date_end_excl = _end_exclusive(date_end)
+    canal_value = (canal or "").strip().upper() or None
+    if canal_value == "ALL":
+        canal_value = None
+    if canal_value not in {None, "CAISSE", "BANQUE"}:
+        raise HTTPException(status_code=400, detail="canal invalide")
+    devise_value = (devise or "").strip().upper() or None
+    if devise_value == "ALL":
+        devise_value = None
+    if devise_value not in {None, *DEVISES_CONNUES}:
+        raise HTTPException(status_code=400, detail="devise invalide")
+
+    v = versements_numerotes(tenant_id)
+    conditions = [
+        Encaissement.organisation_id == tenant_id,
+        Encaissement.statut_paiement.in_(STATUT_PAIEMENT_INCLUS),
+    ]
+    if canal_value:
+        conditions.append(v.c.canal == canal_value)
+    if devise_value:
+        conditions.append(v.c.devise == devise_value)
+    if date_start:
+        conditions.append(
+            v.c.date_flux >= datetime.combine(date_start, datetime.min.time(), tzinfo=timezone.utc)
+        )
+    if date_end_excl:
+        conditions.append(
+            v.c.date_flux < datetime.combine(date_end_excl, datetime.min.time(), tzinfo=timezone.utc)
+        )
+
+    rows = (
+        await db.execute(
+            select(v, Encaissement, ExpertComptable.nom_denomination, ExpertComptable.numero_ordre)
+            .select_from(v)
+            .join(Encaissement, Encaissement.id == v.c.encaissement_id)
+            .outerjoin(ExpertComptable, ExpertComptable.id == Encaissement.expert_comptable_id)
+            .where(*conditions)
+            .order_by(v.c.date_flux, Encaissement.numero_recu, v.c.rang)
+        )
+    ).all()
+
+    lignes: list[ReportVersementLine] = []
+    for row in rows:
+        enc: Encaissement = row.Encaissement
+        montant_total = Decimal(enc.montant_total or enc.montant or 0)
+        cumul = Decimal(row.cumul or 0)
+        lignes.append(
+            ReportVersementLine(
+                id=str(row.versement_id or enc.id),
+                encaissement_id=enc.id,
+                versement_id=row.versement_id,
+                date_versement=row.date_flux,
+                date_encaissement=enc.date_encaissement,
+                numero_recu=enc.numero_recu,
+                type_client=enc.type_client,
+                client_nom=enc.client_nom,
+                expert_comptable=(
+                    {"nom_denomination": row.nom_denomination, "numero_ordre": row.numero_ordre}
+                    if row.nom_denomination
+                    else None
+                ),
+                libelle=enc.libelle,
+                description=enc.description,
+                budget_poste_code=enc.budget_poste_code,
+                budget_poste_libelle=enc.budget_poste_libelle,
+                canal=row.canal,
+                compte_bancaire_id=row.compte_bancaire_id,
+                devise_perception=row.devise or "USD",
+                mode_paiement=row.mode_paiement,
+                reference=row.reference,
+                montant_paye=Decimal(row.montant or 0),
+                montant_percu=Decimal(row.montant or 0),
+                montant_total=montant_total,
+                cumul_paye=cumul,
+                reste_apres=max(montant_total - cumul, Decimal("0")),
+                rang=int(row.rang or 1),
+                nombre_versements=int(row.nombre or 1),
+                nature_versement=nature_versement(int(row.rang or 1), montant_total, cumul),
+                statut_paiement=enc.statut_paiement,
+            )
+        )
+    return lignes
+
+
 @router.get("/journal-tresorerie", response_model=ReportJournalResponse)
 async def journal_tresorerie(
     canal: str,
@@ -1564,52 +1678,70 @@ async def journal_tresorerie(
 
     mouvements: list[dict] = []
 
-    # Une ligne par note, du montant réellement entré ICI : le rapprochement se
-    # fait note par note (`is_reconciled` vit sur l'encaissement), mais ce qu'il
-    # y a à rapprocher sur ce compte est la part qui y est tombée.
-    part_du_compte = _flux_du_compte(
-        select(
-            flux.c.encaissement_id.label("encaissement_id"),
-            func.sum(flux.c.montant).label("montant"),
-            func.min(flux.c.date_flux).label("date_flux"),
-        )
-    )
-    if start_dt:
-        part_du_compte = part_du_compte.where(flux.c.date_flux >= start_dt)
-    if end_dt:
-        part_du_compte = part_du_compte.where(flux.c.date_flux <= end_dt)
-    part_du_compte = part_du_compte.group_by(flux.c.encaissement_id).subquery()
-
+    # Une ligne par VERSEMENT, à sa date, du montant réellement entré ICI. Une
+    # ligne par note datée de son premier versement ramenait le complément
+    # d'une note soldée plus tard au jour de l'acompte : introuvable à sa date,
+    # et le solde courant du relevé faux entre les deux. Le rapprochement reste
+    # porté par la note (`is_reconciled` vit sur l'encaissement) : ses lignes
+    # partagent donc la même case.
+    v = versements_numerotes(tenant_id)
     enc_query = (
         select(
             Encaissement.id,
-            part_du_compte.c.date_flux,
+            v.c.date_flux,
             Encaissement.libelle,
-            Encaissement.reference,
-            part_du_compte.c.montant.label("montant"),
+            Encaissement.numero_recu,
+            func.coalesce(v.c.reference, Encaissement.reference).label("reference"),
+            v.c.montant,
+            v.c.rang,
+            v.c.nombre,
+            v.c.cumul,
+            Encaissement.montant_total,
             Encaissement.is_reconciled,
             Encaissement.reconciled_at,
             Encaissement.bank_statement_ref,
         )
-        .join(part_du_compte, part_du_compte.c.encaissement_id == Encaissement.id)
-        .where(Encaissement.organisation_id == tenant_id)
+        .select_from(v)
+        .join(Encaissement, Encaissement.id == v.c.encaissement_id)
+        .where(
+            Encaissement.organisation_id == tenant_id,
+            v.c.canal == canal,
+            v.c.devise == devise,
+        )
     )
+    if compte_bancaire_id:
+        enc_query = enc_query.where(v.c.compte_bancaire_id == compte_bancaire_id)
+    if start_dt:
+        enc_query = enc_query.where(v.c.date_flux >= start_dt)
+    if end_dt:
+        enc_query = enc_query.where(v.c.date_flux <= end_dt)
     enc_rows = (await db.execute(enc_query)).all()
-    for enc_id, dt, libelle, reference, montant, is_reconciled, reconciled_at, bank_statement_ref in enc_rows:
+    for row in enc_rows:
+        libelle = row.libelle
+        # Un paiement en une fois garde son libellé nu ; un versement partiel
+        # dit ce qu'il est et de quelle note, pour qu'on le reconnaisse seul.
+        if int(row.nombre or 1) > 1 or int(row.rang or 1) > 1 or (
+            Decimal(row.cumul or 0) < Decimal(row.montant_total or 0) - Decimal("0.01")
+        ):
+            nature = nature_versement(int(row.rang or 1), Decimal(row.montant_total or 0), Decimal(row.cumul or 0))
+            suffixe = f"{nature} {int(row.rang or 1)}/{int(row.nombre or 1)}"
+            if row.numero_recu:
+                suffixe += f" · note {row.numero_recu}"
+            libelle = f"{libelle or ''} — {suffixe}".strip(" —")
         mouvements.append(
             {
-                "date": dt,
+                "date": row.date_flux,
                 "libelle": libelle,
-                "reference": reference,
+                "reference": row.reference,
                 "compte_label": compte_label,
-                "entree": Decimal(montant or 0),
+                "entree": Decimal(row.montant or 0),
                 "sortie": Decimal("0"),
                 "type_operation": "ENCAISSEMENT",
-                "transaction_id": str(enc_id) if enc_id else None,
+                "transaction_id": str(row.id) if row.id else None,
                 "transaction_type": "ENCAISSEMENT",
-                "is_reconciled": bool(is_reconciled),
-                "reconciled_at": reconciled_at,
-                "bank_statement_ref": bank_statement_ref,
+                "is_reconciled": bool(row.is_reconciled),
+                "reconciled_at": row.reconciled_at,
+                "bank_statement_ref": row.bank_statement_ref,
             }
         )
 

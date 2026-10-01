@@ -160,6 +160,44 @@ class ReportJournalLine(DecimalBaseModel):
     bank_statement_ref: str | None = None
 
 
+class ReportVersementLine(DecimalBaseModel):
+    """Un versement encaissé, daté du jour où l'argent est entré.
+
+    Les champs d'en-tête de la note (`numero_recu`, `client_nom`, …) gardent
+    leur nom d'origine pour que les écrans et exports qui lisaient la liste des
+    notes lisent celle-ci sans traduction. `montant_paye`/`montant_percu` y
+    valent le montant DU VERSEMENT, pas le cumul de la note.
+    """
+
+    id: str
+    encaissement_id: UUID
+    versement_id: UUID | None = None
+    date_versement: datetime
+    date_encaissement: datetime | None = None
+    numero_recu: str | None = None
+    type_client: str | None = None
+    client_nom: str | None = None
+    expert_comptable: dict | None = None
+    libelle: str | None = None
+    description: str | None = None
+    budget_poste_code: str | None = None
+    budget_poste_libelle: str | None = None
+    canal: str | None = None
+    compte_bancaire_id: int | None = None
+    devise_perception: str = "USD"
+    mode_paiement: str | None = None
+    reference: str | None = None
+    montant_paye: Decimal = Decimal("0")
+    montant_percu: Decimal = Decimal("0")
+    montant_total: Decimal = Decimal("0")
+    cumul_paye: Decimal = Decimal("0")
+    reste_apres: Decimal = Decimal("0")
+    rang: int = 1
+    nombre_versements: int = 1
+    nature_versement: str = "Paiement intégral"
+    statut_paiement: str | None = None
+
+
 class ReportJournalResponse(DecimalBaseModel):
     canal: str
     devise: str
