@@ -945,6 +945,13 @@ export default function Rapports() {
   // Montant d'un encaissement dans la devise regardée : `montant_paye` est le
   // pivot USD, `montant_percu` le montant réellement encaissé. En vue CDF, le
   // premier afficherait des dollars sous un total en francs.
+  // « Acompte (1/2) », « Solde (2/2) »… : ce que le versement représentait
+  // pour sa note le jour où il est entré.
+  const libelleVersement = (e: any) =>
+    e?.nature_versement
+      ? `${e.nature_versement} (${e.rang ?? 1}/${e.nombre_versements ?? 1})`
+      : ''
+
   const montantEncaissement = (e: any) =>
     reportDevise === 'CDF'
       ? toNumber(e?.montant_percu ?? 0)
@@ -991,21 +998,28 @@ export default function Rapports() {
     }
   }
 
+  // Détail des encaissements : une ligne par VERSEMENT, à la date où l'argent
+  // est entré — le périmètre exact du total du résumé. La liste des notes
+  // (/encaissements) filtrait sur la date de la note avec son cumul payé : le
+  // complément versé des jours après l'acompte n'apparaissait pas à son jour,
+  // et le jour de l'acompte montrait de l'argent pas encore reçu. Le filtre
+  // devise est posé côté serveur, comme pour le résumé.
+  const versementsUrl = () =>
+    '/reports/versements' +
+    buildQuery({
+      date_debut: dateDebut,
+      date_fin: dateFin,
+      canal: reportCanal === 'ALL' ? undefined : reportCanal,
+      devise: reportDevise === 'ALL' ? undefined : reportDevise,
+    })
+
   const loadDetails = async () => {
     if (!rapport) return
     setDetailsLoading(true)
     setDetailsError(null)
     setSortiesWarning(null)
     try {
-      const encUrl =
-        '/encaissements' +
-        buildQuery({
-          date_debut: dateDebut,
-          date_fin: dateFin,
-          canal: reportCanal === 'ALL' ? undefined : reportCanal,
-          include: 'expert_comptable',
-          limit: 5000,
-        })
+      const encUrl = versementsUrl()
       const sortUrl =
         '/sorties-fonds' +
         buildQuery({
@@ -1169,15 +1183,7 @@ export default function Rapports() {
   // reposer sur `rapport.encaissements`/`.sorties` : ces listes ne sont remplies
   // que si l'utilisateur a déplié le détail à l'écran.
   const fetchExportDetails = async (): Promise<{ enc: any[]; sor: any[] }> => {
-    const encUrl =
-      '/encaissements' +
-      buildQuery({
-        date_debut: dateDebut,
-        date_fin: dateFin,
-        canal: reportCanal === 'ALL' ? undefined : reportCanal,
-        include: 'expert_comptable',
-        limit: 5000,
-      })
+    const encUrl = versementsUrl()
     const sortUrl =
       '/sorties-fonds' +
       buildQuery({
@@ -1302,11 +1308,14 @@ export default function Rapports() {
       const encaissementsHeaders = [
         'Date',
         'N° Note de débit',
+        'Date de la note',
         'Client',
         'Poste budgétaire',
         'Description',
+        'Nature du versement',
         'Montant Total (USD)',
         `Montant Payé${reportDevise === 'ALL' ? '' : ` (${reportDevise})`}`,
+        'Reste après versement',
         'Devise perçue',
         'Statut',
         'Mode de paiement',
@@ -1326,14 +1335,20 @@ export default function Rapports() {
             ? 'Avance'
             : 'Payé'
 
+        const reste = toNumber(e.reste_apres ?? 0)
+        // Une ligne = un versement : « Date » est celle où l'argent est entré,
+        // « Montant Payé » le montant de CE versement (pas le cumul de la note).
         return [
-          format(new Date(e.date_encaissement), 'dd/MM/yyyy'),
+          format(new Date(e.date_versement ?? e.date_encaissement), 'dd/MM/yyyy'),
           e.numero_recu,
+          e.date_encaissement ? format(new Date(e.date_encaissement), 'dd/MM/yyyy') : '',
           e.expert_comptable?.nom_denomination || e.client_nom || '',
           poste,
           e.description || '',
+          libelleVersement(e),
           Number.isFinite(montantTotal) ? montantTotal : 0,
           Number.isFinite(montantPaye) ? montantPaye : 0,
+          Number.isFinite(reste) ? reste : 0,
           String(e.devise_perception || 'USD').toUpperCase(),
           statut,
           e.mode_paiement || '',
@@ -1361,8 +1376,8 @@ export default function Rapports() {
         subtitle: exportSubtitle,
         headers: encaissementsHeaders,
         rows: encaissementsData,
-        widths: [14, 20, 32, 34, 42, 20, 20, 16, 16, 22],
-        moneyColumns: [5, 6],
+        widths: [14, 20, 14, 32, 34, 42, 22, 20, 20, 20, 16, 16, 22],
+        moneyColumns: [7, 8, 9],
         summaryCards: encaissementCards,
         footerRow: reportDevise === 'ALL'
           ? undefined
@@ -2237,17 +2252,23 @@ export default function Rapports() {
                     <th>N° Note de débit</th>
                     <th>Client</th>
                     <th>Poste budgétaire</th>
+                    <th>Nature du versement</th>
                     <th>Montant payé</th>
+                    <th>Reste après versement</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(rapport.encaissements || []).map((e: any) => (
                     <tr key={e.id}>
-                      <td>{formatReportDate(e.date_encaissement)}</td>
-                      <td>{e.numero_recu}</td>
+                      <td>{formatReportDate(e.date_versement ?? e.date_encaissement)}</td>
+                      <td title={e.date_encaissement ? `Note du ${formatReportDate(e.date_encaissement)}` : undefined}>
+                        {e.numero_recu}
+                      </td>
                       <td>{e.expert_comptable?.nom_denomination || e.client_nom || '-'}</td>
                       <td>{[e.budget_poste_code, e.budget_poste_libelle].filter(Boolean).join(' - ') || '-'}</td>
+                      <td>{libelleVersement(e) || '-'}</td>
                       <td>{formatCurrency(montantEncaissement(e))}</td>
+                      <td>{e.reste_apres != null ? formatCurrency(toNumber(e.reste_apres)) : '-'}</td>
                     </tr>
                   ))}
                 </tbody>
