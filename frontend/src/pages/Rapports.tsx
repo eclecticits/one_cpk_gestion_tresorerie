@@ -15,6 +15,11 @@ import { toNumber } from '../utils/amount'
 import { getStatusMeta } from '../utils/statusMapper'
 import type { Money } from '../types'
 import { getTypeSortieLabel } from '../utils/sortieFondsHelpers'
+import {
+  createReportListSheet,
+  createReportSummarySheet,
+  type ReportSummaryItem,
+} from '../utils/reportExcelStyles'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'export.
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
 let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
@@ -404,21 +409,51 @@ export default function Rapports() {
         : selectedCompte
           ? `${selectedCompte.banque?.nom || 'Banque'} - ${selectedCompte.intitule}`
           : 'Compte bancaire'
-    const rows = journalData.lignes.map((line) => ({
-      Date: formatReportDate(line.date),
-      Libelle: `${(line.libelle || '').trim()}${line.reference ? ` (${line.reference})` : ''}`,
-      Entree: toNumber(line.entree),
-      Sortie: toNumber(line.sortie),
-      Solde: toNumber(line.solde),
-    }))
-    const summaryRows = [
-      { Date: 'Solde initial', Libelle: '', Entree: '', Sortie: '', Solde: toNumber(journalData.solde_initial) },
-      { Date: 'Solde final', Libelle: '', Entree: '', Sortie: '', Solde: toNumber(journalData.solde_final) },
-    ]
-    const sheet = XLSX.utils.json_to_sheet([...summaryRows, ...rows])
+    const totalEntreesJournal = journalData.lignes.reduce((total, line) => total + toNumber(line.entree), 0)
+    const totalSortiesJournal = journalData.lignes.reduce((total, line) => total + toNumber(line.sortie), 0)
+    const soldeInitialJournal = toNumber(journalData.solde_initial)
+    const soldeFinalJournal = toNumber(journalData.solde_final)
+    const journalGeneratedAt = format(new Date(), "dd/MM/yyyy 'à' HH:mm")
+    const rows = journalData.lignes.map((line) => [
+      formatReportDate(line.date),
+      `${(line.libelle || '').trim()}${line.reference ? ` (${line.reference})` : ''}`,
+      toNumber(line.entree),
+      toNumber(line.sortie),
+      toNumber(line.solde),
+    ])
+    const sheet = createReportListSheet(XLSX, {
+      title: `JOURNAL DE TRÉSORERIE — ${nomCompte}`,
+      organisation: user?.organisation_name || user?.organisation_slug || 'ONEC',
+      subtitle: `${periodeLabel} | Canal : ${journalCanal} | Devise : ${journalDeviseEffective} | Généré le ${journalGeneratedAt}`,
+      headers: ['Date', 'Libellé', 'Entrée', 'Sortie', 'Solde'],
+      rows,
+      widths: [16, 58, 18, 18, 18],
+      moneyColumns: [2, 3, 4],
+      summaryCards: [
+        { label: 'Solde initial', value: soldeInitialJournal, format: 'money' },
+        { label: 'Total entrées', value: totalEntreesJournal, tone: 'positive', format: 'money' },
+        { label: 'Total sorties', value: totalSortiesJournal, tone: 'warning', format: 'money' },
+        {
+          label: 'Solde final',
+          value: soldeFinalJournal,
+          tone: soldeFinalJournal < 0 ? 'negative' : 'positive',
+          format: 'money',
+        },
+        { label: 'Mouvements', value: rows.length, format: 'integer' },
+      ],
+      footerRow: ['TOTAL MOUVEMENTS', '', totalEntreesJournal, totalSortiesJournal, soldeFinalJournal],
+      wrapColumns: [1],
+      centerColumns: [0],
+    })
     const wb = XLSX.utils.book_new()
+    wb.Props = {
+      Title: `Journal de trésorerie — ${nomCompte}`,
+      Subject: periodeLabel,
+      Author: user?.organisation_name || 'ONEC',
+      Company: user?.organisation_name || 'ONEC',
+    }
     XLSX.utils.book_append_sheet(wb, sheet, 'Journal')
-    XLSX.writeFile(wb, `Journal_${nomCompte}_${dateFin}.xlsx`)
+    XLSX.writeFile(wb, `Journal_${nomCompte}_${dateFin}.xlsx`, { compression: true, cellStyles: true })
   }
 
   const fetchWithLog = async (label: string, url: string) => {
@@ -1116,17 +1151,6 @@ export default function Rapports() {
     return `du ${format(new Date(dateDebut), 'dd/MM/yyyy')} au ${format(new Date(dateFin), 'dd/MM/yyyy')}`
   }, [dateDebut, dateFin])
 
-  // Libellé de la contrepartie entrante des transferts internes. En vue
-  // consolidée les deux jambes figurent au rapport et s'annulent : c'est ce qui
-  // rend l'égalité « entrées + transferts reçus - sorties = solde » vérifiable.
-  const transfertsRecusLabel = useMemo(() => {
-    if (reportCanal === 'BANQUE') return 'Transferts internes reçus (versements de la caisse)'
-    if (reportCanal === 'CAISSE') {
-      return 'Transferts internes reçus (approvisionnements depuis la banque)'
-    }
-    return 'Transferts internes reçus (contrepartie des sorties de transfert)'
-  }, [reportCanal])
-
   const devisesPresentes: string[] = useMemo(
     () => (rapport?.parDevise || []).map((ligne: any) => ligne.devise),
     [rapport]
@@ -1187,100 +1211,172 @@ export default function Rapports() {
       ])
 
       const wb = XLSX.utils.book_new()
+      const organisationExport = user?.organisation_name || user?.organisation_slug || 'ONEC'
+      const canalExport = reportCanal === 'ALL' ? 'Tous canaux' : reportCanal
+      const deviseExport = reportDevise === 'ALL' ? 'Toutes (non converties)' : reportDevise
+      const generatedAt = format(new Date(), "dd/MM/yyyy 'à' HH:mm")
+      const exportSubtitle = `${periodeLabel} | Canal : ${canalExport} | Devise : ${deviseExport} | Généré le ${generatedAt}`
+      wb.Props = {
+        Title: 'Rapport financier',
+        Subject: exportSubtitle,
+        Author: organisationExport,
+        Company: organisationExport,
+      }
 
-      const summaryData = [
-        ['RAPPORT FINANCIER'],
-        [`Période : ${periodeLabel}`],
-        [],
-        ['RÉSUMÉ'],
-        ['Canal', reportCanal === 'ALL' ? 'Tous canaux' : reportCanal],
-        ['Devise', reportDevise === 'ALL' ? 'Toutes (cumulées, non converties)' : reportDevise],
-        ['Total Encaissements', formatCurrency(rapport.totalEncaissements)],
-        ['Encaissements hors budget', formatCurrency(rapport.encaissementsHorsBudget ?? 0)],
-        [transfertsRecusLabel, formatCurrency(rapport.entreesInternes ?? 0)],
-        ['Total Sorties', formatCurrency(rapport.totalSorties)],
-        ['dont transferts internes', formatCurrency(rapport.transfertsInternes ?? 0)],
-        ['Retours en trésorerie', formatCurrency(rapport.retoursCaisse ?? 0)],
-        ['Sorties nettes', formatCurrency(rapport.sortiesNettes ?? rapport.totalSorties)],
-        ['Flux net de la période', formatCurrency(rapport.fluxPeriode ?? 0)],
-        [`Solde au ${dateDebut}`, formatCurrency(rapport.soldeInitial ?? 0)],
-        ['Solde final', formatCurrency(rapport.soldeFinal ?? rapport.solde)],
-        ["Nombre d'encaissements", rapport.nombreEncaissements],
-        ['Nombre de sorties', rapport.nombreSorties],
-        ['Nombre de réquisitions', rapport.nombreRequisitions],
-        // Les lignes ci-dessus cumulent les devises (compatibilité). Le bloc qui
-        // suit est la lecture exacte : montants bruts, une ligne par devise, en
-        // nombres et non en texte formaté pour rester calculable dans Excel.
-        ...((rapport.parDevise?.length ?? 0) > 0
-          ? [
-              [],
-              ['DÉTAIL PAR DEVISE (montants non convertis)'],
-              [
-                'Devise',
-                'Solde initial',
-                'Encaissements',
-                'Encaissements hors budget',
-                'Transferts reçus',
-                'Sorties',
-                'dont dépenses réelles',
-                'Retours en trésorerie',
-                'Sorties nettes',
-                'Flux net de la période',
-                'Solde',
-              ],
-              ...rapport.parDevise.map((ligne: any) => [
-                ligne.devise,
-                ligne.soldeInitial,
-                ligne.encaissements,
-                ligne.encaissementsHorsBudget,
-                ligne.entreesInternes,
-                ligne.sorties,
-                ligne.depensesReelles,
-                ligne.retoursCaisse,
-                ligne.sortiesNettes,
-                ligne.fluxPeriode,
-                ligne.solde,
-              ]),
-            ]
-          : []),
+      const totalEncaissements = toNumber(rapport.totalEncaissements)
+      const totalSorties = toNumber(rapport.totalSorties)
+      const sortiesNettes = toNumber(rapport.sortiesNettes ?? rapport.totalSorties)
+      const fluxPeriode = toNumber(rapport.fluxPeriode ?? 0)
+      const soldeInitial = toNumber(rapport.soldeInitial ?? 0)
+      const soldeFinal = toNumber(rapport.soldeFinal ?? rapport.solde)
+      const summaryItems: ReportSummaryItem[] = [
+        { label: 'Encaissements', value: totalEncaissements, tone: 'positive', format: 'money' },
+        { label: 'Sorties brutes', value: totalSorties, tone: 'warning', format: 'money' },
+        { label: 'Sorties nettes', value: sortiesNettes, tone: 'warning', format: 'money' },
+        {
+          label: 'Flux net',
+          value: fluxPeriode,
+          tone: fluxPeriode < 0 ? 'negative' : 'positive',
+          format: 'money',
+        },
+        { label: `Solde au ${dateDebut}`, value: soldeInitial, format: 'money' },
+        {
+          label: 'Solde final',
+          value: soldeFinal,
+          tone: soldeFinal < 0 ? 'negative' : 'positive',
+          format: 'money',
+        },
+        { label: 'Réquisitions', value: rapport.nombreRequisitions, tone: 'accent', format: 'integer' },
       ]
-      const summarySheet = XLSX.utils.aoa_to_sheet(summaryData)
+      const summarySheet = createReportSummarySheet(XLSX, {
+        title: 'RAPPORT FINANCIER',
+        organisation: organisationExport,
+        subtitle: exportSubtitle,
+        items: summaryItems,
+        detailTitle: 'DÉTAIL PAR DEVISE (montants non convertis)',
+        detailHeaders: (rapport.parDevise?.length ?? 0) > 0
+          ? [
+              'Devise',
+              'Solde initial',
+              'Encaissements',
+              'Encaissements hors budget',
+              'Transferts reçus',
+              'Sorties',
+              'dont dépenses réelles',
+              'Retours en trésorerie',
+              'Sorties nettes',
+              'Flux net de la période',
+              'Solde',
+            ]
+          : [],
+        // Valeurs numériques conservées pour les calculs et tris dans Excel.
+        detailRows: (rapport.parDevise || []).map((ligne: any) => [
+          ligne.devise,
+          toNumber(ligne.soldeInitial),
+          toNumber(ligne.encaissements),
+          toNumber(ligne.encaissementsHorsBudget),
+          toNumber(ligne.entreesInternes),
+          toNumber(ligne.sorties),
+          toNumber(ligne.depensesReelles),
+          toNumber(ligne.retoursCaisse),
+          toNumber(ligne.sortiesNettes),
+          toNumber(ligne.fluxPeriode),
+          toNumber(ligne.solde),
+        ]),
+        detailMoneyColumns: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        detailWidths: [12, 18, 18, 24, 20, 18, 22, 22, 18, 22, 18],
+        detailCenterColumns: [0],
+        detailCellTone: (value, _rowIndex, columnIndex) => {
+          if (columnIndex !== 9 && columnIndex !== 10) return undefined
+          const numericValue = typeof value === 'number' || typeof value === 'string' ? toNumber(value) : 0
+          return numericValue < 0 ? 'negative' : 'positive'
+        },
+        notice: reportDevise === 'ALL'
+          ? 'ATTENTION — Les devises ne sont pas converties. Le détail par devise ci-dessous fait foi.'
+          : undefined,
+      })
       XLSX.utils.book_append_sheet(wb, summarySheet, 'Résumé')
 
-      const encaissementsData = [
-        // « Montant Total » reste la note de débit, toujours exprimée en pivot
-        // USD ; « Montant Payé » suit la devise regardée, comme les totaux.
-        ['Date', 'N° Note de débit', 'Client', 'Poste budgétaire', 'Description', 'Montant Total (USD)', `Montant Payé${reportDevise === 'ALL' ? '' : ` (${reportDevise})`}`, 'Devise perçue', 'Statut', 'Mode de paiement'],
-        ...enc.map((e: any) => {
-          const montantTotal = toNumber(e.montant_total ?? e.montant ?? 0)
-          const montantPaye = montantEncaissement(e)
-          const poste = e.budget_poste_code
-            ? `${e.budget_poste_code}${e.budget_poste_libelle ? ` - ${e.budget_poste_libelle}` : ''}`
-            : ''
-          const statut =
-            e.statut_paiement === 'non_paye'
-              ? 'Non payé'
-              : e.statut_paiement === 'partiel'
-              ? 'Partiel'
-              : e.statut_paiement === 'avance'
-              ? 'Avance'
-              : 'Payé'
-
-          return [
-            format(new Date(e.date_encaissement), 'dd/MM/yyyy'),
-            e.numero_recu,
-            e.expert_comptable?.nom_denomination || e.client_nom || '',
-            poste,
-            e.description || '',
-            Number.isFinite(montantTotal) ? montantTotal : 0,
-            Number.isFinite(montantPaye) ? montantPaye : 0,
-            String(e.devise_perception || 'USD').toUpperCase(),
-            statut,
-            e.mode_paiement || '',
-          ]
-        })
+      // « Montant Total » reste la note de débit, toujours exprimée en pivot
+      // USD ; « Montant Payé » suit la devise regardée, comme les totaux.
+      const encaissementsHeaders = [
+        'Date',
+        'N° Note de débit',
+        'Client',
+        'Poste budgétaire',
+        'Description',
+        'Montant Total (USD)',
+        `Montant Payé${reportDevise === 'ALL' ? '' : ` (${reportDevise})`}`,
+        'Devise perçue',
+        'Statut',
+        'Mode de paiement',
       ]
-      const encaissementsSheet = XLSX.utils.aoa_to_sheet(encaissementsData)
+      const encaissementsData = enc.map((e: any) => {
+        const montantTotal = toNumber(e.montant_total ?? e.montant ?? 0)
+        const montantPaye = montantEncaissement(e)
+        const poste = e.budget_poste_code
+          ? `${e.budget_poste_code}${e.budget_poste_libelle ? ` - ${e.budget_poste_libelle}` : ''}`
+          : ''
+        const statut =
+          e.statut_paiement === 'non_paye'
+            ? 'Non payé'
+            : e.statut_paiement === 'partiel'
+            ? 'Partiel'
+            : e.statut_paiement === 'avance'
+            ? 'Avance'
+            : 'Payé'
+
+        return [
+          format(new Date(e.date_encaissement), 'dd/MM/yyyy'),
+          e.numero_recu,
+          e.expert_comptable?.nom_denomination || e.client_nom || '',
+          poste,
+          e.description || '',
+          Number.isFinite(montantTotal) ? montantTotal : 0,
+          Number.isFinite(montantPaye) ? montantPaye : 0,
+          String(e.devise_perception || 'USD').toUpperCase(),
+          statut,
+          e.mode_paiement || '',
+        ]
+      })
+      const totalFacture = encaissementsData.reduce((total, row) => total + toNumber(row[7] as Money), 0)
+      const totalEncaisse = encaissementsData.reduce((total, row) => total + toNumber(row[8] as Money), 0)
+      const encaissementsPayes = encaissementsData.filter((row) => row[11] === 'Payé').length
+      const encaissementCards: ReportSummaryItem[] = reportDevise === 'ALL'
+        ? [
+            { label: 'Montant facturé (USD)', value: totalFacture, tone: 'accent', format: 'money' },
+            { label: 'Opérations', value: encaissementsData.length, format: 'integer' },
+            { label: 'Payées', value: encaissementsPayes, tone: 'positive', format: 'integer' },
+            { label: 'Devises', value: 'Non converties', tone: 'warning' },
+          ]
+        : [
+            { label: 'Montant facturé (USD)', value: totalFacture, tone: 'accent', format: 'money' },
+            { label: `Montant encaissé (${reportDevise})`, value: totalEncaisse, tone: 'positive', format: 'money' },
+            { label: 'Opérations', value: encaissementsData.length, format: 'integer' },
+            { label: 'Payées', value: encaissementsPayes, tone: 'positive', format: 'integer' },
+          ]
+      const encaissementsSheet = createReportListSheet(XLSX, {
+        title: 'ENCAISSEMENTS',
+        organisation: organisationExport,
+        subtitle: exportSubtitle,
+        headers: encaissementsHeaders,
+        rows: encaissementsData,
+        widths: [14, 20, 32, 34, 42, 20, 20, 16, 16, 22],
+        moneyColumns: [5, 6],
+        summaryCards: encaissementCards,
+        footerRow: reportDevise === 'ALL'
+          ? undefined
+          : ['TOTAL', '', '', '', '', '', '', totalFacture, totalEncaisse, '', '', '', ''],
+        wrapColumns: [3, 4, 5, 6],
+        centerColumns: [0, 1, 2, 10, 11, 12],
+        cellTone: (value, _rowIndex, columnIndex) => {
+          if (columnIndex !== 11) return undefined
+          if (value === 'Payé') return 'positive'
+          if (value === 'Partiel') return 'warning'
+          if (value === 'Avance') return 'accent'
+          return value === 'Non payé' ? 'negative' : undefined
+        },
+      })
       XLSX.utils.book_append_sheet(wb, encaissementsSheet, 'Encaissements')
 
       const sortiesDataWithPostes = await Promise.all(
@@ -1310,35 +1406,93 @@ export default function Rapports() {
           ]
         })
       )
+      const totalSortiesDetail = sortiesDataWithPostes.reduce(
+        (total, row) => total + toNumber(row[6] as Money),
+        0,
+      )
+      const nombreTransferts = sor.filter((sortie: any) => estTransfertInterne(sortie)).length
+      const nombreRequisitions = new Set(
+        sor.map((sortie: any) => sortie.requisition_id).filter(Boolean),
+      ).size
+      const sortieCards: ReportSummaryItem[] = reportDevise === 'ALL'
+        ? [
+            { label: 'Opérations', value: sortiesDataWithPostes.length, format: 'integer' },
+            { label: 'Réquisitions', value: nombreRequisitions, format: 'integer' },
+            { label: 'Transferts internes', value: nombreTransferts, tone: 'accent', format: 'integer' },
+            { label: 'Devises', value: 'Non converties', tone: 'warning' },
+          ]
+        : [
+            { label: `Montant exporté (${reportDevise})`, value: totalSortiesDetail, tone: 'warning', format: 'money' },
+            { label: 'Opérations', value: sortiesDataWithPostes.length, format: 'integer' },
+            { label: 'Réquisitions', value: nombreRequisitions, format: 'integer' },
+            { label: 'Transferts internes', value: nombreTransferts, tone: 'accent', format: 'integer' },
+          ]
 
-      const sortiesData = [
-        ['Date', 'Référence', 'Type', 'N° Réquisition', 'Objet', 'Poste budgétaire', 'Montant', 'Devise', 'Mode de paiement'],
-        ...sortiesDataWithPostes
-      ]
-      const sortiesSheet = XLSX.utils.aoa_to_sheet(sortiesData)
+      const sortiesSheet = createReportListSheet(XLSX, {
+        title: 'SORTIES DE FONDS',
+        organisation: organisationExport,
+        subtitle: exportSubtitle,
+        headers: ['Date', 'Référence', 'Type', 'N° Réquisition', 'Objet', 'Poste budgétaire', 'Montant', 'Devise', 'Mode de paiement'],
+        rows: sortiesDataWithPostes,
+        widths: [14, 22, 24, 22, 42, 34, 18, 14, 22],
+        moneyColumns: [6],
+        summaryCards: sortieCards,
+        footerRow: reportDevise === 'ALL'
+          ? undefined
+          : ['TOTAL', '', '', '', '', '', totalSortiesDetail, '', ''],
+        wrapColumns: [4, 5],
+        centerColumns: [0, 1, 2, 3, 7, 8],
+        rowTone: (_row, rowIndex) => estTransfertInterne(sor[rowIndex]) ? 'accent' : undefined,
+      })
       XLSX.utils.book_append_sheet(wb, sortiesSheet, 'Sorties de Fonds')
 
       // Détail des transferts internes. Feuille dédiée même en canal « Tous » :
       // la feuille Sorties ne les montre que comme sortantes du canal d'origine,
       // jamais comme entrantes du canal d'arrivée.
       if (transfertsRecus.length) {
-        const transfertsData = [
-          ['Date', 'Référence', 'Sens', 'Motif', 'Bénéficiaire', 'Montant', 'Devise'],
-          ...transfertsRecus.map((t: any) => [
-            t.date_paiement ? format(new Date(t.date_paiement), 'dd/MM/yyyy') : '',
-            t.reference_numero || t.reference || '',
-            t._sens || '',
-            t.motif || '',
-            t.beneficiaire || '',
-            toNumber(t.montant_paye ?? 0),
-            t.devise || '',
-          ]),
-        ]
-        const transfertsSheet = XLSX.utils.aoa_to_sheet(transfertsData)
+        const transfertsData = transfertsRecus.map((t: any) => [
+          t.date_paiement ? format(new Date(t.date_paiement), 'dd/MM/yyyy') : '',
+          t.reference_numero || t.reference || '',
+          t._sens || '',
+          t.motif || '',
+          t.beneficiaire || '',
+          toNumber(t.montant_paye ?? 0),
+          t.devise || '',
+        ])
+        const totalTransferts = transfertsData.reduce((total, row) => total + toNumber(row[5] as Money), 0)
+        const transfertCards: ReportSummaryItem[] = reportDevise === 'ALL'
+          ? [
+              { label: 'Opérations', value: transfertsData.length, format: 'integer' },
+              { label: 'Sens représentés', value: new Set(transfertsData.map((row) => row[2])).size, format: 'integer' },
+              { label: 'Nature', value: 'Mouvements internes', tone: 'accent' },
+              { label: 'Devises', value: 'Non converties', tone: 'warning' },
+            ]
+          : [
+              { label: `Montant transféré (${reportDevise})`, value: totalTransferts, tone: 'accent', format: 'money' },
+              { label: 'Opérations', value: transfertsData.length, format: 'integer' },
+              { label: 'Sens représentés', value: new Set(transfertsData.map((row) => row[2])).size, format: 'integer' },
+              { label: 'Nature', value: 'Mouvements internes', tone: 'accent' },
+            ]
+        const transfertsSheet = createReportListSheet(XLSX, {
+          title: 'TRANSFERTS INTERNES',
+          organisation: organisationExport,
+          subtitle: exportSubtitle,
+          headers: ['Date', 'Référence', 'Sens', 'Motif', 'Bénéficiaire', 'Montant', 'Devise'],
+          rows: transfertsData,
+          widths: [14, 22, 22, 40, 30, 18, 14],
+          moneyColumns: [5],
+          summaryCards: transfertCards,
+          footerRow: reportDevise === 'ALL'
+            ? undefined
+            : ['TOTAL', '', '', '', '', totalTransferts, ''],
+          wrapColumns: [3, 4],
+          centerColumns: [0, 1, 2, 6],
+          cellTone: (_value, _rowIndex, columnIndex) => columnIndex === 2 ? 'accent' : undefined,
+        })
         XLSX.utils.book_append_sheet(wb, transfertsSheet, 'Transferts internes')
       }
 
-      XLSX.writeFile(wb, `rapport_${dateDebut}_${dateFin}.xlsx`)
+      XLSX.writeFile(wb, `rapport_${dateDebut}_${dateFin}.xlsx`, { compression: true, cellStyles: true })
       notifySuccess('Export Excel', 'Le fichier a été téléchargé.')
     } catch (error) {
       console.error('Error exporting to Excel:', error)

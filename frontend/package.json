@@ -22,7 +22,7 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.21.3",
     "recharts": "^3.7.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "npm:xlsx-js-style@^1.2.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.48",
