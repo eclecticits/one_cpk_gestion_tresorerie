@@ -17,6 +17,9 @@
 # env files
 .env
 .env.*
+# Modèle de configuration sans secret : versionné, pour que chaque nouvelle
+# variable (ex. MONTHLY_TREASURY_REPORT_*) soit documentée avec le code.
+!.env.example
 
 # logs
 *.log
