@@ -767,10 +767,16 @@ async def tableau_actualisation_ligne(
         for i in imports
     ]
 
-    # Déclarations rattachées à l'identité de la ligne. Le cadrage vient du
-    # parent : la ligne appartient à une actualisation déjà vérifiée ci-dessus.
+    # Déclarations rattachées à l'identité de la ligne. Côté déclarations, la
+    # colonne s'appelle `member_identity_id` : `identity_id` n'existe pas sur
+    # ces modèles et faisait tomber la route en 500. Cadrage par organisation
+    # en plus : les identités sont propres à un tenant, mais la requête ne
+    # doit pas compter dessus.
     ca = (await db.execute(
-        select(TableauCaDeclaration).where(TableauCaDeclaration.identity_id == row.identity_id)
+        select(TableauCaDeclaration).where(
+            TableauCaDeclaration.organisation_id == tenant_id,
+            TableauCaDeclaration.member_identity_id == row.identity_id,
+        )
     )).scalars().all()
     out["ca_declarations"] = [
         {
@@ -785,7 +791,10 @@ async def tableau_actualisation_ligne(
 
     assurances = (await db.execute(
         select(TableauInsuranceDeclaration)
-        .where(TableauInsuranceDeclaration.identity_id == row.identity_id)
+        .where(
+            TableauInsuranceDeclaration.organisation_id == tenant_id,
+            TableauInsuranceDeclaration.member_identity_id == row.identity_id,
+        )
     )).scalars().all()
     out["insurance_declarations"] = [
         {
