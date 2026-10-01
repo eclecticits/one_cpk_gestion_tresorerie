@@ -166,7 +166,9 @@ export default function Dashboard() {
   const [showForecast, setShowForecast] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [fabOpen, setFabOpen] = useState(false)
-  const [periodType, setPeriodType] = useState<PeriodType>('month')
+  // Le tableau de bord s'ouvre sur la journée en cours : c'est ce que la
+  // caisse vérifie d'abord. Les autres périodes restent à un clic.
+  const [periodType, setPeriodType] = useState<PeriodType>('today')
   const [customDateDebut, setCustomDateDebut] = useState('')
   const [customDateFin, setCustomDateFin] = useState('')
   const [pendingCustomDateDebut, setPendingCustomDateDebut] = useState('')
