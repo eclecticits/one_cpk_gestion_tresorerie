@@ -203,6 +203,37 @@ class ReportVersementLine(DecimalBaseModel):
     est_recette: bool = True
 
 
+class ReportRetourLine(DecimalBaseModel):
+    """Un retour en trésorerie, daté du jour où l'argent est revenu.
+
+    La sortie d'origine n'est pas modifiée : elle reste à sa date avec son
+    montant décaissé. Le retour est une ligne à part, à SA date, qui rappelle
+    la sortie qu'il corrige et ce qu'il en reste à justifier après lui.
+    """
+
+    id: UUID
+    date_retour: datetime
+    reference_numero: str | None = None
+    type_retour: str
+    motif: str | None = None
+    montant: Decimal
+    devise: str = "USD"
+    canal: str = "CAISSE"
+    compte_bancaire_id: int | None = None
+    mode: str | None = None
+    budget_poste_code: str | None = None
+    budget_poste_libelle: str | None = None
+    sortie_fonds_id: UUID
+    sortie_reference: str | None = None
+    sortie_date: datetime | None = None
+    sortie_beneficiaire: str | None = None
+    sortie_motif: str | None = None
+    sortie_montant: Decimal = Decimal("0")
+    numero_requisition: str | None = None
+    total_retourne_apres: Decimal = Decimal("0")
+    reste_a_justifier_apres: Decimal = Decimal("0")
+
+
 class ReportJournalResponse(DecimalBaseModel):
     canal: str
     devise: str

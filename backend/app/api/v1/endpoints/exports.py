@@ -3154,6 +3154,14 @@ async def construire_classeur_sorties_fonds(
             objet_retour = "↩ RETOUR EN TRÉSORERIE"
             if req_r and req_r.objet:
                 objet_retour = f"↩ RETOUR — {req_r.objet}"
+            # La ligne est à la date du retour ; la sortie qu'elle corrige reste
+            # à la sienne, intacte. On la nomme pour qu'on la retrouve.
+            date_sortie_orig = sortie_orig.date_paiement or sortie_orig.created_at
+            origine = sortie_orig.reference_numero or sortie_orig.reference or ""
+            if date_sortie_orig:
+                origine = f"{origine} du {date_sortie_orig.strftime('%d/%m/%Y')}".strip()
+            if origine:
+                objet_retour = f"{objet_retour} (sur sortie {origine})"
             entries.append((
                 retour.created_at,
                 _financial_source_columns("Sortie des fonds", retour.canal, retour.compte_bancaire)

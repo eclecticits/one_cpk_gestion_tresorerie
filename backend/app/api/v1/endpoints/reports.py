@@ -49,6 +49,7 @@ from app.schemas.reports import (
     ReportAnnualMonth,
     ReportAnnualCanalSplit,
     ReportTopExpense,
+    ReportRetourLine,
     ReportVersementLine,
 )
 from app.schemas.sortie_fonds import SortieFondsOut
@@ -1482,6 +1483,127 @@ async def versements(
     return lignes
 
 
+RETOUR_TYPE_LIBELLES = {
+    "reliquat_avance": "Reliquat d'avance",
+    "correction": "Correction",
+    "trop_percu": "Trop-perçu",
+}
+
+
+def _retours_cumules(tenant_id: int):
+    """Retours valides, chacun avec le cumul rendu sur sa sortie APRÈS lui.
+
+    Le cumul porte sur toute l'histoire de la sortie : filtrer la période
+    autour de cette sous-requête, jamais dedans.
+    """
+    return select(
+        RetourCaisse.id.label("retour_id"),
+        func.sum(RetourCaisse.montant)
+        .over(
+            partition_by=RetourCaisse.sortie_fonds_id,
+            order_by=(RetourCaisse.date_retour, RetourCaisse.id),
+        )
+        .label("cumul"),
+    ).where(
+        RetourCaisse.organisation_id == tenant_id,
+        RetourCaisse.statut == "VALIDE",
+    ).subquery("retours_cumules")
+
+
+@router.get("/retours", response_model=list[ReportRetourLine])
+async def retours(
+    date_debut: str | None = None,
+    date_fin: str | None = None,
+    canal: str | None = None,
+    devise: str | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> list[ReportRetourLine]:
+    """Détail des retours en trésorerie : une ligne par retour, à sa date.
+
+    Le résumé comptait bien les retours du jour (« Retours en trésorerie »),
+    mais aucun écran ne les listait : un reliquat de transport rendu
+    aujourd'hui sur une avance d'il y a deux semaines n'apparaissait nulle
+    part à sa date. Même périmètre que `retours_total` du résumé.
+    """
+    date_start = _parse_date_value(date_debut)
+    date_end = _parse_date_value(date_fin)
+    if date_start and date_end and date_start > date_end:
+        date_start, date_end = date_end, date_start
+    date_end_excl = _end_exclusive(date_end)
+    canal_value = (canal or "").strip().upper() or None
+    if canal_value == "ALL":
+        canal_value = None
+    if canal_value not in {None, "CAISSE", "BANQUE"}:
+        raise HTTPException(status_code=400, detail="canal invalide")
+    devise_value = (devise or "").strip().upper() or None
+    if devise_value == "ALL":
+        devise_value = None
+    if devise_value not in {None, *DEVISES_CONNUES}:
+        raise HTTPException(status_code=400, detail="devise invalide")
+
+    cumuls = _retours_cumules(tenant_id)
+    conditions = [
+        RetourCaisse.organisation_id == tenant_id,
+        RetourCaisse.statut == "VALIDE",
+    ]
+    if canal_value:
+        conditions.append(RetourCaisse.canal == canal_value)
+    if devise_value:
+        conditions.append(RetourCaisse.devise == devise_value)
+    if date_start:
+        conditions.append(
+            RetourCaisse.date_retour >= datetime.combine(date_start, datetime.min.time(), tzinfo=timezone.utc)
+        )
+    if date_end_excl:
+        conditions.append(
+            RetourCaisse.date_retour < datetime.combine(date_end_excl, datetime.min.time(), tzinfo=timezone.utc)
+        )
+
+    rows = (
+        await db.execute(
+            select(RetourCaisse, SortieFonds, Requisition.numero_requisition, cumuls.c.cumul)
+            .join(SortieFonds, SortieFonds.id == RetourCaisse.sortie_fonds_id)
+            .outerjoin(Requisition, Requisition.id == SortieFonds.requisition_id)
+            .join(cumuls, cumuls.c.retour_id == RetourCaisse.id)
+            .where(*conditions)
+            .order_by(RetourCaisse.date_retour, RetourCaisse.id)
+        )
+    ).all()
+
+    lignes: list[ReportRetourLine] = []
+    for retour, sortie, numero_requisition, cumul in rows:
+        montant_sortie = Decimal(sortie.montant_paye or 0)
+        cumul = Decimal(cumul or 0)
+        lignes.append(
+            ReportRetourLine(
+                id=retour.id,
+                date_retour=retour.date_retour,
+                reference_numero=retour.reference_numero,
+                type_retour=RETOUR_TYPE_LIBELLES.get(retour.type_retour, retour.type_retour),
+                motif=retour.motif,
+                montant=Decimal(retour.montant or 0),
+                devise=retour.devise or "USD",
+                canal=retour.canal or "CAISSE",
+                compte_bancaire_id=retour.compte_bancaire_id,
+                mode=retour.mode,
+                budget_poste_code=retour.budget_poste_code,
+                budget_poste_libelle=retour.budget_poste_libelle,
+                sortie_fonds_id=sortie.id,
+                sortie_reference=sortie.reference_numero or sortie.reference,
+                sortie_date=sortie.date_paiement or sortie.created_at,
+                sortie_beneficiaire=sortie.beneficiaire,
+                sortie_motif=sortie.motif,
+                sortie_montant=montant_sortie,
+                numero_requisition=numero_requisition,
+                total_retourne_apres=cumul,
+                reste_a_justifier_apres=max(montant_sortie - cumul, Decimal("0")),
+            )
+        )
+    return lignes
+
+
 @router.get("/journal-tresorerie", response_model=ReportJournalResponse)
 async def journal_tresorerie(
     canal: str,
@@ -1671,12 +1793,36 @@ async def journal_tresorerie(
             query = query.where(_sortie_ts >= start_dt, _sortie_ts <= end_dt)
         return Decimal((await db.execute(query)).scalar_one() or 0)
 
+    def _retours_du_compte(query):
+        # Un retour recrédite la trésorerie qui l'a reçu, à SA date : même
+        # filtre de compte que les sorties dont il est le miroir.
+        query = query.where(
+            RetourCaisse.organisation_id == tenant_id,
+            RetourCaisse.statut == "VALIDE",
+            RetourCaisse.canal == canal,
+            RetourCaisse.devise == devise,
+        )
+        if compte_bancaire_id:
+            query = query.where(RetourCaisse.compte_bancaire_id == compte_bancaire_id)
+        if base_date:
+            query = query.where(RetourCaisse.date_retour >= base_date)
+        return query
+
+    async def _sum_retours(before: bool) -> Decimal:
+        query = _retours_du_compte(select(func.coalesce(func.sum(RetourCaisse.montant), 0)))
+        if start_dt and before:
+            query = query.where(RetourCaisse.date_retour < start_dt)
+        return Decimal((await db.execute(query)).scalar_one() or 0)
+
     if start_dt:
         pre_entrees = (
             (await _sum_encaissements(True))
             + (await _sum_transferts(True, True))
             + (await _sum_appro(True))
             + (await _sum_versement(True))
+            # Les retours manquaient : la caisse les avait reçus, le relevé non,
+            # et son solde divergeait de celui de la clôture.
+            + (await _sum_retours(True))
         )
         pre_sorties = (await _sum_sorties(True)) + (await _sum_transferts(True, False))
         solde_initial = solde_base + pre_entrees - pre_sorties
@@ -1791,6 +1937,44 @@ async def journal_tresorerie(
                 "is_reconciled": bool(is_reconciled),
                 "reconciled_at": reconciled_at,
                 "bank_statement_ref": bank_statement_ref,
+            }
+        )
+
+    # Retours en trésorerie : une ENTRÉE à la date du retour. La sortie
+    # d'origine reste à sa date, intacte ; le libellé rappelle laquelle.
+    retour_query = _retours_du_compte(
+        select(
+            RetourCaisse.id,
+            RetourCaisse.date_retour,
+            RetourCaisse.motif,
+            RetourCaisse.reference_numero,
+            RetourCaisse.montant,
+            SortieFonds.reference_numero.label("sortie_reference"),
+            func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at).label("sortie_date"),
+        ).join(SortieFonds, SortieFonds.id == RetourCaisse.sortie_fonds_id)
+    )
+    if start_dt:
+        retour_query = retour_query.where(RetourCaisse.date_retour >= start_dt)
+    if end_dt:
+        retour_query = retour_query.where(RetourCaisse.date_retour <= end_dt)
+    for row in (await db.execute(retour_query)).all():
+        origine = row.sortie_reference or "sortie"
+        if row.sortie_date:
+            origine += f" du {row.sortie_date.strftime('%d/%m/%Y')}"
+        mouvements.append(
+            {
+                "date": row.date_retour,
+                "libelle": f"Retour en trésorerie — {row.motif or 'reliquat rendu'} (sur {origine})",
+                "reference": row.reference_numero,
+                "compte_label": compte_label,
+                "entree": Decimal(row.montant or 0),
+                "sortie": Decimal("0"),
+                "type_operation": "RETOUR",
+                "transaction_id": str(row.id),
+                "transaction_type": "RETOUR",
+                "is_reconciled": None,
+                "reconciled_at": None,
+                "bank_statement_ref": None,
             }
         )
 

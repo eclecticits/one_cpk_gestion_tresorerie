@@ -1045,6 +1045,28 @@ export default function Rapports() {
     }
   }
 
+  // Retours en trésorerie de la période, une ligne par retour à SA date. La
+  // sortie d'origine reste à la sienne, intacte : la ligne la rappelle. Le
+  // résumé comptait déjà ces retours ; aucune liste ne les montrait.
+  const fetchRetoursDetails = async (): Promise<any[]> => {
+    try {
+      const response = await apiRequest(
+        'GET',
+        '/reports/retours' +
+          buildQuery({
+            date_debut: dateDebut,
+            date_fin: dateFin,
+            canal: reportCanal === 'ALL' ? undefined : reportCanal,
+            devise: reportDevise === 'ALL' ? undefined : reportDevise,
+          }),
+      )
+      return Array.isArray(response) ? response : []
+    } catch (error) {
+      console.error('[Rapports] Retours en trésorerie indisponibles', error)
+      return []
+    }
+  }
+
   const loadDetails = async () => {
     if (!rapport) return
     setDetailsLoading(true)
@@ -1071,11 +1093,12 @@ export default function Rapports() {
         return []
       })
 
-      const [encaissements, sorties, requisitions, transfertsRecus] = await Promise.all([
+      const [encaissements, sorties, requisitions, transfertsRecus, retours] = await Promise.all([
         encPromise,
         sortPromise,
         reqPromise,
         fetchTransfertsRecus(),
+        fetchRetoursDetails(),
       ])
 
       const enc = filtrerParDevise(
@@ -1093,6 +1116,7 @@ export default function Rapports() {
           sorties: sor,
           requisitions: req,
           transfertsRecus,
+          retours,
         },
       })
       setDetailsLoaded(true)
@@ -1240,9 +1264,10 @@ export default function Rapports() {
         return
       }
 
-      const [{ enc, sor }, transfertsRecus, XLSX] = await Promise.all([
+      const [{ enc, sor }, transfertsRecus, retours, XLSX] = await Promise.all([
         fetchExportDetails(),
         fetchTransfertsRecus(),
+        fetchRetoursDetails(),
         loadXlsxModule(),
       ])
 
@@ -1520,6 +1545,76 @@ export default function Rapports() {
       })
       XLSX.utils.book_append_sheet(wb, sortiesSheet, 'Sorties de Fonds')
 
+      // Retours en trésorerie : chacun à SA date, avec la sortie qu'il corrige.
+      // La sortie, elle, reste dans la feuille précédente à sa date d'origine.
+      if (retours.length) {
+        const retoursData = retours.map((r: any) => [
+          jourExcel(r.date_retour),
+          r.reference_numero || '',
+          r.type_retour || '',
+          r.motif || '',
+          r.sortie_reference || '',
+          jourExcel(r.sortie_date),
+          r.sortie_beneficiaire || '',
+          r.numero_requisition || '',
+          toNumber(r.sortie_montant ?? 0),
+          toNumber(r.montant ?? 0),
+          toNumber(r.reste_a_justifier_apres ?? 0),
+          String(r.devise || 'USD').toUpperCase(),
+          getSortieModeLabel(r.mode),
+        ])
+        const totalRendu = retours.reduce((total: number, r: any) => total + toNumber(r.montant ?? 0), 0)
+        // Retour sur une sortie d'avant la période : c'est le cas que la
+        // feuille Sorties ne peut pas montrer à côté.
+        const surSortiesAnterieures = retours.filter(
+          (r: any) => r.sortie_date && String(r.sortie_date).slice(0, 10) < dateDebut,
+        ).length
+        const sortiesConcernees = new Set(retours.map((r: any) => r.sortie_fonds_id)).size
+        const retourCards: ReportSummaryItem[] = [
+          ...(reportDevise === 'ALL'
+            ? [{ label: 'Devises', value: 'Non converties', tone: 'warning' } as ReportSummaryItem]
+            : [{ label: `Montant rendu (${reportDevise})`, value: totalRendu, tone: 'positive', format: 'money' } as ReportSummaryItem]),
+          { label: 'Retours', value: retoursData.length, format: 'integer' },
+          { label: 'Sorties concernées', value: sortiesConcernees, format: 'integer' },
+          { label: 'Sur sorties antérieures', value: surSortiesAnterieures, tone: 'accent', format: 'integer' },
+        ]
+        const retoursSheet = createReportListSheet(XLSX, {
+          title: 'RETOURS EN TRÉSORERIE',
+          organisation: organisationExport,
+          subtitle: `${exportSubtitle} | Une ligne par retour, à sa date ; la sortie d'origine n'est pas modifiée`,
+          headers: [
+            'Date',
+            'Référence',
+            'Type de retour',
+            'Motif',
+            "Sortie d'origine",
+            'Date de la sortie',
+            'Bénéficiaire',
+            'N° Réquisition',
+            'Montant décaissé',
+            'Montant rendu',
+            'Reste à justifier',
+            'Devise',
+            'Mode de paiement',
+          ],
+          rows: retoursData,
+          widths: [13, 18, 18, 36, 18, 13, 28, 18, 18, 18, 18, 10, 18],
+          moneyColumns: [8, 9, 10],
+          dateColumns: [0, 5],
+          summaryCards: retourCards,
+          footerRow: reportDevise === 'ALL'
+            ? undefined
+            : ['TOTAL', '', '', '', '', '', '', '', '', totalRendu, '', '', ''],
+          wrapColumns: [3, 6],
+          centerColumns: [1, 2, 4, 7, 11, 12],
+          cellTone: (_value, rowIndex, columnIndex) =>
+            columnIndex === 5 && String(retours[rowIndex]?.sortie_date || '').slice(0, 10) < dateDebut
+              ? 'accent'
+              : undefined,
+        })
+        XLSX.utils.book_append_sheet(wb, retoursSheet, 'Retours')
+      }
+
       // Détail des transferts internes. Feuille dédiée même en canal « Tous » :
       // la feuille Sorties ne les montre que comme sortantes du canal d'origine,
       // jamais comme entrantes du canal d'arrivée.
@@ -1589,13 +1684,16 @@ export default function Rapports() {
     // `loadDetails` n'a pas forcément été déclenché : sans ce chargement le PDF
     // perdrait les transferts reçus, et son résumé étiquetterait « USD » des
     // totaux dont il ne connaît pas les devises (cf. pdfGenerator).
-    const [{ enc, sor }, transfertsRecus] = await Promise.all([
+    const [{ enc, sor }, transfertsRecus, retours] = await Promise.all([
       detailsLoaded
         ? Promise.resolve({ enc: rapport.encaissements || [], sor: rapport.sorties || [] })
         : fetchExportDetails(),
       rapport.transfertsRecus?.length
         ? Promise.resolve(rapport.transfertsRecus)
         : fetchTransfertsRecus(),
+      detailsLoaded && Array.isArray(rapport.retours)
+        ? Promise.resolve(rapport.retours)
+        : fetchRetoursDetails(),
     ])
     await generateGlobalReportPDF(
       {
@@ -1603,6 +1701,7 @@ export default function Rapports() {
         encaissements: enc,
         sorties: sor,
         transfertsRecus,
+        retours,
         canal: reportCanal,
         devise: reportDevise,
       },
@@ -2380,6 +2479,41 @@ export default function Rapports() {
               </table>
             </div>
           </div>
+
+          {(rapport.retours || []).length > 0 && (
+            <div className={styles.tableSection}>
+              <h3>Retours en trésorerie</h3>
+              <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Référence</th>
+                      <th>Motif</th>
+                      <th>Sortie d'origine</th>
+                      <th>Montant rendu</th>
+                      <th>Reste à justifier</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(rapport.retours || []).map((r: any) => (
+                      <tr key={r.id}>
+                        <td>{formatReportDate(r.date_retour)}</td>
+                        <td>{r.reference_numero || '-'}</td>
+                        <td>{r.motif || r.type_retour || '-'}</td>
+                        <td title={r.sortie_beneficiaire || undefined}>
+                          {r.sortie_reference || '-'}
+                          {r.sortie_date ? ` du ${formatReportDate(r.sortie_date)}` : ''}
+                        </td>
+                        <td>{formatCurrency(r.montant ?? 0)}</td>
+                        <td>{formatCurrency(r.reste_a_justifier_apres ?? 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           <div className={styles.tableSection}>
             <h3>Réquisitions</h3>

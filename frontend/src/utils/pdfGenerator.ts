@@ -1236,6 +1236,23 @@ export const generateGlobalReportPDF = async (
     sortieRows
   )
 
+  // Retours en trésorerie, chacun à sa date ; la sortie d'origine reste dans
+  // la section précédente à la sienne, et la ligne la rappelle.
+  const retours = Array.isArray(rapport?.retours) ? rapport.retours : []
+  if (retours.length) {
+    addSection(
+      'RETOURS EN TRÉSORERIE',
+      ['Date', 'Référence', "Sortie d'origine", 'Montant rendu', 'Devise'],
+      retours.map((r: any) => [
+        formatPdfDate(r.date_retour),
+        r.reference_numero || '-',
+        `${r.sortie_reference || '-'}${r.sortie_date ? ` du ${formatPdfDate(r.sortie_date)}` : ''}`,
+        formatAmount(toNumber(r.montant ?? 0)),
+        (r.devise || 'USD').toUpperCase(),
+      ])
+    )
+  }
+
   // Transferts internes REÇUS par le canal du rapport (versements encaissés par
   // la banque, approvisionnements reçus en caisse). Ils n'apparaissent dans
   // aucune des deux sections ci-dessus : ce ne sont pas des recettes, et leur
