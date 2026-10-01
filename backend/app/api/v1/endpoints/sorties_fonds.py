@@ -2852,9 +2852,11 @@ async def upload_sortie_pdf(
             smtp_cfg = resolve_smtp_config(ns)
             if smtp_cfg and ns and ns.email_tresorier:
                     org_res = await db.execute(
-                        select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                        select(Organisation.nom, Organisation.slug).where(Organisation.id == tenant_id).limit(1)
                     )
-                    org_name = org_res.scalar_one_or_none()
+                    org_row = org_res.first()
+                    org_name = org_row.nom if org_row else None
+                    org_slug = org_row.slug if org_row else None
                     caissier_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
                     createur_id = sortie.created_by if sortie is not None else transfert.execute_par
                     if createur_id and createur_id != user.id:
@@ -2883,10 +2885,12 @@ async def upload_sortie_pdf(
                     if sortie is not None:
                         num_transaction = sortie.reference_numero or sortie.reference or str(sortie.id)
                         montant_notifie = float(sortie.montant_paye or 0)
+                        devise_notifiee = sortie.devise
                         beneficiaire_notifie = sortie.beneficiaire
                     else:
                         num_transaction = transfert.reference or str(sid)
                         montant_notifie = float(transfert.montant or 0)
+                        devise_notifiee = transfert.devise
                         # Le bénéficiaire d'un mouvement interne est la poche qui
                         # reçoit : c'est la seule réponse vraie à « où est allé
                         # l'argent », et celle que porte déjà la ligne d'écran.
@@ -2909,6 +2913,8 @@ async def upload_sortie_pdf(
                         caissier_nom=caissier_name,
                         brand_name="ONEC",
                         organisation_name=org_name,
+                        organisation_slug=org_slug,
+                        devise=devise_notifiee,
                         official_pdf_path=official_pdf_path,
                         attachment_paths=attachment_fs_paths,
                     )

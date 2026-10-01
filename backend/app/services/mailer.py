@@ -31,7 +31,7 @@ async def send_in_thread(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> 
     """Exécute un envoi SMTP dans un thread.
 
     Toutes les fonctions `send_*` de ce module sont synchrones et bloquent sur
-    le réseau, jusqu'à 20 s en cas de serveur SMTP lent (voir le `timeout=20`
+    le réseau, jusqu'à SMTP_TIMEOUT_SECONDS en cas de serveur SMTP lent (voir le `timeout`
     des connexions). Appelées directement depuis une coroutine, elles figent la
     boucle d'événements pendant toute cette durée : plus aucune requête n'avance
     sur le worker, alors même que le serveur n'a rien à calculer.
@@ -417,15 +417,16 @@ def _send_email_message(
 ) -> None:
     mark_as_automatic_message(msg)
     port = int(smtp_port)
+    timeout = int(settings.smtp_timeout_seconds or 120)
     require_tls = bool(getattr(settings, "smtp_require_tls", True))
     context = ssl.create_default_context()
     if port == 465:
         # TLS implicite (SMTPS) avec vérification du certificat.
-        with smtplib.SMTP_SSL(smtp_host, port, timeout=20, context=context) as smtp:
+        with smtplib.SMTP_SSL(smtp_host, port, timeout=timeout, context=context) as smtp:
             smtp.login(smtp_user, smtp_password)
             smtp.send_message(msg)
         return
-    with smtplib.SMTP(smtp_host, port, timeout=20) as smtp:
+    with smtplib.SMTP(smtp_host, port, timeout=timeout) as smtp:
         smtp.ehlo()
         if smtp.has_extn("starttls"):
             # STARTTLS avec vérification du certificat (empêche le MITM).
@@ -668,6 +669,113 @@ def send_dossier_notification(
         logger.exception("Failed to send notification email for dossier %s", dossier_reference)
 
 
+def _build_sortie_notification_text(
+    *,
+    num_transaction: str,
+    num_bon_requisition: str | None,
+    montant_label: str,
+    beneficiaire: str,
+    caissier_nom: str,
+    brand_label: str,
+    tenant_url: str | None,
+) -> str:
+    lines = [
+        "Monsieur le Secrétaire Exécutif,",
+        "",
+        f"Nous avons l'honneur de vous informer qu'une sortie de fonds a été effectuée sur la caisse de {brand_label}.",
+        "",
+        "Détails de l'opération :",
+        f"- Référence : {num_transaction}",
+        f"- Réquisition associée : {num_bon_requisition or '-'}",
+        f"- Montant décaissé : {montant_label}",
+        f"- Bénéficiaire : {beneficiaire}",
+        f"- Caissier / Trésorier : {caissier_nom}",
+        "",
+        "Le bon de sortie officiel et les pièces justificatives sont joints à ce message.",
+    ]
+    if tenant_url:
+        lines.extend(["", f"Pour toute vérification : {tenant_url}"])
+    lines.extend(
+        [
+            "",
+            "Veuillez agréer, Monsieur le Secrétaire Exécutif, l'expression de notre haute considération.",
+            "",
+            f"Le Secrétariat — {brand_label}",
+            "",
+            AUTOMATIC_MESSAGE_NOTICE,
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_sortie_notification_html(
+    *,
+    num_transaction: str,
+    num_bon_requisition: str | None,
+    montant_label: str,
+    beneficiaire: str,
+    caissier_nom: str,
+    brand_label: str,
+    tenant_url: str | None,
+) -> str:
+    rows = [
+        ("Référence", num_transaction),
+        ("Réquisition associée", num_bon_requisition or "-"),
+        ("Montant décaissé", montant_label),
+        ("Bénéficiaire", beneficiaire),
+        ("Caissier / Trésorier", caissier_nom),
+    ]
+    rows_html = "".join(
+        f"""
+              <tr>
+                <td style="padding:9px 12px; border:1px solid #e5e7eb; background:#f8fafc; width:42%;"><strong>{html.escape(label)}</strong></td>
+                <td style="padding:9px 12px; border:1px solid #e5e7eb;">{html.escape(str(value or "-"))}</td>
+              </tr>"""
+        for label, value in rows
+    )
+    tenant_link_block = (
+        f"""
+            <div style="margin:18px 0 4px; padding:14px 16px; border:1px solid #d9eee7; border-radius:12px; background:#f2fbf8;">
+              <div style="font-size:13px; color:#58736c; font-weight:700; margin-bottom:8px;">Pour toute vérification</div>
+              <a href="{html.escape(tenant_url)}" style="display:inline-block; padding:10px 16px; border-radius:10px; background:#0f7b62; color:#ffffff; text-decoration:none; font-weight:700;">
+                Accéder à l'espace {html.escape(brand_label)}
+              </a>
+              <div style="margin-top:8px; font-size:12px; color:#6b7f79;">{html.escape(tenant_url)}</div>
+            </div>"""
+        if tenant_url
+        else ""
+    )
+    return f"""
+    <html>
+      <body style="margin:0; padding:24px; background:#f6faf9; font-family: Arial, sans-serif; color:#1f2937; line-height:1.6;">
+        <div style="max-width:640px; margin:0 auto; border:1px solid #dfe9e6; border-radius:16px; overflow:hidden; background:#ffffff;">
+          <div style="padding:22px 24px; background:#0f7b62; color:#ffffff;">
+            <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; opacity:.86;">ONEC Smart</div>
+            <h2 style="margin:6px 0 0; font-size:20px; line-height:1.25;">Confirmation de sortie de fonds</h2>
+            <div style="margin-top:4px; font-size:13px; opacity:.9;">{html.escape(num_transaction)}</div>
+          </div>
+          <div style="padding:22px 24px;">
+            <p style="margin-top:0;">Monsieur le Secrétaire Exécutif,</p>
+            <p>Nous avons l'honneur de vous informer qu'une sortie de fonds a été effectuée sur la caisse de <strong>{html.escape(brand_label)}</strong>.</p>
+            <table style="width:100%; border-collapse:collapse; margin:16px 0; font-size:14px;">{rows_html}
+            </table>
+            <p style="margin:0;">Le bon de sortie officiel et les pièces justificatives sont joints à ce message.</p>
+            {tenant_link_block}
+            <p style="margin:18px 0 0;">
+              Veuillez agréer, Monsieur le Secrétaire Exécutif, l'expression de notre haute considération.
+            </p>
+            <p style="margin:14px 0 0; font-weight:700;">Le Secrétariat — {html.escape(brand_label)}</p>
+          </div>
+          <div style="padding:14px 24px; background:#f8fafc; color:#7b8d88; font-size:12px; text-align:center;">
+            {html.escape(brand_label)} · ONEC Smart<br />
+            {html.escape(AUTOMATIC_MESSAGE_NOTICE)}
+          </div>
+        </div>
+      </body>
+    </html>
+    """.strip()
+
+
 def send_sortie_notification(
     *,
     smtp_host: str,
@@ -684,38 +792,38 @@ def send_sortie_notification(
     caissier_nom: str,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
+    organisation_slug: str | None = None,
+    devise: str | None = None,
     official_pdf_path: str | None = None,
     attachment_paths: list[str] | None = None,
 ) -> None:
+    # Le destinataire est l'adresse du champ « Email du trésorier », mais le
+    # message s'adresse au Secrétaire Exécutif : c'est lui qui en est le lecteur.
     cc_list = _split_emails(cc_emails)
     brand_label = _format_brand_label(brand_name, organisation_name)
+    tenant_url = _tenant_portal_url(organisation_slug)
+    # La devise de l'opération, pas un « $ » d'office : une sortie en CDF
+    # s'affichait en dollars.
+    montant_label = _format_currency(montant, (devise or "USD").upper())
 
     msg = EmailMessage()
-    msg["Subject"] = f"💸 Confirmation de Sortie de Fonds - {num_transaction}"
+    msg["Subject"] = f"Confirmation de sortie de fonds - {num_transaction}"
     msg["From"] = sender
     msg["To"] = tresorier_email
     if cc_list:
         msg["Cc"] = ", ".join(cc_list)
 
-    montant_fmt = f"{montant:,.2f}"
-    msg.set_content(
-        "Chers Membres du Bureau,\n"
-        "\n"
-        "Nous vous informons qu'une sortie de fonds a été effectuée avec succès.\n"
-        "\n"
-        "Détails de l'opération :\n"
-        f"- Référence : {num_transaction}\n"
-        f"- Réquisition associée : {num_bon_requisition or '-'}\n"
-        f"- Montant décaissé : {montant_fmt} $\n"
-        f"- Bénéficiaire : {beneficiaire}\n"
-        f"- Caissier / Trésorier : {caissier_nom}\n"
-        "\n"
-        "Le Bon de Sortie officiel ainsi que les preuves de décharge sont joints à ce message.\n"
-        "\n"
-        "Cordialement,\n"
-        "ONEC Smart\n"
-        f"{brand_label}"
+    contenu = dict(
+        num_transaction=num_transaction,
+        num_bon_requisition=num_bon_requisition,
+        montant_label=montant_label,
+        beneficiaire=beneficiaire,
+        caissier_nom=caissier_nom,
+        brand_label=brand_label,
+        tenant_url=tenant_url,
     )
+    msg.set_content(_build_sortie_notification_text(**contenu))
+    msg.add_alternative(_build_sortie_notification_html(**contenu), subtype="html")
 
     if official_pdf_path:
         if os.path.exists(official_pdf_path):
@@ -760,7 +868,7 @@ def send_security_code(
 ) -> None:
     brand_label = _format_brand_label(brand_name, organisation_name)
     msg = EmailMessage()
-    msg["Subject"] = f"🔐 Votre code de vérification {brand_label}"
+    msg["Subject"] = f"Votre code de vérification {brand_label}"
     msg["From"] = sender
     msg["To"] = recipient
 

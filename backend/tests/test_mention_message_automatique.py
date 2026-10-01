@@ -59,6 +59,33 @@ def test_les_pieces_jointes_restent_intactes():
     assert AUTOMATIC_MESSAGE_NOTICE in _corps(msg, "plain")
 
 
+def test_le_mail_de_sortie_s_adresse_au_secretaire_executif(monkeypatch):
+    from app.core.config import settings
+    from app.services import mailer
+
+    monkeypatch.setattr(settings, "tenant_base_domain", "onec-rdc.org")
+    envoyes: list[EmailMessage] = []
+    monkeypatch.setattr(mailer, "_send_email_message", lambda **kw: envoyes.append(kw["msg"]))
+
+    mailer.send_sortie_notification(
+        smtp_host="smtp.example.com", smtp_port=465, smtp_user="u", smtp_password="p",
+        sender="cpk@example.com", tresorier_email="se@example.com", cc_emails=None,
+        num_transaction="PAY-ADM-2026-00149", num_bon_requisition=None,
+        montant=5525, beneficiaire="Fournisseur", caissier_nom="Caissier",
+        organisation_name="CPK", organisation_slug="cpk", devise="CDF",
+    )
+
+    (msg,) = envoyes
+    assert msg["Subject"] == "Confirmation de sortie de fonds - PAY-ADM-2026-00149"
+    texte, page = _corps(msg, "plain"), _corps(msg, "html")
+    for corps in (texte, page):
+        assert "Monsieur le Secrétaire Exécutif," in corps
+        assert "Membres du Bureau" not in corps
+        assert "https://cpk.onec-rdc.org/login" in corps
+        assert "5 525,00 CDF" in corps  # la devise de l'opération, pas « $ »
+        assert corps.count(AUTOMATIC_MESSAGE_NOTICE) == 1
+
+
 def test_whatsapp_porte_la_mention_une_seule_fois():
     from app.services.notifications import templates
 

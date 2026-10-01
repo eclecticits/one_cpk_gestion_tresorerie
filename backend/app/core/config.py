@@ -289,6 +289,12 @@ class Settings(BaseSettings):
     # Exiger TLS (STARTTLS ou SMTPS) avec vérification du certificat pour l'envoi
     # d'e-mails. Ne passer à false qu'en dev/local (ex. MailHog sans TLS).
     smtp_require_tls: bool = Field(default=True, alias="SMTP_REQUIRE_TLS")
+    # Délai d'attente d'une opération SMTP, en secondes. 20 s ne suffisaient pas
+    # pour un bon de sortie de ~1 Mo sur une liaison montante lente : le noyau
+    # met le message en tampon, et l'attente de la réponse du serveur couvre en
+    # fait la fin du téléversement. L'envoi tourne dans un thread, une attente
+    # plus longue ne fige pas l'API.
+    smtp_timeout_seconds: int = Field(default=120, alias="SMTP_TIMEOUT_SECONDS")
 
     # Online payments (aggregator)
     online_payments_compte_bancaire_id: int | None = None
