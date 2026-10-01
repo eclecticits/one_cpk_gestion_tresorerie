@@ -21,6 +21,7 @@ from app.services.export_queue import NOM_TACHE
 from app.utils.scheduler import (
     start_billing_guard_scheduler,
     start_monthly_report_scheduler,
+    start_monthly_treasury_report_scheduler,
     start_weekly_report_scheduler,
     stop_schedulers,
 )
@@ -83,6 +84,7 @@ async def au_demarrage(ctx: dict[str, Any]) -> None:
     # encore d'un worker déployé en double.
     start_weekly_report_scheduler()
     start_monthly_report_scheduler()
+    start_monthly_treasury_report_scheduler()
     start_billing_guard_scheduler()
     logger.info("Ordonnanceurs démarrés dans le worker (SCHEDULERS_IN_WORKER=true).")
 

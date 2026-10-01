@@ -48,6 +48,8 @@ import {
   adminTestEmailConnection,
   adminGetWeeklyReportStatus,
   adminRunWeeklyReport,
+  adminGetMonthlyReportStatus,
+  adminRunMonthlyReport,
   adminSetUserPassword,
   adminToggleUserStatus,
   adminUpdateRequisitionApprover,
@@ -57,7 +59,7 @@ import { getComptaMappings } from '../api/comptabilite'
 import { getBudgetPostes } from '../api/budget'
 import type { BudgetPosteSummary } from '../types/budget'
 import { getOrganisationSettings, updateOrganisationSettings, type OrganisationSettings as TenantSettings } from '../api/organisation'
-import type { NotificationSettings, PermissionInfo, RoleInfo, WeeklyReportStatus } from '../api/admin'
+import type { MonthlyReportStatus, NotificationSettings, PermissionInfo, RoleInfo, WeeklyReportStatus } from '../api/admin'
 import type { PrintSettings } from '../api/admin'
 import type { RequisitionApprover } from '../api/admin'
 import BankSettings from '../components/settings/BankSettings'
@@ -78,6 +80,7 @@ import BudgetTab from '../components/settings/BudgetTab'
 import ServicesTab from '../components/settings/ServicesTab'
 import ServiceMembersManager from '../components/settings/ServiceMembersManager'
 import WhatsAppSettings from '../components/settings/WhatsAppSettings'
+import ReportStatusCard from '../components/settings/ReportStatusCard'
 // Billing moved to Organisation Settings.
 
 type SettingsTab = 'general' | 'permissions' | 'services' | 'budget'
@@ -184,6 +187,9 @@ export default function Settings() {
   const [weeklyStatus, setWeeklyStatus] = useState<WeeklyReportStatus | null>(null)
   const [weeklyStatusLoading, setWeeklyStatusLoading] = useState(false)
   const [weeklyReportRunning, setWeeklyReportRunning] = useState(false)
+  const [monthlyStatus, setMonthlyStatus] = useState<MonthlyReportStatus | null>(null)
+  const [monthlyStatusLoading, setMonthlyStatusLoading] = useState(false)
+  const [monthlyReportRunning, setMonthlyReportRunning] = useState(false)
   const [approvers, setApprovers] = useState<RequisitionApprover[]>([])
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
@@ -527,6 +533,7 @@ export default function Settings() {
         mappingsNonMappes,
         notificationSettingsRes,
         weeklyStatusRes,
+        monthlyStatusRes,
         rolesRes,
         permissionsRes,
         approversData,
@@ -540,6 +547,7 @@ export default function Settings() {
           () => ({ data: null }) as { data: NotificationSettings | null },
         ),
         adminGetWeeklyReportStatus().catch(() => null as WeeklyReportStatus | null),
+        adminGetMonthlyReportStatus().catch(() => null as MonthlyReportStatus | null),
         adminGetRoles(),
         isSuperAdmin ? adminGetPermissions() : Promise.resolve([]),
         adminListRequisitionApprovers(),
@@ -557,6 +565,7 @@ export default function Settings() {
       setAccountingUnmappedCount(mappingsNonMappes)
       setNotificationSettings(notificationSettingsRes.data)
       setWeeklyStatus(weeklyStatusRes)
+      setMonthlyStatus(monthlyStatusRes)
       setRoles(rolesRes)
       setPermissions(permissionsRes)
       setApprovers(approversData)
@@ -590,11 +599,37 @@ export default function Settings() {
       setWeeklyReportRunning(true)
       await adminRunWeeklyReport()
       showSuccess('Rapport hebdo', 'Rapport envoyé.')
-      await loadWeeklyStatus()
     } catch (error: any) {
       showError('Rapport hebdo', error?.message || 'Impossible d’envoyer le rapport.')
     } finally {
+      // Un échec est désormais inscrit dans le statut : le recharger dans les deux cas.
+      await loadWeeklyStatus()
       setWeeklyReportRunning(false)
+    }
+  }
+
+  const loadMonthlyStatus = async () => {
+    try {
+      setMonthlyStatusLoading(true)
+      setMonthlyStatus(await adminGetMonthlyReportStatus())
+    } catch (error: any) {
+      setMonthlyStatus(null)
+      showError('Rapport mensuel', error?.message || 'Impossible de charger le statut.')
+    } finally {
+      setMonthlyStatusLoading(false)
+    }
+  }
+
+  const handleRunMonthlyReportNow = async () => {
+    try {
+      setMonthlyReportRunning(true)
+      await adminRunMonthlyReport()
+      showSuccess('Rapport mensuel', 'Rapport envoyé.')
+    } catch (error: any) {
+      showError('Rapport mensuel', error?.message || 'Impossible d’envoyer le rapport.')
+    } finally {
+      await loadMonthlyStatus()
+      setMonthlyReportRunning(false)
     }
   }
 
@@ -2503,82 +2538,32 @@ export default function Settings() {
 
                         <div className={styles.notificationSubBlock}>
                           <h4>Rapport hebdomadaire (lundi matin)</h4>
-                          <div className={styles.weeklyCard}>
-                        <div className={styles.weeklyStatusRow}>
-                          <div>
-                            <div className={styles.weeklyLabel}>Statut du planificateur</div>
-                            <div className={styles.weeklyMeta}>
-                              {weeklyStatusLoading && 'Chargement...'}
-                              {!weeklyStatusLoading && weeklyStatus && (
-                                <>
-                                  <span
-                                    className={
-                                      weeklyStatus.enabled && weeklyStatus.running
-                                        ? styles.badgeActive
-                                        : styles.badgeInactive
-                                    }
-                                  >
-                                    {weeklyStatus.enabled && weeklyStatus.running ? 'Actif' : 'Inactif'}
-                                  </span>
-                                  <span>Fuseau : {weeklyStatus.timezone}</span>
-                                  <span>
-                                    Prochaine exécution :
-                                    {weeklyStatus.next_run
-                                      ? ` ${new Date(weeklyStatus.next_run).toLocaleString('fr-FR')}`
-                                      : ' —'}
-                                  </span>
-                                  <span>
-                                    Dernier envoi :
-                                    {weeklyStatus.last_sent_at
-                                      ? ` ${new Date(weeklyStatus.last_sent_at).toLocaleString('fr-FR')}`
-                                      : ' —'}
-                                  </span>
-                                  <span>
-                                    Dernier succès :
-                                    {weeklyStatus.last_success_at
-                                      ? ` ${new Date(weeklyStatus.last_success_at).toLocaleString('fr-FR')}`
-                                      : ' —'}
-                                  </span>
-                                  <span>
-                                    Dernier échec :
-                                    {weeklyStatus.last_failure_at
-                                      ? ` ${new Date(weeklyStatus.last_failure_at).toLocaleString('fr-FR')}`
-                                      : ' —'}
-                                  </span>
-                                </>
-                              )}
-                              {!weeklyStatusLoading && !weeklyStatus && 'Statut indisponible.'}
-                            </div>
-                          </div>
-                          <div className={styles.weeklyActions}>
-                            <button
-                              type="button"
-                              className={styles.secondaryBtn}
-                              onClick={loadWeeklyStatus}
-                              disabled={weeklyStatusLoading}
-                            >
-                              {weeklyStatusLoading ? 'Actualisation...' : 'Actualiser'}
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.primaryBtn}
-                              onClick={handleRunWeeklyReportNow}
-                              disabled={weeklyReportRunning}
-                            >
-                              {weeklyReportRunning ? 'Envoi...' : 'Envoyer maintenant'}
-                            </button>
-                          </div>
+                          <ReportStatusCard
+                            status={weeklyStatus}
+                            loading={weeklyStatusLoading}
+                            running={weeklyReportRunning}
+                            onRefresh={loadWeeklyStatus}
+                            onRun={handleRunWeeklyReportNow}
+                            hint={<>
+                              L’envoi utilise les paramètres SMTP ci-dessus. Destinataire : l’e-mail du président,
+                              à défaut celui du trésorier (sauf si <code className={styles.inlineCode}>WEEKLY_REPORT_TO</code>{' '}
+                              est défini sur le serveur).
+                            </>}
+                          />
                         </div>
-                        {weeklyStatus && weeklyStatus.last_status === 'failed' && (
-                          <div className={styles.weeklyWarning}>
-                            Dernier envoi en échec. {weeklyStatus.last_error || 'Vérifiez la configuration SMTP.'}
-                          </div>
-                        )}
-                        <div className={styles.weeklyHint}>
-                          L’envoi utilise les paramètres SMTP ci-dessus et le destinataire configuré via
-                          <code className={styles.inlineCode}>WEEKLY_REPORT_TO</code>.
-                        </div>
-                          </div>
+
+                        <div className={styles.notificationSubBlock}>
+                          <h4>Rapport mensuel (1er du mois)</h4>
+                          <ReportStatusCard
+                            status={monthlyStatus}
+                            loading={monthlyStatusLoading}
+                            running={monthlyReportRunning}
+                            onRefresh={loadMonthlyStatus}
+                            onRun={handleRunMonthlyReportNow}
+                            hint={<>
+                              Trésorerie du mois écoulé, mêmes destinataires que le rapport hebdomadaire.
+                            </>}
+                          />
                         </div>
                       </div>
 

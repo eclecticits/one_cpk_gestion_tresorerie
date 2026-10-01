@@ -6,13 +6,23 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import settings
-from app.services.weekly_report import run_weekly_report, _resolve_timezone as _weekly_tz
+from app.services.weekly_report import (
+    run_monthly_treasury_report,
+    run_weekly_report,
+    _resolve_timezone as _weekly_tz,
+)
 from app.services.monthly_report import run_monthly_report, _resolve_timezone as _monthly_tz
 from app.services.billing_guard import run_billing_guard
 
 logger = logging.getLogger("onec_cpk_api.scheduler")
 
 _scheduler: AsyncIOScheduler | None = None
+
+# Par défaut APScheduler abandonne un déclenchement en retard de plus d'UNE
+# seconde (« Run time of job was missed »). Une boucle d'événements occupée à
+# 7h30 suffisait à faire sauter le rapport de la semaine. Une heure de marge ;
+# `coalesce` empêche qu'un retard produise plusieurs envois.
+REPORT_MISFIRE_GRACE_SECONDS = 3600
 
 
 def start_weekly_report_scheduler() -> None:
@@ -40,6 +50,7 @@ def start_weekly_report_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         coalesce=True,
+        misfire_grace_time=REPORT_MISFIRE_GRACE_SECONDS,
     )
     scheduler.start()
     _scheduler = scheduler
@@ -50,6 +61,47 @@ def start_weekly_report_scheduler() -> None:
         settings.weekly_report_day_of_week,
         settings.weekly_report_hour,
         settings.weekly_report_minute,
+        tz.key,
+        next_run,
+    )
+
+
+def start_monthly_treasury_report_scheduler() -> None:
+    """Rapport de trésorerie mensuel de chaque organisation (mois écoulé)."""
+    global _scheduler
+    if not settings.monthly_treasury_report_enabled:
+        logger.info("Monthly treasury report scheduler disabled (MONTHLY_TREASURY_REPORT_ENABLED=false).")
+        return
+
+    tz = _weekly_tz()
+    trigger = CronTrigger(
+        day=settings.monthly_treasury_report_day_of_month,
+        hour=settings.monthly_treasury_report_hour,
+        minute=settings.monthly_treasury_report_minute,
+        timezone=tz,
+    )
+    if _scheduler is None:
+        _scheduler = AsyncIOScheduler(timezone=tz)
+    scheduler = _scheduler
+    scheduler.add_job(
+        run_monthly_treasury_report,
+        trigger,
+        id="monthly_treasury_report_job",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=REPORT_MISFIRE_GRACE_SECONDS,
+    )
+    if not scheduler.running:
+        scheduler.start()
+
+    job = scheduler.get_job("monthly_treasury_report_job")
+    next_run = job.next_run_time.isoformat() if job and job.next_run_time else "unknown"
+    logger.info(
+        "Monthly treasury report scheduler started: day=%s %02d:%02d (%s). Next run: %s",
+        settings.monthly_treasury_report_day_of_month,
+        settings.monthly_treasury_report_hour,
+        settings.monthly_treasury_report_minute,
         tz.key,
         next_run,
     )
@@ -178,6 +230,25 @@ def get_weekly_report_status() -> dict:
             "day_of_week": settings.weekly_report_day_of_week,
             "hour": settings.weekly_report_hour,
             "minute": settings.weekly_report_minute,
+        },
+    }
+
+
+def get_monthly_treasury_report_status() -> dict:
+    tz = _weekly_tz()
+    running = bool(_scheduler and _scheduler.running)
+    job = _scheduler.get_job("monthly_treasury_report_job") if running else None
+    next_run = job.next_run_time.isoformat() if job and job.next_run_time else None
+    return {
+        "enabled": settings.monthly_treasury_report_enabled,
+        "host": _hote_des_ordonnanceurs(),
+        "running": running,
+        "timezone": tz.key,
+        "next_run": next_run,
+        "schedule": {
+            "day_of_month": settings.monthly_treasury_report_day_of_month,
+            "hour": settings.monthly_treasury_report_hour,
+            "minute": settings.monthly_treasury_report_minute,
         },
     }
 

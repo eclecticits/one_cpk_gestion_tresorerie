@@ -107,6 +107,8 @@ export async function adminTestEmailConnection(input: Partial<NotificationSettin
 
 export type WeeklyReportStatus = {
   enabled: boolean
+  // Processus qui porte l'ordonnanceur ; `running` ne vaut que pour l'API.
+  host?: 'backend' | 'exports-worker'
   running: boolean
   timezone: string
   next_run: string | null
@@ -128,6 +130,23 @@ export async function adminGetWeeklyReportStatus(): Promise<WeeklyReportStatus> 
 
 export async function adminRunWeeklyReport(): Promise<{ status: string; message: string }> {
   return apiRequest('POST', '/admin/run-weekly-report')
+}
+
+// Rapport de trésorerie mensuel : mêmes champs que l'hebdo, planifié au jour du mois.
+export type MonthlyReportStatus = Omit<WeeklyReportStatus, 'schedule'> & {
+  schedule: {
+    day_of_month: number
+    hour: number
+    minute: number
+  }
+}
+
+export async function adminGetMonthlyReportStatus(): Promise<MonthlyReportStatus> {
+  return apiRequest('GET', '/admin/monthly-report-status')
+}
+
+export async function adminRunMonthlyReport(): Promise<{ status: string; message: string }> {
+  return apiRequest('POST', '/admin/run-monthly-report')
 }
 
 export type RoleInfo = {

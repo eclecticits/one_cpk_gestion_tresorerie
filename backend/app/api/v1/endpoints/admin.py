@@ -42,8 +42,8 @@ from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import _send_email_message, send_in_thread, send_security_code
 from app.services.email_config import normalize_smtp_password, resolve_smtp_config
 from app.services.system_settings_service import consolidate_system_settings
-from app.services.weekly_report import send_weekly_report, _get_system_settings
-from app.utils.scheduler import get_weekly_report_status
+from app.services.weekly_report import send_monthly_treasury_report, send_weekly_report, _get_system_settings
+from app.utils.scheduler import get_monthly_treasury_report_status, get_weekly_report_status
 from app.schemas.admin import (
     DeleteUserRequest,
     NotificationSettingsResponse,
@@ -1318,6 +1318,35 @@ async def weekly_report_status(
     status["last_error"] = ns.last_weekly_report_error if ns else ""
     status["last_success_at"] = ns.last_weekly_report_success_at.isoformat() if ns and ns.last_weekly_report_success_at else None
     status["last_failure_at"] = ns.last_weekly_report_failure_at.isoformat() if ns and ns.last_weekly_report_failure_at else None
+    return status
+
+
+@router.post("/run-monthly-report", dependencies=[Depends(has_permission("can_edit_settings"))])
+async def run_monthly_treasury_report(
+    current_user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        await send_monthly_treasury_report(db, tenant_id=tenant_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "success", "message": "Rapport mensuel envoyé."}
+
+
+@router.get("/monthly-report-status", dependencies=[Depends(has_permission("can_edit_settings"))])
+async def monthly_treasury_report_status(
+    current_user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    status = get_monthly_treasury_report_status()
+    ns = await _get_system_settings(db, tenant_id)
+    status["last_sent_at"] = ns.last_monthly_report_sent_at.isoformat() if ns and ns.last_monthly_report_sent_at else None
+    status["last_status"] = ns.last_monthly_report_status if ns else "never"
+    status["last_error"] = ns.last_monthly_report_error if ns else ""
+    status["last_success_at"] = ns.last_monthly_report_success_at.isoformat() if ns and ns.last_monthly_report_success_at else None
+    status["last_failure_at"] = ns.last_monthly_report_failure_at.isoformat() if ns and ns.last_monthly_report_failure_at else None
     return status
 
 

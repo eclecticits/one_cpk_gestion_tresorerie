@@ -137,9 +137,18 @@ class Settings(BaseSettings):
     weekly_report_to: str | None = None
     weekly_report_cc: str | None = None
     weekly_report_day_of_week: str = "mon"
-    weekly_report_hour: int = 8
-    weekly_report_minute: int = 0
+    weekly_report_hour: int = 7
+    weekly_report_minute: int = 30
     weekly_report_timezone: str = "UTC"
+
+    # Rapport de trésorerie MENSUEL de chaque organisation : le pendant de
+    # l'hebdo (mêmes destinataires, même fuseau WEEKLY_REPORT_TIMEZONE), sur le
+    # mois écoulé. À ne pas confondre avec `monthly_report_*` ci-dessous, le PDF
+    # national consolidé destiné au super-admin.
+    monthly_treasury_report_enabled: bool = False
+    monthly_treasury_report_day_of_month: int = 1
+    monthly_treasury_report_hour: int = 7
+    monthly_treasury_report_minute: int = 30
 
     monthly_report_enabled: bool = False
     monthly_report_to: str | None = None

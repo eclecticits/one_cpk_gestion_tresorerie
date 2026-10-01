@@ -990,6 +990,8 @@ def send_weekly_report_email(
     msg.set_content(text_body or "Rapport hebdomadaire trésorerie.")
     msg.add_alternative(html_body, subtype="html")
 
+    # L'erreur est relancée, pas avalée : l'appelant l'inscrit dans le statut
+    # du rapport et le bouton « Envoyer maintenant » l'affiche telle quelle.
     try:
         _send_email_message(
             smtp_host=smtp_host,
@@ -998,10 +1000,10 @@ def send_weekly_report_email(
             smtp_password=smtp_password,
             msg=msg,
         )
-        logger.info("Weekly report email sent to %s", recipient)
-        return True
     except Exception:
         logger.exception("Failed to send weekly report email to %s", recipient)
+        raise
+    logger.info("Weekly report email sent to %s", recipient)
 
 
 def send_monitoring_alert_email(

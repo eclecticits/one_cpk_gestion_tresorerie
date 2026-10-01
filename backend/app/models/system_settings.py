@@ -94,6 +94,12 @@ class SystemSettings(Base):
     last_weekly_report_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
     last_weekly_report_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_weekly_report_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Rapport de trésorerie mensuel : statut distinct de l'hebdo.
+    last_monthly_report_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_monthly_report_status: Mapped[str] = mapped_column(String(20), nullable=False, default="never")
+    last_monthly_report_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    last_monthly_report_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_monthly_report_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
