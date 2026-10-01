@@ -18,6 +18,8 @@ import { getTypeSortieLabel } from '../utils/sortieFondsHelpers'
 import {
   createReportListSheet,
   createReportSummarySheet,
+  jourExcel,
+  telechargerClasseur,
   type ReportSummaryItem,
 } from '../utils/reportExcelStyles'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'export.
@@ -26,6 +28,12 @@ let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
 function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
   if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('../utils/pdfGenerator')
   return _pdfGeneratorModulePromise
+}
+type XlsxModule = typeof import('xlsx')
+async function loadXlsxModule(): Promise<XlsxModule> {
+  const importedModule = await import('xlsx')
+  const compatibleModule = importedModule as XlsxModule & { default?: XlsxModule }
+  return compatibleModule.utils ? compatibleModule : compatibleModule.default || compatibleModule
 }
 const generateGlobalReportPDF: PdfGeneratorModule['generateGlobalReportPDF'] = async (...args) => {
   const mod = await loadPdfGeneratorModule()
@@ -400,7 +408,7 @@ export default function Rapports() {
 
   const exportJournalToExcel = async () => {
     if (!journalData) return
-    const XLSX = await import('xlsx')
+    const XLSX = await loadXlsxModule()
     const nomCompte =
       journalCanal === 'CAISSE' && selectedCompte
         ? `${selectedCompte.intitule || 'Caisse'} (${journalDeviseEffective})`
@@ -415,7 +423,7 @@ export default function Rapports() {
     const soldeFinalJournal = toNumber(journalData.solde_final)
     const journalGeneratedAt = format(new Date(), "dd/MM/yyyy 'à' HH:mm")
     const rows = journalData.lignes.map((line) => [
-      formatReportDate(line.date),
+      jourExcel(line.date),
       `${(line.libelle || '').trim()}${line.reference ? ` (${line.reference})` : ''}`,
       toNumber(line.entree),
       toNumber(line.sortie),
@@ -443,7 +451,7 @@ export default function Rapports() {
       ],
       footerRow: ['TOTAL MOUVEMENTS', '', totalEntreesJournal, totalSortiesJournal, soldeFinalJournal],
       wrapColumns: [1],
-      centerColumns: [0],
+      dateColumns: [0],
     })
     const wb = XLSX.utils.book_new()
     wb.Props = {
@@ -453,7 +461,7 @@ export default function Rapports() {
       Company: user?.organisation_name || 'ONEC',
     }
     XLSX.utils.book_append_sheet(wb, sheet, 'Journal')
-    XLSX.writeFile(wb, `Journal_${nomCompte}_${dateFin}.xlsx`, { compression: true, cellStyles: true })
+    telechargerClasseur(XLSX, wb, `Journal_${nomCompte}_${dateFin}.xlsx`)
   }
 
   const fetchWithLog = async (label: string, url: string) => {
@@ -1013,13 +1021,36 @@ export default function Rapports() {
       devise: reportDevise === 'ALL' ? undefined : reportDevise,
     })
 
+  const encaissementsFallbackUrl = () =>
+    '/encaissements' +
+    buildQuery({
+      date_debut: dateDebut,
+      date_fin: dateFin,
+      canal: reportCanal === 'ALL' ? undefined : reportCanal,
+      include: 'expert_comptable',
+      limit: 5000,
+    })
+
+  const fetchEncaissementsDetails = async (): Promise<any[]> => {
+    try {
+      const response = await fetchWithLog('versements-details', versementsUrl())
+      return Array.isArray(response) ? response : []
+    } catch (error: any) {
+      if (error?.status !== 404) throw error
+      // Compatibilité avec un backend qui n'expose pas encore la route dédiée
+      // par versement. L'export reste disponible avec la liste historique.
+      console.warn('[Rapports] /reports/versements indisponible, repli sur /encaissements')
+      const response = await fetchWithLog('encaissements-details-fallback', encaissementsFallbackUrl())
+      return Array.isArray(response) ? response : []
+    }
+  }
+
   const loadDetails = async () => {
     if (!rapport) return
     setDetailsLoading(true)
     setDetailsError(null)
     setSortiesWarning(null)
     try {
-      const encUrl = versementsUrl()
       const sortUrl =
         '/sorties-fonds' +
         buildQuery({
@@ -1032,7 +1063,7 @@ export default function Rapports() {
       const reqUrl =
         '/requisitions' + buildQuery({ date_debut: dateDebut, date_fin: dateFin, limit: 5000 })
 
-      const encPromise = fetchWithLog('encaissements-details', encUrl)
+      const encPromise = fetchEncaissementsDetails()
       const reqPromise = fetchWithLog('requisitions-details', reqUrl)
       const sortPromise = fetchWithLog('sorties-fonds-details', sortUrl).catch((err) => {
         console.error('[Rapports] Sorties indisponibles (détails)', err)
@@ -1183,7 +1214,6 @@ export default function Rapports() {
   // reposer sur `rapport.encaissements`/`.sorties` : ces listes ne sont remplies
   // que si l'utilisateur a déplié le détail à l'écran.
   const fetchExportDetails = async (): Promise<{ enc: any[]; sor: any[] }> => {
-    const encUrl = versementsUrl()
     const sortUrl =
       '/sorties-fonds' +
       buildQuery({
@@ -1194,7 +1224,7 @@ export default function Rapports() {
         limit: 5000,
       })
     const [encaissements, sorties] = await Promise.all([
-      apiRequest('GET', encUrl),
+      fetchEncaissementsDetails(),
       apiRequest('GET', sortUrl),
     ])
     return {
@@ -1213,7 +1243,7 @@ export default function Rapports() {
       const [{ enc, sor }, transfertsRecus, XLSX] = await Promise.all([
         fetchExportDetails(),
         fetchTransfertsRecus(),
-        import('xlsx'),
+        loadXlsxModule(),
       ])
 
       const wb = XLSX.utils.book_new()
@@ -1303,14 +1333,16 @@ export default function Rapports() {
       })
       XLSX.utils.book_append_sheet(wb, summarySheet, 'Résumé')
 
-      // « Montant Total » reste la note de débit, toujours exprimée en pivot
-      // USD ; « Montant Payé » suit la devise regardée, comme les totaux.
+      // Une ligne = un VERSEMENT (GET /reports/versements). « Date » est celle
+      // où l'argent est entré, « Montant Payé » le montant de ce versement dans
+      // la devise regardée ; « Montant Total » reste la note, en pivot USD.
       const encaissementsHeaders = [
         'Date',
         'N° Note de débit',
         'Date de la note',
         'Client',
         'Poste budgétaire',
+        'Nature budgétaire',
         'Description',
         'Nature du versement',
         'Montant Total (USD)',
@@ -1320,72 +1352,89 @@ export default function Rapports() {
         'Statut',
         'Mode de paiement',
       ]
+      const libelleStatut = (e: any) => {
+        // Statut AU JOUR du versement : un acompte depuis complété reste
+        // « Partiel » sur sa ligne, sinon la ligne contredirait son propre reste.
+        if (e.reste_apres != null) return toNumber(e.reste_apres) > 0.01 ? 'Partiel' : 'Payé'
+        return e.statut_paiement === 'non_paye'
+          ? 'Non payé'
+          : e.statut_paiement === 'partiel'
+          ? 'Partiel'
+          : e.statut_paiement === 'avance'
+          ? 'Avance'
+          : 'Payé'
+      }
       const encaissementsData = enc.map((e: any) => {
         const montantTotal = toNumber(e.montant_total ?? e.montant ?? 0)
         const montantPaye = montantEncaissement(e)
         const poste = e.budget_poste_code
           ? `${e.budget_poste_code}${e.budget_poste_libelle ? ` - ${e.budget_poste_libelle}` : ''}`
           : ''
-        const statut =
-          e.statut_paiement === 'non_paye'
-            ? 'Non payé'
-            : e.statut_paiement === 'partiel'
-            ? 'Partiel'
-            : e.statut_paiement === 'avance'
-            ? 'Avance'
-            : 'Payé'
-
         const reste = toNumber(e.reste_apres ?? 0)
-        // Une ligne = un versement : « Date » est celle où l'argent est entré,
-        // « Montant Payé » le montant de CE versement (pas le cumul de la note).
         return [
-          format(new Date(e.date_versement ?? e.date_encaissement), 'dd/MM/yyyy'),
+          jourExcel(e.date_versement ?? e.date_encaissement),
           e.numero_recu,
-          e.date_encaissement ? format(new Date(e.date_encaissement), 'dd/MM/yyyy') : '',
+          jourExcel(e.date_encaissement),
           e.expert_comptable?.nom_denomination || e.client_nom || '',
           poste,
+          e.nature_budgetaire || 'Budgétaire',
           e.description || '',
           libelleVersement(e),
           Number.isFinite(montantTotal) ? montantTotal : 0,
           Number.isFinite(montantPaye) ? montantPaye : 0,
           Number.isFinite(reste) ? reste : 0,
           String(e.devise_perception || 'USD').toUpperCase(),
-          statut,
+          libelleStatut(e),
           e.mode_paiement || '',
         ]
       })
-      const totalFacture = encaissementsData.reduce((total, row) => total + toNumber(row[7] as Money), 0)
-      const totalEncaisse = encaissementsData.reduce((total, row) => total + toNumber(row[8] as Money), 0)
-      const encaissementsPayes = encaissementsData.filter((row) => row[11] === 'Payé').length
+      // Sommer « Montant Total » par ligne compterait une note autant de fois
+      // qu'elle a de versements dans la période : on ne le totalise pas.
+      const totalEncaisse = enc.reduce((total: number, e: any) => total + montantEncaissement(e), 0)
+      const totalHorsRecettes = enc
+        .filter((e: any) => e.est_recette === false)
+        .reduce((total: number, e: any) => total + montantEncaissement(e), 0)
+      const notesConcernees = new Set(enc.map((e: any) => e.encaissement_id ?? e.id)).size
+      const versementsSuivants = enc.filter((e: any) => toNumber(e.rang ?? 1) > 1).length
       const encaissementCards: ReportSummaryItem[] = reportDevise === 'ALL'
         ? [
-            { label: 'Montant facturé (USD)', value: totalFacture, tone: 'accent', format: 'money' },
-            { label: 'Opérations', value: encaissementsData.length, format: 'integer' },
-            { label: 'Payées', value: encaissementsPayes, tone: 'positive', format: 'integer' },
+            { label: 'Versements', value: encaissementsData.length, format: 'integer' },
+            { label: 'Notes concernées', value: notesConcernees, format: 'integer' },
+            { label: 'Compléments et soldes', value: versementsSuivants, tone: 'accent', format: 'integer' },
             { label: 'Devises', value: 'Non converties', tone: 'warning' },
           ]
         : [
-            { label: 'Montant facturé (USD)', value: totalFacture, tone: 'accent', format: 'money' },
             { label: `Montant encaissé (${reportDevise})`, value: totalEncaisse, tone: 'positive', format: 'money' },
-            { label: 'Opérations', value: encaissementsData.length, format: 'integer' },
-            { label: 'Payées', value: encaissementsPayes, tone: 'positive', format: 'integer' },
+            // Ces deux cartes retombent sur « Encaissements » et « hors budget » du Résumé.
+            { label: 'dont recettes', value: totalEncaisse - totalHorsRecettes, tone: 'positive', format: 'money' },
+            { label: 'dont hors budget / tiers', value: totalHorsRecettes, tone: 'warning', format: 'money' },
+            { label: 'Versements', value: encaissementsData.length, format: 'integer' },
+            { label: 'Compléments et soldes', value: versementsSuivants, tone: 'accent', format: 'integer' },
           ]
       const encaissementsSheet = createReportListSheet(XLSX, {
         title: 'ENCAISSEMENTS',
         organisation: organisationExport,
-        subtitle: exportSubtitle,
+        subtitle: `${exportSubtitle} | Une ligne par versement, à sa date`,
         headers: encaissementsHeaders,
         rows: encaissementsData,
-        widths: [14, 20, 14, 32, 34, 42, 22, 20, 20, 20, 16, 16, 22],
-        moneyColumns: [7, 8, 9],
+        widths: [13, 20, 13, 32, 34, 16, 40, 22, 18, 18, 18, 12, 12, 18],
+        moneyColumns: [8, 9, 10],
+        dateColumns: [0, 2],
         summaryCards: encaissementCards,
         footerRow: reportDevise === 'ALL'
           ? undefined
-          : ['TOTAL', '', '', '', '', '', '', totalFacture, totalEncaisse, '', '', '', ''],
-        wrapColumns: [3, 4, 5, 6],
-        centerColumns: [0, 1, 2, 10, 11, 12],
+          : ['TOTAL', '', '', '', '', '', '', '', '', totalEncaisse, '', '', '', ''],
+        wrapColumns: [3, 4, 6],
+        centerColumns: [1, 5, 7, 11, 12, 13],
         cellTone: (value, _rowIndex, columnIndex) => {
-          if (columnIndex !== 11) return undefined
+          if (columnIndex === 5) return value && value !== 'Budgétaire' ? 'warning' : undefined
+          if (columnIndex === 7) {
+            const nature = String(value || '')
+            if (nature.startsWith('Acompte')) return 'warning'
+            if (nature.startsWith('Complément')) return 'accent'
+            return nature.startsWith('Solde') ? 'positive' : undefined
+          }
+          if (columnIndex !== 12) return undefined
           if (value === 'Payé') return 'positive'
           if (value === 'Partiel') return 'warning'
           if (value === 'Avance') return 'accent'
@@ -1394,18 +1443,27 @@ export default function Rapports() {
       })
       XLSX.utils.book_append_sheet(wb, encaissementsSheet, 'Encaissements')
 
+      // Une requête par RÉQUISITION, pas par sortie : une réquisition payée en
+      // dix tranches demandait dix fois les mêmes lignes.
+      const postesParRequisition = new Map<string, Promise<string>>()
+      const postesDeLaRequisition = (requisitionId: string) => {
+        let postes = postesParRequisition.get(requisitionId)
+        if (!postes) {
+          const lignesUrl = '/lignes-requisition' + buildQuery({ requisition_id: requisitionId })
+          postes = apiRequest('GET', lignesUrl).then((lignesRes: any) => {
+            const lignes = Array.isArray(lignesRes) ? lignesRes : []
+            return lignes.length ? [...new Set(lignes.map((l: any) => l.rubrique))].join(', ') : ''
+          })
+          postesParRequisition.set(requisitionId, postes)
+        }
+        return postes
+      }
       const sortiesDataWithPostes = await Promise.all(
         sor.map(async (s: any) => {
-          let posteBudgetaire = ''
-          if (s.requisition_id) {
-            const lignesUrl = '/lignes-requisition' + buildQuery({ requisition_id: s.requisition_id })
-            const lignesRes: any = await apiRequest('GET', lignesUrl)
-            const lignes = Array.isArray(lignesRes) ? lignesRes : []
-            posteBudgetaire = lignes.length ? [...new Set(lignes.map((l: any) => l.rubrique))].join(', ') : ''
-          }
+          const posteBudgetaire = s.requisition_id ? await postesDeLaRequisition(String(s.requisition_id)) : ''
 
           return [
-            format(new Date(s.date_paiement), 'dd/MM/yyyy'),
+            jourExcel(s.date_paiement),
             s.reference || '',
             // Sans le type, un versement ou un approvisionnement se confond ici
             // avec une dépense ordinaire.
@@ -1456,7 +1514,8 @@ export default function Rapports() {
           ? undefined
           : ['TOTAL', '', '', '', '', '', totalSortiesDetail, '', ''],
         wrapColumns: [4, 5],
-        centerColumns: [0, 1, 2, 3, 7, 8],
+        dateColumns: [0],
+        centerColumns: [1, 2, 3, 7, 8],
         rowTone: (_row, rowIndex) => estTransfertInterne(sor[rowIndex]) ? 'accent' : undefined,
       })
       XLSX.utils.book_append_sheet(wb, sortiesSheet, 'Sorties de Fonds')
@@ -1466,7 +1525,7 @@ export default function Rapports() {
       // jamais comme entrantes du canal d'arrivée.
       if (transfertsRecus.length) {
         const transfertsData = transfertsRecus.map((t: any) => [
-          t.date_paiement ? format(new Date(t.date_paiement), 'dd/MM/yyyy') : '',
+          jourExcel(t.date_paiement),
           t.reference_numero || t.reference || '',
           t._sens || '',
           t.motif || '',
@@ -1501,17 +1560,24 @@ export default function Rapports() {
             ? undefined
             : ['TOTAL', '', '', '', '', totalTransferts, ''],
           wrapColumns: [3, 4],
-          centerColumns: [0, 1, 2, 6],
+          dateColumns: [0],
+          centerColumns: [1, 2, 6],
           cellTone: (_value, _rowIndex, columnIndex) => columnIndex === 2 ? 'accent' : undefined,
         })
         XLSX.utils.book_append_sheet(wb, transfertsSheet, 'Transferts internes')
       }
 
-      XLSX.writeFile(wb, `rapport_${dateDebut}_${dateFin}.xlsx`, { compression: true, cellStyles: true })
+      telechargerClasseur(XLSX, wb, `rapport_${dateDebut}_${dateFin}.xlsx`)
       notifySuccess('Export Excel', 'Le fichier a été téléchargé.')
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error exporting to Excel:', error)
-      notifyError("Erreur d'export", "Une erreur est survenue lors de l'export vers Excel.")
+      const detail = error?.payload?.detail || error?.payload?.message || error?.message
+      notifyError(
+        "Erreur d'export",
+        detail
+          ? `Impossible de générer le fichier Excel : ${detail}`
+          : "Une erreur est survenue lors de l'export vers Excel.",
+      )
     }
   }
 

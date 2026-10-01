@@ -1,4 +1,5 @@
-import type { CellObject, CellStyle, WorkSheet } from 'xlsx'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import type { CellObject, CellStyle, WorkBook, WorkSheet } from 'xlsx'
 
 type XlsxModule = typeof import('xlsx')
 type SheetValue = string | number | boolean | Date | null | undefined
@@ -26,6 +27,7 @@ const TEAL = '0F766E'
 const BORDER = 'D1D5DB'
 const WHITE = 'FFFFFF'
 const MONEY_FORMAT = '#,##0.00;[Red]-#,##0.00'
+const DATE_FORMAT = 'dd/mm/yyyy'
 
 const toneFills: Record<SummaryTone, string> = {
   default: SLATE_LIGHT,
@@ -76,7 +78,8 @@ const totalStyle: CellStyle = {
 
 const footerTotalStyle: CellStyle = {
   font: { bold: true, color: { rgb: WHITE }, sz: 10 },
-  fill: { patternType: 'solid', fgColor: { rgb: GREEN_DARK } },
+  // Ligne TOTAL du modèle budget : même vert que l'en-tête.
+  fill: { patternType: 'solid', fgColor: { rgb: GREEN } },
   alignment: { vertical: 'center', wrapText: true },
   border: thinBorder,
 }
@@ -87,6 +90,7 @@ type RowStyleVariants = {
   centered: CellStyle
   number: CellStyle
   money: CellStyle
+  date: CellStyle
 }
 
 function rowStyleVariants(base: CellStyle): RowStyleVariants {
@@ -100,6 +104,7 @@ function rowStyleVariants(base: CellStyle): RowStyleVariants {
     centered: { ...base, alignment: { ...base.alignment, horizontal: 'center' } },
     number: { ...base, alignment: rightAlignment },
     money: { ...base, alignment: rightAlignment, numFmt: MONEY_FORMAT },
+    date: { ...base, alignment: { ...base.alignment, horizontal: 'center' }, numFmt: DATE_FORMAT },
   }
 }
 
@@ -161,7 +166,8 @@ function applyBanner(
 ) {
   const titleStyle: CellStyle = {
     font: { bold: true, color: { rgb: WHITE }, sz: 16 },
-    fill: { patternType: 'solid', fgColor: { rgb: GREEN_DARK } },
+    // Même vert que le bandeau des exports backend (`_write_banner`).
+    fill: { patternType: 'solid', fgColor: { rgb: GREEN } },
     alignment: { horizontal: 'center', vertical: 'center' },
   }
   const organisationStyle: CellStyle = {
@@ -195,6 +201,10 @@ export type ReportListSheetOptions = {
   footerRow?: SheetValue[]
   wrapColumns?: number[]
   centerColumns?: number[]
+  /** Colonnes de dates : passer `jourExcel(...)`, rendu en vraie date Excel (tri et filtre). */
+  dateColumns?: number[]
+  /** Colonne « N° » en tête, comme les exports budget (défaut : oui). */
+  ordinal?: boolean
   rowTone?: (row: SheetValue[], rowIndex: number) => SummaryTone | undefined
   cellTone?: (value: SheetValue, rowIndex: number, columnIndex: number) => SummaryTone | undefined
 }
@@ -268,6 +278,27 @@ function styleCards(
   sheet['!rows']![labelRow] = { hpt: 27 }
 }
 
+/** Mise en page que xlsx-js-style ne sait pas écrire, posée par `telechargerClasseur`. */
+type SheetLayout = { freezeRows: number; printTitleRow?: number }
+const LAYOUT_KEY = '!onecLayout'
+
+function setLayout(sheet: WorkSheet, layout: SheetLayout) {
+  ;(sheet as any)[LAYOUT_KEY] = layout
+}
+
+/**
+ * Jour d'une date (heure locale), en numéro de série Excel, pour une colonne
+ * `dateColumns`. Un objet `Date` passé tel quel à xlsx-js-style sort décalé de
+ * quelques secondes selon le fuseau, et son format `m/d/yy` écrase le nôtre.
+ */
+export function jourExcel(value: string | Date | null | undefined): number | '' {
+  if (!value) return ''
+  const parsed = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  const jour = Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate())
+  return (jour - Date.UTC(1899, 11, 30)) / 86_400_000
+}
+
 function applySheetLayout(sheet: WorkSheet) {
   sheet['!margins'] = {
     left: 0.35,
@@ -284,7 +315,23 @@ export function createReportListSheet(
   xlsx: XlsxModule,
   options: ReportListSheetOptions,
 ): WorkSheet {
-  const { title, organisation, subtitle, headers, rows, widths } = options
+  const { title, organisation, subtitle } = options
+  // Colonne « N° » comme `_build_list_sheet` côté backend : chaque ligne se
+  // cite par son numéro. Les index d'options restent ceux de l'appelant, on
+  // les décale ici d'un cran.
+  const ordinal = options.ordinal !== false
+  const shift = ordinal ? 1 : 0
+  const headers = ordinal ? ['N°', ...options.headers] : options.headers
+  const rows = ordinal
+    ? options.rows.map((row, index) => [index + 1, ...row])
+    : options.rows
+  const widths = ordinal ? [6, ...options.widths] : options.widths
+  const footerValues = options.footerRow
+    ? ordinal
+      ? [options.footerRow[0], '', ...options.footerRow.slice(1)]
+      : options.footerRow
+    : undefined
+  const shiftColumns = (columns?: number[]) => new Set((columns || []).map((column) => column + shift))
   const lastCol = Math.max(headers.length, 1)
   const cards = (options.summaryCards || []).slice(0, Math.min(5, lastCol))
   const hasCards = cards.length > 0
@@ -296,23 +343,24 @@ export function createReportListSheet(
   ]
   if (hasCards) content.push(...cardRows(cards, lastCol), [])
   content.push(headers, ...rows)
-  if (options.footerRow) content.push(options.footerRow)
+  if (footerValues) content.push(footerValues)
 
   const sheet = xlsx.utils.aoa_to_sheet(content)
   const firstDataRow = headerRow + 1
   const lastDataRow = rows.length ? firstDataRow + rows.length - 1 : headerRow
-  const footerRow = options.footerRow ? lastDataRow + 1 : null
-  const moneyColumns = new Set(options.moneyColumns || [])
+  const footerRow = footerValues ? lastDataRow + 1 : null
+  const moneyColumns = shiftColumns(options.moneyColumns)
   const totalRows = new Set(options.totalRowIndexes || [])
-  const wrapColumns = new Set(options.wrapColumns || [])
-  const centerColumns = new Set(options.centerColumns || [])
+  const wrapColumns = shiftColumns(options.wrapColumns)
+  const centerColumns = shiftColumns(options.centerColumns)
+  const dateColumns = shiftColumns(options.dateColumns)
 
   applyBanner(sheet, xlsx, lastCol)
   if (hasCards) styleCards(sheet, xlsx, cards, 4, lastCol)
   applyRowStyle(sheet, xlsx, headerRow, 1, lastCol, headerStyle)
   sheet['!rows']![headerRow - 1] = { hpt: 25 }
 
-  rows.forEach((rowValues, rowIndex) => {
+  options.rows.forEach((rowValues, rowIndex) => {
     const excelRow = firstDataRow + rowIndex
     const rowTone = options.rowTone?.(rowValues, rowIndex)
     const rowVariants = rowTone && rowTone !== 'default'
@@ -326,12 +374,19 @@ export function createReportListSheet(
     for (let col = 1; col <= lastCol; col += 1) {
       const cell = ensureCell(sheet, xlsx, excelRow, col)
       const columnIndex = col - 1
-      const cellTone = options.cellTone?.(rowValues[columnIndex], rowIndex, columnIndex)
+      const callerColumn = columnIndex - shift
+      const cellTone = callerColumn >= 0
+        ? options.cellTone?.(rowValues[callerColumn], rowIndex, callerColumn)
+        : undefined
       const variants = cellTone && cellTone !== 'default'
         ? highlightedBodyVariants[cellTone]
         : rowVariants
-      cell.s = moneyColumns.has(columnIndex)
+      cell.s = ordinal && columnIndex === 0
+        ? variants.centered
+        : moneyColumns.has(columnIndex)
         ? variants.money
+        : dateColumns.has(columnIndex) && cell.t === 'n'
+          ? variants.date
         : cell.t === 'n'
           ? variants.number
           : centerColumns.has(columnIndex)
@@ -353,6 +408,9 @@ export function createReportListSheet(
           : footerTotalVariants.text
     }
     sheet['!rows']![footerRow - 1] = { hpt: 24 }
+    // « TOTAL » s'étale sur « N° » et la première colonne : seule, la colonne
+    // N° est trop étroite pour le libellé.
+    if (ordinal && lastCol > 1) addMerge(sheet, footerRow, 1, footerRow, 2)
   }
 
   sheet['!cols'] = headers.map((_, index) => ({ wch: widths[index] || 18 }))
@@ -360,6 +418,8 @@ export function createReportListSheet(
     ref: `${xlsx.utils.encode_cell({ r: headerRow - 1, c: 0 })}:${xlsx.utils.encode_cell({ r: lastDataRow - 1, c: lastCol - 1 })}`,
   }
   applySheetLayout(sheet)
+  // En-tête figé au défilement et répété à chaque page imprimée.
+  setLayout(sheet, { freezeRows: headerRow, printTitleRow: headerRow })
   return sheet
 }
 
@@ -478,5 +538,69 @@ export function createReportSummarySheet(
     wch: index < tableCols ? options.detailWidths?.[index] || defaultWidths[index] || 18 : 3,
   }))
   applySheetLayout(sheet)
+  setLayout(sheet, { freezeRows: 3 })
   return sheet
+}
+
+/**
+ * Complète le XML d'une feuille avec ce que xlsx-js-style n'écrit pas et que le
+ * modèle budget (openpyxl) pose : volets figés, quadrillage masqué, onglet vert,
+ * impression paysage ajustée à la largeur.
+ */
+function patchWorksheetXml(xml: string, layout: SheetLayout | undefined): string {
+  let patched = xml
+  if (!/<sheetPr[\s>/]/.test(patched)) {
+    patched = patched.replace(
+      '<dimension',
+      `<sheetPr><tabColor rgb="FF${GREEN}"/><pageSetUpPr fitToPage="1"/></sheetPr><dimension`,
+    )
+  }
+  const pane = layout && layout.freezeRows > 0
+    ? `<pane ySplit="${layout.freezeRows}" topLeftCell="A${layout.freezeRows + 1}" activePane="bottomLeft" state="frozen"/>` +
+      '<selection pane="bottomLeft"/>'
+    : ''
+  patched = patched.replace(
+    /<sheetView((?:\s+[^>]*?)?)\/>/,
+    (_match, attributes: string) => `<sheetView showGridLines="0"${attributes}>${pane}</sheetView>`,
+  )
+  patched = patched.replace(
+    /(<pageMargins[^>]*\/>)/,
+    '$1<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>',
+  )
+  return patched
+}
+
+/**
+ * Écrit le classeur et le télécharge, mis en page comme les exports backend.
+ * Remplace `XLSX.writeFile` pour les classeurs construits par ce module.
+ */
+export function telechargerClasseur(xlsx: XlsxModule, wb: WorkBook, filename: string) {
+  // Ligne d'en-tête répétée en haut de chaque page imprimée.
+  const names = wb.SheetNames.flatMap((name, index) => {
+    const row = ((wb.Sheets[name] as any)?.[LAYOUT_KEY] as SheetLayout | undefined)?.printTitleRow
+    return row
+      ? [{ Name: '_xlnm.Print_Titles', Sheet: index, Ref: `'${name.replace(/'/g, "''")}'!$${row}:$${row}` }]
+      : []
+  })
+  wb.Workbook = { ...(wb.Workbook || {}), Names: [...(wb.Workbook?.Names || []), ...names] }
+
+  const written = xlsx.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true }) as ArrayBuffer
+  const files = unzipSync(new Uint8Array(written))
+  wb.SheetNames.forEach((name, index) => {
+    const path = `xl/worksheets/sheet${index + 1}.xml`
+    if (!files[path]) return
+    const layout = (wb.Sheets[name] as any)?.[LAYOUT_KEY] as SheetLayout | undefined
+    files[path] = strToU8(patchWorksheetXml(strFromU8(files[path]), layout))
+  })
+  const blob = new Blob([zipSync(files, { level: 6 })], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
