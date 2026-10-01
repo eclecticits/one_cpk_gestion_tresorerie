@@ -196,6 +196,11 @@ class ReportVersementLine(DecimalBaseModel):
     nombre_versements: int = 1
     nature_versement: str = "Paiement intégral"
     statut_paiement: str | None = None
+    # « Budgétaire », « Hors budget », « Fonds de tiers »… : libellé de la
+    # colonne « Nature budgétaire » de l'export des encaissements.
+    nature_budgetaire: str = "Budgétaire"
+    # Compte dans « Encaissements » du résumé ; sinon dans « hors budget ».
+    est_recette: bool = True
 
 
 class ReportJournalResponse(DecimalBaseModel):

@@ -52,6 +52,7 @@ from app.schemas.reports import (
     ReportVersementLine,
 )
 from app.schemas.sortie_fonds import SortieFondsOut
+from app.api.v1.endpoints.exports import _nature_budgetaire_label
 from app.utils.formatters import calculer_journal_avec_solde
 
 router = APIRouter()
@@ -1470,6 +1471,12 @@ async def versements(
                 nombre_versements=int(row.nombre or 1),
                 nature_versement=nature_versement(int(row.rang or 1), montant_total, cumul),
                 statut_paiement=enc.statut_paiement,
+                nature_budgetaire=_nature_budgetaire_label(enc),
+                # Même règle que `est_recette` du résumé.
+                est_recette=(
+                    (enc.nature_mouvement or "BUDGETAIRE") == "BUDGETAIRE"
+                    and bool(enc.impact_budgetaire)
+                ),
             )
         )
     return lignes

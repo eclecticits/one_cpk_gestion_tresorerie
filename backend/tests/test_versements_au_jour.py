@@ -90,6 +90,7 @@ async def test_le_complement_figure_au_jour_de_son_versement(db_session, sans_ca
     ]
     assert jour[0].rang == 2 and jour[0].nombre_versements == 2
     assert jour[0].reste_apres == Decimal("0")
+    assert jour[0].nature_budgetaire == "Budgétaire" and jour[0].est_recette is True
 
     # Le jour de l'acompte ne montre que l'acompte, pas l'argent reçu ensuite.
     veille = await versements(
