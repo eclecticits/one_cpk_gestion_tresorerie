@@ -1596,3 +1596,27 @@
   border-color: #dc2626;
   color: #ffffff;
 }
+
+/* Retour en trésorerie intercalé à sa date parmi les sorties. Teinte verte et
+   badge écrit : la couleur double l'information, elle ne la remplace pas. */
+.rowRetour td {
+  background: #f0fdf4;
+}
+
+.retourBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: #dcfce7;
+  color: #047857;
+  border: 1px solid #86efac;
+}
+
+.amountRetour {
+  color: #047857;
+}

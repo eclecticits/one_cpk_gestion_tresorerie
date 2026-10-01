@@ -103,6 +103,10 @@ export default function Encaissements() {
   // approvisionnements banque -> caisse. Volontairement tenues hors des totaux
   // d'encaissements (ce ne sont pas des recettes clients).
   const [entreesCaisse, setEntreesCaisse] = useState<EntreeCaisseLigne[]>([])
+  // Versements reçus dans la période sur des notes émises AVANT elle : la
+  // liste ci-dessus range les notes à leur date d'émission, un complément
+  // payé aujourd'hui sur une note de la semaine dernière n'y figurait pas.
+  const [complementsAnterieurs, setComplementsAnterieurs] = useState<any[]>([])
   const [entreesCaisseTotaux, setEntreesCaisseTotaux] = useState({ usd: 0, cdf: 0 })
 
   const [printingEncaissement, setPrintingEncaissement] = useState<Encaissement | null>(null)
@@ -236,13 +240,28 @@ export default function Encaissements() {
         '/encaissements/entrees-caisse' +
         buildQuery({ date_debut: dateDebut, date_fin: dateFin, limit: 200 })
 
-      const [encRes, proRes, servicesRes, entreesRes] = await Promise.all([
+      const versementsPath =
+        '/reports/versements' + buildQuery({ date_debut: dateDebut, date_fin: dateFin })
+
+      const [encRes, proRes, servicesRes, entreesRes, versementsRes] = await Promise.all([
         apiRequest<any>('GET', encPath),
         apiRequest<any>('GET', proformaPath),
         getServices({ active: true }),
         // Cette liste est indicative : son échec ne doit pas vider l'écran.
         apiRequest<any>('GET', entreesPath).catch(() => null),
+        // Indicative aussi ; inutile pour une recherche ciblée, qui ignore la période.
+        rechercheCiblee || !dateDebut
+          ? Promise.resolve(null)
+          : apiRequest<any>('GET', versementsPath).catch(() => null),
       ])
+
+      // Seuls les versements dont la note est ANTÉRIEURE à la période : les
+      // autres sont déjà visibles dans la liste, sur la ligne de leur note.
+      setComplementsAnterieurs(
+        (Array.isArray(versementsRes) ? versementsRes : []).filter(
+          (v: any) => v.date_encaissement && format(new Date(v.date_encaissement), 'yyyy-MM-dd') < dateDebut,
+        ),
+      )
 
       setEntreesCaisse(Array.isArray(entreesRes?.items) ? entreesRes.items : [])
       setEntreesCaisseTotaux({
@@ -1096,6 +1115,53 @@ export default function Encaissements() {
           </div>
         )}
       </div>
+
+      {complementsAnterieurs.length > 0 && !hasClientFilters && (
+        <div className={styles.proformaSection}>
+          <div className={styles.sectionHeader}>
+            <h3>Versements reçus sur des notes antérieures</h3>
+            <span className={styles.countBadge}>{complementsAnterieurs.length}</span>
+          </div>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64748b' }}>
+            Acomptes complétés ou soldés sur la période, pour des notes émises avant elle. La note
+            garde sa date d'émission ; le versement apparaît ici, à la date où l'argent est entré.
+          </p>
+          <div className={styles.proformaTableContainer}>
+            <table className={styles.proformaTable}>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>N° Note de débit</th>
+                  <th>Date de la note</th>
+                  <th>Client</th>
+                  <th>Nature du versement</th>
+                  <th>Montant payé</th>
+                  <th>Reste après versement</th>
+                </tr>
+              </thead>
+              <tbody>
+                {complementsAnterieurs.map((v) => (
+                  <tr key={`versement-${v.id}`}>
+                    <td>{format(new Date(v.date_versement), 'dd/MM/yyyy')}</td>
+                    <td><strong>{v.numero_recu || '—'}</strong></td>
+                    <td>{format(new Date(v.date_encaissement), 'dd/MM/yyyy')}</td>
+                    <td>{v.expert_comptable?.nom_denomination || v.client_nom || '—'}</td>
+                    <td>{v.nature_versement} ({v.rang}/{v.nombre_versements})</td>
+                    <td style={{ color: '#166534', fontWeight: 700 }}>
+                      + {toNumber(v.montant_paye).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}{' '}
+                      {v.devise_perception}
+                    </td>
+                    <td>
+                      {toNumber(v.reste_apres).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}{' '}
+                      {v.devise_perception}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {entreesCaisse.length > 0 && !hasClientFilters && (
         <div className={styles.proformaSection}>

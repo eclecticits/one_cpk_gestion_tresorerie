@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
+import { Fragment, useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Search, Printer, Undo2, Ban, Lock, Paperclip, Pencil, Target } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -403,6 +403,26 @@ export default function SortiesFonds() {
   const netTransfertsInternes = sortiesQuery.data?.netTransfertsInternes ?? 0
   const totalRetoursCaisse = sortiesQuery.data?.totalRetoursCaisse ?? 0
   const totalDepensesNettes = sortiesQuery.data?.totalDepensesNettes ?? 0
+
+  // Retours en trésorerie de la période, chacun à SA date. Ils vivent dans une
+  // autre table que les sorties : le tableau n'en montrait que le total, alors
+  // que l'export Excel les listait. La sortie d'origine n'est pas modifiée ;
+  // la ligne de retour la rappelle. Même règle d'application que le total
+  // renvoyé par /sorties-fonds : un filtre propre aux sorties (type, mode,
+  // statut autre que validé) ne s'applique pas à un retour.
+  const retoursApplicables =
+    !filterType && !filterModePaiement && (!filterStatut || ['VALIDE', 'ALL'].includes(String(filterStatut).toUpperCase()))
+  const retoursQuery = useQuery({
+    queryKey: ['sorties-fonds', 'retours', dateDebut, dateFin, retoursApplicables],
+    enabled: retoursApplicables,
+    queryFn: async () => {
+      const res = await apiRequest<any>('GET', '/reports/retours', {
+        params: { date_debut: dateDebut || undefined, date_fin: dateFin || undefined },
+      })
+      return (Array.isArray(res) ? res : []) as any[]
+    },
+  })
+  const retoursPeriode = retoursApplicables ? retoursQuery.data ?? [] : []
 
   const invalidateSortiesFonds = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['sorties-fonds'] })
@@ -1916,6 +1936,76 @@ export default function SortiesFonds() {
   const canCreate = hasPermission('sorties_fonds')
 
   const filteredSorties = sortiesList
+
+  // Les retours s'intercalent dans la page 1 à leur date : chacun avant la
+  // première sortie payée avant lui (l'ordre des sorties ne change pas). Ceux
+  // qui sont plus anciens que toute la page se rangent en fin de page 1.
+  const { retoursAvantSortie, retoursSansSortie } = useMemo(() => {
+    const avant = new Map<number, any[]>()
+    const reste: any[] = []
+    if (page !== 1) return { retoursAvantSortie: avant, retoursSansSortie: reste }
+    const dateDe = (value: any) => new Date(value || 0).getTime()
+    ;[...retoursPeriode]
+      .sort((a, b) => dateDe(b.date_retour) - dateDe(a.date_retour))
+      .forEach((retour) => {
+        const index = filteredSorties.findIndex(
+          (sortie) => dateDe((sortie as any).date_paiement) < dateDe(retour.date_retour),
+        )
+        if (index === -1) reste.push(retour)
+        else avant.set(index, [...(avant.get(index) || []), retour])
+      })
+    return { retoursAvantSortie: avant, retoursSansSortie: reste }
+  }, [retoursPeriode, filteredSorties, page])
+
+  const renderRetourRow = (retour: any) => (
+    <tr key={`retour-${retour.id}`} className={styles.rowRetour} title="Retour en trésorerie : la sortie d'origine n'est pas modifiée">
+      <td>
+        <div className={styles.cellStack}>
+          <strong className={styles.cellPrimary}>{format(new Date(retour.date_retour), 'dd/MM/yyyy')}</strong>
+          {retour.reference_numero && <span className={styles.cellSecondary}>{retour.reference_numero}</span>}
+        </div>
+      </td>
+      <td>
+        <div className={styles.cellStack}>
+          <span className={styles.retourBadge}>↩ Retour</span>
+          <span className={styles.senseHint}>{retour.type_retour}</span>
+        </div>
+      </td>
+      <td>
+        <div className={styles.cellStack}>
+          <span className={styles.cellPrimary}>
+            Sur {retour.sortie_reference || 'sortie'}
+            {retour.sortie_date ? ` du ${format(new Date(retour.sortie_date), 'dd/MM/yyyy')}` : ''}
+          </span>
+          {retour.numero_requisition && <span className={styles.cellSecondary}>{retour.numero_requisition}</span>}
+        </div>
+      </td>
+      <td>
+        <div className={styles.cellStack}>
+          <span className={styles.cellPrimary}>{retour.motif || 'Reliquat rendu'}</span>
+          {retour.sortie_beneficiaire && <span className={styles.cellSecondary}>{retour.sortie_beneficiaire}</span>}
+        </div>
+      </td>
+      <td>
+        <span className={styles.cellPrimary}>
+          {[retour.budget_poste_code, retour.budget_poste_libelle].filter(Boolean).join(' - ') || '-'}
+        </span>
+      </td>
+      <td>
+        <div className={styles.cellStack}>
+          <strong className={styles.amountRetour}>−{formatCurrency(retour.montant)}</strong>
+          <span className={styles.cellSecondary}>
+            Reste à justifier : {formatCurrency(retour.reste_a_justifier_apres)}
+          </span>
+        </div>
+      </td>
+      <td>
+        <span className={styles.cellPrimary}>{getModePaiementLabel(retour.mode)}</span>
+      </td>
+      <td>{renderStatutBadge('VALIDE')}</td>
+      <td />
+    </tr>
+  )
   const totalSorties = totalMontantSorties
   const hasActiveFilters = Boolean(
     dateDebut || dateFin || filterType || filterModePaiement || filterStatut || filterNumeroRequisition
@@ -3503,19 +3593,22 @@ export default function SortiesFonds() {
             </tr>
           </thead>
           <tbody>
-            {filteredSorties.length === 0 ? (
+            {filteredSorties.length === 0 && retoursSansSortie.length === 0 ? (
               <tr>
                 <td colSpan={9} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
                   {dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
                 </td>
               </tr>
             ) : (
-              filteredSorties.map((sortie) => {
+              <>
+              {filteredSorties.map((sortie, index) => {
                 const sortieWithType = sortie as any
                 const typeSortie = sortieWithType.type_sortie || 'requisition'
 
                 return (
-                  <tr key={sortie.id}>
+                  <Fragment key={sortie.id}>
+                  {(retoursAvantSortie.get(index) || []).map(renderRetourRow)}
+                  <tr>
                     <td>
                       <div className={styles.cellStack}>
                         <strong className={styles.cellPrimary}>{format(new Date(sortie.date_paiement), 'dd/MM/yyyy')}</strong>
@@ -3681,14 +3774,44 @@ export default function SortiesFonds() {
                       </div>
                     </td>
                   </tr>
+                  </Fragment>
                 )
-              })
+              })}
+              {retoursSansSortie.map(renderRetourRow)}
+              </>
             )}
           </tbody>
           </table>
         </div>
 
       <div className={styles.mobileCards}>
+        {page === 1 && retoursPeriode.map((retour: any) => (
+          <div key={`card-retour-${retour.id}`} className={`${styles.card} ${styles.rowRetour}`}>
+            <div className={styles.cardHeader}>
+              <div>
+                <div className={styles.cardTitle}>{format(new Date(retour.date_retour), 'dd/MM/yyyy')}</div>
+                <div className={styles.cardSub}>
+                  Retour sur {retour.sortie_reference || 'sortie'}
+                  {retour.sortie_date ? ` du ${format(new Date(retour.sortie_date), 'dd/MM/yyyy')}` : ''}
+                </div>
+              </div>
+              <div className={`${styles.cardAmountMain} ${styles.amountRetour}`}>+{formatCurrency(retour.montant)}</div>
+            </div>
+            <div className={styles.cardBody}>
+              <div className={styles.retourBadge}>↩ Retour</div>
+              <div className={styles.cardGrid}>
+                <div>
+                  <div className={styles.cardLabel}>Motif</div>
+                  <div className={styles.cardValue}>{retour.motif || 'Reliquat rendu'}</div>
+                </div>
+                <div>
+                  <div className={styles.cardLabel}>Reste à justifier</div>
+                  <div className={styles.cardValue}>{formatCurrency(retour.reste_a_justifier_apres)}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
         {filteredSorties.length === 0 ? (
           <div className={styles.emptyCards}>
             {dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
