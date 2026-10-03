@@ -1,0 +1,234 @@
+/* Choix d'un poste budgétaire : champ de recherche + arborescence. */
+
+.picker {
+  position: relative;
+  min-width: 0;
+}
+
+.champ {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.champ input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 34px 0 34px;
+  text-overflow: ellipsis;
+}
+
+.loupe {
+  position: absolute;
+  left: 11px;
+  color: var(--color-text-muted, #64748b);
+  pointer-events: none;
+}
+
+.effacer {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-text-muted, #64748b);
+  background: transparent;
+  cursor: pointer;
+}
+
+.effacer:hover {
+  color: var(--color-title, #0f172a);
+  background: var(--color-surface-muted, #f1f5f9);
+}
+
+.invalide .champ input {
+  border-color: #fca5a5;
+}
+
+/* Rendue dans un portail : position, largeur et hauteur viennent du composant.
+   Au-dessus des modales de l'application (10100), sous les notifications (20000). */
+.liste {
+  position: fixed;
+  z-index: 10200;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 8px;
+  background: var(--color-surface, #ffffff);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--color-title, #0f172a);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.optionActive {
+  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 9%, transparent);
+}
+
+.optionChoisie {
+  box-shadow: inset 3px 0 0 var(--tenant-primary, #1f6b5c);
+}
+
+.optionParent {
+  color: var(--color-text-muted, #475569);
+  font-weight: 600;
+}
+
+.chevron {
+  flex: none;
+  transition: transform 0.15s ease;
+}
+
+.chevronOuvert {
+  transform: rotate(90deg);
+}
+
+.puce {
+  flex: none;
+  width: 14px;
+}
+
+.intitule {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surligne {
+  padding: 0 1px;
+  border-radius: 2px;
+  color: inherit;
+  background: #fde68a;
+}
+
+.disponible {
+  flex: none;
+  color: #15803d;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.disponibleEpuise {
+  color: #b42318;
+}
+
+.badgeParent {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--color-text-muted, #64748b);
+  background: var(--color-surface-muted, #f1f5f9);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.vide {
+  padding: 12px 10px;
+  color: var(--color-text-muted, #64748b);
+  font-size: 13px;
+}
+
+/* Situation du poste choisi. */
+
+.resume {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 12px;
+}
+
+.resumeAlerte {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.resumeDepasse {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.chiffres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  color: var(--color-text-muted, #475569);
+}
+
+.chiffres strong {
+  color: var(--color-title, #0f172a);
+  font-variant-numeric: tabular-nums;
+}
+
+.positif strong {
+  color: #15803d;
+}
+
+.negatif strong {
+  color: #b42318;
+}
+
+.jauge {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.jauge span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--tenant-primary, #1f6b5c);
+}
+
+.resumeAlerte .jauge span {
+  background: #d97706;
+}
+
+.resumeDepasse .jauge span {
+  background: #dc2626;
+}
+
+.message {
+  margin: 0;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.resumeDepasse .message {
+  color: #b42318;
+}
+
+.note {
+  margin: 0;
+  color: var(--color-text-muted, #64748b);
+}
+
+@media (max-width: 768px) {
+  .option {
+    min-height: 44px;
+  }
+}

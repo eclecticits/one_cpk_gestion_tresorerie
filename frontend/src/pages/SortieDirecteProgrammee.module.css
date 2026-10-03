@@ -451,6 +451,11 @@
   background: #ffffff;
 }
 
+/* Situation du poste choisi : toute la largeur, sous les champs de la ligne. */
+.lineResume {
+  grid-column: 2 / -1;
+}
+
 .lineInvalid {
   border-color: #fca5a5;
   background: #fffafa;
@@ -1517,5 +1522,12 @@
 @media (prefers-reduced-motion: reduce) {
   .spin {
     animation-duration: 1.5s;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Sans numéro de ligne, la situation du poste prend toute la largeur. */
+  .lineResume {
+    grid-column: 1 / -1;
   }
 }

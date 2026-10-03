@@ -22,6 +22,8 @@ import {
 } from 'lucide-react'
 import { getServices } from '../api/services'
 import { getBudgetPostes } from '../api/budget'
+import { getPrintSettings, type PrintSettings } from '../api/settings'
+import PosteBudgetairePicker, { PosteBudgetaireResume } from '../components/PosteBudgetairePicker'
 import {
   listOrdresDecaissement,
   createOrdreDecaissement,
@@ -98,6 +100,8 @@ export default function SortieDirecteProgrammee() {
 
   const [services, setServices] = useState<Service[]>([])
   const [postes, setPostes] = useState<BudgetPosteSummary[]>([])
+  // Taux, seuil d'alerte et blocage : de quoi situer le poste choisi avant de transmettre.
+  const [reglagesBudget, setReglagesBudget] = useState<PrintSettings | null>(null)
   const [ordres, setOrdres] = useState<OrdreDecaissement[]>([])
   const [ordersTotal, setOrdersTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -158,6 +162,25 @@ export default function SortieDirecteProgrammee() {
     [estCollation, nbParticipants, prixParTete, lignes]
   )
 
+  /** Ce que la pièce impute sur chaque poste, toutes lignes confondues, en USD.
+   *  Deux lignes sur un même poste se cumulent : c'est leur somme qui doit
+   *  tenir dans le disponible. `null` : montant en CDF sans taux connu. */
+  const tauxCdf = toNumber(reglagesBudget?.exchange_rate_cdf ?? 0)
+  const montantUsdParPoste = useMemo(() => {
+    const sommes = new Map<number, number>()
+    const lignesImputees = estCollation ? lignes.slice(0, 1) : lignes
+    lignesImputees.forEach((ligne) => {
+      if (!ligne.budget_poste_id) return
+      const montant = estCollation ? total : (parseFloat(ligne.montant) || 0)
+      sommes.set(ligne.budget_poste_id, (sommes.get(ligne.budget_poste_id) ?? 0) + montant)
+    })
+    const enUsd = new Map<number, number | null>()
+    sommes.forEach((somme, posteId) => {
+      enUsd.set(posteId, devise === 'USD' ? somme : tauxCdf > 0 ? somme / tauxCdf : null)
+    })
+    return enUsd
+  }, [estCollation, lignes, total, devise, tauxCdf])
+
   /** Le plafond qui s'applique, et ce qui le fait dépasser. Deux bornes pour
    *  une collation : le prix par tête dit que c'en est bien une, le total dit
    *  qu'elle reste une sortie directe. */
@@ -175,7 +198,9 @@ export default function SortieDirecteProgrammee() {
   )
 
   const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'TOUS' | 'AUTORISE' | 'PAYE' | 'ANNULE'>('TOUS')
+  // La liste s'ouvre sur ce qui reste à traiter : les ordres en attente de la
+  // caisse (une sortie directe n'a pas de brouillon, elle naît autorisée).
+  const [statusFilter, setStatusFilter] = useState<'TOUS' | 'AUTORISE' | 'PAYE' | 'ANNULE'>('AUTORISE')
 
   const ordreStats = useMemo(
     () => ({
@@ -223,12 +248,15 @@ export default function SortieDirecteProgrammee() {
     setReferencesLoading(true)
     setReferencesError(null)
     try {
-      const [srv, bud] = await Promise.all([
+      const [srv, bud, reglages] = await Promise.all([
         getServices({ active: true }),
         getBudgetPostes({ type: 'DEPENSE', active: true }),
+        // Facultatif : sans eux, la situation du poste s'affiche sans seuil ni conversion.
+        getPrintSettings().catch(() => null),
       ])
       setServices(Array.isArray(srv) ? srv : [])
       setPostes(bud?.postes || [])
+      setReglagesBudget(reglages)
     } catch (err) {
       console.error('Erreur chargement données:', err)
       setReferencesError('Les services et postes budgétaires n’ont pas pu être chargés.')
@@ -837,23 +865,16 @@ export default function SortieDirecteProgrammee() {
                   <span className={styles.lineNumber} aria-label={`Ligne ${index + 1}`}>{index + 1}</span>
                   <div className={`${styles.lineField} ${styles.budgetField}`}>
                     <label htmlFor={`direct-budget-${index}`}>Poste budgétaire <span aria-hidden="true">*</span></label>
-                    <select
+<PosteBudgetairePicker
                       id={`direct-budget-${index}`}
-                      value={ligne.budget_poste_id ?? ''}
-                      onChange={(e) => updateLigne(index, 'budget_poste_id', e.target.value)}
+                      postes={postes}
+                      value={ligne.budget_poste_id}
+                      onChange={(posteId) => updateLigne(index, 'budget_poste_id', posteId ? String(posteId) : '')}
                       disabled={referencesLoading || Boolean(referencesError)}
-                      aria-invalid={validationAttempted && !ligne.budget_poste_id}
-                      aria-describedby={validationAttempted && !ligne.budget_poste_id ? `direct-budget-error-${index}` : undefined}
-                      aria-required="true"
-                      required
-                    >
-                      <option value="">{referencesLoading ? 'Chargement des postes…' : 'Choisir un poste'}</option>
-                      {postes.map((poste) => (
-                        <option key={poste.id} value={poste.id}>
-                          {poste.code} — {poste.libelle} (disp. {fmtMontant(poste.montant_disponible, 'USD')})
-                        </option>
-                      ))}
-                    </select>
+                      loading={referencesLoading}
+                      invalid={validationAttempted && !ligne.budget_poste_id}
+                      describedBy={validationAttempted && !ligne.budget_poste_id ? `direct-budget-error-${index}` : undefined}
+                    />
                     {validationAttempted && !ligne.budget_poste_id && <small id={`direct-budget-error-${index}`} className={styles.fieldError}>Sélectionnez un poste.</small>}
                   </div>
                   {/* En collation, la description EST le motif : deux champs
@@ -900,6 +921,20 @@ export default function SortieDirecteProgrammee() {
                   >
                     <Trash2 size={16} aria-hidden="true" />
                   </button>
+                  )}
+                  {/* Situation du poste, sous la première ligne qui l'utilise :
+                      les lignes suivantes sur le même poste s'y additionnent. */}
+                  {ligne.budget_poste_id
+                    && postesById.has(ligne.budget_poste_id)
+                    && lignes.findIndex((l) => l.budget_poste_id === ligne.budget_poste_id) === index && (
+                    <div className={styles.lineResume}>
+                      <PosteBudgetaireResume
+                        poste={postesById.get(ligne.budget_poste_id)!}
+                        montantUsd={montantUsdParPoste.has(ligne.budget_poste_id) ? montantUsdParPoste.get(ligne.budget_poste_id)! : 0}
+                        seuil={toNumber(reglagesBudget?.budget_alert_threshold ?? 80)}
+                        bloque={Boolean(reglagesBudget?.budget_block_overrun)}
+                      />
+                    </div>
                   )}
                 </div>
               ))}
