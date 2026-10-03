@@ -140,6 +140,10 @@
   cursor: not-allowed;
 }
 
+.sectionToggle {
+  display: none;
+}
+
 .sectionTitle {
   margin: 0 0 4px;
   font-size: 13px;
@@ -1198,23 +1202,127 @@
     gap: 16px;
   }
 
-  .filters {
+  /* Filtres repliés derrière le bouton « Filtres » de la barre collante.
+     La recherche n'y figure plus : la barre collante la porte déjà. */
+  .filters:not(.filtersOpen) {
     display: none;
   }
 
+  .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 10px;
+  }
+
+  .filterGroupSearch {
+    display: none;
+  }
+
+  /* Pas de marge latérale : .main en fournit déjà, et la barre collante
+     garde ainsi la largeur des fiches en dessous. */
   .searchSticky {
     display: block;
     position: sticky;
     top: 0;
     z-index: 6;
     background: #f8fafc;
-    padding: 12px 16px;
-    border-bottom: 1px solid #e2e8f0;
-    margin-bottom: 12px;
+    padding: 8px 0;
+    margin-bottom: 8px;
+  }
+
+  .searchStickyRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .searchStickyRow .searchBox {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .tableContainer {
     display: none;
+  }
+
+  /* Section « Dossiers en traitement » : un seul bouton-titre de 44 px
+     (avec le nombre de dossiers) au lieu du titre, de deux champs empilés
+     et d'un tableau masqué — ~170 px qui repoussaient la liste pour rien. */
+  .sectionBar {
+    margin: 8px 0;
+  }
+
+  .sectionTitle {
+    display: none;
+  }
+
+  .sectionToggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: var(--touch-target-min, 44px);
+    padding: 0 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #1f2937;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+  }
+
+  .sectionToggleCount {
+    margin-left: auto;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: #e0f2fe;
+    color: #0369a1;
+    font-size: 12px;
+  }
+
+  .sectionToggleChevron {
+    transition: transform 160ms ease;
+  }
+
+  .sectionBarOpen .sectionToggleChevron {
+    transform: rotate(180deg);
+  }
+
+  .sectionBar:not(.sectionBarOpen) .dossierFilters {
+    display: none;
+  }
+
+  .dossierFilters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  /* Déplié, le tableau des dossiers défile dans son propre cadre. */
+  .dossierTableContainer.dossierTableOpen {
+    display: block;
+    max-height: 50dvh;
+    margin-bottom: 8px;
+  }
+
+  .dossierTableContainer .table {
+    min-width: 640px;
+  }
+
+  /* Dans la modale de dossier, trois boutons à icône empilés triplaient la
+     hauteur de chaque ligne : ils restent côte à côte. */
+  .detailTable .actions {
+    flex-direction: row;
+    flex-wrap: nowrap;
+  }
+
+  .modal {
+    padding: 8px;
+  }
+
+  .modalContent {
+    max-height: calc(100dvh - 16px);
   }
 
   .mobileCards {
@@ -1516,4 +1624,19 @@
   background: #dc2626;
   border-color: #dc2626;
   color: #ffffff;
+}
+
+/* Croix de fermeture à 44 px au doigt. En fin de fichier pour passer après
+   la définition ci-dessus, à spécificité égale. */
+@media (max-width: 768px) {
+  .closeBtn {
+    min-width: var(--touch-target-min, 44px);
+    min-height: var(--touch-target-min, 44px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sectionToggleChevron {
+    transition: none;
+  }
 }

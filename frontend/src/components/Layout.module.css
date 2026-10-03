@@ -713,6 +713,10 @@
   transform: translateY(-7px) rotate(-45deg);
 }
 
+.mobileTopBar {
+  display: none;
+}
+
 .overlay {
   display: none;
   position: fixed;
@@ -794,8 +798,43 @@
     display: none;
   }
 
+  /* Bouton du menu logé dans le bandeau : 44 px (cible tactile) centrés
+     dans 52 px. L'ombre portée n'a plus lieu d'être sur un fond opaque. */
   .mobileMenuToggle {
     display: flex;
+    top: calc(4px + env(safe-area-inset-top, 0px));
+    left: max(8px, env(safe-area-inset-left, 0px));
+    width: 44px;
+    height: 44px;
+    padding: 10px;
+    box-shadow: none;
+  }
+
+  /* Bandeau fixe de 52 px (+ encoche). z-index 1 seulement : il n'a à
+     passer devant rien, puisque .main commence sous lui ; toute modale ou
+     tout panneau fixe ouvert depuis une page doit continuer à le recouvrir. */
+  .mobileTopBar {
+    display: flex;
+    align-items: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1;
+    height: calc(52px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right, 0px)) 0 calc(60px + env(safe-area-inset-left, 0px));
+    background: var(--color-surface, #ffffff);
+    border-bottom: 1px solid var(--color-border, #dbe3ee);
+  }
+
+  .mobileTopBarTitle {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--color-title, #0f172a);
   }
 
   .overlay {
@@ -827,8 +866,17 @@
     left: 222px;
   }
 
+  /* .main démarre sous le bandeau au lieu de défiler dessous : un élément
+     collant en `top: 0` (recherche, en-tête de tableau) s'arrête ainsi
+     juste sous le bandeau, au lieu de passer sous le bouton du menu.
+     Hauteur = écran - bandeau, pour que .layout (100dvh, overflow hidden)
+     ne rogne pas le bas de la page. Le haut ne garde que 16 px de marge,
+     contre 76 px de réserve auparavant. */
   .main {
-    padding: calc(76px + env(safe-area-inset-top, 0px)) 24px max(24px, env(safe-area-inset-bottom, 0px));
+    margin-top: calc(52px + env(safe-area-inset-top, 0px));
+    height: calc(100vh - 52px - env(safe-area-inset-top, 0px));
+    height: calc(100dvh - 52px - env(safe-area-inset-top, 0px));
+    padding: 16px 24px max(24px, env(safe-area-inset-bottom, 0px));
     margin-left: 0;
     width: 100%;
   }
@@ -842,7 +890,9 @@
 
 @media (max-width: 768px) {
   .main {
-    padding: calc(76px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(92px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+    /* Le bandeau du menu est hors de .main (voir max-width: 1024px) :
+       12 px de marge haute suffisent. */
+    padding: 12px max(16px, env(safe-area-inset-right, 0px)) calc(92px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
     overflow-x: auto;
     overflow-y: auto;
   }
@@ -902,7 +952,7 @@
 
 @media (max-width: 480px) {
   .main {
-    padding: calc(72px + env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) calc(96px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+    padding: 12px max(12px, env(safe-area-inset-right, 0px)) calc(96px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
     overflow-x: auto;
     overflow-y: auto;
   }
@@ -911,16 +961,10 @@
     width: min(88vw, 340px);
   }
 
-  .mobileMenuToggle {
-    top: max(10px, env(safe-area-inset-top, 0px));
-    left: max(10px, env(safe-area-inset-left, 0px));
-    width: 48px;
-    height: 48px;
-    padding: 12px;
-  }
-
+  /* Même gabarit qu'au-dessus de 480 px : le bouton reste centré dans le
+     bandeau de 52 px (48 px à 10 px du haut en débordaient). */
   .mobileMenuToggleOpen {
-    left: calc(min(88vw, 340px) - 58px);
+    left: calc(min(88vw, 340px) - 54px);
   }
 
   .hamburger {

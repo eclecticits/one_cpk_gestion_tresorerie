@@ -1,0 +1,60 @@
+/* Bouton de repli des filtres : réservé au téléphone. En desktop les
+   filtres restent toujours visibles, le bouton n'a donc pas lieu d'être. */
+.toggle {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    min-height: var(--touch-target-min, 44px);
+    padding: 0 12px;
+    border: 1px solid var(--color-border-strong, #cbd5e1);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--color-surface, #ffffff);
+    color: #334155;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .toggleOuvert {
+    border-color: var(--tenant-primary, #0d9488);
+    color: var(--tenant-primary, #0d9488);
+  }
+}
+
+/* Pastille du nombre de filtres actifs : sans elle, une liste filtrée
+   panneau replié ressemblerait à une liste complète. */
+.compteur {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--tenant-primary, #0d9488);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chevron {
+  transition: transform 160ms ease;
+}
+
+.toggleOuvert .chevron {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}

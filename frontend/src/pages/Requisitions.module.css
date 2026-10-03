@@ -2506,19 +2506,87 @@
 }
 
 @media (max-width: 768px) {
+  /* Le panneau n'est plus masqué en entier : il portait aussi les dossiers
+     brouillons, le compteur et le total, devenus inaccessibles au téléphone.
+     Seuls les champs et les actions se replient derrière « Filtres ». */
   .filtersSection {
+    padding: 10px 12px;
+  }
+
+  .filtersSection:not(.filtersSectionOpen) .filtersGrid,
+  .filtersSection:not(.filtersSectionOpen) .filtersActions {
     display: none;
   }
 
+  /* Replié, il ne reste que le compteur : son filet de séparation n'a plus
+     rien à séparer. */
+  .filtersSection:not(.filtersSectionOpen) .resultsInfo {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  /* Doublon de la recherche collante, toujours visible au-dessus. */
+  .searchBar {
+    display: none;
+  }
+
+  /* Dossiers brouillons désormais visibles au téléphone : le tableau défile
+     dans son cadre (overflow: hidden y rognait les boutons d'action) plutôt
+     que d'écraser ses quatre boutons sur plusieurs lignes. */
+  .dossierSection {
+    margin-bottom: 10px;
+    padding: 10px;
+  }
+
+  .dossierTableWrap {
+    overflow-x: auto;
+    max-height: 50dvh;
+  }
+
+  .dossierTable {
+    min-width: 560px;
+  }
+
+  /* Deux champs par rangée : la moitié de la hauteur d'une colonne unique. */
+  .filtersGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .periodQuick {
+    width: 100%;
+    height: var(--touch-target-min, 44px);
+  }
+
+  .periodQuickBtn {
+    flex: 1 1 0;
+  }
+
+  .actionsSpacer {
+    display: none;
+  }
+
+  /* Pas de marge latérale : .main en fournit déjà, et la barre collante
+     garde ainsi la même largeur que les fiches en dessous. */
   .searchSticky {
     display: block;
     position: sticky;
     top: 0;
     z-index: 6;
     background: #f8fafc;
-    padding: 12px 16px;
-    border-bottom: 1px solid #e2e8f0;
-    margin-bottom: 12px;
+    padding: 8px 0;
+    margin-bottom: 8px;
+  }
+
+  .searchStickyRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .searchStickyRow .searchBox {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .mobileCards {
@@ -3118,8 +3186,10 @@
 }
 
 @media (max-width: 768px) {
+  /* .main fournit déjà 16 px : en ajouter 16 coûtait 32 px de large sur
+     360 px, soit près de 9 % de l'écran. */
   .container {
-    padding: 16px;
+    padding: 0;
   }
 
   .compactGrid,
@@ -3205,6 +3275,14 @@
     gap: 8px;
   }
 
+  /* Fil d'Ariane de la page de création : le titre dit déjà où l'on est,
+     et sous 480 px chaque maillon s'empilait sur sa propre ligne (~100 px). */
+  .breadcrumbLink,
+  .breadcrumbSeparator,
+  .breadcrumbCurrent {
+    display: none;
+  }
+
   .primaryBtn,
   .secondaryBtn {
     width: 100%;
@@ -3213,26 +3291,68 @@
     font-size: 14px;
   }
 
+  /* Huit raccourcis de statut en deux colonnes occupaient quatre rangées
+     (~340 px) avant la liste. Ils passent sur une seule rangée qui défile
+     horizontalement dans son propre conteneur (~56 px). */
   .kpiGrid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
-    margin: 8px 0 16px;
+    display: flex;
+    gap: 8px;
+    margin: 0 0 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .kpiGrid::-webkit-scrollbar {
+    display: none;
   }
 
   .kpiCard {
-    padding: 12px;
+    flex: 0 0 auto;
+    min-width: 96px;
+    min-height: var(--touch-target-min, 44px);
+    padding: 6px 10px;
+    scroll-snap-align: start;
   }
 
   .kpiLabel {
     font-size: 10px;
+    white-space: nowrap;
   }
 
   .kpiValue {
-    font-size: 20px;
+    font-size: 18px;
   }
 
+  /* La description du statut ne tient pas dans une pastille de 96 px. */
   .kpiHint {
-    font-size: 10px;
+    display: none;
+  }
+
+  /* Modale « description du dossier » : marges réduites et pied collant,
+     pour que Enregistrer/Annuler restent visibles quand le clavier
+     virtuel réduit la hauteur. */
+  .modal {
+    padding: 8px;
+  }
+
+  .modalContent {
+    max-height: calc(100dvh - 16px);
+  }
+
+  .modalActions {
+    position: sticky;
+    bottom: 0;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    padding: 10px 16px;
+    background: #ffffff;
+  }
+
+  .modalActions > button {
+    flex: 1 1 120px;
+    min-height: var(--touch-target-min, 44px);
   }
 
   .actionBtn {
@@ -3248,18 +3368,8 @@
 }
 
 @media (max-width: 480px) {
-  .container {
-    padding: 12px;
-  }
-
   .headerActions {
     flex-direction: column;
-  }
-
-  .kpiGrid {
-    /* Deux raccourcis restent confortables même à 320 px et évitent de
-       repousser la liste de plusieurs écrans sous cinq cartes empilées. */
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .cardActionBtn {
@@ -3666,5 +3776,15 @@
   .fondsTiersSolde {
     grid-column: 1 / -1;
     order: 3;
+  }
+}
+
+/* Croix de fermeture à 44 px au doigt. En fin de fichier : la définition
+   rouge de .closeBtn (plus haut, 32 px) l'emporterait sinon à spécificité
+   égale. */
+@media (max-width: 768px) {
+  .closeBtn {
+    min-width: var(--touch-target-min, 44px);
+    min-height: var(--touch-target-min, 44px);
   }
 }

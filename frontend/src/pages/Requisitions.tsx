@@ -24,6 +24,7 @@ import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
+import FiltresMobileToggle from '../components/FiltresMobileToggle'
 import { format, subDays } from 'date-fns'
 import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, FileText, X, MoreHorizontal } from 'lucide-react'
 // jsPDF/jspdf-autotable sont lourds : on charge ../utils/pdfGenerator dynamiquement,
@@ -407,6 +408,9 @@ export default function Requisitions() {
 
   const [activeTab, setActiveTab] = useState<'classique' | 'remboursement_transport'>('classique')
   const [searchQuery, setSearchQuery] = useState('')
+  // Panneau de filtres sur téléphone : replié par défaut pour que la liste
+  // apparaisse sans défiler. Sans effet au-delà de 768 px (CSS seul).
+  const [filtresMobileOuverts, setFiltresMobileOuverts] = useState(false)
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
   const [filterBudgetPosteId, setFilterBudgetPosteId] = useState<string>('')
@@ -2220,6 +2224,10 @@ export default function Requisitions() {
     })
 
   const hasActiveFilters = searchQuery !== '' || filterStatut !== '' || filterModePaiement !== '' || filterObjet !== '' || filterBudgetPosteId !== '' || filterServiceId !== ''
+  // Filtres posés dans le panneau repliable (la recherche reste visible).
+  const nbFiltresPanneau =
+    [filterStatut, filterModePaiement, filterObjet, filterBudgetPosteId, filterServiceId].filter(Boolean).length +
+    (dateDebut !== defaultDateDebut || dateFin !== today ? 1 : 0)
 
   useEffect(() => {
     setPage(1)
@@ -2564,7 +2572,45 @@ export default function Requisitions() {
         })}
       </div>
 
-      <div className={styles.filtersSection}>
+      {/* Recherche collante du téléphone (masquée en desktop), placée avant
+          le panneau de filtres pour que le bouton « Filtres » le déplie
+          juste en dessous. */}
+      <div className={styles.searchSticky}>
+        <div className={styles.searchStickyRow}>
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon}><Search size={16} /></span>
+            <input
+              type="text"
+              placeholder="Rechercher par numéro, objet ou demandeur..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className={styles.searchInputMobile}
+              aria-label="Rechercher une réquisition par numéro, objet ou demandeur"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className={styles.searchClear}
+                onClick={() => setSearchQuery('')}
+                aria-label="Effacer la recherche"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          <FiltresMobileToggle
+            ouvert={filtresMobileOuverts}
+            onToggle={() => setFiltresMobileOuverts((prev) => !prev)}
+            controle="req-filtres-panneau"
+            actifs={nbFiltresPanneau}
+          />
+        </div>
+      </div>
+
+      <div
+        id="req-filtres-panneau"
+        className={`${styles.filtersSection} ${filtresMobileOuverts ? styles.filtersSectionOpen : ''}`}
+      >
         {draftDossiers.length > 0 && (
           <div className={styles.dossierSection}>
             <div className={styles.dossierHeader}>
@@ -2819,29 +2865,6 @@ export default function Requisitions() {
               <span className={styles.totalCount}>{formatCdf(totalRequisitions * exchangeRate)}</span>
             )}
           </p>
-        </div>
-      </div>
-
-      <div className={styles.searchSticky}>
-        <div className={styles.searchBox}>
-          <span className={styles.searchIcon}><Search size={16} /></span>
-          <input
-            type="text"
-            placeholder="Rechercher par numéro, objet ou demandeur..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className={styles.searchInputMobile}
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              className={styles.searchClear}
-              onClick={() => setSearchQuery('')}
-              aria-label="Effacer la recherche"
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-          )}
         </div>
       </div>
 

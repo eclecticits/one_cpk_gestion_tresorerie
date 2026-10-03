@@ -6,6 +6,7 @@ import type { BudgetCommentaire, BudgetCommentaireGeneral, ReportCreancesRefus, 
 import { getServices } from '../api/services'
 import { getPrintSettings } from '../api/settings'
 import styles from './Budget.module.css'
+import FiltresMobileToggle from '../components/FiltresMobileToggle'
 import { formatAmount, toNumber } from '../utils/amount'
 import { compareBudgetCodes, normalizeBudgetCode as normalizeCode } from '../utils/budgetCode'
 import type { BudgetExerciseSummary, BudgetPosteSummary, BudgetPosteTree } from '../types/budget'
@@ -212,6 +213,10 @@ export default function Budget() {
   const [selectedLeafIds, setSelectedLeafIds] = useState<Set<number>>(() => new Set())
   const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  // Téléphone : service, période, création d'exercice et colonnes optionnelles
+  // se replient derrière « Filtres » pour que le tableau remonte. Sans effet
+  // au-delà de 768 px (CSS seul).
+  const [filtresMobileOuverts, setFiltresMobileOuverts] = useState(false)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [alertThreshold, setAlertThreshold] = useState(80)
   // Les deux colonnes de comparaison N-1 immobilisent 200 px en permanence
@@ -1709,7 +1714,10 @@ export default function Budget() {
         title="Suivi budgétaire"
         subtitle={`${annee ? `Exercice ${annee}` : 'Aucun exercice'}${statut ? ` · ${statut}` : ''}`}
         actions={
-          <div className={styles.toolbar}>
+          <div
+            id="budget-filtres"
+            className={`${styles.toolbar} ${filtresMobileOuverts ? styles.toolbarOpen : ''}`}
+          >
             <div className={styles.toolbarRow}>
               <div className={styles.toolbarFilters}>
                 <select
@@ -1725,10 +1733,18 @@ export default function Budget() {
                     </option>
                   ))}
                 </select>
+                <FiltresMobileToggle
+                  ouvert={filtresMobileOuverts}
+                  onToggle={() => setFiltresMobileOuverts((prev) => !prev)}
+                  controle="budget-filtres"
+                  actifs={
+                    (selectedServiceId ? 1 : 0) + (periodeActive ? 1 : 0) + (compareN1 ? 1 : 0) + (suiviRythme ? 1 : 0)
+                  }
+                />
                 {peutCreer && (
                 <button
                   type="button"
-                  className={styles.secondaryAction}
+                  className={`${styles.secondaryAction} ${styles.mobileSecondary}`}
                   onClick={handleOpenCreateExercise}
                   disabled={createExerciseLoading}
                 >
@@ -1736,7 +1752,7 @@ export default function Budget() {
                 </button>
                 )}
                 <select
-                  className={`${styles.yearSelect} ${styles.serviceSelect}`}
+                  className={`${styles.yearSelect} ${styles.serviceSelect} ${styles.mobileSecondary}`}
                   aria-label="Filtrer par service"
                   value={selectedServiceId ?? ''}
                   onChange={(e) => setSelectedServiceId(e.target.value ? Number(e.target.value) : null)}
@@ -1750,7 +1766,7 @@ export default function Budget() {
                 </select>
                 {/* Période d'exécution. Laissée vide, l'écran est celui d'avant :
                     les montants de l'exercice entier. */}
-                <div className={styles.periodeFilter}>
+                <div className={`${styles.periodeFilter} ${styles.mobileSecondary}`}>
                   <label htmlFor="budget-periode-debut">Du</label>
                   <input
                     id="budget-periode-debut"
@@ -1834,7 +1850,7 @@ export default function Budget() {
                     quand on en a besoin plutot que de les subir. */}
                 <button
                   type="button"
-                  className={`${styles.toggleButton} ${compareN1 ? styles.toggleButtonOn : ''}`}
+                  className={`${styles.toggleButton} ${compareN1 ? styles.toggleButtonOn : ''} ${styles.mobileSecondary}`}
                   onClick={toggleCompareN1}
                   aria-pressed={compareN1}
                   title={
@@ -1848,7 +1864,7 @@ export default function Budget() {
                 </button>
                 <button
                   type="button"
-                  className={`${styles.toggleButton} ${suiviRythme ? styles.toggleButtonOn : ''}`}
+                  className={`${styles.toggleButton} ${suiviRythme ? styles.toggleButtonOn : ''} ${styles.mobileSecondary}`}
                   onClick={toggleSuiviRythme}
                   aria-pressed={suiviRythme}
                   title={

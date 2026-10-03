@@ -878,6 +878,14 @@ export default function Layout() {
         <span className={styles.hamburger} aria-hidden="true"></span>
       </button>
 
+      {/* Bandeau mobile/tablette : fond opaque derrière le bouton du menu.
+          Sans lui, le bouton flottait au-dessus du contenu qui défilait et
+          masquait le début des barres de recherche collantes. Masqué
+          au-delà de 1024 px (voir Layout.module.css). */}
+      <div className={styles.mobileTopBar} aria-hidden="true">
+        <span className={styles.mobileTopBarTitle}>{activeAppDef.label}</span>
+      </div>
+
       <button
         type="button"
         className={styles.desktopReopen}

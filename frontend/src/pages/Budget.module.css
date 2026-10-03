@@ -1538,3 +1538,80 @@
   border-color: #bfdbfe;
   color: #1d4ed8;
 }
+
+/* ── Barre d'outils au téléphone ──────────────────────────────────────────
+   Placé en fin de fichier : .periodeFilter, .toolbarRight et .exerciceBadge
+   sont définis plus haut et l'emporteraient sinon à spécificité égale.
+
+   À 360 px, la barre empilait une dizaine de rangées (exercice, création,
+   service, période sur deux lignes, repère, nouveau poste, pastilles,
+   export) : ~520 px avant la synthèse, le tableau commençait sous la ligne
+   de flottaison. Le service, la période, la création d'exercice et les
+   colonnes optionnelles (N-1, rythme) se replient derrière « Filtres » ;
+   il reste ~5 rangées. Au-delà de 768 px, rien ne change. */
+@media (max-width: 768px) {
+  .toolbar:not(.toolbarOpen) .mobileSecondary {
+    display: none;
+  }
+
+  .toolbarFilters {
+    width: 100%;
+    align-items: center;
+  }
+
+  /* Le sélecteur d'exercice partage sa rangée avec le bouton « Filtres ». */
+  .yearSelect {
+    flex: 1 1 140px;
+    max-width: none;
+  }
+
+  .serviceSelect {
+    flex: 1 1 100%;
+  }
+
+  /* Deux dates côte à côte ne tenaient pas en 328 px sans retour à la
+     ligne : la rangée débordait et faisait défiler toute la page. */
+  .periodeFilter {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
+  .periodeInput {
+    flex: 1 1 110px;
+    min-width: 0;
+  }
+
+  .toolbarRight {
+    width: 100%;
+  }
+
+  .toolbarRight .primaryAction {
+    flex: 1 1 auto;
+  }
+
+  /* Le repère d'exercice peut porter « Revenir à … » : en nowrap, il
+     dépassait la largeur de l'écran. */
+  .exerciceBadge {
+    height: auto;
+    min-height: var(--control-h, 38px);
+    flex-wrap: wrap;
+    white-space: normal;
+    padding: 4px 12px;
+  }
+
+  /* Seul sur sa rangée, le groupe Exporter / ⋮ restait calé à gauche
+     (space-between avec un seul élément) et ses menus, alignés à droite du
+     bouton, sortaient de l'écran par la gauche. */
+  .toolbarActions {
+    margin-left: auto;
+  }
+
+  .dropdownMenu {
+    max-width: calc(100vw - 32px);
+  }
+
+  .statBandHeader {
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+}

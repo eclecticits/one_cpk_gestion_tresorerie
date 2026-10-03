@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Sparkles, Search, Printer, Download, Eye, Check, ShieldCheck, Ban, Lock, Banknote, Smartphone, CreditCard, Landmark, Loader2, X } from 'lucide-react'
+import { Sparkles, Search, Printer, Download, Eye, Check, ShieldCheck, Ban, Lock, Banknote, Smartphone, CreditCard, Landmark, Loader2, X, ChevronDown } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { usePermissions } from '../hooks/usePermissions'
@@ -13,6 +13,7 @@ import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import type { Money } from '../types'
 import RowActionsMenu, { type ActionLigne } from '../components/RowActionsMenu'
+import FiltresMobileToggle from '../components/FiltresMobileToggle'
 import RequisitionActionModal from '../components/RequisitionActionModal'
 import RemboursementActionModal from '../components/RemboursementActionModal'
 type PdfGeneratorRemboursementModule = typeof import('../utils/pdfGeneratorRemboursement')
@@ -133,6 +134,10 @@ export default function Validation() {
   const [pageIndex, setPageIndex] = useState<number>(0)
   const [hasMore, setHasMore] = useState<boolean>(false)
   const [searchQuery, setSearchQuery] = useState('')
+  // Téléphone : filtres et dossiers repliés par défaut pour que la liste à
+  // valider apparaisse sans défiler. Sans effet au-delà de 768 px (CSS seul).
+  const [filtresMobileOuverts, setFiltresMobileOuverts] = useState(false)
+  const [dossiersMobileOuverts, setDossiersMobileOuverts] = useState(false)
   const [dossiers, setDossiers] = useState<DossierRequisition[]>([])
   const [dossiersLoading, setDossiersLoading] = useState(false)
   const [dossierFilterStatus, setDossierFilterStatus] = useState<'EN_EXAMEN' | 'TRAITEMENT' | 'all'>('EN_EXAMEN')
@@ -733,8 +738,47 @@ export default function Validation() {
         </div>
       </div>
 
-      <div className={styles.filters}>
-        <div className={styles.filterGroup}>
+      {/* Recherche collante du téléphone (masquée en desktop), suivie du
+          bouton qui déplie Type / Statut / Affichage juste en dessous. Avant,
+          ces filtres étaient masqués sans recours au téléphone : seules les
+          réquisitions « En attente » y étaient visibles. */}
+      <div className={styles.searchSticky}>
+        <div className={styles.searchStickyRow}>
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon}><Search size={16} /></span>
+            <input
+              type="text"
+              placeholder="Rechercher une réquisition..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className={styles.searchInputMobile}
+              aria-label="Rechercher une réquisition par numéro, objet ou demandeur"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className={styles.searchClear}
+                onClick={() => setSearchQuery('')}
+                aria-label="Effacer la recherche"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          <FiltresMobileToggle
+            ouvert={filtresMobileOuverts}
+            onToggle={() => setFiltresMobileOuverts((prev) => !prev)}
+            controle="validation-filtres"
+            actifs={(filterType !== 'all' ? 1 : 0) + (filterStatus !== 'EN_ATTENTE' ? 1 : 0)}
+          />
+        </div>
+      </div>
+
+      <div
+        id="validation-filtres"
+        className={`${styles.filters} ${filtresMobileOuverts ? styles.filtersOpen : ''}`}
+      >
+        <div className={`${styles.filterGroup} ${styles.filterGroupSearch}`}>
           <label htmlFor="validation-search">Rechercher</label>
           <input
             id="validation-search"
@@ -780,8 +824,21 @@ export default function Validation() {
         </div>
       </div>
 
-      <div className={styles.sectionBar}>
+      <div className={`${styles.sectionBar} ${dossiersMobileOuverts ? styles.sectionBarOpen : ''}`}>
         <div className={styles.sectionTitle}>Dossiers en traitement</div>
+        {/* Téléphone uniquement : la section des dossiers se replie derrière
+            son titre, pour ne pas repousser la liste à valider. */}
+        <button
+          type="button"
+          className={styles.sectionToggle}
+          onClick={() => setDossiersMobileOuverts((prev) => !prev)}
+          aria-expanded={dossiersMobileOuverts}
+          aria-controls="validation-dossiers"
+        >
+          <span>Dossiers en traitement</span>
+          <span className={styles.sectionToggleCount}>{dossiersLoading ? '…' : filteredDossiers.length}</span>
+          <ChevronDown size={16} aria-hidden="true" className={styles.sectionToggleChevron} />
+        </button>
         <div className={styles.dossierFilters}>
           <div className={styles.dossierFilterGroup}>
             <label htmlFor="dossier-search">Rechercher dossier</label>
@@ -808,7 +865,10 @@ export default function Validation() {
           </div>
         </div>
       </div>
-      <div className={styles.tableContainer}>
+      <div
+        id="validation-dossiers"
+        className={`${styles.tableContainer} ${styles.dossierTableContainer} ${dossiersMobileOuverts ? styles.dossierTableOpen : ''}`}
+      >
         <table className={styles.table}>
           <thead>
             <tr>
@@ -865,29 +925,6 @@ export default function Validation() {
             )}
           </tbody>
         </table>
-      </div>
-
-      <div className={styles.searchSticky}>
-        <div className={styles.searchBox}>
-          <span className={styles.searchIcon}><Search size={16} /></span>
-          <input
-            type="text"
-            placeholder="Rechercher une réquisition..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className={styles.searchInputMobile}
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              className={styles.searchClear}
-              onClick={() => setSearchQuery('')}
-              aria-label="Effacer la recherche"
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-          )}
-        </div>
       </div>
 
       {filteredRequisitions.length === 0 ? (
