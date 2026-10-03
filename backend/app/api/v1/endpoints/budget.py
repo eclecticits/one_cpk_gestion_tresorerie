@@ -203,9 +203,13 @@ async def _appliquer_periode(
     serait pire qu'une colonne assumée « à ce jour ».
     """
     if date_debut is None and date_fin is None:
+        # Sans période, le réalisé est le cumul à ce jour : le repère est donc
+        # la prévision ramenée à aujourd'hui (entière pour un exercice passé,
+        # nulle pour un exercice à venir).
+        part = part_ecoulee(annee, None)
         for line in lines:
             line.montant_paye_cumule = line.montant_paye
-            line.montant_prevu_a_date = line.montant_prevu
+            line.montant_prevu_a_date = (Decimal(line.montant_prevu or 0) * part).quantize(Decimal("0.01"))
         return
 
     valider_periode_exercice(annee, date_debut, date_fin)
@@ -2079,7 +2083,8 @@ async def list_budget_lines(
     # postes ne savent pas de quand ils datent.
     periode_map: dict[int, Decimal] = {}
     cumul_map: dict[int, Decimal] = {}
-    part_exercice = Decimal("1")
+    # Sans date de fin, le repère prorata temporis se prend à aujourd'hui.
+    part_exercice = part_ecoulee(annee, date_fin)
     if date_debut is not None or date_fin is not None:
         valider_periode_exercice(annee, date_debut, date_fin)
         debut_dt, fin_dt = bornes_periode(date_debut, date_fin)
@@ -2102,7 +2107,6 @@ async def list_budget_lines(
                 service_id=service_id,
             )
         )
-        part_exercice = part_ecoulee(annee, date_fin)
 
     summaries: list[BudgetLineSummary] = []
     for line in lines:
@@ -2120,11 +2124,10 @@ async def list_budget_lines(
             montant_engage = active_recettes_map.get(line.id, Decimal("0"))
             montant_paye = montant_engage
         montant_paye_cumule = montant_paye
-        montant_prevu_a_date = montant_prevu
+        montant_prevu_a_date = (montant_prevu * part_exercice).quantize(Decimal("0.01"))
         if periode_map or cumul_map:
             montant_paye = periode_map.get(line.id, Decimal("0"))
             montant_paye_cumule = cumul_map.get(line.id, Decimal("0"))
-            montant_prevu_a_date = (montant_prevu * part_exercice).quantize(Decimal("0.01"))
         is_depense = (line.type or "").upper() == "DEPENSE"
         base_consomme = _base_consomme(
             is_depense=is_depense, montant_engage=montant_engage, montant_paye=montant_paye

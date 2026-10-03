@@ -299,7 +299,11 @@ async def test_sans_periode_rien_ne_change(db_session):
     assert lignes[recette.code].montant_paye == Decimal("500.00")
     assert lignes[depense.code].montant_paye == Decimal("250.00")
     assert lignes[recette.code].montant_paye_cumule == lignes[recette.code].montant_paye
-    assert lignes[depense.code].montant_prevu_a_date == PREVU
+    # Le réalisé est un cumul à ce jour : le repère se ramène à aujourd'hui.
+    from app.services.budget_execution import part_ecoulee
+
+    attendu = (PREVU * part_ecoulee(ANNEE, None)).quantize(Decimal("0.01"))
+    assert lignes[depense.code].montant_prevu_a_date == attendu
 
 
 @pytest.mark.asyncio

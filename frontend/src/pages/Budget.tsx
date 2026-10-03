@@ -1,6 +1,6 @@
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { lazyWithRetry } from '../utils/lazyWithRetry'
-import { Check, ChevronDown, Columns3, Download, FileText, Globe, MessageSquare, MoreVertical, Plus, Table, X } from 'lucide-react'
+import { Check, ChevronDown, Columns3, Download, FileText, Gauge, Globe, MessageSquare, MoreVertical, Plus, Table, X } from 'lucide-react'
 import { closeBudgetExercise, createBudgetCommentaire, updateBudgetCommentaire, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetCommentaireGeneral, getBudgetCommentaires, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, getReportsCreances, initializeBudgetExercise, reopenBudgetExercise, reporterCreancesExercice, saveBudgetCommentaireGeneral, setPosteArrieres, updateBudgetPoste } from '../api/budget'
 import type { BudgetCommentaire, BudgetCommentaireGeneral, ReportCreancesRefus, ReportCreancesResult, ReportsCreancesPoste } from '../api/budget'
 import { getServices } from '../api/services'
@@ -158,6 +158,15 @@ export default function Budget() {
   // Le cumul depuis l'ouverture de l'exercice ne dit quelque chose de plus que
   // si la période ne part pas du 1er janvier.
   const afficheCumul = Boolean(debutEffectif) && debutEffectif > `${selectedYear ?? ''}-01-01`
+  // Date à laquelle la prévision est ramenée : la fin de la période, ou
+  // aujourd'hui — bornée à l'exercice, comme le calcul du serveur.
+  const dateRepere = (() => {
+    if (finEffective) return formatDateFr(finEffective, selectedYear, 'fin')
+    const aujourdhui = new Date()
+    if (selectedYear && aujourdhui.getFullYear() > selectedYear) return `31/12/${selectedYear}`
+    if (selectedYear && aujourdhui.getFullYear() < selectedYear) return `01/01/${selectedYear}`
+    return aujourdhui.toLocaleDateString('fr-FR')
+  })()
   // Ce que les exports doivent afficher : un lecteur de PDF ou de classeur ne
   // voit pas les filtres de l'écran.
   const periodeLisible = periodeActive
@@ -222,6 +231,28 @@ export default function Budget() {
       const next = !open
       try {
         window.localStorage.setItem('budget.comparaisonN1', next ? 'open' : 'closed')
+      } catch {
+        /* Navigation privee : le choix vaut pour la session. */
+      }
+      return next
+    })
+  }
+  // Suivi du rythme : prévision ramenée aux jours écoulés, et l'avance ou le
+  // retard du réalisé sur elle. Lecture ponctuelle, comme la comparaison N-1 :
+  // repliée par défaut, et l'état suit l'agent d'une visite à l'autre.
+  const [suiviRythme, setSuiviRythme] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('budget.suiviRythme') === 'open'
+    } catch {
+      return false
+    }
+  })
+
+  const toggleSuiviRythme = () => {
+    setSuiviRythme((open) => {
+      const next = !open
+      try {
+        window.localStorage.setItem('budget.suiviRythme', next ? 'open' : 'closed')
       } catch {
         /* Navigation privee : le choix vaut pour la session. */
       }
@@ -670,6 +701,15 @@ export default function Budget() {
 
 
   const isRecetteView = filter === 'RECETTE'
+  /** Écart au rythme : en recette, l'avance est bonne nouvelle ; en dépense,
+   *  aller plus vite que le rythme prévu est ce qui doit alerter. */
+  const classeRythme = (ecart: number, type: string | null | undefined) => {
+    if (Math.abs(ecart) < 0.005) return styles.rythmeNeutre
+    if ((type || '').toUpperCase() === 'RECETTE') return ecart > 0 ? styles.rythmeAvance : styles.rythmeRetard
+    return ecart > 0 ? styles.rythmeRetard : styles.rythmeNeutre
+  }
+  const formatEcartRythme = (ecart: number) =>
+    `${ecart > 0.005 ? '+' : ''}${formatAmount(ecart)}`
   // Le brouillon est le seul état où un commentaire reste corrigeable. Le
   // serveur reste l'autorité (champ `modifiable`) ; ce booléen ne sert qu'au
   // libellé d'aide, pour annoncer la règle avant que l'on écrive.
@@ -1286,6 +1326,7 @@ export default function Budget() {
       const isAtLimit = !isRecetteView && !isOverrun && Math.abs(totals.disponible) <= 0.005
       const isNearLimit = !isRecetteView && !isAtLimit && pourcentage >= warningThreshold && pourcentage < 100
       const tone = isOverrun ? 'danger' : (isAtLimit || isNearLimit) ? 'warning' : 'ok'
+      const ecartRythme = totals.payeCumule - totals.prevuADate
       const objectif = totals.prevu
       const atteint = totals.paye
       const ecart = atteint - objectif
@@ -1463,13 +1504,19 @@ export default function Budget() {
             {afficheCumul && (
               <td className={styles.colReal}>{formatAmount(totals.payeCumule)}</td>
             )}
-            {periodeActive && (
-              <td className={styles.colAmount}>
+            {suiviRythme && (
+              <>
                 {/* Repère, pas un droit à dépenser : le crédit voté reste annuel. */}
-                <span className={totals.paye > totals.prevuADate ? styles.overrunValue : ''}>
-                  {formatAmount(totals.prevuADate)}
-                </span>
-              </td>
+                <td className={styles.colAmount}>{formatAmount(totals.prevuADate)}</td>
+                <td className={styles.colDelta}>
+                  {/* Le repère court depuis le 1er janvier : il se compare au
+                      réalisé cumulé, jamais à celui d'une période qui
+                      commencerait plus tard. */}
+                  <span className={classeRythme(ecartRythme, line.type)}>
+                    {formatEcartRythme(ecartRythme)}
+                  </span>
+                </td>
+              </>
             )}
             <td className={`${styles.colAvailable} ${isOverrun ? styles.overrunValue : ''}`}>
               {/* En recette, le solde est ce qui manque (ou dépasse) à l'objectif :
@@ -1798,6 +1845,20 @@ export default function Budget() {
                 >
                   <Columns3 size={14} aria-hidden="true" />
                   Comparer à N-1
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.toggleButton} ${suiviRythme ? styles.toggleButtonOn : ''}`}
+                  onClick={toggleSuiviRythme}
+                  aria-pressed={suiviRythme}
+                  title={
+                    suiviRythme
+                      ? 'Masquer la prévision à date et l’écart au rythme'
+                      : `Comparer le réalisé à la prévision ramenée au ${dateRepere}`
+                  }
+                >
+                  <Gauge size={14} aria-hidden="true" />
+                  Suivre le rythme
                 </button>
               </div>
               <div className={styles.toolbarActions}>
@@ -2134,13 +2195,23 @@ export default function Budget() {
                     Réalisé cumulé
                   </th>
                 )}
-                {periodeActive && (
-                  <th
-                    className={styles.colAmount}
-                    title="Prévision ramenée aux jours écoulés (prorata temporis)"
-                  >
-                    Prévision à date
-                  </th>
+                {suiviRythme && (
+                  <>
+                    <th
+                      className={styles.colAmount}
+                      title={`Prévision ramenée aux jours écoulés au ${dateRepere} (prorata temporis) : prévision × jours écoulés ÷ jours de l'année`}
+                    >
+                      Prévision à date
+                    </th>
+                    <th
+                      className={styles.colDelta}
+                      title={isRecetteView
+                        ? 'Réalisé cumulé moins prévision à date : positif, les recettes sont en avance sur le rythme ; négatif, en retard'
+                        : 'Réalisé cumulé moins prévision à date : positif, la dépense va plus vite que le rythme prévu'}
+                    >
+                      {isRecetteView ? 'Avance / retard' : 'Écart au rythme'}
+                    </th>
+                  </>
                 )}
                 <th
                   className={styles.colAvailable}

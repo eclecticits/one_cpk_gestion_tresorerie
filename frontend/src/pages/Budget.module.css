@@ -850,6 +850,23 @@
   font-weight: 700;
 }
 
+/* Écart au rythme (prévision à date) : vert en avance sur l'objectif de
+   recette, rouge en retard — ou, en dépense, quand on va plus vite que prévu. */
+.rythmeAvance {
+  color: #15803d;
+  font-weight: 700;
+}
+
+.rythmeRetard {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.rythmeNeutre {
+  color: #475569;
+  font-weight: 600;
+}
+
 .deltaNeutral {
   color: #475569;
   font-weight: 600;
