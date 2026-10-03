@@ -26,7 +26,7 @@ import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
 import FiltresMobileToggle from '../components/FiltresMobileToggle'
 import { format, subDays } from 'date-fns'
-import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, FileText, X, MoreHorizontal } from 'lucide-react'
+import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, FileText, X, MoreHorizontal, Plus } from 'lucide-react'
 // jsPDF/jspdf-autotable sont lourds : on charge ../utils/pdfGenerator dynamiquement,
 // au moment de l'action (impression/téléchargement), plutôt qu'au chargement de la page.
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
@@ -475,6 +475,9 @@ export default function Requisitions() {
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
   const budgetLoadSeqRef = useRef(0)
   const draftIdSeqRef = useRef(0)
+  const pendingExpenseFocusRef = useRef<
+    { type: 'poste'; groupId: string } | { type: 'ligne'; lineId: string } | null
+  >(null)
   const makeDraftId = (prefix: string) => {
     draftIdSeqRef.current += 1
     return `${prefix}-${draftIdSeqRef.current}`
@@ -881,6 +884,7 @@ export default function Requisitions() {
 
   const addGroupeDepense = () => {
     const groupId = makeDraftId('poste')
+    pendingExpenseFocusRef.current = { type: 'poste', groupId }
     setGroupesDepense((prev) => [
       ...prev,
       {
@@ -888,7 +892,7 @@ export default function Requisitions() {
         budget_poste_id: null,
         rubrique: '',
         budgetSearch: '',
-        showBudgetDropdown: false,
+        showBudgetDropdown: true,
         lignes: [nouvelleLigneDepense(makeDraftId('ligne'))],
       },
     ])
@@ -896,10 +900,12 @@ export default function Requisitions() {
   }
 
   const addLigne = (groupId: string) => {
+    const lineId = makeDraftId('ligne')
+    pendingExpenseFocusRef.current = { type: 'ligne', lineId }
     setGroupesDepense((prev) =>
       prev.map((groupe) =>
         groupe.id === groupId
-          ? { ...groupe, lignes: [...groupe.lignes, nouvelleLigneDepense(makeDraftId('ligne'))] }
+          ? { ...groupe, lignes: [...groupe.lignes, nouvelleLigneDepense(lineId)] }
           : groupe
       )
     )
@@ -1995,6 +2001,28 @@ export default function Requisitions() {
     }
   }, [groupesDepense, activeGroupId])
 
+  // Une action d'ajout se termine là où l'utilisateur doit poursuivre sa
+  // saisie. Ce focus évite de devoir rechercher le nouveau poste ou la nouvelle
+  // dépense plus bas dans la page, notamment au clavier et sur mobile.
+  useEffect(() => {
+    const pending = pendingExpenseFocusRef.current
+    if (!pending) return
+    pendingExpenseFocusRef.current = null
+    const elementId = pending.type === 'poste'
+      ? `req-poste-${pending.groupId}`
+      : `req-ligne-description-${pending.lineId}`
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.getElementById(elementId) as HTMLInputElement | null
+      if (!element) return
+      element.focus()
+      element.scrollIntoView({
+        block: 'center',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [groupesDepense])
+
   const filterBudgetTree = (query: string) => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return budgetTree
@@ -2046,6 +2074,7 @@ export default function Requisitions() {
   const BudgetDropdownNode = ({
     node,
     depth,
+    groupId,
     expandedIds,
     onToggle,
     onSelect,
@@ -2053,6 +2082,7 @@ export default function Requisitions() {
   }: {
     node: any
     depth: number
+    groupId: string
     expandedIds: Set<number>
     onToggle: (id: number, row?: HTMLElement | null) => void
     onSelect: (line: any) => void
@@ -2061,17 +2091,57 @@ export default function Requisitions() {
     const hasChildren = (node.children || []).length > 0
     const isExpanded = forceExpand || expandedIds.has(node.id)
     const disponibleLabel = hasChildren ? '' : formatCurrency(toNumber(node.montant_disponible ?? 0))
+    const moveFocus = (event: React.KeyboardEvent<HTMLButtonElement>, offset: number) => {
+      const tree = event.currentTarget.closest<HTMLElement>('[role="tree"]')
+      if (!tree) return
+      const items = Array.from(tree.querySelectorAll<HTMLButtonElement>('[role="treeitem"]'))
+        .filter((item) => item.offsetParent !== null)
+      const currentIndex = items.indexOf(event.currentTarget)
+      const next = items[Math.max(0, Math.min(items.length - 1, currentIndex + offset))]
+      next?.focus()
+    }
     return (
       <>
-        <div
+        <button
+          type="button"
+          role="treeitem"
+          tabIndex={-1}
+          aria-level={depth + 1}
+          aria-expanded={hasChildren ? isExpanded : undefined}
           className={`${styles.dropdownItem} ${hasChildren ? styles.parentItem : ''}`}
           style={{ paddingLeft: `${10 + depth * 16}px` }}
           data-tree-node={hasChildren ? node.id : undefined}
+          data-budget-option
           onClick={(event) => {
             if (hasChildren) {
               onToggle(node.id, event.currentTarget)
             } else {
               onSelect(node)
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown') {
+              event.preventDefault()
+              moveFocus(event, 1)
+            } else if (event.key === 'ArrowUp') {
+              event.preventDefault()
+              moveFocus(event, -1)
+            } else if (event.key === 'Home') {
+              event.preventDefault()
+              moveFocus(event, -Number.MAX_SAFE_INTEGER)
+            } else if (event.key === 'End') {
+              event.preventDefault()
+              moveFocus(event, Number.MAX_SAFE_INTEGER)
+            } else if (event.key === 'ArrowRight' && hasChildren && !isExpanded) {
+              event.preventDefault()
+              onToggle(node.id, event.currentTarget)
+            } else if (event.key === 'ArrowLeft' && hasChildren && isExpanded && !forceExpand) {
+              event.preventDefault()
+              onToggle(node.id, event.currentTarget)
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              setGroupeDropdown(groupId, false)
+              document.getElementById(`req-poste-${groupId}`)?.focus()
             }
           }}
         >
@@ -2085,14 +2155,15 @@ export default function Requisitions() {
             <span className={styles.dropdownMeta}>{disponibleLabel}</span>
           )}
           {hasChildren && <span className={styles.parentBadge}>Parent</span>}
-        </div>
+        </button>
         {hasChildren && isExpanded && (
-          <div className={styles.treeBranch} data-tree-branch={node.id}>
+          <div className={styles.treeBranch} data-tree-branch={node.id} role="group">
             {node.children.map((child: any) => (
               <BudgetDropdownNode
                 key={child.id}
                 node={child}
                 depth={depth + 1}
+                groupId={groupId}
                 expandedIds={expandedIds}
                 onToggle={onToggle}
                 onSelect={onSelect}
@@ -3142,29 +3213,32 @@ export default function Requisitions() {
                       )}
                     </div>
 
-                    {/* Dérogation par ligne : proposée, jamais imposée. Repliée,
-                        elle ne coûte qu'une ligne de texte au cas mono-mode. */}
-                    <label className={styles.reglementSplitToggle} htmlFor="reglement-par-ligne">
-                      <input
-                        type="checkbox"
-                        id="reglement-par-ligne"
-                        checked={reglementParLigne}
-                        onChange={(e) => activerReglementParLigne(e.target.checked)}
-                      />
-                      <span className={styles.optionText}>
-                        <strong>Régler certaines lignes autrement</strong>
-                        <small>
-                          Ajoute un choix Caisse / Banque sur chaque ligne. Les lignes non modifiées
-                          suivent le règlement ci-dessus.
-                        </small>
-                      </span>
-                    </label>
-
                     <div className={styles.optionGrid}>
+                      {/* Options avancées, volontairement compactes : elles ne
+                          doivent pas dominer le mode de paiement principal. */}
+                      <label
+                        className={styles.optionCard}
+                        htmlFor="reglement-par-ligne"
+                        data-checked={reglementParLigne ? 'true' : 'false'}
+                        title="Choisir Caisse ou Banque séparément sur certaines dépenses"
+                      >
+                        <input
+                          type="checkbox"
+                          id="reglement-par-ligne"
+                          checked={reglementParLigne}
+                          onChange={(e) => activerReglementParLigne(e.target.checked)}
+                        />
+                        <span className={styles.optionText}>
+                          <strong>Règlement par ligne</strong>
+                          <small>Caisse ou Banque selon la dépense.</small>
+                        </span>
+                      </label>
+
                       <label
                         className={styles.optionCard}
                         htmlFor="a_valoir"
                         data-checked={formData.a_valoir ? 'true' : 'false'}
+                        title="Dépense à rembourser par une autre instance"
                       >
                         <input
                           type="checkbox"
@@ -3183,6 +3257,7 @@ export default function Requisitions() {
                         htmlFor="decaissement_progressif"
                         data-checked={formData.decaissement_progressif ? 'true' : 'false'}
                         data-locked={reglementMixte ? 'true' : 'false'}
+                        title="Autoriser des sorties par tranches"
                       >
                         <input
                           type="checkbox"
@@ -3207,9 +3282,8 @@ export default function Requisitions() {
 
                     {formData.decaissement_progressif && (
                       <p className={styles.optionNote}>
-                        Après approbation, l'argent ne sortira pas en une fois : vous autoriserez des tranches
-                        (bénéficiaire + montant) et la caisse ne pourra payer que les tranches autorisées,
-                        dans la limite du montant total approuvé.
+                        Après approbation, les paiements pourront être autorisés par tranches,
+                        dans la limite du total approuvé.
                       </p>
                     )}
 
@@ -3265,12 +3339,10 @@ export default function Requisitions() {
                         />
                         <div className={styles.annexeDropContent}>
                           <span className={styles.annexeIcon}><Paperclip size={16} /></span>
-                          <div>
-                            <strong>Glissez-déposez un fichier</strong>
-                            <div className={styles.annexeHint}>
-                              ou cliquez pour sélectionner — PDF / PNG / JPEG, 3 Mo maximum
-                            </div>
-                          </div>
+                          <strong>Choisir un justificatif</strong>
+                          <span className={styles.annexeDropHint}>
+                            ou glisser ici · PDF, PNG ou JPEG · 3 Mo max.
+                          </span>
                         </div>
                       </div>
                       {annexeFile && !annexeError && (
@@ -3296,12 +3368,14 @@ export default function Requisitions() {
                       <div className={styles.lignesHeading}>
                         <h3 className={styles.formSectionTitle} id="req-section-lignes">Lignes de dépense</h3>
                         <p className={styles.lignesSubtitle}>
-                          {groupesDepense.length} poste{groupesDepense.length > 1 ? 's' : ''} · {lignes.length} ligne{lignes.length > 1 ? 's' : ''} · Total {formatCurrency(calculateTotalUsd())}
+                          Choisissez un poste budgétaire, puis détaillez les dépenses qui lui seront imputées.
                         </p>
                       </div>
-                      <button type="button" onClick={addGroupeDepense} className={styles.addBtn}>
-                        + Ajouter un autre poste budgétaire
-                      </button>
+                      <div className={styles.lignesSummary} aria-live="polite">
+                        {groupesDepense.length} poste{groupesDepense.length > 1 ? 's' : ''}
+                        <span aria-hidden="true">·</span>
+                        {lignes.length} dépense{lignes.length > 1 ? 's' : ''}
+                      </div>
                     </div>
 
                     <div className={styles.budgetGroups}>
@@ -3313,7 +3387,6 @@ export default function Requisitions() {
                         const sousTotalUsd = getGroupeSousTotalUsd(groupe)
                         const disponible = toNumber(budgetLine?.montant_disponible)
                         const soldeApres = budgetLine ? disponible - sousTotalUsd : 0
-                        const resteCdf = budgetLine && exchangeRate ? disponible * exchangeRate : null
                         const seuil = printSettings?.budget_alert_threshold ?? 80
                         const pourcentage = budgetLine?.montant_prevu
                           ? ((toNumber(budgetLine.montant_engage) + sousTotalUsd) / toNumber(budgetLine.montant_prevu)) * 100
@@ -3326,36 +3399,87 @@ export default function Requisitions() {
                             data-active={groupe.id === activeGroupId ? 'true' : 'false'}
                             data-overrun={depasse ? 'true' : 'false'}
                             onFocusCapture={() => setActiveGroupId(groupe.id)}
+                            role="group"
+                            aria-labelledby={`req-poste-title-${groupe.id}`}
                           >
                             <div className={styles.budgetGroupTop}>
-                              <div className={styles.budgetGroupPoste}>
-                                <label>Poste budgétaire *</label>
+                              <div className={styles.budgetGroupIdentity}>
+                                <strong id={`req-poste-title-${groupe.id}`}>Poste {groupIndex + 1}</strong>
+                                <span>{budgetLine ? budgetLine.code : 'Imputation à choisir'}</span>
+                              </div>
+                              {groupesDepense.length > 1 && (
+                                <button
+                                  type="button"
+                                  className={styles.removeGroupBtn}
+                                  onClick={() => removeGroupeDepense(groupe.id)}
+                                  aria-label={`Supprimer le poste ${groupIndex + 1}`}
+                                  title="Supprimer ce poste"
+                                >
+                                  <Trash2 size={16} aria-hidden="true" />
+                                </button>
+                              )}
+                            </div>
+
+                            <div className={styles.budgetGroupPoste}>
+                                <label htmlFor={`req-poste-${groupe.id}`}>Poste budgétaire <span aria-hidden="true">*</span></label>
                                 <div className={styles.posteCell}>
                                   <input
+                                    id={`req-poste-${groupe.id}`}
                                     type="text"
                                     value={query}
                                     aria-label={`Poste budgétaire du groupe ${groupIndex + 1}`}
+                                    aria-required="true"
+                                    role="combobox"
+                                    aria-autocomplete="list"
+                                    aria-haspopup="tree"
+                                    aria-expanded={groupe.showBudgetDropdown}
+                                    aria-controls={`req-poste-options-${groupe.id}`}
                                     onChange={(e) => updateGroupeSearch(groupe.id, e.target.value)}
                                     onFocus={() => {
                                       setActiveGroupId(groupe.id)
                                       setGroupeDropdown(groupe.id, true)
                                     }}
-                                    onBlur={() => {
+                                    onBlur={(event) => {
+                                      const next = event.relatedTarget as Node | null
+                                      const tree = document.getElementById(`req-poste-options-${groupe.id}`)
+                                      if (next && tree?.contains(next)) return
                                       setTimeout(() => setGroupeDropdown(groupe.id, false), 120)
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Escape') {
+                                        event.preventDefault()
+                                        setGroupeDropdown(groupe.id, false)
+                                      } else if (event.key === 'ArrowDown' && groupe.showBudgetDropdown) {
+                                        event.preventDefault()
+                                        document
+                                          .querySelector<HTMLButtonElement>(`#req-poste-options-${groupe.id} [data-budget-option]`)
+                                          ?.focus()
+                                      }
                                     }}
                                     placeholder="Rechercher par code ou libellé"
                                   />
                                   {groupe.showBudgetDropdown && filteredBudgetTree.length > 0 && (
                                     <div
+                                      id={`req-poste-options-${groupe.id}`}
                                       className={styles.dropdown}
+                                      role="tree"
+                                      aria-label={`Postes budgétaires disponibles pour le poste ${groupIndex + 1}`}
+                                      data-budget-tree={groupe.id}
                                       data-tree-scroll
                                       onMouseDown={(event) => event.preventDefault()}
+                                      onBlur={(event) => {
+                                        const next = event.relatedTarget as Node | null
+                                        if (!next || !event.currentTarget.contains(next)) {
+                                          setGroupeDropdown(groupe.id, false)
+                                        }
+                                      }}
                                     >
                                       {filteredBudgetTree.map((node: any) => (
                                         <BudgetDropdownNode
                                           key={node.id}
                                           node={node}
                                           depth={0}
+                                          groupId={groupe.id}
                                           expandedIds={expandedBudgetIds}
                                           onToggle={toggleBudgetNode}
                                           onSelect={(line) => selectBudgetPoste(line, groupe.id)}
@@ -3365,8 +3489,13 @@ export default function Requisitions() {
                                     </div>
                                   )}
                                   {groupe.showBudgetDropdown && filteredBudgetTree.length === 0 && (
-                                    <div className={styles.dropdown} onMouseDown={(event) => event.preventDefault()}>
-                                      <div className={styles.dropdownItem}>Aucun poste trouvé.</div>
+                                    <div
+                                      id={`req-poste-options-${groupe.id}`}
+                                      className={styles.dropdown}
+                                      role="status"
+                                      onMouseDown={(event) => event.preventDefault()}
+                                    >
+                                      <div className={styles.dropdownEmpty}>Aucun poste trouvé pour cette recherche.</div>
                                     </div>
                                   )}
                                 </div>
@@ -3376,39 +3505,33 @@ export default function Requisitions() {
                                     Aucun poste budgétaire trouvé. Vérifie la page Budget (Dépenses).
                                   </small>
                                 )}
-                              </div>
-                              <button
-                                type="button"
-                                className={styles.removeGroupBtn}
-                                onClick={() => removeGroupeDepense(groupe.id)}
-                                disabled={groupesDepense.length === 1}
-                              >
-                                Supprimer le groupe
-                              </button>
                             </div>
 
                             {budgetLine && (
                               <div className={styles.groupBudgetInfo}>
-                                <span>Budget prévu <strong>{formatCurrency(budgetLine.montant_prevu)}</strong></span>
-                                <span>Déjà engagé <strong>{formatCurrency(budgetLine.montant_engage)}</strong></span>
-                                <span className={depasse ? styles.budgetAlert : undefined}>Disponible <strong>{formatCurrency(disponible)}</strong></span>
-                                <span>Sous-total <strong>{formatCurrency(sousTotalUsd)}</strong></span>
-                                <span className={soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}>
-                                  Solde après <strong>{formatCurrency(soldeApres)}</strong>
+                                <span className={depasse ? styles.budgetAlert : undefined}>
+                                  <small>Disponible</small>
+                                  <strong>{formatCurrency(disponible)}</strong>
                                 </span>
-                                {resteCdf !== null && (
-                                  <span className={styles.budgetMuted}>
-                                    Disponible CDF {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(resteCdf)}
-                                  </span>
-                                )}
-                                {pourcentage >= seuil && pourcentage < 100 && (
-                                  <span className={styles.budgetWarn}>Seuil {seuil}% atteint</span>
-                                )}
+                                <span>
+                                  <small>Sous-total saisi</small>
+                                  <strong>{formatCurrency(sousTotalUsd)}</strong>
+                                </span>
+                                <span className={soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}>
+                                  <small>Solde après demande</small>
+                                  <strong>{formatCurrency(soldeApres)}</strong>
+                                </span>
+                              </div>
+                            )}
+
+                            {budgetLine && pourcentage >= seuil && pourcentage < 100 && (
+                              <div className={styles.budgetThreshold} role="status">
+                                Seuil d’alerte de {seuil}% atteint pour ce poste.
                               </div>
                             )}
 
                             {depasse && (
-                              <div className={styles.budgetWarning}>
+                              <div className={styles.budgetWarning} role="alert">
                                 {printSettings?.budget_block_overrun ? 'Blocage' : 'Dépassement'} : le sous-total du poste
                                 {' '}({formatCurrency(sousTotalUsd)}) dépasse le disponible budgétaire
                                 {' '}({formatCurrency(disponible)}).
@@ -3437,6 +3560,7 @@ export default function Requisitions() {
                                     <tr key={ligne.id} className={styles.ligneRow}>
                                       <td className={styles.colDescription} data-label="Description">
                                         <input
+                                          id={`req-ligne-description-${ligne.id}`}
                                           type="text"
                                           value={ligne.description}
                                           aria-label={`Description de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
@@ -3449,6 +3573,7 @@ export default function Requisitions() {
                                         <input
                                           type="number"
                                           value={ligne.quantite}
+                                          inputMode="numeric"
                                           aria-label={`Quantité de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
                                           onChange={(e) => updateLigne(groupe.id, ligne.id, 'quantite', parseInt(e.target.value) || 0)}
                                           min="1"
@@ -3471,8 +3596,13 @@ export default function Requisitions() {
                                             type="number"
                                             step="0.01"
                                             value={ligne.montant_unitaire}
+                                            min="0.01"
+                                            inputMode="decimal"
                                             aria-label={`Prix unitaire de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
                                             onChange={(e) => updateLigne(groupe.id, ligne.id, 'montant_unitaire', parseFloat(e.target.value) || 0)}
+                                            onFocus={(event) => {
+                                              if (toNumber(ligne.montant_unitaire) === 0) event.currentTarget.select()
+                                            }}
                                             required
                                           />
                                           {ligne.devise === 'CDF' && exchangeRate > 0 && (
@@ -3547,21 +3677,29 @@ export default function Requisitions() {
                                           aria-label={`Supprimer la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
                                           title="Supprimer la ligne"
                                         >
-                                          ×
+                                          <Trash2 size={15} aria-hidden="true" />
                                         </button>
                                       </td>
                                     </tr>
                                   ))}
                                 </tbody>
                                 <tfoot>
+                                  <tr className={styles.addExpenseRow}>
+                                    <td colSpan={reglementParLigne ? 7 : 6}>
+                                      <button type="button" onClick={() => addLigne(groupe.id)} className={styles.addLineBtn}>
+                                        <Plus size={15} aria-hidden="true" />
+                                        Ajouter une dépense
+                                      </button>
+                                    </td>
+                                  </tr>
                                   <tr>
-                                    <td colSpan={reglementParLigne ? 4 : 3}>Sous-total du poste</td>
+                                    <td colSpan={reglementParLigne ? 5 : 4}>Sous-total du poste</td>
                                     <td className={styles.cellAmount}>{formatCurrency(sousTotalUsd)}</td>
                                     <td />
                                   </tr>
                                   {budgetLine && (
                                     <tr className={styles.lignesFootHint}>
-                                      <td colSpan={reglementParLigne ? 4 : 3}>Solde après demande</td>
+                                      <td colSpan={reglementParLigne ? 5 : 4}>Solde après demande</td>
                                       <td className={`${styles.cellAmount} ${soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}`}>
                                         {formatCurrency(soldeApres)}
                                       </td>
@@ -3571,23 +3709,23 @@ export default function Requisitions() {
                                 </tfoot>
                               </table>
                             </div>
-
-                            <div className={styles.groupActions}>
-                              <button type="button" onClick={() => addLigne(groupe.id)} className={styles.addLineBtn}>
-                                + Ajouter une ligne
-                              </button>
-                            </div>
                           </div>
                         )
                       })}
+                      <button type="button" onClick={addGroupeDepense} className={styles.addBudgetGroupBtn}>
+                        <Plus size={17} aria-hidden="true" />
+                        Ajouter un poste budgétaire
+                      </button>
                       <div className={styles.totalBudgetGroups}>
-                        <span>Total général</span>
-                        <strong>{formatCurrency(calculateTotalUsd())}</strong>
-                        {exchangeRate > 0 && (
+                        <div className={styles.totalBudgetLabel}>
+                          <span>Total général</span>
+                          {exchangeRate > 0 && (
                           <small>
                             Équivalent CDF {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(calculateTotalUsd() * exchangeRate)}
                           </small>
-                        )}
+                          )}
+                        </div>
+                        <strong>{formatCurrency(calculateTotalUsd())}</strong>
                       </div>
                     </div>
 

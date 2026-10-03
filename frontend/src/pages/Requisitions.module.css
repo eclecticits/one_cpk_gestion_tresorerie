@@ -424,22 +424,23 @@
   grid-column: span 2;
 }
 
-/* Cases à cocher présentées comme des cartes cliquables (cible >= 36px). */
+/* Options avancées compactes : trois commandes sur une ligne plutôt que de
+   grandes cartes qui prendraient le pas sur le mode de règlement principal. */
 .optionGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .optionCard {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-height: 56px;
-  padding: 10px 12px;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 6px 9px;
   border: 1px solid #dbe3ee;
-  border-radius: 10px;
+  border-radius: 7px;
   background: #ffffff;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
@@ -449,10 +450,15 @@
   border-color: #94a3b8;
 }
 
+.optionCard:focus-within {
+  border-color: var(--tenant-primary, #0d9488);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tenant-primary, #0d9488) 14%, transparent);
+}
+
 .optionCard input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
   flex: 0 0 auto;
   cursor: pointer;
   accent-color: var(--tenant-primary, #0d9488);
@@ -476,15 +482,19 @@
 }
 
 .optionText strong {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
   color: #1f2937;
 }
 
 .optionText small {
-  font-size: 12px;
-  line-height: 1.35;
+  display: block;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.25;
   color: #5b6674;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Contrainte métier, pas un choix : la case reste lisible mais inactive, et le
@@ -496,33 +506,6 @@
 
 .optionCard[data-locked="true"] input[type="checkbox"] {
   cursor: default;
-}
-
-/* Ouverture du règlement ligne par ligne : volontairement plus discret que les
-   cartes d'options, c'est une dérogation rare au règlement global. */
-.reglementSplitToggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 8px 10px;
-  border: 1px dashed #cbd5e1;
-  border-radius: 10px;
-  background: #fbfdff;
-  cursor: pointer;
-}
-
-.reglementSplitToggle:hover {
-  border-color: #94a3b8;
-}
-
-.reglementSplitToggle input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  margin-top: 3px;
-  flex: 0 0 auto;
-  cursor: pointer;
-  accent-color: var(--tenant-primary, #0d9488);
 }
 
 .optionNote {
@@ -778,9 +761,8 @@
   left: 0;
   right: auto;
   background: white;
-  border: 2px solid #3b82f6;
-  border-top: none;
-  border-radius: 0 0 6px 6px;
+  border: 1px solid #b8c4d3;
+  border-radius: 6px;
   max-height: 420px;
   overflow-y: auto;
   min-width: 520px;
@@ -815,7 +797,15 @@
 }
 
 .dropdownItem {
+  width: 100%;
+  min-height: 40px;
   padding: 12px;
+  border: none;
+  border-radius: 0;
+  background: #ffffff;
+  color: #1f2937;
+  font: inherit;
+  text-align: left;
   white-space: nowrap;
   cursor: pointer;
   transition: background 0.2s;
@@ -837,6 +827,20 @@
 
 .dropdownItem:hover {
   background: #f1f5f9;
+}
+
+.dropdownItem:focus-visible {
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, var(--tenant-primary, #0d9488) 9%, #ffffff);
+  outline: 2px solid var(--tenant-primary, #0d9488);
+  outline-offset: -2px;
+}
+
+.dropdownEmpty {
+  padding: 14px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .parentItem {
@@ -889,16 +893,16 @@
 .lignesSection {
   border: 1px solid #e8edf4;
   border-radius: 10px;
-  background: #fcfdff;
-  padding: 14px 16px;
+  background: #ffffff;
+  padding: 16px;
 }
 
 .lignesHeader {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .lignesHeading {
@@ -914,47 +918,49 @@
 
 .lignesSubtitle {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.45;
   color: #5b6674;
 }
 
-.addBtn {
-  min-height: 36px;
-  padding: 8px 14px;
-  background: var(--tenant-primary, #0d9488);
-  color: white;
-  border-radius: 6px;
-  font-size: 13px;
+.lignesSummary {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
-}
-
-.addBtn:hover {
-  filter: brightness(0.94);
 }
 
 /* Pas d'overflow ici : le sélecteur de poste ouvre une liste absolue de 520px
    qui doit pouvoir déborder du tableau sans être rognée. */
 .lignesTableWrap {
   min-width: 0;
+  padding: 0 12px 12px;
 }
 
 .budgetGroups {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .budgetGroup {
-  border: 1px solid #dbe3ee;
-  border-radius: 6px;
+  border: 1px solid #dfe4eb;
+  border-radius: 8px;
   background: #ffffff;
-  padding: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
 }
 
 .budgetGroup[data-active="true"] {
-  border-color: color-mix(in srgb, var(--tenant-primary, #0d9488) 45%, #dbe3ee);
-  background: #fbfefd;
+  border-color: color-mix(in srgb, var(--tenant-primary, #0d9488) 55%, #dbe3ee);
+  box-shadow: inset 3px 0 0 var(--tenant-primary, #0d9488), 0 1px 3px rgba(15, 23, 42, 0.05);
 }
 
 .budgetGroup[data-overrun="true"] {
@@ -963,13 +969,41 @@
 
 .budgetGroupTop {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 12px;
+  align-items: center;
+  min-height: 48px;
+  padding: 6px 10px 6px 13px;
+  border-bottom: 1px solid #e8edf3;
+  border-radius: 8px 8px 0 0;
+  background: #f7f8fa;
+}
+
+.budgetGroupIdentity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.budgetGroupIdentity strong {
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.budgetGroupIdentity span {
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .budgetGroupPoste {
   min-width: 0;
+  padding: 12px 12px 0;
 }
 
 .budgetGroupPoste label {
@@ -984,8 +1018,8 @@
 
 .budgetGroupPoste input {
   width: 100%;
-  min-height: 36px;
-  padding: 8px 10px;
+  min-height: 40px;
+  padding: 9px 11px;
   border: 1px solid var(--color-border, #dbe3ee);
   border-radius: 6px;
   font-size: 13px;
@@ -999,24 +1033,37 @@
 }
 
 .groupBudgetInfo {
-  margin: 10px 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  font-size: 12px;
-  color: #64748b;
+  margin: 10px 12px 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  background: #fbfcfd;
 }
 
 .groupBudgetInfo span {
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #f8fafc;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  color: #64748b;
+}
+
+.groupBudgetInfo span + span {
+  border-left: 1px solid #e8edf3;
+}
+
+.groupBudgetInfo small {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
 }
 
 .groupBudgetInfo strong {
-  margin-left: 4px;
   color: #0f172a;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1024,41 +1071,44 @@
   color: #64748b;
 }
 
-.groupActions {
-  display: flex;
-  justify-content: flex-start;
-  margin-top: 10px;
-}
-
-.addLineBtn,
-.removeGroupBtn {
-  min-height: 36px;
-  border-radius: 6px;
-  border: 1px solid #dbe3ee;
-  background: #ffffff;
-  color: #334155;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
 .addLineBtn {
-  padding: 0 12px;
+  width: 100%;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 0;
+  background: #ffffff;
+  color: var(--tenant-primary, #0d9488);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .removeGroupBtn {
-  padding: 0 10px;
-  color: #be123c;
-  border-color: #fecaca;
-  background: #fff1f2;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
 }
 
 .addLineBtn:hover {
-  background: #f8fafc;
+  background: color-mix(in srgb, var(--tenant-primary, #0d9488) 7%, #ffffff);
 }
 
 .removeGroupBtn:hover:not(:disabled) {
+  border-color: #fecaca;
   background: #ffe4e6;
+  color: #be123c;
 }
 
 .removeGroupBtn:disabled {
@@ -1066,27 +1116,64 @@
   opacity: 0.45;
 }
 
+.addBudgetGroupBtn {
+  width: 100%;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px dashed #b8c4d3;
+  border-radius: 8px;
+  background: #fbfcfd;
+  color: var(--tenant-primary, #0d9488);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.addBudgetGroupBtn:hover {
+  border-color: var(--tenant-primary, #0d9488);
+  background: color-mix(in srgb, var(--tenant-primary, #0d9488) 6%, #ffffff);
+}
+
 .totalBudgetGroups {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: baseline;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #f8fafc;
+  width: min(100%, 390px);
+  margin-left: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 2px 2px;
+  border-top: 1px solid #dbe3ee;
   color: #334155;
 }
 
 .totalBudgetGroups strong {
-  font-size: 16px;
+  font-size: 20px;
   color: #0f172a;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .totalBudgetGroups small {
   color: #64748b;
+}
+
+.totalBudgetLabel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+}
+
+.totalBudgetLabel span {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .lignesTable {
@@ -1097,7 +1184,7 @@
   font-size: 13px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
+  border-radius: 6px;
 }
 
 .lignesTable th {
@@ -1123,17 +1210,18 @@
   width: 100%;
   min-height: 36px;
   padding: 7px 9px;
-  border: 1px solid var(--color-border, #dbe3ee);
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
   font-size: 13px;
   color: #0f172a;
-  background: #ffffff;
+  background: transparent;
 }
 
 .lignesTable input:focus,
 .lignesTable select:focus {
   border-color: var(--tenant-primary, #0d9488);
   outline: 2px solid color-mix(in srgb, var(--tenant-primary, #0d9488) 22%, transparent);
+  background: #ffffff;
 }
 
 /* Répartition des colonnes : la description prend la moitié de la largeur,
@@ -1189,6 +1277,12 @@
   font-weight: 800;
   color: var(--color-title, #0f172a);
   border-bottom: none;
+}
+
+.lignesTable tfoot .addExpenseRow td {
+  padding: 0;
+  border-bottom: 1px solid #e8edf3;
+  background: #ffffff;
 }
 
 .lignesFootHint td {
@@ -1310,11 +1404,21 @@
 }
 
 .budgetWarning {
-  margin-top: 8px;
+  margin: 0 12px 10px;
   padding: 8px 10px;
   border-radius: 6px;
   background: #fee2e2;
   color: #b91c1c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.budgetThreshold {
+  margin: 0 12px 10px;
+  padding: 7px 10px;
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
   font-size: 12px;
   font-weight: 700;
 }
@@ -2939,16 +3043,25 @@
 
 .annexeDrop {
   position: relative;
-  border: 2px dashed #cbd5f5;
-  border-radius: 10px;
+  width: min(100%, 620px);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  border: 1px dashed #b8c4d3;
+  border-radius: 7px;
   background: #f8fafc;
-  padding: 16px;
+  padding: 8px 11px;
   transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .annexeDrop:hover {
   border-color: #4f46e5;
   background: #eef2ff;
+}
+
+.annexeDrop:focus-within {
+  border-color: var(--tenant-primary, #0d9488);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tenant-primary, #0d9488) 16%, transparent);
 }
 
 .annexeDropError {
@@ -2972,10 +3085,16 @@
 }
 
 .annexeDropContent {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   color: #334155;
+}
+
+.annexeDropContent strong {
+  flex: 0 0 auto;
+  font-size: 13px;
 }
 
 .annexeIcon {
@@ -2987,6 +3106,15 @@
 .annexeHint {
   font-size: 12px;
   color: #64748b;
+}
+
+.annexeDropHint {
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .annexePreview {
@@ -3100,16 +3228,16 @@
    le rognage de la liste des postes budgétaires. */
 @media (max-width: 900px) {
   .optionGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .budgetGroupTop {
-    grid-template-columns: 1fr;
-    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    align-items: center;
   }
 
   .removeGroupBtn {
-    width: 100%;
+    width: 36px;
   }
 
   .lignesTable,
@@ -3165,7 +3293,7 @@
     text-align: left;
   }
 
-  .lignesTable tfoot tr {
+  .lignesTable tfoot tr:not(.addExpenseRow) {
     display: flex;
     justify-content: space-between;
     gap: 12px;
@@ -3181,6 +3309,22 @@
   }
 
   .lignesTable tfoot td:empty {
+    display: none;
+  }
+
+  .lignesTable tfoot .addExpenseRow {
+    display: block;
+    padding: 0;
+    border-radius: 0;
+    background: #ffffff;
+  }
+
+  .lignesTable tfoot .addExpenseRow td {
+    display: block;
+    padding: 0;
+  }
+
+  .lignesTable tfoot .addExpenseRow td::before {
     display: none;
   }
 }
@@ -3203,10 +3347,15 @@
     align-items: flex-start;
   }
 
+  .budgetGroupTop {
+    grid-template-columns: minmax(0, 1fr) var(--touch-target-min, 44px);
+  }
+
   /* Cibles tactiles : >= --touch-target-min sous 768px. */
   .field input,
   .field select,
   .field textarea,
+  .budgetGroupPoste input,
   .lignesTable input,
   .lignesTable select {
     min-height: var(--touch-target-min, 44px);
@@ -3218,14 +3367,20 @@
   }
 
   .removeBtn,
-  .addBtn,
   .addLineBtn,
+  .addBudgetGroupBtn,
   .removeGroupBtn {
     min-height: var(--touch-target-min, 44px);
   }
 
+  .removeGroupBtn {
+    width: var(--touch-target-min, 44px);
+    height: var(--touch-target-min, 44px);
+  }
+
   .removeBtn {
-    width: 100%;
+    width: var(--touch-target-min, 44px);
+    margin-left: auto;
   }
 
   /* Le sélecteur de poste ne peut plus imposer 520px sur un petit écran. */
@@ -3364,6 +3519,91 @@
     flex-wrap: wrap;
     gap: 8px;
     justify-content: center;
+  }
+}
+
+@media (max-width: 600px) {
+  .optionGrid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .optionCard {
+    min-height: var(--touch-target-min, 44px);
+  }
+
+  .lignesSection {
+    padding: 12px;
+  }
+
+  .lignesHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .lignesSummary {
+    white-space: normal;
+  }
+
+  .budgetGroupIdentity {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .budgetGroupPoste {
+    padding: 10px 10px 0;
+  }
+
+  .groupBudgetInfo {
+    grid-template-columns: 1fr;
+    margin: 10px;
+  }
+
+  .groupBudgetInfo span + span {
+    border-top: 1px solid #e8edf3;
+    border-left: none;
+  }
+
+  .budgetThreshold,
+  .budgetWarning {
+    margin-right: 10px;
+    margin-left: 10px;
+  }
+
+  .lignesTableWrap {
+    padding: 0 10px 10px;
+  }
+
+  .lignesTable td {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 5px;
+    padding: 8px 10px;
+  }
+
+  .lignesTable .colAction {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .lignesTable .colAction::before {
+    display: none;
+  }
+
+  .lignesTable tfoot tr:not(.addExpenseRow) {
+    align-items: baseline;
+    border-radius: 0;
+  }
+
+  .totalBudgetGroups {
+    width: 100%;
+    gap: 10px;
+  }
+
+  .totalBudgetGroups strong {
+    font-size: 18px;
   }
 }
 
