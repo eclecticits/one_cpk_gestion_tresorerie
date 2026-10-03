@@ -330,6 +330,9 @@ function MenuActionsLigne({ items, libelle }: { items: ActionLigne[]; libelle: s
   )
 }
 
+/** Statut sur lequel la liste s'ouvre, et où « Effacer les filtres » la ramène. */
+const STATUT_PAR_DEFAUT = 'BROUILLON'
+
 export default function Requisitions() {
   const queryClient = useQueryClient()
   const { user } = useAuth()
@@ -411,7 +414,9 @@ export default function Requisitions() {
   // Panneau de filtres sur téléphone : replié par défaut pour que la liste
   // apparaisse sans défiler. Sans effet au-delà de 768 px (CSS seul).
   const [filtresMobileOuverts, setFiltresMobileOuverts] = useState(false)
-  const [filterStatut, setFilterStatut] = useState<string>('')
+  // La liste s'ouvre sur les brouillons : ce qui reste à soumettre. « Toutes »
+  // reste à un clic, et effacer les filtres ramène ici.
+  const [filterStatut, setFilterStatut] = useState<string>(STATUT_PAR_DEFAUT)
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
   const [filterBudgetPosteId, setFilterBudgetPosteId] = useState<string>('')
   const [filterObjet, setFilterObjet] = useState<string>('')
@@ -2294,10 +2299,10 @@ export default function Requisitions() {
       }
     })
 
-  const hasActiveFilters = searchQuery !== '' || filterStatut !== '' || filterModePaiement !== '' || filterObjet !== '' || filterBudgetPosteId !== '' || filterServiceId !== ''
+  const hasActiveFilters = searchQuery !== '' || filterStatut !== STATUT_PAR_DEFAUT || filterModePaiement !== '' || filterObjet !== '' || filterBudgetPosteId !== '' || filterServiceId !== ''
   // Filtres posés dans le panneau repliable (la recherche reste visible).
   const nbFiltresPanneau =
-    [filterStatut, filterModePaiement, filterObjet, filterBudgetPosteId, filterServiceId].filter(Boolean).length +
+    [filterStatut !== STATUT_PAR_DEFAUT, filterModePaiement, filterObjet, filterBudgetPosteId, filterServiceId].filter(Boolean).length +
     (dateDebut !== defaultDateDebut || dateFin !== today ? 1 : 0)
 
   useEffect(() => {
@@ -2357,7 +2362,7 @@ export default function Requisitions() {
 
   const clearFilters = () => {
     setSearchQuery('')
-    setFilterStatut('')
+    setFilterStatut(STATUT_PAR_DEFAUT)
     setFilterModePaiement('')
     setFilterObjet('')
     setFilterBudgetPosteId('')
