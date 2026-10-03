@@ -37,3 +37,20 @@ def resolve_permission_code(permission_code: str) -> str:
 # ce code, la case s'enregistrait sans rien ouvrir, et seul « Validation → Avis
 # technique » donnait réellement le droit.
 EXAMEN_VALIDATION_PERMISSIONS: tuple[str, ...] = ("can_verify_technical", "treso.validation_examens.validate")
+
+
+# Permissions à attribution explicite. L'administrateur ne les tient PAS de son
+# rôle : le court-circuit `admin` de `has_permission` les ignore, et elles ne
+# s'obtiennent qu'en étant cochées pour le rôle dans Paramètres → Permissions —
+# rôle Administrateur compris, qui devient réglable pour elles seules.
+# Le super-administrateur, qui règle ces permissions, garde son court-circuit.
+#
+# Y figurent les corrections qui déplacent du réalisé déjà encaissé : on décide
+# qui les porte, on ne les reçoit pas par défaut de fonction.
+PERMISSIONS_EXPLICITES: frozenset[str] = frozenset({
+    "treso.encaissements.reimputer",
+})
+
+
+def est_permission_explicite(permission_code: str) -> bool:
+    return resolve_permission_code(permission_code) in PERMISSIONS_EXPLICITES

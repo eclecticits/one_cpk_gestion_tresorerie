@@ -32,6 +32,7 @@ from app.models.requisition_approver import RequisitionApprover
 from app.models.rubrique import Rubrique
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
+from app.core.permissions import PERMISSIONS_EXPLICITES
 from app.models.rbac import Role, Permission, role_permissions
 from app.models.user import User
 from app.models.organisation_settings import OrganisationSettings
@@ -994,13 +995,29 @@ async def update_role_permissions(
         )
         old_perm_codes = [row[0] for row in old_perm_res.all()]
 
-        # remove existing
-        await db.execute(
-            role_permissions.delete().where(role_permissions.c.role_id == role_update.role_id)
-        )
-        if role_update.permission_codes:
+        role_code = (
+            await db.execute(select(Role.code).where(Role.id == role_update.role_id))
+        ).scalar_one_or_none()
+        demandes = list(role_update.permission_codes or [])
+        if (role_code or "").lower() == "admin":
+            # L'administrateur tient tous ses droits de son rôle, sauf les
+            # permissions à attribution explicite : seules celles-là se règlent
+            # ici. Ses autres lignes ne sont ni effacées ni réécrites.
+            demandes = [code for code in demandes if code in PERMISSIONS_EXPLICITES]
+            explicites_ids = select(Permission.id).where(Permission.code.in_(PERMISSIONS_EXPLICITES))
+            await db.execute(
+                role_permissions.delete().where(
+                    role_permissions.c.role_id == role_update.role_id,
+                    role_permissions.c.permission_id.in_(explicites_ids),
+                )
+            )
+        else:
+            await db.execute(
+                role_permissions.delete().where(role_permissions.c.role_id == role_update.role_id)
+            )
+        if demandes:
             perm_res = await db.execute(
-                select(Permission).where(Permission.code.in_(role_update.permission_codes))
+                select(Permission).where(Permission.code.in_(demandes))
             )
             perms = perm_res.scalars().all()
             if perms:
@@ -1016,7 +1033,7 @@ async def update_role_permissions(
             target_table="roles",
             target_id=str(role_update.role_id),
             old_value={"permissions": old_perm_codes},
-            new_value={"permissions": role_update.permission_codes or []},
+            new_value={"permissions": demandes},
             ip_address=get_request_ip(request),
         )
     await db.commit()

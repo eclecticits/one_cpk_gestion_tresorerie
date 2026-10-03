@@ -288,7 +288,9 @@ export default function Settings() {
   // en cours. On ne rattrape donc rien ici.
   const handleSaveRolePermissions = async (roleId: number, permissionCodes: string[], label: string) => {
     const role = roles.find((r) => r.id === roleId)
-    if (!role || role.code === 'admin') return
+    // Le rôle admin passe aussi : le serveur n'y règle que les permissions à
+    // attribution explicite et laisse le reste de ses droits intact.
+    if (!role) return
     await adminUpdateRolePermissions({ roles: [{ role_id: roleId, permission_codes: permissionCodes }] })
     const trimmedLabel = label.trim()
     if (trimmedLabel && trimmedLabel !== (role.label || '')) {

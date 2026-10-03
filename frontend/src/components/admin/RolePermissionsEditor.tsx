@@ -16,6 +16,7 @@ import styles from './RolePermissionsEditor.module.css'
 import type { PermissionInfo, RoleInfo } from '../../api/admin'
 import {
   ACTION_KIND_LABELS,
+  EXPLICIT_PERMISSION_CODES,
   PERMISSION_TREE,
   findPermissionLocation,
   findUnmappedCodes,
@@ -205,7 +206,8 @@ function TriStateBox({
 export interface RolePermissionsEditorProps {
   roles: RoleInfo[]
   permissions: PermissionInfo[]
-  /** Enregistre UN rôle. Ne reçoit jamais le rôle `admin`. */
+  /** Enregistre UN rôle. Pour le rôle `admin`, seules comptent les permissions
+   *  à attribution explicite : le serveur ignore le reste. */
   onSaveRole: (roleId: number, permissionCodes: string[], label: string) => Promise<void>
   onAddRole: () => void | Promise<void>
   onDeleteRole: (roleId: number) => void | Promise<void>
@@ -305,6 +307,10 @@ export default function RolePermissionsEditor({
     [roles, selectedRoleId],
   )
   const isAdminRole = selectedRole?.code === 'admin'
+  // L'administrateur tient tout de son rôle, sauf les permissions à attribution
+  // explicite : celles-là se cochent pour lui comme pour n'importe quel rôle.
+  const adminVerrouille = (code: string) => isAdminRole && !EXPLICIT_PERMISSION_CODES.has(code)
+  const possede = (code: string) => granted.has(code) || adminVerrouille(code)
 
   /** Total des tâches affichables, tous modules confondus. */
   const totalTasks = useMemo(
@@ -314,8 +320,11 @@ export default function RolePermissionsEditor({
 
   const countFor = useCallback(
     (role: RoleInfo) => {
-      if (role.code === 'admin') return totalTasks
       const codes = new Set(role.permissions ?? [])
+      if (role.code === 'admin') {
+        const explicitesRefusees = [...EXPLICIT_PERMISSION_CODES].filter((code) => !codes.has(code)).length
+        return totalTasks - explicitesRefusees
+      }
       return tree.reduce(
         (acc, m) =>
           acc + m.menus.reduce((a, menu) => a + menu.tasks.filter((t) => codes.has(t.code)).length, 0),
@@ -419,8 +428,8 @@ export default function RolePermissionsEditor({
 
   const moduleAccessCode = activeModule ? MODULE_ACCESS_CODE[activeModule.key] : undefined
 
-  const applyChange = (mutate: (draft: Set<string>) => void) => {
-    if (isAdminRole || saving) return
+  const applyChange = (mutate: (draft: Set<string>) => void, autoriseAdmin = false) => {
+    if ((isAdminRole && !autoriseAdmin) || saving) return
     setGranted((prev) => {
       const draft = new Set(prev)
       mutate(draft)
@@ -435,6 +444,16 @@ export default function RolePermissionsEditor({
     next: boolean,
     allTasks = menu.tasks,
   ) => {
+    if (isAdminRole) {
+      // Rôle Administrateur : seule une permission explicite se règle, et
+      // sans les accès de menu, qu'il tient déjà de son rôle.
+      if (!EXPLICIT_PERMISSION_CODES.has(task.code)) return
+      applyChange((draft) => {
+        if (next) draft.add(task.code)
+        else draft.delete(task.code)
+      }, true)
+      return
+    }
     applyChange((draft) => {
       if (next) {
         draft.add(task.code)
@@ -563,7 +582,7 @@ export default function RolePermissionsEditor({
   }
 
   const handleSave = async () => {
-    if (!selectedRole || isAdminRole || !dirty) return
+    if (!selectedRole || !dirty) return
     setSaving(true)
     setBanner(null)
     try {
@@ -614,7 +633,7 @@ export default function RolePermissionsEditor({
                 (t) => normalize(t.label).includes(query) || normalize(t.code).includes(query),
               )
         }
-        if (onlyGranted) tasks = tasks.filter((t) => granted.has(t.code) || isAdminRole)
+        if (onlyGranted) tasks = tasks.filter((t) => possede(t.code))
         // `tasks` = ce qui est AFFICHÉ ; `allTasks` = le menu entier.
         // Les niveaux, la case tri-state et le compteur raisonnent toujours sur
         // le menu entier : un filtre ne doit jamais changer ce qu'une action fait.
@@ -654,7 +673,7 @@ export default function RolePermissionsEditor({
   const grantedInModule = useMemo(() => {
     if (!activeModule) return 0
     return activeModule.menus.reduce(
-      (acc, menu) => acc + menu.tasks.filter((t) => granted.has(t.code) || isAdminRole).length,
+      (acc, menu) => acc + menu.tasks.filter((t) => possede(t.code)).length,
       0,
     )
   }, [activeModule, granted, isAdminRole])
@@ -664,12 +683,10 @@ export default function RolePermissionsEditor({
     [activeModule],
   )
 
-  const grantedTotal = isAdminRole
-    ? totalTasks
-    : tree.reduce(
-        (acc, m) => acc + m.menus.reduce((a, menu) => a + menu.tasks.filter((t) => granted.has(t.code)).length, 0),
-        0,
-      )
+  const grantedTotal = tree.reduce(
+    (acc, m) => acc + m.menus.reduce((a, menu) => a + menu.tasks.filter((t) => possede(t.code)).length, 0),
+    0,
+  )
 
   /* ---- Rendu ---- */
 
@@ -896,12 +913,10 @@ export default function RolePermissionsEditor({
               <div className={styles.moduleTabs} role="tablist" aria-label="Modules">
                 {tree.map((module) => {
                   const total = module.menus.reduce((a, m) => a + m.tasks.length, 0)
-                  const on = isAdminRole
-                    ? total
-                    : module.menus.reduce(
-                        (a, m) => a + m.tasks.filter((t) => granted.has(t.code)).length,
-                        0,
-                      )
+                  const on = module.menus.reduce(
+                    (a, m) => a + m.tasks.filter((t) => possede(t.code)).length,
+                    0,
+                  )
                   const isActive = module.key === activeModule?.key
                   return (
                     <button
@@ -966,7 +981,9 @@ export default function RolePermissionsEditor({
                     <ShieldCheck size={15} aria-hidden="true" />
                     <span>
                       Le rôle Administrateur dispose de tous les droits par conception
-                      (court-circuit d'autorisation côté serveur). Cet écran ne le modifie pas.
+                      (court-circuit d'autorisation côté serveur), sauf les permissions
+                      marquées « explicite » : elles se cochent ici pour lui comme pour les
+                      autres rôles.
                     </span>
                   </div>
                 )}
@@ -1090,11 +1107,13 @@ export default function RolePermissionsEditor({
                   {visibleMenus.map((menu, index) => {
                     const isOpen = expanded.has(menu.key)
                     const all = menu.allTasks
-                    const state = isAdminRole ? 'all' : triStateOf(all, granted)
+                    const state = isAdminRole
+                      ? triStateOf(all, new Set(all.filter((t) => possede(t.code)).map((t) => t.code)))
+                      : triStateOf(all, granted)
                     const level: LevelState = isAdminRole
                       ? 'full'
                       : detectLevel(menu, all, granted)
-                    const on = all.filter((t) => isAdminRole || granted.has(t.code)).length
+                    const on = all.filter((t) => possede(t.code)).length
                     const hasRead = all.some(
                       (t) => t.kind === 'read' && (isAdminRole || granted.has(t.code)),
                     )
@@ -1184,9 +1203,9 @@ export default function RolePermissionsEditor({
                         {isOpen && (
                           <ul className={styles.taskGroup} role="group">
                             {menu.tasks.map((task) => {
-                              const checked = isAdminRole || granted.has(task.code)
+                              const checked = possede(task.code)
                               const changed =
-                                !isAdminRole && granted.has(task.code) !== initialGranted.has(task.code)
+                                !adminVerrouille(task.code) && granted.has(task.code) !== initialGranted.has(task.code)
                               return (
                                 <li
                                   key={task.code}
@@ -1206,6 +1225,14 @@ export default function RolePermissionsEditor({
                                     {menu.menuCode === task.code && (
                                       <span className={styles.requiredPill}>requis</span>
                                     )}
+                                    {task.explicit && (
+                                      <span
+                                        className={styles.requiredPill}
+                                        title="L'administrateur ne l'a pas d'office : à cocher pour chaque rôle, Administrateur compris."
+                                      >
+                                        explicite
+                                      </span>
+                                    )}
                                   </span>
                                   <code className={styles.taskCode} title={task.code}>
                                     {task.code}
@@ -1217,7 +1244,7 @@ export default function RolePermissionsEditor({
                                     <input
                                       type="checkbox"
                                       checked={checked}
-                                      disabled={isAdminRole || saving}
+                                      disabled={adminVerrouille(task.code) || saving}
                                       onChange={(e) => toggleTask(menu, task, e.target.checked, all)}
                                     />
                                     <span />
@@ -1238,7 +1265,7 @@ export default function RolePermissionsEditor({
                   type="button"
                   className={styles.secondaryButton}
                   onClick={resetChanges}
-                  disabled={!dirty || saving || isAdminRole}
+                  disabled={!dirty || saving}
                 >
                   <RotateCcw size={14} aria-hidden="true" />
                   Annuler les modifications
@@ -1247,7 +1274,7 @@ export default function RolePermissionsEditor({
                   type="button"
                   className={`${styles.primaryButton} ${dirty ? styles.primaryButtonActive : ''}`}
                   onClick={handleSave}
-                  disabled={!dirty || saving || isAdminRole}
+                  disabled={!dirty || saving}
                 >
                   <Save size={14} aria-hidden="true" />
                   {saving ? 'Enregistrement…' : 'Enregistrer'}

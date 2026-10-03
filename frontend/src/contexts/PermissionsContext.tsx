@@ -19,6 +19,8 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   const [menuPermissions, setMenuPermissions] = useState<Set<string>>(new Set())
   const [permissionCodes, setPermissionCodes] = useState<Set<string>>(new Set())
   const [isAdmin, setIsAdmin] = useState(false)
+  // Permissions à attribution explicite : `isAdmin` ne les ouvre pas d'office.
+  const [explicites, setExplicites] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -26,6 +28,7 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
       setMenuPermissions(new Set())
       setPermissionCodes(new Set())
       setIsAdmin(false)
+      setExplicites(new Set())
       setLoading(false)
       return
     }
@@ -37,6 +40,7 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
       .then(res => {
         if (cancelled) return
         setIsAdmin(!!res.is_admin)
+        setExplicites(new Set(res.explicit_permissions || []))
         setMenuPermissions(new Set(res.menus || []))
         setPermissionCodes(new Set(res.permissions || []))
       })
@@ -52,10 +56,10 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
 
   const hasPermission = useCallback(
     (permission: string) => {
-      if (isAdmin) return true
+      if (isAdmin && !explicites.has(permission)) return true
       return menuPermissions.has(permission) || permissionCodes.has(permission)
     },
-    [isAdmin, menuPermissions, permissionCodes],
+    [isAdmin, explicites, menuPermissions, permissionCodes],
   )
 
   const value = useMemo(

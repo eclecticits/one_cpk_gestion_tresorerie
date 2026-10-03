@@ -23,7 +23,7 @@ from app.core.tenant_resolver import (
     resolve_tenant,
 )
 from app.core.config import settings
-from app.core.permissions import resolve_permission_code
+from app.core.permissions import PERMISSIONS_EXPLICITES, resolve_permission_code
 from app.db.session import get_db
 from app.models.user import User
 from app.models.rbac import Permission, role_permissions, Role
@@ -475,6 +475,28 @@ async def require_national_admin(
     )
 
 
+async def codes_explicites_accordes(db: AsyncSession, user: User) -> set[str]:
+    """Les permissions à attribution explicite que le rôle de l'utilisateur porte.
+
+    Lues en base à chaque fois : elles gardent des actions rares, et un compte
+    administrateur ancien peut n'avoir que la chaîne `role` sans `role_id` — on
+    retrouve alors son rôle par le code.
+    """
+    role_id = user.role_id
+    if role_id is None and user.role:
+        role_id = (
+            await db.execute(select(Role.id).where(Role.code == (user.role or "").lower()))
+        ).scalar_one_or_none()
+    if role_id is None:
+        return set()
+    res = await db.execute(
+        select(Permission.code)
+        .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+        .where(role_permissions.c.role_id == role_id, Permission.code.in_(PERMISSIONS_EXPLICITES))
+    )
+    return {row[0] for row in res.all()}
+
+
 def has_any_permission(permission_codes: Iterable[str]):
     # Maintain both raw and resolved codes to be safe
     raw_codes = list(permission_codes)
@@ -491,10 +513,17 @@ def has_any_permission(permission_codes: Iterable[str]):
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
-        # Legacy admin short-circuit
+        # Legacy admin short-circuit — sauf si tous les codes demandés sont à
+        # attribution explicite : l'administrateur ne les tient pas de son rôle.
         role_name = (user.role or "").lower()
-        if role_name in {"super_admin", "admin"}:
+        if role_name == "super_admin":
             return user
+        if role_name == "admin":
+            if set(resolved_codes) - PERMISSIONS_EXPLICITES:
+                return user
+            if await codes_explicites_accordes(db, user):
+                return user
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_access_denied_detail())
         user_permissions = cached_permission_codes(user)
         user_service_ids = cached_service_ids(user)
         if user_permissions is not None and user_permissions.intersection(all_requested_codes):
@@ -556,9 +585,15 @@ def has_permission(permission_code: str):
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
-        # Legacy admin short-circuit
+        # Legacy admin short-circuit. Une permission à attribution explicite y
+        # échappe : seul le super-administrateur la tient d'office, tout autre
+        # compte — administrateur compris — doit l'avoir reçue pour son rôle.
         if (user.role or "").lower() == "super_admin":
             return user
+        if resolved_permission_code in PERMISSIONS_EXPLICITES:
+            if resolved_permission_code in await codes_explicites_accordes(db, user):
+                return user
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=access_denied_detail)
         if (user.role or "").lower() == "admin":
             return user
         user_permissions = cached_permission_codes(user)

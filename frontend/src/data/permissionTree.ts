@@ -50,6 +50,12 @@ export interface PermissionTask {
   deferred?: boolean
   /** true = code conserve en base mais masque dans l’interface. */
   hidden?: boolean
+  /**
+   * true = permission à attribution explicite : l'administrateur ne la tient
+   * pas de son rôle, elle se coche pour lui comme pour les autres rôles.
+   * Doit refléter `PERMISSIONS_EXPLICITES` côté serveur (app/core/permissions.py).
+   */
+  explicit?: boolean
 }
 
 export interface PermissionMenu {
@@ -109,10 +115,10 @@ export const PERMISSION_TREE: PermissionModule[] = [
           { code: 'treso.encaissements.delete', label: 'Supprimer un encaissement', kind: 'delete' },
           { code: 'treso.encaissements.export', label: 'Exporter les encaissements', kind: 'export' },
           // Corrige le poste de recette d'un encaissement, même payé : déplace le
-          // réalisé des versements d'un poste à l'autre. Mêmes rôles qu'Annuler :
-          // administrateur, secrétaire exécutif et comptable — ni le caissier, qui
-          // saisit, ni le trésorier, qui valide (20261003_reimput_enc_roles).
-          { code: 'treso.encaissements.reimputer', label: 'Corriger le poste budgétaire (après paiement)', kind: 'manage' },
+          // réalisé des versements d'un poste à l'autre. Attribution explicite :
+          // l'administrateur ne l'a pas d'office, elle se règle ici rôle par rôle
+          // (par défaut secrétaire exécutif et comptable ; ni caissier ni trésorier).
+          { code: 'treso.encaissements.reimputer', label: 'Corriger le poste budgétaire (après paiement)', kind: 'manage', explicit: true },
           { code: 'cancel_encaissement', label: 'Annuler un encaissement', kind: 'cancel' },
         ],
       },
@@ -686,6 +692,13 @@ export const ALL_TREE_CODES: string[] = PERMISSION_TREE.flatMap((m) =>
 /** Codes volontairement non semes : granularite documentee, pas reste-a-faire. */
 export const DEFERRED_PERMISSION_CODES: string[] = PERMISSION_TREE.flatMap((m) =>
   m.menus.flatMap((menu) => menu.tasks.filter((t) => t.deferred).map((t) => t.code)),
+)
+
+/** Codes à attribution explicite : réglables même pour le rôle Administrateur. */
+export const EXPLICIT_PERMISSION_CODES: ReadonlySet<string> = new Set(
+  PERMISSION_TREE.flatMap((m) =>
+    m.menus.flatMap((menu) => menu.tasks.filter((t) => t.explicit).map((t) => t.code)),
+  ),
 )
 
 /** Codes conserves en base mais masques dans la matrice. */
