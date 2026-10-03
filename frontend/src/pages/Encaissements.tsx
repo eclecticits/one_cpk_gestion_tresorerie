@@ -24,6 +24,7 @@ import NotificationModal from '../components/NotificationModal'
 import EncaissementForm from '../components/EncaissementForm'
 import EncaissementTable from '../components/EncaissementTable'
 import AffecterBudgetModal from '../components/AffecterBudgetModal'
+import ReimputationEncaissement from '../components/ReimputationEncaissement'
 import EncaissementFilters from '../components/EncaissementFilters'
 // pdfGeneratorReports tire jspdf (135 ko gz) : importe statiquement ici, il
 // pesait 82 % du chunk de cette route pour une action que l'utilisateur ne
@@ -115,6 +116,7 @@ export default function Encaissements() {
   const [notification, setNotification] = useState<Notification | null>(null)
   // Encaissement reçu hors budget dont on est en train de décider l'imputation.
   const [affectationEncaissement, setAffectationEncaissement] = useState<Encaissement | null>(null)
+  const [reimputationEncaissement, setReimputationEncaissement] = useState<Encaissement | null>(null)
   // Garde de réentrance de l'export Excel. Le bouton vit dans le composant
   // de filtres (EncaissementsFilters), qui n'expose pas d'état occupé : un
   // useRef est ce qui empêche ici cinq clics de créer cinq jobs quand le
@@ -1224,7 +1226,31 @@ export default function Encaissements() {
         canCancelOperation={hasPermission('cancel_encaissement')}
         onAffecterBudget={setAffectationEncaissement}
         canAffecterBudget={hasPermission('treso.budget.update')}
+        onReimputer={setReimputationEncaissement}
+        canReimputer={hasPermission('treso.encaissements.reimputer')}
       />
+
+      {reimputationEncaissement && (
+        <ReimputationEncaissement
+          encaissement={reimputationEncaissement}
+          onClose={() => setReimputationEncaissement(null)}
+          onSuccess={async (resultat) => {
+            setReimputationEncaissement(null)
+            const portee = resultat.lignes_deplacees < resultat.lignes_total
+              ? `${resultat.lignes_deplacees} ligne(s) sur ${resultat.lignes_total} ré-imputée(s)`
+              : 'Encaissement ré-imputé'
+            const realise = Number(resultat.montant_paye_deplace)
+            setNotification({
+              type: 'success',
+              title: 'Poste budgétaire corrigé',
+              message: `${portee} sur ${resultat.nouveau_poste_code}`
+                + (realise ? ` : ${formatCurrency(realise)} de réalisé déplacé.` : '.'),
+            })
+            await loadData()
+            window.dispatchEvent(new Event('dashboard-refresh'))
+          }}
+        />
+      )}
 
       {affectationEncaissement && (
         <AffecterBudgetModal

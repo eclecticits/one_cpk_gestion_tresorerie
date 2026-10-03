@@ -108,6 +108,10 @@ export const PERMISSION_TREE: PermissionModule[] = [
           { code: 'treso.encaissements.update', label: 'Modifier un encaissement', kind: 'update', deferred: true },
           { code: 'treso.encaissements.delete', label: 'Supprimer un encaissement', kind: 'delete' },
           { code: 'treso.encaissements.export', label: 'Exporter les encaissements', kind: 'export' },
+          // Corrige le poste de recette d'un encaissement, même payé : déplace le
+          // réalisé des versements d'un poste à l'autre. Accordé au seul rôle admin
+          // par la migration 20261003_reimput_encaiss.
+          { code: 'treso.encaissements.reimputer', label: 'Corriger le poste budgétaire (après paiement)', kind: 'manage' },
           { code: 'cancel_encaissement', label: 'Annuler un encaissement', kind: 'cancel' },
         ],
       },

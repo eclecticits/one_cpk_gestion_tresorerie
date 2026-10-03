@@ -52,3 +52,44 @@ export const reimputerRequisition = (
   requisitionId: string,
   payload: { budget_poste_id: number; motif: string; forcer?: boolean; ligne_ids?: string[] },
 ) => apiRequest<ResultatReimputation>('POST', `/requisitions/${requisitionId}/reimputation`, payload)
+
+/** Ce qu'une ré-imputation d'encaissement déplacerait, avant de la décider. */
+export interface ApercuReimputationEncaissement {
+  postes_avant: number[]
+  nouveau_poste_id: number
+  /** Lignes qui partent, sur le total que porte la note. */
+  lignes: number
+  lignes_total: number
+  /** Versements dont une part du réalisé change de poste. */
+  versements: number
+  imputations: number
+  montant_paye_deplace: string | number
+  /** Écritures comptables au brouillon dont le compte de produit sera refait. */
+  ecritures_reecrites: number
+}
+
+export interface ResultatReimputationEncaissement {
+  postes_avant: number[]
+  nouveau_poste_id: number
+  nouveau_poste_code: string
+  lignes_deplacees: number
+  lignes_total: number
+  versements_deplaces: number
+  imputations_deplacees: number
+  montant_paye_deplace: string | number
+  ecritures_reecrites: number
+}
+
+/** `articleIds` vide ou absent : toute la note suit. */
+export const apercuReimputationEncaissement = (encaissementId: string, budgetPosteId: number, articleIds?: string[]) =>
+  apiRequest<ApercuReimputationEncaissement>('GET', `/encaissements/${encaissementId}/reimputation`, {
+    params: {
+      budget_poste_id: budgetPosteId,
+      ...(articleIds?.length ? { article_ids: articleIds } : {}),
+    },
+  })
+
+export const reimputerEncaissement = (
+  encaissementId: string,
+  payload: { budget_poste_id: number; motif: string; article_ids?: string[] },
+) => apiRequest<ResultatReimputationEncaissement>('POST', `/encaissements/${encaissementId}/reimputation`, payload)

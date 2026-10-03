@@ -423,6 +423,64 @@ async def generer_ecriture_encaissement(
     return ecriture
 
 
+async def reecrire_produits_ecriture_brouillon(
+    db: AsyncSession,
+    *,
+    ecriture: ComptaEcriture,
+    produits: list[tuple[int, Decimal]],
+) -> None:
+    """Refait les lignes de produit d'une écriture d'encaissement au brouillon.
+
+    Sert à la ré-imputation d'un encaissement : le poste a choisi le compte de
+    produit, il change, le compte suit. Seul un brouillon s'y prête — il n'a
+    pas atteint le Grand Livre, et la base refuse de toucher aux lignes d'une
+    écriture validée. La trésorerie (le débit) ne bouge pas ; les lignes sont
+    reconstruites au taux de l'écriture, comme à sa génération.
+
+    `produits` : (budget_poste_id, montant) dans la devise de l'écriture ; la
+    somme doit égaler le débit, sinon l'écriture ne serait plus équilibrée.
+    """
+    if ecriture.statut != "BROUILLON":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Seule une écriture au brouillon peut voir ses comptes de produit changer.",
+        )
+    lignes = (
+        await db.execute(
+            select(ComptaLigneEcriture)
+            .where(ComptaLigneEcriture.ecriture_id == ecriture.id)
+            .order_by(ComptaLigneEcriture.ordre)
+        )
+    ).scalars().all()
+    debits = [ligne for ligne in lignes if Decimal(str(ligne.debit or 0)) > 0]
+    total_debit = sum((Decimal(str(ligne.debit)) for ligne in debits), Decimal("0"))
+    total_produits = sum((montant for _poste, montant in produits), Decimal("0"))
+    if total_produits != total_debit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Répartition budgétaire incohérente : les produits ({total_produits}) ne couvrent pas "
+                f"la trésorerie de l'écriture ({total_debit})."
+            ),
+        )
+    libelle = debits[0].libelle if debits else ecriture.libelle
+    nouvelles: list[tuple[int, Decimal, Decimal, str]] = [
+        (ligne.compte_id, Decimal(str(ligne.debit)), Decimal("0"), ligne.libelle) for ligne in debits
+    ]
+    for poste_id, montant in produits:
+        compte = await resolve_compte_poste_budgetaire(db, ecriture.organisation_id, poste_id)
+        nouvelles.append((compte.id, Decimal("0"), montant, libelle))
+
+    for ligne in lignes:
+        await db.delete(ligne)
+    await db.flush()
+    _ajouter_lignes(
+        db, ecriture=ecriture, organisation_id=ecriture.organisation_id, societe_id=ecriture.societe_id,
+        devise=ecriture.devise, taux=Decimal(str(ecriture.taux_change)), lignes=nouvelles,
+    )
+    await db.flush()
+
+
 async def generer_ecriture_sortie_fonds(
     db: AsyncSession,
     *,

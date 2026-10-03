@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { format } from 'date-fns'
-import { MoreVertical, Wallet, Printer, Ban, Eye, Target } from 'lucide-react'
+import { MoreVertical, Wallet, Printer, Ban, Eye, Target, ArrowRightLeft } from 'lucide-react'
 import { Encaissement } from '../types'
 import { toNumber } from '../utils/amount'
 import { actionImprimerDocument, getTypeClientLabel } from '../utils/encaissementHelpers'
@@ -20,6 +20,9 @@ interface EncaissementTableProps {
   /** Ouvre la décision d'imputation d'un encaissement reçu hors budget. */
   onAffecterBudget?: (enc: Encaissement) => void
   canAffecterBudget?: boolean
+  /** Ouvre la correction du poste de recette d'un encaissement budgétaire. */
+  onReimputer?: (enc: Encaissement) => void
+  canReimputer?: boolean
 }
 
 export default function EncaissementTable({
@@ -32,9 +35,18 @@ export default function EncaissementTable({
   canCancelOperation,
   onAffecterBudget,
   canAffecterBudget = false,
+  onReimputer,
+  canReimputer = false,
 }: EncaissementTableProps) {
   const peutAffecter = (enc: Encaissement) =>
     canAffecterBudget && !!onAffecterBudget && !enc.is_deleted && estAffectable(enc)
+  // Seul un encaissement budgétaire actif a un poste de recette à corriger ; le
+  // hors budget passe par « Affecter au budget ».
+  const peutReimputer = (enc: Encaissement) =>
+    canReimputer && !!onReimputer && !enc.is_deleted
+    && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE'
+    && (enc.nature_mouvement || 'BUDGETAIRE') === 'BUDGETAIRE'
+    && enc.impact_budgetaire !== false
 
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null)
@@ -273,6 +285,17 @@ export default function EncaissementTable({
                             <span>Affecter au budget</span>
                           </button>
                         )}
+                        {peutReimputer(enc) && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={styles.actionsMenuItem}
+                            onClick={() => { setOpenMenuId(null); onReimputer?.(enc) }}
+                          >
+                            <ArrowRightLeft size={15} />
+                            <span>Corriger le poste budgétaire</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           role="menuitem"
@@ -449,6 +472,18 @@ export default function EncaissementTable({
                     title="Affecter cet encaissement à un poste budgétaire"
                   >
                     <Target size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Affecter
+                  </button>
+                )}
+                {peutReimputer(enc) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onReimputer?.(enc)
+                    }}
+                    className={styles.paymentBtn}
+                    title="Corriger le poste budgétaire de cet encaissement"
+                  >
+                    <ArrowRightLeft size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Corriger le poste
                   </button>
                 )}
                 {!enc.is_deleted && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (

@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_user, get_current_tenant_id, has_permission
 from app.services.creances import agregats_creance, est_exigible, montant_du
@@ -81,6 +82,10 @@ from app.services.mouvements_budgetaires import (
     sum_active_by_encaissement,
 )
 from app.services.regularisations_budgetaires import affecter_encaissement_hors_budget
+from app.services.reimputation_encaissement import (
+    apercu_reimputation_encaissement,
+    reimputer_encaissement,
+)
 
 # Encadrement des relances de solde : au-delà du plafond, le recouvrement
 # doit passer par un autre canal (appel, courrier) plutôt que des emails sans fin.
@@ -2523,6 +2528,104 @@ async def affecter_encaissement_budget(
     await db.commit()
     await invalidate_report_summary_cache(tenant_id)
     return {"id": str(regularisation.id), "status": "ok"}
+
+
+class ReimputationEncaissementIn(BaseModel):
+    """Correction du poste de recette d'un encaissement, y compris payé."""
+    budget_poste_id: int = Field(ge=1)
+    motif: str = Field(min_length=3, max_length=500)
+    # Les lignes à déplacer. Omis, toute la note suit — un reçu peut mêler
+    # plusieurs natures de recette, donc plusieurs postes.
+    article_ids: list[uuid.UUID] | None = None
+
+
+async def _encaissement_pour_reimputation(db: AsyncSession, encaissement_id: str, tenant_id: int) -> Encaissement:
+    try:
+        uid = uuid.UUID(encaissement_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="encaissement_id invalide")
+    encaissement = (
+        await db.execute(
+            select(Encaissement).where(Encaissement.id == uid, Encaissement.organisation_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if encaissement is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement introuvable")
+    return encaissement
+
+
+@router.get(
+    "/{encaissement_id}/reimputation",
+    summary="Ce que déplacerait une ré-imputation, sans rien écrire",
+    dependencies=[Depends(has_permission("treso.encaissements.reimputer"))],
+)
+async def previsualiser_reimputation_encaissement(
+    encaissement_id: str,
+    budget_poste_id: int = Query(..., ge=1),
+    article_ids: list[uuid.UUID] | None = Query(None, description="Lignes à déplacer ; toutes si absent"),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    encaissement = await _encaissement_pour_reimputation(db, encaissement_id, tenant_id)
+    return await apercu_reimputation_encaissement(
+        db, encaissement=encaissement, nouveau_poste_id=budget_poste_id, article_ids=article_ids
+    )
+
+
+@router.post(
+    "/{encaissement_id}/reimputation",
+    summary="Ré-imputer un encaissement sur un autre poste de recette",
+    dependencies=[Depends(has_permission("treso.encaissements.reimputer"))],
+)
+async def reimputer_encaissement_endpoint(
+    encaissement_id: str,
+    payload: ReimputationEncaissementIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Corrige le poste de recette d'un encaissement, payé ou non.
+
+    Les lignes désignées changent de poste, et leur réalisé les suit :
+    imputations des versements, compteurs des postes, brouillons comptables.
+    Refusé si une écriture est déjà validée ou si l'exercice est clôturé.
+    """
+    encaissement = await _encaissement_pour_reimputation(db, encaissement_id, tenant_id)
+    resultat = await reimputer_encaissement(
+        db,
+        encaissement=encaissement,
+        nouveau_poste_id=payload.budget_poste_id,
+        article_ids=payload.article_ids,
+        user_id=user.id,
+        motif=payload.motif,
+    )
+    await log_action(
+        db,
+        user_id=user.id,
+        action="ENCAISSEMENT_REIMPUTE",
+        target_table="encaissements",
+        target_id=str(encaissement.id),
+        old_value={"postes": resultat["postes_avant"], "entete": resultat["entete_avant"]},
+        new_value={
+            "poste": payload.budget_poste_id,
+            "entete": resultat["entete_apres"],
+            "motif": resultat["motif"],
+            "lignes": [str(aid) for aid in payload.article_ids] if payload.article_ids else "toutes",
+            "lignes_deplacees": f"{resultat['lignes_deplacees']}/{resultat['lignes_total']}",
+            "paye_deplace": str(resultat["montant_paye_deplace"]),
+            "ecritures_reecrites": resultat["ecritures_reecrites"],
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    # Du réalisé change de poste : les résumés mémorisés diraient encore
+    # l'ancienne ventilation le temps du TTL.
+    await invalidate_report_summary_cache(tenant_id)
+    return {
+        **resultat,
+        "montant_paye_deplace": str(resultat["montant_paye_deplace"]),
+    }
 
 
 @router.get("/{encaissement_id}/pieces-justificatives")

@@ -109,6 +109,8 @@ export interface EncaissementArticle {
   quantite: Money
   prix_unitaire: Money
   montant: Money
+  /** Poste de recette de CETTE ligne ; nul = elle suit celui de l'encaissement. */
+  budget_poste_id?: number | null
   sort_order: number
   created_at: string
 }
