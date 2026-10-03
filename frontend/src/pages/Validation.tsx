@@ -456,7 +456,7 @@ export default function Validation() {
     try {
       const lignesData = await loadRequisitionLines(requisition.id)
 
-      if (!lignesData || lignesData.length === 0) {
+      if (!lignesData?.length && String((requisition as any).nature_requisition || 'BUDGETAIRE').toUpperCase() === 'BUDGETAIRE') {
         showError('Erreur', 'Aucune ligne de dépense trouvée pour cette réquisition.')
         return
       }
@@ -477,7 +477,7 @@ export default function Validation() {
     try {
       const lignesData = await loadRequisitionLines(requisition.id)
 
-      if (!lignesData || lignesData.length === 0) {
+      if (!lignesData?.length && String((requisition as any).nature_requisition || 'BUDGETAIRE').toUpperCase() === 'BUDGETAIRE') {
         showError('Erreur', 'Aucune ligne de dépense trouvée pour cette réquisition.')
         return
       }

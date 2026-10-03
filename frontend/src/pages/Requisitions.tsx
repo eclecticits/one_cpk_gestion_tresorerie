@@ -1576,7 +1576,7 @@ export default function Requisitions() {
       const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: requisition.id } })
       const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
 
-      if (!lignesData || lignesData.length === 0) {
+      if (!lignesData?.length && String((requisition as any).nature_requisition || 'BUDGETAIRE').toUpperCase() === 'BUDGETAIRE') {
         setNotification({
           show: true,
           type: 'error',
@@ -1608,7 +1608,7 @@ export default function Requisitions() {
       const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: requisition.id } })
       const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
 
-      if (!lignesData || lignesData.length === 0) {
+      if (!lignesData?.length && String((requisition as any).nature_requisition || 'BUDGETAIRE').toUpperCase() === 'BUDGETAIRE') {
         setNotification({
           show: true,
           type: 'error',

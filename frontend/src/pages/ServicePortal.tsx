@@ -629,7 +629,7 @@ export default function ServicePortal() {
     try {
       const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
       const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
-      if (!lignesData || lignesData.length === 0) return
+      if (!lignesData?.length && String((req as any).nature_requisition || 'BUDGETAIRE').toUpperCase() === 'BUDGETAIRE') return
       await generateSingleRequisitionPDF(req as any, lignesData, 'print', `${user?.prenom} ${user?.nom}`)
     } catch {
       setDetailError("Impossible d'imprimer la réquisition.")
@@ -640,7 +640,7 @@ export default function ServicePortal() {
     try {
       const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
       const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
-      if (!lignesData || lignesData.length === 0) return
+      if (!lignesData?.length && String((req as any).nature_requisition || 'BUDGETAIRE').toUpperCase() === 'BUDGETAIRE') return
       await generateSingleRequisitionPDF(req as any, lignesData, 'download', `${user?.prenom} ${user?.nom}`)
     } catch {
       setDetailError("Impossible de télécharger la réquisition.")
