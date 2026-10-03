@@ -596,6 +596,27 @@ export default function Encaissements() {
     filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId
   )
   const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId || filterOperationStatus !== 'ACTIVE' || filterDeletedStatus !== 'all'
+  // Présentation seule : ce qu'annonce le bouton « Filtres » quand le panneau
+  // est replié sur téléphone. La période par défaut (aujourd'hui) ne compte pas
+  // comme un filtre ; elle est ignorée, comme à l'écran, pendant une recherche ciblée.
+  const rechercheCiblee = Boolean(filterNumeroRecu || filterClient)
+  const nbFiltresActifs = [
+    !rechercheCiblee && (dateDebut !== today || dateFin !== today),
+    filterStatut,
+    filterNumeroRecu,
+    filterClient,
+    filterBudgetPosteId,
+    filterOperationStatus !== 'ACTIVE',
+    filterDeletedStatus !== 'all',
+  ].filter(Boolean).length
+  const jourCourt = (iso: string) => (iso ? iso.split('-').reverse().join('/') : '…')
+  const resumeFiltres = filterNumeroRecu
+    ? `N° ${filterNumeroRecu}`
+    : filterClient
+    ? filterClient
+    : dateDebut === dateFin
+    ? (dateDebut === today ? 'Aujourd’hui' : jourCourt(dateDebut))
+    : `${jourCourt(dateDebut)} → ${jourCourt(dateFin)}`
 
   const exportToExcel = useCallback(async () => {
     // Sans cette garde, un export mis en file (202) laisse le bouton muet : le
@@ -913,7 +934,7 @@ export default function Encaissements() {
   )
 
   return (
-    <div className={styles.container}>
+    <div className={isCreatePage ? styles.container : `${styles.container} ${styles.listView}`}>
       <PageHeader
         title={isCreatePage ? 'Nouvel encaissement' : 'Encaissements'}
         subtitle={isCreatePage ? 'Enregistrez un paiement ou une recette' : 'Enregistrement des paiements et recettes'}
@@ -937,7 +958,7 @@ export default function Encaissements() {
               </button>
             </div>
           ) : hasPermission('encaissements') && (
-            <div className={styles.headerActions}>
+            <div className={`${styles.headerActions} ${styles.listHeaderActions}`}>
               <Link to="/clients" className={styles.secondaryBtn}>
                 Gérer les clients
               </Link>
@@ -1037,6 +1058,8 @@ export default function Encaissements() {
         totalResteAPayer={totalResteAPayer}
         formatCurrency={formatCurrency}
         filteredCount={filteredEncaissements.length}
+        nbFiltresActifs={nbFiltresActifs}
+        resumeFiltres={resumeFiltres}
       />
 
       {showForm && form}

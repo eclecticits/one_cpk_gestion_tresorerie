@@ -1,3 +1,5 @@
+import { useId, useState } from 'react'
+import { ChevronDown, SlidersHorizontal } from 'lucide-react'
 import styles from '../pages/Encaissements.module.css'
 import DebiteursPanel from './DebiteursPanel'
 import ExportAnnulationsToggle from './ExportAnnulationsToggle'
@@ -49,6 +51,10 @@ interface EncaissementFiltersProps {
   totalResteAPayer: number
   formatCurrency: (amount: number) => string
   filteredCount: number
+  /** Nombre de filtres qui s'écartent de la vue par défaut (badge du bouton « Filtres »). */
+  nbFiltresActifs: number
+  /** Ce que la liste montre, en quelques mots, quand le panneau est replié. */
+  resumeFiltres: string
 }
 
 export default function EncaissementFilters({
@@ -96,11 +102,41 @@ export default function EncaissementFilters({
   totalResteAPayer,
   formatCurrency,
   filteredCount,
+  nbFiltresActifs,
+  resumeFiltres,
 }: EncaissementFiltersProps) {
+  // Sur téléphone, le panneau ouvert faisait plus d'un écran de haut : la liste
+  // des encaissements n'apparaissait qu'après huit champs, trois boutons et les
+  // totaux. Il part donc replié ; le repli n'a d'effet visuel que sous 768 px
+  // (voir `.filtersCollapsed` dans le module), le desktop affiche tout comme avant.
+  // Pas de mémorisation : rouvrir la page doit toujours montrer la liste d'abord.
+  const [ouvert, setOuvert] = useState(false)
+  const corpsId = useId()
+  const libelleBadge = `${nbFiltresActifs} filtre${nbFiltresActifs > 1 ? 's' : ''} actif${nbFiltresActifs > 1 ? 's' : ''}`
+
   return (
-    <div className={styles.filtersSection}>
+    <div className={`${styles.filtersSection} ${ouvert ? '' : styles.filtersCollapsed}`}>
       <h3>Filtres</h3>
 
+      {/* Bouton visible uniquement sous 768 px : il remplace le titre. */}
+      <button
+        type="button"
+        className={styles.filtersToggle}
+        aria-expanded={ouvert}
+        aria-controls={corpsId}
+        aria-label={`Filtres${nbFiltresActifs > 0 ? `, ${libelleBadge}` : ''} — ${resumeFiltres}`}
+        onClick={() => setOuvert((v) => !v)}
+      >
+        <SlidersHorizontal size={16} aria-hidden="true" />
+        <span className={styles.filtersToggleLabel}>Filtres</span>
+        {nbFiltresActifs > 0 && (
+          <span className={styles.filtersBadge} aria-hidden="true">{nbFiltresActifs}</span>
+        )}
+        <span className={styles.filtersToggleResume} aria-hidden="true">{resumeFiltres}</span>
+        <ChevronDown size={18} className={styles.filtersChevron} aria-hidden="true" />
+      </button>
+
+      <div id={corpsId} className={styles.filtersBody}>
       <div className={styles.filterGrid}>
         <div className={styles.filterField}>
           <label>Date début</label>
@@ -116,7 +152,11 @@ export default function EncaissementFilters({
           <label>Période</label>
           <button
             type="button"
-            onClick={applyDateFilters}
+            onClick={() => {
+              applyDateFilters()
+              // Sur téléphone, on replie pour montrer aussitôt le résultat.
+              setOuvert(false)
+            }}
             className={styles.applyBtn}
             disabled={!hasPendingDateFilters || Boolean(filterNumeroRecu || filterClient)}
           >
@@ -158,6 +198,7 @@ export default function EncaissementFilters({
                   // Entrée retient le numéro tel quel : celui qui colle un
                   // numéro complet ne doit pas avoir à viser une proposition.
                   appliquerNumero(numeroSaisi)
+                  if (numeroSaisi.trim()) setOuvert(false)
                 } else if (e.key === 'Escape') {
                   setNumeroSaisi('')
                 }
@@ -188,7 +229,10 @@ export default function EncaissementFilters({
                   <div
                     key={n.numero}
                     className={styles.dropdownItem}
-                    onClick={() => appliquerNumero(n.numero)}
+                    onClick={() => {
+                      appliquerNumero(n.numero)
+                      setOuvert(false)
+                    }}
                   >
                     <strong>{n.numero}</strong>
                     {n.est_proforma && (
@@ -238,6 +282,7 @@ export default function EncaissementFilters({
                 if (e.key === 'Enter') {
                   e.preventDefault()
                   appliquerClient(clientSaisi)
+                  if (clientSaisi.trim()) setOuvert(false)
                 } else if (e.key === 'Escape') {
                   setClientSaisi('')
                 }
@@ -266,7 +311,10 @@ export default function EncaissementFilters({
                   <div
                     key={`${c.type}-${c.valeur}`}
                     className={styles.dropdownItem}
-                    onClick={() => appliquerClient(c.valeur)}
+                    onClick={() => {
+                      appliquerClient(c.valeur)
+                      setOuvert(false)
+                    }}
                   >
                     <strong>{c.libelle}</strong>
                     {c.type === 'expert' && (
@@ -406,6 +454,7 @@ export default function EncaissementFilters({
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }

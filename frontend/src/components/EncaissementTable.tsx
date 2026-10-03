@@ -382,6 +382,7 @@ export default function EncaissementTable({
                         }}
                         className={styles.cardIconBtn}
                         title="Voir détails"
+                        aria-label="Voir détails"
                       >
                         <Eye size={16} />
                       </button>

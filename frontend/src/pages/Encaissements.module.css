@@ -991,11 +991,10 @@
     gap: 16px;
   }
 
-  .filtersSection {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-  }
+  /* Plus de `position: sticky` sur `.filtersSection` : le panneau ouvert
+     (8 champs empilés + actions + totaux) dépassait la hauteur d'un écran de
+     téléphone ou de tablette portrait ; collé en haut, il recouvrait les cartes
+     qui défilaient dessous — la liste devenait invisible. */
 }
 
 .table {
@@ -2679,4 +2678,196 @@
   margin-top: 3px;
   font-size: 11px;
   color: #9a3412;
+}
+
+/* --- Liste des encaissements sur téléphone --------------------------------
+   Placé en fin de fichier pour passer après les blocs @media précédents, à
+   spécificité égale.
+
+   Avant : sous 768 px, l'ouverture de la page empilait l'en-tête (~150 px),
+   la pagination sur deux lignes (~90 px), le panneau de filtres déplié
+   (~1 100 px : 8 champs de 44 px + libellés, 5 boutons pleine largeur, totaux),
+   puis la section pro formas et les tableaux de versements. Les premières
+   cartes n'arrivaient qu'après 1 400 à 2 000 px de défilement, soit 2 à 3
+   écrans de téléphone. */
+
+/* Le bouton « Filtres » n'existe que sur téléphone : en desktop, le titre et
+   le panneau restent affichés comme avant. */
+.filtersToggle {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* Ordre visuel : la liste d'abord, les sections annexes (pro formas,
+     versements sur notes antérieures, entrées de caisse) après les cartes.
+     Le DOM n'est pas réordonné : le desktop garde sa disposition. */
+  .listView {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .listView > .proformaSection {
+    order: 1;
+  }
+
+  /* Deux actions d'en-tête côte à côte plutôt qu'empilées : ~52 px regagnés.
+     auto-fit + 140 px : elles repassent l'une sous l'autre sur les écrans
+     les plus étroits plutôt que de déborder. */
+  .listHeaderActions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--spacing-sm, 8px);
+  }
+
+  .listHeaderActions .primaryBtn,
+  .listHeaderActions .secondaryBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--touch-target-min, 44px);
+    padding: 8px 10px;
+    text-align: center;
+  }
+
+  /* Pagination sur une seule ligne quand la largeur le permet (elle forçait
+     auparavant « Page x / y » sur sa propre ligne). */
+  .pageInfo {
+    width: auto;
+  }
+
+  /* Le titre est remplacé par le bouton de repli. */
+  .filtersSection > h3 {
+    display: none;
+  }
+
+  .filtersToggle {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm, 8px);
+    width: 100%;
+    min-height: var(--touch-target-min, 44px);
+    padding: 8px 12px;
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: var(--radius-sm, 8px);
+    background: #f8fafc;
+    color: var(--color-title, #0f172a);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .filtersToggle[aria-expanded="true"] {
+    margin-bottom: 12px;
+  }
+
+  .filtersToggleLabel {
+    flex-shrink: 0;
+  }
+
+  .filtersBadge {
+    flex-shrink: 0;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--tenant-primary, #2563eb);
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+  }
+
+  /* Rappel de ce que la liste montre (période ou recherche ciblée) : c'est
+     ce qui explique, panneau replié, pourquoi on ne voit que la journée. */
+  .filtersToggleResume {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-weight: 500;
+    color: var(--color-text-muted, #64748b);
+  }
+
+  .filtersChevron {
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+  }
+
+  .filtersToggle[aria-expanded="true"] .filtersChevron {
+    transform: rotate(180deg);
+  }
+
+  /* Replié : il ne reste que le bouton (44 px), sans le cadre du panneau
+     autour — ~1 100 px rendus à la liste. */
+  .filtersCollapsed {
+    padding: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    margin-bottom: 12px;
+  }
+
+  .filtersCollapsed .filtersBody {
+    display: none;
+  }
+
+  /* minmax(0, 1fr) et non 1fr : un nom de client ou un libellé insécable
+     élargissait la colonne, donc la page, au-delà de l'écran. */
+  .mobileCards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cardValue {
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+
+  .cardIconBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--touch-target-min, 44px);
+    min-height: var(--touch-target-min, 44px);
+  }
+
+  /* Actions en grille de deux plutôt qu'en colonne : jusqu'à 5 boutons de
+     40 px empilés (232 px par carte) tombent à 2-3 rangées. `.deleteBtn`
+     (« Annuler ») n'avait aucune taille sur carte : il restait à la hauteur
+     du bouton natif. */
+  .cardActions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: var(--spacing-sm, 8px);
+  }
+
+  .cardActions .paymentBtn,
+  .cardActions .printBtn,
+  .cardActions .deleteBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: var(--touch-target-min, 44px);
+    padding: 8px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  .cardActions .deleteBtn {
+    border: 1px solid #fecaca;
+  }
+
+  .cardActions svg {
+    flex-shrink: 0;
+  }
 }
