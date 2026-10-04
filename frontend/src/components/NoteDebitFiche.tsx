@@ -29,6 +29,14 @@ import styles from '../pages/NotesDebitExperts.module.css'
 const montant = (valeur: string | number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(Number(valeur) || 0)
 
+const CATEGORIES_ARRIERE = new Set([
+  'ARRIERE_COTISATION',
+  'ARRIERE_PENALITE_APO',
+  'ARRIERE_AUTRE_PENALITE',
+])
+// Groupes disjoints : un arriéré de pénalité est compté avec les arriérés.
+const CATEGORIES_PENALITE = new Set(['PENALITE_APO', 'AUTRE_PENALITE'])
+
 const ETAPES: { cle: string; libelle: string }[] = [
   { cle: 'non_paye', libelle: 'Émise' },
   { cle: 'partiel', libelle: 'Partiellement payée' },
@@ -151,6 +159,18 @@ export default function NoteDebitFiche({ noteId, onClose, onChange, onVoirImport
   const annulee = fiche?.statut_operation === 'ANNULEE'
   const reste = Number(fiche?.reste_du ?? 0)
   const etapeCourante = fiche?.statut_paiement === 'avance' ? 'complet' : fiche?.statut_paiement
+  const groupesCreances = fiche
+    ? [
+        {
+          titre: 'Arriérés',
+          lignes: fiche.articles.filter((article) => CATEGORIES_ARRIERE.has(article.categorie)),
+        },
+        {
+          titre: 'Pénalités',
+          lignes: fiche.articles.filter((article) => CATEGORIES_PENALITE.has(article.categorie)),
+        },
+      ].filter((groupe) => groupe.lignes.length > 0)
+    : []
 
   return createPortal(
     <>
@@ -159,7 +179,10 @@ export default function NoteDebitFiche({ noteId, onClose, onChange, onVoirImport
         <header className={styles.drawerEntete}>
           <div>
             <span className={styles.muted}>Note de débit</span>
-            <h2 className={styles.numero}>{fiche?.numero_recu ?? '…'}</h2>
+            <h2 className={styles.numero}>{fiche?.numero_note_externe || fiche?.numero_recu || '…'}</h2>
+            {fiche?.numero_note_externe && (
+              <small className={styles.muted}>Référence ONEC Smart : {fiche.numero_recu || '—'}</small>
+            )}
           </div>
           <button type="button" className={styles.iconeBtn} onClick={onClose} aria-label="Fermer">
             <X size={18} aria-hidden />
@@ -286,8 +309,40 @@ export default function NoteDebitFiche({ noteId, onClose, onChange, onVoirImport
               </div>
               <span className={styles.muted}>
                 Émise le {fiche.date_encaissement ? format(new Date(fiche.date_encaissement), 'dd/MM/yyyy') : '—'}
+                {fiche.exercice ? ` · Exercice ${fiche.exercice}` : ''}
+                {fiche.date_echeance ? ` · Échéance ${format(new Date(fiche.date_echeance), 'dd/MM/yyyy')}` : ''}
               </span>
             </section>
+
+            {(fiche.reference_decision || fiche.observation) && (
+              <section className={styles.drawerBloc}>
+                <div>
+                  {fiche.reference_decision && <div><strong>Référence / décision :</strong> {fiche.reference_decision}</div>}
+                  {fiche.observation && <div><strong>Observation :</strong> {fiche.observation}</div>}
+                </div>
+              </section>
+            )}
+
+            {groupesCreances.length > 0 && (
+              <div className={styles.groupesCreances}>
+                {groupesCreances.map((groupe) => (
+                  <section key={groupe.titre} className={styles.groupeCreance}>
+                    <strong>{groupe.titre}</strong>
+                    {groupe.lignes.map((article, index) => (
+                      <span key={`${article.categorie}-${article.exercice}-${index}`}>
+                        {article.exercice ?? '—'} — {montant(article.montant)}
+                      </span>
+                    ))}
+                    <b>
+                      Total {groupe.titre.toLowerCase()} :{' '}
+                      {montant(
+                        groupe.lignes.reduce((somme, article) => somme + Number(article.montant), 0),
+                      )}
+                    </b>
+                  </section>
+                ))}
+              </div>
+            )}
 
             <table className={styles.table}>
               <thead>
@@ -302,11 +357,19 @@ export default function NoteDebitFiche({ noteId, onClose, onChange, onVoirImport
                   <tr key={`${article.libelle}-${i}`}>
                     <td>
                       {article.libelle}
+                      {/* La nature n'est rappelée que si le libellé ne la dit pas déjà ; une
+                          ligne historique (LEGACY) garde son seul libellé. */}
+                      {article.categorie !== 'LEGACY' &&
+                        !article.libelle.toLowerCase().startsWith(article.categorie_libelle.toLowerCase()) && (
+                          <small className={styles.muted}> · {article.categorie_libelle}</small>
+                        )}
                       {Number(article.quantite) !== 1 && (
                         <small className={styles.muted}>
-                          {' '}
-                          ({Number(article.quantite)} × {montant(article.prix_unitaire)})
+                          {' '}({Number(article.quantite)} × {montant(article.prix_unitaire)})
                         </small>
+                      )}
+                      {article.reference_decision && (
+                        <small className={styles.muted}> · Réf. {article.reference_decision}</small>
                       )}
                     </td>
                     <td className={styles.muted}>{article.poste_code ?? '—'}</td>

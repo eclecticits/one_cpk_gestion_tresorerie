@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Numeric, String, Text, Integer, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Text, Integer, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,9 +29,17 @@ class Encaissement(Base):
             "is_deleted",
             "date_encaissement",
         ),
+        Index(
+            "uq_enc_org_num_note_externe",
+            "organisation_id",
+            "numero_note_externe",
+            unique=True,
+            postgresql_where=text("numero_note_externe IS NOT NULL AND btrim(numero_note_externe) <> ''"),
+        ),
         CheckConstraint("montant >= 0", name="ck_encaissements_montant_nonneg"),
         CheckConstraint("montant_total >= 0", name="ck_encaissements_montant_total_nonneg"),
         CheckConstraint("montant_paye >= 0", name="ck_encaissements_montant_paye_nonneg"),
+        CheckConstraint("exercice IS NULL OR exercice BETWEEN 1900 AND 2100", name="ck_encaissements_exercice"),
         CheckConstraint(
             "type_client IN ('expert_comptable','sec','personne_physique','personne_morale','partenaire','autre')",
             name="ck_encaissements_type_client",
@@ -66,6 +74,10 @@ class Encaissement(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     numero_recu: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    #: Numéro porté par une note historique avant son introduction dans ONEC
+    #: Smart. Il ne remplace jamais `numero_recu`, qui reste la référence
+    #: interne et continue d'alimenter les séquences et les paiements.
+    numero_note_externe: Mapped[str | None] = mapped_column(String(100), nullable=True)
     numero_proforma: Mapped[str | None] = mapped_column(String(50), nullable=True)
     est_proforma: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     date_paiement: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -109,6 +121,11 @@ class Encaissement(Base):
     
     libelle: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Exercice métier appelé par la note, indépendant de l'année calendaire de
+    #: saisie. Une ancienne note 2024 peut ainsi être importée en 2026.
+    exercice: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    date_echeance: Mapped[date | None] = mapped_column(Date, nullable=True)
+    reference_decision: Mapped[str | None] = mapped_column(String(255), nullable=True)
     
     # Montants
     montant: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
@@ -208,6 +225,12 @@ class EncaissementArticle(Base):
     __tablename__ = "encaissement_articles"
     __table_args__ = (
         CheckConstraint("montant >= 0", name="ck_encaissement_articles_montant_nonneg"),
+        CheckConstraint("exercice IS NULL OR exercice BETWEEN 1900 AND 2100", name="ck_enc_articles_exercice"),
+        CheckConstraint(
+            "categorie IS NULL OR categorie IN ('COTISATION_ANNUELLE','ARRIERE_COTISATION','PENALITE_APO',"
+            "'ARRIERE_PENALITE_APO','AUTRE_PENALITE','ARRIERE_AUTRE_PENALITE','AUTRE_CREANCE','LEGACY')",
+            name="ck_enc_articles_categorie",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -225,6 +248,12 @@ class EncaissementArticle(Base):
     )
     libelle: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: `description` conserve l'observation libre historique. Les champs
+    #: suivants donnent à la ligne sa nature de créance, sans multiplier les
+    #: colonnes pour chaque nouvelle pénalité.
+    categorie: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    exercice: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    reference_decision: Mapped[str | None] = mapped_column(String(255), nullable=True)
     quantite: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=1)
     prix_unitaire: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     montant: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)

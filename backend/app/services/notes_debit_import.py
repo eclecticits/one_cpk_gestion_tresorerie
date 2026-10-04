@@ -31,15 +31,32 @@ import re
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import extract, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.horodatage import est_super_admin
+from app.domain.notes_debit import (
+    ARRIERE_AUTRE_PENALITE,
+    ARRIERE_COTISATION,
+    ARRIERE_PENALITE_APO,
+    AUTRE_CREANCE,
+    AUTRE_PENALITE,
+    CATEGORIES_ARRIERE,
+    CATEGORIES_IMPORTABLES,
+    COTISATION_ANNUELLE,
+    LEGACY,
+    LIBELLES as LIBELLES_CATEGORIES,
+    PENALITE_APO,
+    libelle_categorie,
+    normaliser_categorie,
+)
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.encaissement import Encaissement, EncaissementArticle
 from app.models.encaissement_tarif import normaliser_libelle
@@ -78,6 +95,85 @@ MOTS_INFORMATION = {
     "telephone", "tel", "phone", "gsm", "annee", "exercice", "nif", "code",
     "nombre", "nb", "effectif", "age", "id",
 }
+
+#: Les montants d'un encaissement sont tenus en USD ; le CDF n'est qu'une
+#: devise de perception, convertie au paiement (`taux_change_applique`). Une
+#: note libellée en CDF serait relue comme des dollars : elle est refusée.
+DEVISES = {"USD"}
+EXERCICE_MIN = 2000
+EXERCICE_MAX = 2100
+
+# Ordre stable : il sert uniquement de clé technique à l'écran de choix des
+# postes. La catégorie stockée en base reste la donnée métier.
+ORDRE_CATEGORIES = [
+    COTISATION_ANNUELLE,
+    ARRIERE_COTISATION,
+    PENALITE_APO,
+    ARRIERE_PENALITE_APO,
+    AUTRE_PENALITE,
+    ARRIERE_AUTRE_PENALITE,
+    AUTRE_CREANCE,
+]
+INDEX_CATEGORIES = {categorie: 100 + index for index, categorie in enumerate(ORDRE_CATEGORIES)}
+
+#: Ce que chaque onglet d'import accepte, comme chaque onglet a son modèle :
+#: une pénalité déposée dans « Cotisations EC » (ou l'inverse) est une erreur
+#: de fichier. Le fichier mixte accepte tout.
+CATEGORIES_PAR_ONGLET = {
+    "ec": {COTISATION_ANNUELLE, ARRIERE_COTISATION, AUTRE_CREANCE},
+    "sec": {COTISATION_ANNUELLE, ARRIERE_COTISATION, AUTRE_CREANCE},
+    "penalites": {PENALITE_APO, ARRIERE_PENALITE_APO, AUTRE_PENALITE, ARRIERE_AUTRE_PENALITE},
+    "toutes": set(CATEGORIES_IMPORTABLES),
+}
+
+
+@dataclass
+class ProblemeImport:
+    feuille: str
+    ligne: int
+    champ: str
+    valeur: Any
+    message: str
+    code: str
+    niveau: str = "ERREUR"
+
+    def dict(self) -> dict[str, Any]:
+        return {
+            "feuille": self.feuille,
+            "ligne": self.ligne,
+            "champ": self.champ,
+            "valeur": "" if self.valeur is None else str(self.valeur),
+            "message": self.message,
+            "code": self.code,
+            "niveau": self.niveau,
+        }
+
+
+@dataclass
+class CreanceAnalysee:
+    categorie: str
+    exercice: int
+    libelle: str
+    montant: Decimal
+    devise: str
+    reference_decision: str | None = None
+    observation: str | None = None
+    feuille: str = "Cotisations EC"
+    ligne: int = 0
+
+
+@dataclass
+class TableStructuree:
+    nom: str
+    ligne_entete: int
+    colonnes: dict[str, int]
+    lignes: list[tuple[int, list[Any]]]
+
+
+@dataclass
+class ClasseurStructure:
+    principale: TableStructuree
+    details: TableStructuree | None
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +265,166 @@ def cle_numero_ordre(valeur: Any) -> str:
 
 def cle_nom(valeur: Any) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", _sans_accents(str(valeur or "")).lower()).split())
+
+
+ENTETES_PRINCIPAUX = {
+    "numero_note_externe": {"n° note externe", "no note externe", "numero note externe", "note externe"},
+    "date_note": {"date note", "date de la note"},
+    "numero_ordre": {"n° d'ordre", "no d'ordre", "numero d'ordre", "numero ordre", "matricule"},
+    "nom": {"nom / raison sociale", "nom raison sociale", "nom", "raison sociale", "denomination"},
+    "type_membre": {"type membre", "type de membre"},
+    "exercice": {"exercice n", "exercice", "annee"},
+    COTISATION_ANNUELLE: {"cotisation n", "cotisation annuelle", "cotisation"},
+    ARRIERE_COTISATION: {"arrieres cotisations", "arriere cotisation", "arrieres de cotisations"},
+    PENALITE_APO: {"penalite apo n", "penalite apo"},
+    ARRIERE_PENALITE_APO: {"arrieres penalite apo", "arriere penalite apo"},
+    AUTRE_PENALITE: {"autre penalite"},
+    ARRIERE_AUTRE_PENALITE: {"arrieres autres penalites", "arriere autre penalite"},
+    AUTRE_CREANCE: {"autres creances", "autre creance"},
+    "total": {"total note", "montant total", "total"},
+    "devise": {"devise", "currency"},
+    "date_echeance": {"date echeance", "date d'echeance", "echeance"},
+    "reference_decision": {"reference / decision", "reference decision", "reference", "decision"},
+    "observation": {"observation", "observations"},
+}
+
+ENTETES_DETAILS = {
+    "numero_note_externe": ENTETES_PRINCIPAUX["numero_note_externe"],
+    "numero_ordre": ENTETES_PRINCIPAUX["numero_ordre"],
+    "categorie": {"categorie", "nature", "type creance"},
+    "exercice": {"exercice", "annee"},
+    "montant": {"montant", "amount"},
+    "devise": ENTETES_PRINCIPAUX["devise"],
+    "libelle": {"motif / libelle", "motif libelle", "motif", "libelle"},
+    "reference_decision": ENTETES_PRINCIPAUX["reference_decision"],
+    "observation": ENTETES_PRINCIPAUX["observation"],
+}
+
+
+def _index_entetes(ligne: list[Any], aliases: dict[str, set[str]]) -> dict[str, int]:
+    reconnus = {
+        normaliser_entete(alias): champ
+        for champ, valeurs in aliases.items()
+        for alias in valeurs
+    }
+    resultat: dict[str, int] = {}
+    for index, brut in enumerate(ligne):
+        champ = reconnus.get(normaliser_entete(brut))
+        if champ is not None and champ not in resultat:
+            resultat[champ] = index
+    return resultat
+
+
+def _table_structuree(
+    feuille: Any,
+    aliases: dict[str, set[str]],
+    requis: set[str],
+    un_parmi: set[str] | None = None,
+) -> TableStructuree | None:
+    toutes = [list(ligne) for ligne in feuille.iter_rows(values_only=True)]
+    for position, ligne in enumerate(toutes[:LIGNES_AVANT_ENTETE]):
+        colonnes = _index_entetes(ligne, aliases)
+        if requis <= set(colonnes) and (not un_parmi or un_parmi & set(colonnes)):
+            donnees = [
+                (position + 2 + decalage, valeurs)
+                for decalage, valeurs in enumerate(toutes[position + 1 :])
+                if any(v not in (None, "") for v in valeurs)
+            ]
+            return TableStructuree(
+                nom=feuille.title,
+                ligne_entete=position + 1,
+                colonnes=colonnes,
+                lignes=donnees,
+            )
+    return None
+
+
+def lire_classeur_structure(contenu: bytes) -> ClasseurStructure | None:
+    """Lit le nouveau modèle à deux feuilles, ou rend ``None`` pour l'ancien.
+
+    Le format est reconnu par ses colonnes structurantes, pas uniquement par le
+    nom de l'onglet : renommer « Cotisations EC » ne doit pas rendre un fichier
+    historique inutilisable.
+    """
+
+    try:
+        from openpyxl import load_workbook
+    except Exception:  # pragma: no cover
+        raise HTTPException(status_code=500, detail="openpyxl n'est pas installé")
+    try:
+        classeur = load_workbook(filename=BytesIO(contenu), data_only=True, read_only=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Fichier illisible : déposez un classeur Excel (.xlsx).")
+    try:
+        principale = None
+        detail = None
+        for feuille in classeur.worksheets:
+            if principale is None:
+                # Une colonne de créance suffit : le modèle « Pénalités » n'a
+                # pas de colonne « Cotisation N ».
+                candidate = _table_structuree(
+                    feuille,
+                    ENTETES_PRINCIPAUX,
+                    {"numero_ordre", "exercice"},
+                    set(ORDRE_CATEGORIES),
+                )
+                # L'ancien modèle « Cotisation 2026 » n'est volontairement pas
+                # reconnu ici : il reste traité par le lecteur historique.
+                if candidate is not None:
+                    principale = candidate
+            if detail is None:
+                detail = _table_structuree(
+                    feuille,
+                    ENTETES_DETAILS,
+                    {"categorie", "exercice", "montant"},
+                )
+        if principale is None:
+            return None
+        return ClasseurStructure(principale=principale, details=detail)
+    finally:
+        classeur.close()
+
+
+def lire_date(valeur: Any) -> date | None:
+    if valeur in (None, ""):
+        return None
+    if isinstance(valeur, datetime):
+        return valeur.date()
+    if isinstance(valeur, date):
+        return valeur
+    texte = str(valeur).strip()
+    for format_date in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(texte, format_date).date()
+        except ValueError:
+            pass
+    raise ValueError(texte)
+
+
+def lire_exercice(valeur: Any) -> int:
+    if isinstance(valeur, bool) or valeur in (None, ""):
+        raise ValueError(str(valeur or ""))
+    try:
+        exercice = int(float(str(valeur).strip()))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(str(valeur)) from exc
+    if not EXERCICE_MIN <= exercice <= EXERCICE_MAX:
+        raise ValueError(str(valeur))
+    return exercice
+
+
+def lire_devise(valeur: Any, *, defaut: str = "USD") -> str:
+    devise = str(valeur or defaut).strip().upper()
+    if devise not in DEVISES:
+        raise ValueError(str(valeur or ""))
+    return devise
+
+
+def _texte_optionnel(valeur: Any, limite: int | None = None) -> str | None:
+    texte = " ".join(str(valeur or "").replace("\xa0", " ").split())
+    if not texte:
+        return None
+    return texte[:limite] if limite else texte
 
 
 @dataclass
@@ -410,7 +666,7 @@ async def _deja_emises(
                 Encaissement.is_deleted.is_(False),
                 Encaissement.est_proforma.is_(False),
                 Encaissement.statut_operation != "ANNULEE",
-                extract("year", Encaissement.date_encaissement) == annee,
+                func.coalesce(Encaissement.exercice, extract("year", Encaissement.date_encaissement)) == annee,
             )
         )
     ).all()
@@ -432,6 +688,17 @@ class LigneAnalysee:
     erreurs: list[str] = field(default_factory=list)
     avertissements: list[str] = field(default_factory=list)
     doublon: bool = False
+    numero_note_externe: str | None = None
+    date_note: date | None = None
+    exercice: int | None = None
+    devise: str = "USD"
+    date_echeance: date | None = None
+    reference_decision: str | None = None
+    observation: str | None = None
+    total_attendu: Decimal | None = None
+    creances: list[CreanceAnalysee] = field(default_factory=list)
+    resume_montants: dict[str, Decimal] = field(default_factory=dict)
+    problemes: list[ProblemeImport] = field(default_factory=list)
 
     @property
     def total(self) -> Decimal:
@@ -459,10 +726,863 @@ class Analyse:
     #: index de colonne → (tarif, poste du tarif)
     tarifs: dict[int, tuple[Any, BudgetPoste | None]]
     categorie: str = "toutes"
+    format_import: str = "historique"
+    problemes: list[ProblemeImport] = field(default_factory=list)
 
 
 def _montant_texte(valeur: Decimal) -> str:
     return f"{valeur:,.2f}".replace(",", " ")
+
+
+def _categorie_legacy(libelle: str) -> str:
+    normalise = normaliser_entete(libelle)
+    if "arriere" in normalise:
+        # Sans feuille de détail, l'exercice réel est inconnu : LEGACY est plus
+        # honnête qu'une ventilation inventée.
+        return LEGACY
+    if "cotis" in normalise:
+        return COTISATION_ANNUELLE
+    if "penalit" in normalise and "apo" in normalise:
+        return PENALITE_APO
+    if "penalit" in normalise:
+        return AUTRE_PENALITE
+    return AUTRE_CREANCE
+
+
+def _exercice_legacy(libelle: str, defaut: int) -> int:
+    trouve = re.search(r"\b(20\d{2}|2100)\b", libelle or "")
+    return int(trouve.group(1)) if trouve else defaut
+
+
+def _cellule(table: TableStructuree, valeurs: list[Any], champ: str) -> Any:
+    index = table.colonnes.get(champ)
+    return valeurs[index] if index is not None and index < len(valeurs) else None
+
+
+def _signaler(
+    ligne: LigneAnalysee | None,
+    problemes: list[ProblemeImport],
+    *,
+    feuille: str,
+    numero_ligne: int,
+    champ: str,
+    valeur: Any,
+    message: str,
+    code: str,
+    niveau: str = "ERREUR",
+) -> None:
+    probleme = ProblemeImport(
+        feuille=feuille,
+        ligne=numero_ligne,
+        champ=champ,
+        valeur=valeur,
+        message=message,
+        code=code,
+        niveau=niveau,
+    )
+    problemes.append(probleme)
+    if ligne is not None:
+        ligne.problemes.append(probleme)
+        texte = f"{champ} : {message}"
+        if niveau == "ERREUR":
+            ligne.erreurs.append(texte)
+        else:
+            ligne.avertissements.append(texte)
+
+
+def _libelle_ligne_principale(categorie: str, exercice: int, observation: str | None) -> str:
+    if categorie in {AUTRE_PENALITE, AUTRE_CREANCE} and observation:
+        return observation[:255]
+    return f"{libelle_categorie(categorie)} {exercice}"[:255]
+
+
+async def _analyser_structure(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    user: Any,
+    classeur: ClasseurStructure,
+    service_id: int | None,
+    categorie_import: str,
+) -> Analyse:
+    """Analyse le classeur métier sans écrire en base."""
+
+    services = await services_disponibles(db, user, tenant_id)
+    if service_id is not None:
+        service_retenu = await resoudre_service(db, user, tenant_id, service_id)
+    elif (getattr(user, "role", "") or "").lower() not in {"admin", "super_admin"} and len(services) == 1:
+        service_retenu = services[0].id
+    else:
+        service_retenu = None
+    exercice_budget, postes = await postes_disponibles(db, tenant_id, service_retenu)
+
+    principale = classeur.principale
+    par_numero, par_nom = await _experts(db)
+    problemes: list[ProblemeImport] = []
+    lignes: list[LigneAnalysee] = []
+    par_externe: dict[str, list[LigneAnalysee]] = {}
+    par_ordre: dict[str, list[LigneAnalysee]] = {}
+
+    for numero_ligne, valeurs in principale.lignes:
+        numero_brut = _cellule(principale, valeurs, "numero_ordre")
+        numero = _texte_optionnel(numero_brut, 100) or ""
+        nom = _texte_optionnel(_cellule(principale, valeurs, "nom"), 300) or ""
+        externe = _texte_optionnel(_cellule(principale, valeurs, "numero_note_externe"), 100)
+        ligne = LigneAnalysee(
+            ligne=numero_ligne,
+            numero_ordre=numero,
+            nom=nom,
+            numero_note_externe=externe,
+        )
+
+        cle_ordre = cle_numero_ordre(numero)
+        if not cle_ordre:
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="N° d'ordre",
+                valeur=numero_brut,
+                message="numéro d'ordre absent ou invalide",
+                code="NUMERO_ORDRE_INVALIDE",
+            )
+        else:
+            ligne.expert = par_numero.get(cle_ordre)
+            if ligne.expert is None:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=numero_ligne,
+                    champ="N° d'ordre",
+                    valeur=numero_brut,
+                    message="membre introuvable dans le référentiel des experts",
+                    code="MEMBRE_INTROUVABLE",
+                )
+            par_ordre.setdefault(cle_ordre, []).append(ligne)
+
+        if externe:
+            par_externe.setdefault(externe.casefold(), []).append(ligne)
+
+        try:
+            ligne.exercice = lire_exercice(_cellule(principale, valeurs, "exercice"))
+        except ValueError:
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="Exercice N",
+                valeur=_cellule(principale, valeurs, "exercice"),
+                message=f"année invalide ({EXERCICE_MIN} à {EXERCICE_MAX} attendue)",
+                code="EXERCICE_INVALIDE",
+            )
+
+        try:
+            ligne.devise = lire_devise(_cellule(principale, valeurs, "devise"))
+        except ValueError:
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="Devise",
+                valeur=_cellule(principale, valeurs, "devise"),
+                message="devise non gérée : les notes de débit sont tenues en USD",
+                code="DEVISE_INVALIDE",
+            )
+
+        try:
+            ligne.date_note = lire_date(_cellule(principale, valeurs, "date_note"))
+        except ValueError:
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="Date note",
+                valeur=_cellule(principale, valeurs, "date_note"),
+                message="date invalide",
+                code="DATE_INVALIDE",
+            )
+        if ligne.date_note is None:
+            ligne.date_note = datetime.now(timezone.utc).date()
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="Date note",
+                valeur=None,
+                message="date absente : la date du jour sera utilisée",
+                code="DATE_ABSENTE",
+                niveau="AVERTISSEMENT",
+            )
+        elif ligne.date_note > datetime.now(timezone.utc).date():
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="Date note",
+                valeur=ligne.date_note,
+                message="la date de note ne peut pas être future",
+                code="DATE_INVALIDE",
+            )
+        elif ligne.date_note < datetime.now(timezone.utc).date() and not est_super_admin(user):
+            # Même règle que la saisie (`resoudre_date_operation`) : seul un
+            # super administrateur antidate une opération financière.
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="Date note",
+                valeur=ligne.date_note,
+                message="seul un super administrateur peut dater une note d'un autre jour",
+                code="DATE_ANTERIEURE",
+            )
+
+        try:
+            ligne.date_echeance = lire_date(_cellule(principale, valeurs, "date_echeance"))
+        except ValueError:
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="Date échéance",
+                valeur=_cellule(principale, valeurs, "date_echeance"),
+                message="date invalide",
+                code="DATE_INVALIDE",
+            )
+        if ligne.date_echeance and ligne.date_note and ligne.date_echeance < ligne.date_note:
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="Date échéance",
+                valeur=ligne.date_echeance,
+                message="l'échéance est antérieure à la date de la note",
+                code="DATE_INVALIDE",
+            )
+
+        ligne.reference_decision = _texte_optionnel(
+            _cellule(principale, valeurs, "reference_decision"), 255
+        )
+        ligne.observation = _texte_optionnel(_cellule(principale, valeurs, "observation"))
+
+        if ligne.expert is not None:
+            type_brut = _texte_optionnel(_cellule(principale, valeurs, "type_membre"))
+            if type_brut:
+                type_normalise = re.sub(r"[^a-z]", "", _sans_accents(type_brut).lower())
+                attendu_sec = ligne.expert.type_ec == "SEC"
+                fourni_sec = type_normalise in {"sec", "societe", "societedexpertisecomptable"}
+                fourni_ec = type_normalise in {"ec", "expertcomptable", "expert"}
+                if not (fourni_sec or fourni_ec) or fourni_sec != attendu_sec:
+                    _signaler(
+                        ligne,
+                        problemes,
+                        feuille=principale.nom,
+                        numero_ligne=numero_ligne,
+                        champ="Type membre",
+                        valeur=type_brut,
+                        message=f"type incompatible avec le référentiel ({'SEC' if attendu_sec else 'EC'} attendu)",
+                        code="TYPE_MEMBRE_INVALIDE",
+                    )
+            attendu_sec = ligne.expert.type_ec == "SEC"
+            if categorie_import == "ec" and attendu_sec:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Type membre",
+                    valeur=ligne.expert.type_ec,
+                    message="une SEC doit être importée dans l'onglet « Cotisations SEC »",
+                    code="TYPE_MEMBRE_INVALIDE",
+                )
+            elif categorie_import == "sec" and not attendu_sec:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Type membre",
+                    valeur=ligne.expert.type_ec,
+                    message="un expert-comptable doit être importé dans l'onglet « Cotisations EC »",
+                    code="TYPE_MEMBRE_INVALIDE",
+                )
+            if nom and cle_nom(nom) != cle_nom(ligne.expert.nom_denomination):
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Nom / Raison sociale",
+                    valeur=nom,
+                    message=f"le référentiel contient « {ligne.expert.nom_denomination} » ; le n° d'ordre fait foi",
+                    code="NOM_DIFFERENT",
+                    niveau="AVERTISSEMENT",
+                )
+
+        for categorie_ligne in ORDRE_CATEGORIES:
+            brut = _cellule(principale, valeurs, categorie_ligne)
+            try:
+                montant = lire_montant(brut)
+            except ValueError:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=numero_ligne,
+                    champ=libelle_categorie(categorie_ligne),
+                    valeur=brut,
+                    message="montant invalide",
+                    code="MONTANT_INVALIDE",
+                )
+                continue
+            if montant is None:
+                continue
+            if montant < 0:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=numero_ligne,
+                    champ=libelle_categorie(categorie_ligne),
+                    valeur=brut,
+                    message="le montant doit être positif ou nul",
+                    code="MONTANT_INVALIDE",
+                )
+                continue
+            if montant > 0 and categorie_ligne not in CATEGORIES_PAR_ONGLET[categorie_import]:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=numero_ligne,
+                    champ=libelle_categorie(categorie_ligne),
+                    valeur=brut,
+                    message=f"cette créance ne s'importe pas dans l'onglet « {CATEGORIES[categorie_import]} »",
+                    code="CATEGORIE_HORS_ONGLET",
+                )
+                continue
+            ligne.resume_montants[categorie_ligne] = montant
+
+        total_brut = _cellule(principale, valeurs, "total")
+        try:
+            ligne.total_attendu = lire_montant(total_brut)
+        except ValueError:
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=numero_ligne,
+                champ="Total note",
+                valeur=total_brut,
+                message="montant total invalide",
+                code="MONTANT_INVALIDE",
+            )
+        lignes.append(ligne)
+
+    # Un numéro externe identifie une note sans ambiguïté. Sans numéro externe,
+    # le n° d'ordre est une clé technique sûre seulement s'il n'apparaît qu'une
+    # fois dans le fichier.
+    for externe, groupe in par_externe.items():
+        if len(groupe) > 1:
+            for ligne in groupe:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=ligne.ligne,
+                    champ="N° note externe",
+                    valeur=ligne.numero_note_externe,
+                    message="numéro externe présent plusieurs fois dans le fichier",
+                    code="DOUBLON_NUMERO_EXTERNE",
+                )
+    for cle_ordre, groupe in par_ordre.items():
+        sans_externe = [ligne for ligne in groupe if not ligne.numero_note_externe]
+        if len(sans_externe) > 1:
+            for ligne in sans_externe:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=ligne.ligne,
+                    champ="N° d'ordre",
+                    valeur=ligne.numero_ordre,
+                    message="plusieurs notes sans numéro externe rendent le rattachement du détail ambigu",
+                    code="DOUBLON",
+                )
+
+    # Ventilation de la deuxième feuille.
+    detail = classeur.details
+    if detail is not None:
+        for numero_ligne, valeurs in detail.lignes:
+            externe = _texte_optionnel(_cellule(detail, valeurs, "numero_note_externe"), 100)
+            numero_ordre = _texte_optionnel(_cellule(detail, valeurs, "numero_ordre"), 100) or ""
+            cible: LigneAnalysee | None = None
+            if externe:
+                groupe = par_externe.get(externe.casefold(), [])
+                cible = groupe[0] if len(groupe) == 1 else None
+            elif numero_ordre:
+                groupe = par_ordre.get(cle_numero_ordre(numero_ordre), [])
+                cible = groupe[0] if len(groupe) == 1 else None
+            if cible is None:
+                _signaler(
+                    None,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="N° note externe / N° d'ordre",
+                    valeur=externe or numero_ordre,
+                    message="aucune note d'en-tête ne correspond de façon unique",
+                    code="RATTACHEMENT_INTROUVABLE",
+                )
+                continue
+            if numero_ordre and cle_numero_ordre(numero_ordre) != cle_numero_ordre(cible.numero_ordre):
+                _signaler(
+                    cible,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="N° d'ordre",
+                    valeur=numero_ordre,
+                    message="le numéro d'ordre ne correspond pas à l'en-tête de la note",
+                    code="NUMERO_ORDRE_INVALIDE",
+                )
+                continue
+
+            categorie_brute = _cellule(detail, valeurs, "categorie")
+            categorie_ligne = normaliser_categorie(_texte_optionnel(categorie_brute))
+            if categorie_ligne not in CATEGORIES_IMPORTABLES:
+                _signaler(
+                    cible,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Catégorie",
+                    valeur=categorie_brute,
+                    message="catégorie de créance inconnue",
+                    code="CATEGORIE_INCONNUE",
+                )
+                continue
+            if categorie_ligne not in CATEGORIES_PAR_ONGLET[categorie_import]:
+                _signaler(
+                    cible,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Catégorie",
+                    valeur=categorie_brute,
+                    message=f"cette créance ne s'importe pas dans l'onglet « {CATEGORIES[categorie_import]} »",
+                    code="CATEGORIE_HORS_ONGLET",
+                )
+                continue
+            try:
+                exercice_ligne = lire_exercice(_cellule(detail, valeurs, "exercice"))
+            except ValueError:
+                _signaler(
+                    cible,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Exercice",
+                    valeur=_cellule(detail, valeurs, "exercice"),
+                    message=f"année invalide ({EXERCICE_MIN} à {EXERCICE_MAX} attendue)",
+                    code="EXERCICE_INVALIDE",
+                )
+                continue
+            try:
+                montant_ligne = lire_montant(_cellule(detail, valeurs, "montant"))
+            except ValueError:
+                montant_ligne = None
+            if montant_ligne is None or montant_ligne <= 0:
+                _signaler(
+                    cible,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Montant",
+                    valeur=_cellule(detail, valeurs, "montant"),
+                    message="un montant strictement positif est requis pour une ligne de détail",
+                    code="MONTANT_INVALIDE",
+                )
+                continue
+            try:
+                devise_ligne = lire_devise(_cellule(detail, valeurs, "devise"), defaut=cible.devise)
+            except ValueError:
+                _signaler(
+                    cible,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Devise",
+                    valeur=_cellule(detail, valeurs, "devise"),
+                    message="devise non gérée : les notes de débit sont tenues en USD",
+                    code="DEVISE_INVALIDE",
+                )
+                continue
+            libelle = _texte_optionnel(_cellule(detail, valeurs, "libelle"), 255)
+            if categorie_ligne in {AUTRE_PENALITE, ARRIERE_AUTRE_PENALITE} and not libelle:
+                _signaler(
+                    cible,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Motif / Libellé",
+                    valeur=None,
+                    message="un motif est obligatoire pour une autre pénalité",
+                    code="LIBELLE_REQUIS",
+                )
+                continue
+            if categorie_ligne in CATEGORIES_ARRIERE and cible.exercice and exercice_ligne >= cible.exercice:
+                _signaler(
+                    cible,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Exercice",
+                    valeur=exercice_ligne,
+                    message=f"un arriéré doit être antérieur à l'exercice de la note ({cible.exercice})",
+                    code="EXERCICE_INVALIDE",
+                )
+                continue
+            if categorie_ligne == COTISATION_ANNUELLE and cible.exercice and exercice_ligne != cible.exercice:
+                _signaler(
+                    cible,
+                    problemes,
+                    feuille=detail.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Catégorie",
+                    valeur=categorie_brute,
+                    message="une cotisation d'un exercice antérieur doit être ARRIERE_COTISATION",
+                    code="CATEGORIE_INCOHERENTE",
+                )
+                continue
+            cible.creances.append(
+                CreanceAnalysee(
+                    categorie=categorie_ligne,
+                    exercice=exercice_ligne,
+                    libelle=libelle or f"{libelle_categorie(categorie_ligne)} {exercice_ligne}",
+                    montant=montant_ligne,
+                    devise=devise_ligne,
+                    reference_decision=_texte_optionnel(
+                        _cellule(detail, valeurs, "reference_decision"), 255
+                    ),
+                    observation=_texte_optionnel(_cellule(detail, valeurs, "observation")),
+                    feuille=detail.nom,
+                    ligne=numero_ligne,
+                )
+            )
+
+    # Les colonnes de l'en-tête sont soit des lignes courantes, soit des totaux
+    # de contrôle remplacés par la ventilation détaillée.
+    for ligne in lignes:
+        if ligne.exercice is None:
+            continue
+        for categorie_ligne, montant_resume in ligne.resume_montants.items():
+            details_categorie = [c for c in ligne.creances if c.categorie == categorie_ligne]
+            if categorie_ligne in CATEGORIES_ARRIERE:
+                total_detail = sum((c.montant for c in details_categorie), Decimal("0.00"))
+                if montant_resume > 0 and not details_categorie:
+                    _signaler(
+                        ligne,
+                        problemes,
+                        feuille=principale.nom,
+                        numero_ligne=ligne.ligne,
+                        champ=libelle_categorie(categorie_ligne),
+                        valeur=montant_resume,
+                        message="arriéré non ventilé dans la feuille « Détail créances »",
+                        code="ARRIERE_NON_VENTILE",
+                    )
+                elif montant_resume != total_detail:
+                    _signaler(
+                        ligne,
+                        problemes,
+                        feuille=principale.nom,
+                        numero_ligne=ligne.ligne,
+                        champ=libelle_categorie(categorie_ligne),
+                        valeur=montant_resume,
+                        message=f"le total détaillé vaut {_montant_texte(total_detail)} {ligne.devise}",
+                        code="MONTANT_INCOHERENT",
+                    )
+                continue
+
+            details_exercice = [
+                c for c in details_categorie if c.exercice == ligne.exercice
+            ]
+            if details_exercice:
+                total_detail = sum((c.montant for c in details_exercice), Decimal("0.00"))
+                if montant_resume != total_detail:
+                    _signaler(
+                        ligne,
+                        problemes,
+                        feuille=principale.nom,
+                        numero_ligne=ligne.ligne,
+                        champ=libelle_categorie(categorie_ligne),
+                        valeur=montant_resume,
+                        message=f"le total détaillé de l'exercice vaut {_montant_texte(total_detail)} {ligne.devise}",
+                        code="MONTANT_INCOHERENT",
+                    )
+                continue
+            if montant_resume <= 0:
+                continue
+            if categorie_ligne == AUTRE_PENALITE and not ligne.observation:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=ligne.ligne,
+                    champ="Observation",
+                    valeur=None,
+                    message="un motif est obligatoire lorsque « Autre pénalité » est renseignée",
+                    code="LIBELLE_REQUIS",
+                )
+                continue
+            ligne.creances.append(
+                CreanceAnalysee(
+                    categorie=categorie_ligne,
+                    exercice=ligne.exercice,
+                    libelle=_libelle_ligne_principale(categorie_ligne, ligne.exercice, ligne.observation),
+                    montant=montant_resume,
+                    devise=ligne.devise,
+                    reference_decision=ligne.reference_decision,
+                    observation=ligne.observation,
+                    feuille=principale.nom,
+                    ligne=ligne.ligne,
+                )
+            )
+
+        if not ligne.creances and not ligne.erreurs:
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=ligne.ligne,
+                champ="Montants",
+                valeur=None,
+                message="aucune créance à importer",
+                code="MONTANT_INVALIDE",
+            )
+        total_calcule = sum((c.montant for c in ligne.creances), Decimal("0.00"))
+        if ligne.total_attendu is not None and ligne.total_attendu != total_calcule:
+            _signaler(
+                ligne,
+                problemes,
+                feuille=principale.nom,
+                numero_ligne=ligne.ligne,
+                champ="Total note",
+                valeur=ligne.total_attendu,
+                message=f"la somme des lignes vaut {_montant_texte(total_calcule)} {ligne.devise}",
+                code="TOTAL_INCOHERENT",
+            )
+
+        # Contrat historique avec l'écran : `montants` contient les agrégats par
+        # colonne virtuelle, tandis que `creances` garde chaque exercice.
+        par_categorie: dict[str, Decimal] = {}
+        for creance in ligne.creances:
+            par_categorie[creance.categorie] = par_categorie.get(creance.categorie, Decimal("0")) + creance.montant
+        ligne.montants = {
+            INDEX_CATEGORIES[categorie_ligne]: montant
+            for categorie_ligne, montant in par_categorie.items()
+        }
+
+    # Numéros externes déjà présents dans ce conseil.
+    externes = {ligne.numero_note_externe.casefold() for ligne in lignes if ligne.numero_note_externe}
+    if externes:
+        existants = (
+            await db.execute(
+                select(Encaissement.numero_note_externe, Encaissement.numero_recu).where(
+                    Encaissement.organisation_id == tenant_id,
+                    Encaissement.numero_note_externe.is_not(None),
+                    func.lower(Encaissement.numero_note_externe).in_(externes),
+                )
+            )
+        ).all()
+        par_numero_existant = {(numero or "").casefold(): interne for numero, interne in existants}
+        for ligne in lignes:
+            interne = par_numero_existant.get((ligne.numero_note_externe or "").casefold())
+            if interne:
+                ligne.doublon = True
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=ligne.ligne,
+                    champ="N° note externe",
+                    valeur=ligne.numero_note_externe,
+                    message=f"ce numéro existe déjà (référence ONEC Smart {interne})",
+                    code="NUMERO_EXTERNE_EXISTANT",
+                )
+
+    # Une cotisation annuelle ne peut pas être appelée deux fois au même membre
+    # et au même exercice. Les pénalités restent répétables : deux décisions
+    # distinctes peuvent légitimement porter la même catégorie.
+    experts_ids = {ligne.expert.id for ligne in lignes if ligne.expert is not None}
+    cotisations_existantes: dict[tuple[uuid.UUID, int], str] = {}
+    if experts_ids:
+        donnees = (
+            await db.execute(
+                select(
+                    Encaissement.expert_comptable_id,
+                    EncaissementArticle.exercice,
+                    Encaissement.numero_recu,
+                )
+                .join(EncaissementArticle, EncaissementArticle.encaissement_id == Encaissement.id)
+                .where(
+                    Encaissement.organisation_id == tenant_id,
+                    Encaissement.expert_comptable_id.in_(experts_ids),
+                    Encaissement.is_deleted.is_(False),
+                    Encaissement.est_proforma.is_(False),
+                    Encaissement.statut_operation != "ANNULEE",
+                    EncaissementArticle.categorie == COTISATION_ANNUELLE,
+                )
+            )
+        ).all()
+        cotisations_existantes = {
+            (expert_id, exercice): numero or "—"
+            for expert_id, exercice, numero in donnees
+            if expert_id is not None and exercice is not None
+        }
+    cotisations_fichier: dict[tuple[uuid.UUID, int], LigneAnalysee] = {}
+    for ligne in lignes:
+        if ligne.expert is None:
+            continue
+        for creance in ligne.creances:
+            if creance.categorie != COTISATION_ANNUELLE:
+                continue
+            cle = (ligne.expert.id, creance.exercice)
+            if cle in cotisations_existantes:
+                ligne.doublon = True
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=ligne.ligne,
+                    champ="Cotisation N",
+                    valeur=creance.exercice,
+                    message=f"cotisation déjà émise sur la note {cotisations_existantes[cle]}",
+                    code="DOUBLON_COTISATION",
+                )
+            elif cle in cotisations_fichier:
+                autre = cotisations_fichier[cle]
+                for concernee in (autre, ligne):
+                    concernee.doublon = True
+                    if not any(p.code == "DOUBLON_COTISATION" for p in concernee.problemes):
+                        _signaler(
+                            concernee,
+                            problemes,
+                            feuille=principale.nom,
+                            numero_ligne=concernee.ligne,
+                            champ="Cotisation N",
+                            valeur=creance.exercice,
+                            message="cotisation dupliquée dans le fichier pour ce membre et cet exercice",
+                            code="DOUBLON_COTISATION",
+                        )
+            else:
+                cotisations_fichier[cle] = ligne
+
+    # Colonnes virtuelles et suggestions de postes, compatibles avec le même
+    # écran de confirmation que l'import historique.
+    codes_arrieres = await _codes_arrieres(db, tenant_id, exercice_budget) if exercice_budget else set()
+    postes_arrieres = [p for p in postes if (p.code or "").strip().upper() in codes_arrieres]
+    aujourdhui = datetime.now().date()
+    tarifs_par_libelle = {
+        tarif.libelle_normalise: (tarif, poste)
+        for tarif, poste in await tarifs_resolus(db, tenant_id, actifs_seulement=True, a_la_date=aujourdhui)
+    }
+    tarifs: dict[int, tuple[Any, BudgetPoste | None]] = {}
+    colonnes: list[dict[str, Any]] = []
+    presentes = {
+        creance.categorie
+        for ligne in lignes
+        for creance in ligne.creances
+    } | {
+        categorie_ligne
+        for ligne in lignes
+        for categorie_ligne, montant in ligne.resume_montants.items()
+        if montant > 0
+    }
+    for categorie_ligne in ORDRE_CATEGORIES:
+        if categorie_ligne not in presentes:
+            continue
+        index = INDEX_CATEGORIES[categorie_ligne]
+        libelle = LIBELLES_CATEGORIES[categorie_ligne]
+        trouve = tarifs_par_libelle.get(normaliser_libelle(libelle))
+        tarif, poste_tarif = trouve if trouve is not None else (None, None)
+        if tarif is not None:
+            tarifs[index] = (tarif, poste_tarif)
+        suggere = poste_tarif
+        if suggere is None and categorie_ligne in CATEGORIES_ARRIERE:
+            suggere = postes_arrieres[0] if len(postes_arrieres) == 1 else next(
+                (p for p in postes if "arri" in normaliser_entete(p.libelle)), None
+            )
+        if suggere is None:
+            mot = "cotis" if categorie_ligne in {COTISATION_ANNUELLE, ARRIERE_COTISATION} else (
+                "penal" if "PENALITE" in categorie_ligne else "creance"
+            )
+            suggere = next((p for p in postes if mot in normaliser_entete(p.libelle)), None)
+        total_categorie = sum(
+            (c.montant for ligne in lignes for c in ligne.creances if c.categorie == categorie_ligne),
+            Decimal("0.00"),
+        )
+        colonnes.append(
+            {
+                "avertissement": None,
+                "cle": str(index),
+                "categorie": categorie_ligne,
+                "libelle": libelle,
+                "arrieres": categorie_ligne in CATEGORIES_ARRIERE,
+                "tarif": (
+                    {
+                        "id": tarif.id,
+                        "libelle": tarif.libelle,
+                        "montant": str(tarif.montant) if tarif.montant is not None else None,
+                        "poste_code": tarif.budget_poste_code,
+                    }
+                    if tarif is not None
+                    else None
+                ),
+                "poste_impose": poste_tarif is not None,
+                "poste_suggere_id": suggere.id if suggere is not None else None,
+                "erreur": None,
+                "total": str(total_categorie),
+                "nb_lignes": sum(
+                    1
+                    for ligne in lignes
+                    if any(c.categorie == categorie_ligne for c in ligne.creances)
+                ),
+            }
+        )
+
+    feuille_compat = Feuille(
+        ligne_entete=principale.ligne_entete,
+        col_numero=principale.colonnes.get("numero_ordre"),
+        col_nom=principale.colonnes.get("nom"),
+        col_total=principale.colonnes.get("total"),
+        colonnes=[],
+        ignorees=[],
+        lignes=principale.lignes,
+    )
+    return Analyse(
+        feuille=feuille_compat,
+        exercice=exercice_budget,
+        annee=exercice_budget.annee if exercice_budget else datetime.now().year,
+        lignes=lignes,
+        colonnes=colonnes,
+        postes=postes,
+        services=services,
+        service_id=service_retenu,
+        tarifs=tarifs,
+        categorie=categorie_import,
+        format_import="structure",
+        problemes=problemes,
+    )
 
 
 async def analyser(
@@ -476,6 +1596,16 @@ async def analyser(
 ) -> Analyse:
     if categorie not in CATEGORIES:
         raise HTTPException(status_code=400, detail="Catégorie d'import inconnue")
+    classeur_structure = lire_classeur_structure(contenu)
+    if classeur_structure is not None:
+        return await _analyser_structure(
+            db,
+            tenant_id=tenant_id,
+            user=user,
+            classeur=classeur_structure,
+            service_id=service_id,
+            categorie_import=categorie,
+        )
     feuille = lire_feuille(contenu)
     services = await services_disponibles(db, user, tenant_id)
     # L'aperçu ne bloque pas sur le service : un agent de plusieurs services le
@@ -670,7 +1800,23 @@ async def analyser(
 def analyse_en_reponse(analyse: Analyse) -> dict[str, Any]:
     valides = [l for l in analyse.lignes if not l.erreurs]
     arrieres = {c.index for c in analyse.feuille.colonnes if c.arrieres}
+    if analyse.format_import == "structure":
+        total_arrieres = sum(
+            (
+                creance.montant
+                for ligne in valides
+                for creance in ligne.creances
+                if creance.categorie in CATEGORIES_ARRIERE
+            ),
+            Decimal("0.00"),
+        )
+    else:
+        total_arrieres = sum(
+            (m for l in valides for i, m in l.montants.items() if i in arrieres), Decimal("0.00")
+        )
+    problemes = analyse.problemes
     return {
+        "format_import": analyse.format_import,
         "categorie": analyse.categorie,
         "ligne_entete": analyse.feuille.ligne_entete,
         "exercice": analyse.annee,
@@ -681,11 +1827,19 @@ def analyse_en_reponse(analyse: Analyse) -> dict[str, Any]:
         "colonnes": analyse.colonnes,
         "colonnes_ignorees": analyse.feuille.ignorees,
         "colonne_numero": analyse.feuille.col_numero is not None,
+        "problemes": [probleme.dict() for probleme in problemes],
         "lignes": [
             {
                 "ligne": l.ligne,
                 "numero_ordre": l.numero_ordre,
                 "nom": l.nom,
+                "numero_note_externe": l.numero_note_externe,
+                "date_note": l.date_note.isoformat() if l.date_note else None,
+                "exercice": l.exercice,
+                "devise": l.devise,
+                "date_echeance": l.date_echeance.isoformat() if l.date_echeance else None,
+                "reference_decision": l.reference_decision,
+                "observation": l.observation,
                 "expert": (
                     {
                         "id": str(l.expert.id),
@@ -702,6 +1856,21 @@ def analyse_en_reponse(analyse: Analyse) -> dict[str, Any]:
                 "doublon": l.doublon,
                 "erreurs": l.erreurs,
                 "avertissements": l.avertissements,
+                "problemes": [probleme.dict() for probleme in l.problemes],
+                "creances": [
+                    {
+                        "categorie": creance.categorie,
+                        "exercice": creance.exercice,
+                        "libelle": creance.libelle,
+                        "montant": str(creance.montant),
+                        "devise": creance.devise,
+                        "reference_decision": creance.reference_decision,
+                        "observation": creance.observation,
+                        "feuille": creance.feuille,
+                        "ligne": creance.ligne,
+                    }
+                    for creance in l.creances
+                ],
             }
             for l in analyse.lignes
         ],
@@ -710,11 +1879,15 @@ def analyse_en_reponse(analyse: Analyse) -> dict[str, Any]:
             "nb_ok": sum(1 for l in analyse.lignes if l.statut == "ok"),
             "nb_avertissements": sum(1 for l in analyse.lignes if l.statut == "avertissement"),
             "nb_erreurs": sum(1 for l in analyse.lignes if l.statut == "erreur"),
-            "nb_doublons": sum(1 for l in valides if l.doublon),
+            "nb_doublons": sum(1 for l in analyse.lignes if l.doublon),
             "total": str(sum((l.total for l in valides), Decimal("0.00"))),
-            "total_arrieres": str(
-                sum((m for l in valides for i, m in l.montants.items() if i in arrieres), Decimal("0.00"))
+            "total_arrieres": str(total_arrieres),
+            "membres_introuvables": sum(1 for p in problemes if p.code == "MEMBRE_INTROUVABLE"),
+            "numeros_existants": sum(1 for p in problemes if p.code == "NUMERO_EXTERNE_EXISTANT"),
+            "montants_incoherents": sum(
+                1 for p in problemes if p.code in {"MONTANT_INCOHERENT", "TOTAL_INCOHERENT"}
             ),
+            "arrieres_non_ventiles": sum(1 for p in problemes if p.code == "ARRIERE_NON_VENTILE"),
         },
     }
 
@@ -754,6 +1927,14 @@ async def importer(
     erreurs_colonnes = [c["erreur"] for c in analyse.colonnes if c["erreur"]]
     if erreurs_colonnes:
         raise HTTPException(status_code=400, detail=" ".join(erreurs_colonnes))
+    if analyse.format_import == "structure" and any(
+        probleme.niveau == "ERREUR" and probleme.code == "RATTACHEMENT_INTROUVABLE"
+        for probleme in analyse.problemes
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="La feuille « Détail créances » contient des lignes qui ne peuvent être rattachées à aucune note.",
+        )
 
     postes_valides = {p.id for p in analyse.postes}
     poste_par_colonne: dict[int, int] = {}
@@ -784,6 +1965,58 @@ async def importer(
     if not a_creer:
         raise HTTPException(status_code=400, detail="Aucune note à créer : toutes les lignes sont en erreur ou déjà émises.")
 
+    if analyse.format_import == "structure":
+        # Sérialise deux imports concurrents visant le même membre. Après le
+        # verrou, on recontrôle la cotisation : la prévisualisation n'est pas
+        # une garantie si un autre utilisateur confirme en même temps.
+        experts_ids = sorted({ligne.expert.id for ligne in a_creer if ligne.expert is not None}, key=str)
+        if experts_ids:
+            await db.execute(
+                select(ExpertComptable.id)
+                .where(ExpertComptable.id.in_(experts_ids))
+                .order_by(ExpertComptable.id)
+                .with_for_update()
+            )
+        cles_cotisations = {
+            (ligne.expert.id, creance.exercice)
+            for ligne in a_creer
+            if ligne.expert is not None
+            for creance in ligne.creances
+            if creance.categorie == COTISATION_ANNUELLE
+        }
+        if cles_cotisations:
+            deja = (
+                await db.execute(
+                    select(
+                        Encaissement.expert_comptable_id,
+                        EncaissementArticle.exercice,
+                        Encaissement.numero_recu,
+                    )
+                    .join(EncaissementArticle, EncaissementArticle.encaissement_id == Encaissement.id)
+                    .where(
+                        Encaissement.organisation_id == tenant_id,
+                        Encaissement.expert_comptable_id.in_({cle[0] for cle in cles_cotisations}),
+                        Encaissement.is_deleted.is_(False),
+                        Encaissement.est_proforma.is_(False),
+                        Encaissement.statut_operation != "ANNULEE",
+                        EncaissementArticle.categorie == COTISATION_ANNUELLE,
+                    )
+                )
+            ).all()
+            conflit = next(
+                (
+                    numero
+                    for expert_id, exercice_ligne, numero in deja
+                    if (expert_id, exercice_ligne) in cles_cotisations
+                ),
+                None,
+            )
+            if conflit:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Une cotisation a été émise depuis la prévisualisation (note {conflit}). Relancez l'analyse.",
+                )
+
     await _valider_postes_articles(
         db,
         tenant_id=tenant_id,
@@ -792,8 +2025,20 @@ async def importer(
         impact_budgetaire=True,
     )
     postes_par_id = {p.id: p for p in analyse.postes}
-    libelles = {c.index: c.libelle for c in analyse.feuille.colonnes}
-    arrieres = {c.index for c in analyse.feuille.colonnes if c.arrieres}
+    libelles = (
+        {int(info["cle"]): info["libelle"] for info in analyse.colonnes}
+        if analyse.format_import == "structure"
+        else {c.index: c.libelle for c in analyse.feuille.colonnes}
+    )
+    categories_par_index = {
+        int(info["cle"]): info.get("categorie")
+        for info in analyse.colonnes
+    }
+    arrieres = (
+        {int(info["cle"]) for info in analyse.colonnes if info["arrieres"]}
+        if analyse.format_import == "structure"
+        else {c.index for c in analyse.feuille.colonnes if c.arrieres}
+    )
     date_note = resoudre_date_operation(None, user=user, champ="date_encaissement")
 
     total = Decimal("0.00")
@@ -806,6 +2051,7 @@ async def importer(
         colonnes=[
             {
                 "libelle": libelles[index],
+                "categorie": categories_par_index.get(index),
                 "arrieres": index in arrieres,
                 "poste_id": poste_id,
                 "poste_code": postes_par_id[poste_id].code,
@@ -821,7 +2067,15 @@ async def importer(
         expert = ligne.expert
         assert expert is not None
         articles: list[dict[str, Any]] = []
-        for ordre, (index, montant) in enumerate(ligne.montants.items()):
+        sources_articles = (
+            [
+                (INDEX_CATEGORIES[creance.categorie], creance.montant, creance)
+                for creance in ligne.creances
+            ]
+            if analyse.format_import == "structure"
+            else [(index, montant, None) for index, montant in ligne.montants.items()]
+        )
+        for ordre, (index, montant, creance) in enumerate(sources_articles):
             quantite, prix = Decimal("1.00"), montant
             tarif = analyse.tarifs.get(index, (None, None))[0]
             # Trois pénalités à 100, c'est 3 × 100 et non une ligne de 300 qui
@@ -832,22 +2086,41 @@ async def importer(
                     quantite, prix = (montant / tarife).quantize(CENT), tarife
             articles.append(
                 {
-                    "libelle": libelles[index],
-                    "description": None,
+                    "libelle": creance.libelle if creance is not None else libelles[index],
+                    "description": creance.observation if creance is not None else None,
                     "quantite": quantite,
                     "prix_unitaire": prix,
                     "montant": montant,
                     "budget_poste_id": poste_par_colonne[index],
+                    "categorie": (
+                        creance.categorie if creance is not None else _categorie_legacy(libelles[index])
+                    ),
+                    "exercice": (
+                        creance.exercice
+                        if creance is not None
+                        else _exercice_legacy(libelles[index], analyse.annee)
+                    ),
+                    "reference_decision": creance.reference_decision if creance is not None else None,
                     "sort_order": ordre,
                 }
             )
+        date_note_ligne = date_note
+        if (
+            analyse.format_import == "structure"
+            and ligne.date_note is not None
+            and ligne.date_note != date_note.date()
+        ):
+            date_note_ligne = resoudre_date_operation(
+                datetime.combine(ligne.date_note, time.min, tzinfo=timezone.utc), user=user, champ="Date note"
+            )
         ecarts = await appliquer_tarifs(
-            db, tenant_id, articles, peut_forcer=True, date_encaissement=date_note.date()
+            db, tenant_id, articles, peut_forcer=True, date_encaissement=date_note_ligne.date()
         )
         montant_note = ligne.total
         poste_entete = postes_par_id[articles[0]["budget_poste_id"]]
         note = Encaissement(
             numero_recu=await generate_document_number(db, doc_type="ND", tenant_id=tenant_id, service_id=None),
+            numero_note_externe=ligne.numero_note_externe,
             numero_proforma=None,
             est_proforma=False,
             organisation_id=tenant_id,
@@ -856,7 +2129,14 @@ async def importer(
             client_nom=None,
             client_id=None,
             libelle=", ".join(a["libelle"] for a in articles)[:255],
-            description=f"Import « {enregistrement.fichier} », ligne {ligne.ligne}",
+            description=(
+                ligne.observation
+                if analyse.format_import == "structure"
+                else f"Import « {enregistrement.fichier} », ligne {ligne.ligne}"
+            ),
+            exercice=ligne.exercice if analyse.format_import == "structure" else analyse.annee,
+            date_echeance=ligne.date_echeance,
+            reference_decision=ligne.reference_decision,
             montant=montant_note,
             montant_total=montant_note,
             montant_paye=Decimal("0.00"),
@@ -873,13 +2153,23 @@ async def importer(
             impact_budgetaire=True,
             hors_budget_status=hors_budget_initial_status("BUDGETAIRE"),
             canal="CAISSE",
-            date_encaissement=date_note,
+            date_encaissement=date_note_ligne,
             date_paiement=None,
             created_by=user_id,
             note_debit_import_id=enregistrement.id,
         )
         db.add(note)
-        await db.flush()
+        try:
+            await db.flush()
+        except IntegrityError as exc:
+            await db.rollback()
+            contrainte = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            if contrainte == "uq_enc_org_num_note_externe":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Le numéro externe « {ligne.numero_note_externe} » vient d'être importé. Relancez l'analyse.",
+                ) from exc
+            raise
         _add_encaissement_articles(db, note, tenant_id, articles)
         if ecarts:
             await log_action(
@@ -891,11 +2181,19 @@ async def importer(
                 new_value={"ecarts": ecarts, "import": str(enregistrement.id)},
             )
         total += montant_note
-        total_arrieres += sum((m for i, m in ligne.montants.items() if i in arrieres), Decimal("0.00"))
+        total_arrieres += (
+            sum(
+                (creance.montant for creance in ligne.creances if creance.categorie in CATEGORIES_ARRIERE),
+                Decimal("0.00"),
+            )
+            if analyse.format_import == "structure"
+            else sum((m for i, m in ligne.montants.items() if i in arrieres), Decimal("0.00"))
+        )
         notes.append(
             {
                 "id": str(note.id),
                 "numero_recu": note.numero_recu,
+                "numero_note_externe": note.numero_note_externe,
                 "numero_ordre": expert.numero_ordre,
                 "nom": expert.nom_denomination,
                 "montant_total": str(montant_note),

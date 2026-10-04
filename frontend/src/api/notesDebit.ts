@@ -5,9 +5,18 @@ export const PERMISSION_IMPORT_NOTES_DEBIT = 'treso.experts_comptables.import_no
 
 export type StatutNotes = 'impayees' | 'soldees' | 'toutes'
 
+export const LIBELLE_STATUT_NOTE: Record<string, string> = {
+  non_paye: 'Émise',
+  partiel: 'Partiellement payée',
+  complet: 'Payée',
+  avance: 'Payée (avance)',
+}
+
 export interface NoteDebitExpert {
   id: string
   numero_recu: string | null
+  numero_note_externe: string | null
+  exercice: number | null
   date_encaissement: string | null
   jours: number
   libelle: string
@@ -40,6 +49,7 @@ export const listerNotesDebit = (params: {
   statut?: StatutNotes
   type_client?: string
   import_id?: string
+  exercice?: number
   limit?: number
   offset?: number
 }) =>
@@ -49,12 +59,32 @@ export const listerNotesDebit = (params: {
     ),
   })
 
+/** Toute la sélection filtrée, page après page : l'API plafonne à 200 notes par appel. */
+export async function listerToutesNotesDebit(params: {
+  q?: string
+  statut?: StatutNotes
+  type_client?: string
+  import_id?: string
+  exercice?: number
+}): Promise<ListeNotesDebit> {
+  const PAGE = 200
+  const premiere = await listerNotesDebit({ ...params, limit: PAGE, offset: 0 })
+  const items = [...premiere.items]
+  while (items.length < premiere.total) {
+    const suite = await listerNotesDebit({ ...params, limit: PAGE, offset: items.length })
+    if (!suite.items.length) break
+    items.push(...suite.items)
+  }
+  return { ...premiere, items }
+}
+
 /** Onglets d'import, comme ceux de l'import national des experts. */
 export type CategorieImportNotes = 'toutes' | 'ec' | 'sec' | 'penalites'
 
 export interface ColonneAnalysee {
   /** Index de la colonne dans la feuille : la clé des montants et des postes. */
   cle: string
+  categorie?: string | null
   libelle: string
   arrieres: boolean
   tarif: { id: number; libelle: string; montant: string | null; poste_code: string | null } | null
@@ -72,6 +102,13 @@ export interface LigneAnalysee {
   ligne: number
   numero_ordre: string
   nom: string
+  numero_note_externe: string | null
+  date_note: string | null
+  exercice: number | null
+  devise: 'USD' | 'CDF'
+  date_echeance: string | null
+  reference_decision: string | null
+  observation: string | null
   expert: { id: string; numero_ordre: string; nom: string; type_ec: string } | null
   montants: Record<string, string>
   total: string
@@ -79,10 +116,35 @@ export interface LigneAnalysee {
   doublon: boolean
   erreurs: string[]
   avertissements: string[]
+  problemes: ProblemeImport[]
+  creances: LigneCreance[]
+}
+
+export interface ProblemeImport {
+  feuille: string
+  ligne: number
+  champ: string
+  valeur: string
+  message: string
+  code: string
+  niveau: 'ERREUR' | 'AVERTISSEMENT'
+}
+
+export interface LigneCreance {
+  categorie: string
+  exercice: number
+  libelle: string
+  montant: string
+  devise: 'USD' | 'CDF'
+  reference_decision: string | null
+  observation: string | null
+  feuille: string
+  ligne: number
 }
 
 export interface AnalyseImport {
   fichier: string
+  format_import: 'historique' | 'structure'
   categorie: CategorieImportNotes
   ligne_entete: number
   exercice: number
@@ -93,6 +155,7 @@ export interface AnalyseImport {
   colonnes: ColonneAnalysee[]
   colonnes_ignorees: { libelle: string; raison: string }[]
   colonne_numero: boolean
+  problemes: ProblemeImport[]
   lignes: LigneAnalysee[]
   resume: {
     nb_lignes: number
@@ -102,6 +165,10 @@ export interface AnalyseImport {
     nb_doublons: number
     total: string
     total_arrieres: string
+    membres_introuvables: number
+    numeros_existants: number
+    montants_incoherents: number
+    arrieres_non_ventiles: number
   }
 }
 
@@ -113,7 +180,14 @@ export interface ResultatImport {
   nb_lignes_ecartees: number
   montant_total: string
   montant_arrieres: string
-  notes: { id: string; numero_recu: string; numero_ordre: string; nom: string; montant_total: string }[]
+  notes: {
+    id: string
+    numero_recu: string
+    numero_note_externe: string | null
+    numero_ordre: string
+    nom: string
+    montant_total: string
+  }[]
 }
 
 export const analyserImportNotes = (fichier: File, serviceId: number | null, categorie: CategorieImportNotes) => {
@@ -176,6 +250,11 @@ export interface ExpertDocument {
 export interface DocumentNote {
   id: string
   numero_recu: string | null
+  numero_note_externe: string | null
+  exercice: number | null
+  date_echeance: string | null
+  reference_decision: string | null
+  observation: string | null
   date_encaissement: string | null
   libelle: string
   type_client: 'expert_comptable' | 'sec'
@@ -184,7 +263,18 @@ export interface DocumentNote {
   montant_total: string
   montant_paye: string
   reste_du: string
-  articles: { libelle: string; quantite: string; prix_unitaire: string; montant: string; poste_code: string | null }[]
+  articles: {
+    libelle: string
+    categorie: string
+    categorie_libelle: string
+    exercice: number | null
+    reference_decision: string | null
+    observation: string | null
+    quantite: string
+    prix_unitaire: string
+    montant: string
+    poste_code: string | null
+  }[]
   expert: ExpertDocument
 }
 

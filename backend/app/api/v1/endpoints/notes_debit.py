@@ -17,12 +17,21 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import extract, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_tenant_id, get_current_user, has_permission
 from app.api.v1.endpoints.encaissements import _portee_encaissements
 from app.db.session import get_db
+from app.domain.notes_debit import (
+    CATEGORIES_ARRIERE,
+    LEGACY,
+    PENALITE_APO,
+    ARRIERE_PENALITE_APO,
+    AUTRE_PENALITE,
+    ARRIERE_AUTRE_PENALITE,
+    libelle_categorie,
+)
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.note_debit_import import NoteDebitImport
@@ -145,6 +154,7 @@ async def lister_notes(
     statut: str = Query(default="impayees", pattern="^(impayees|soldees|toutes)$"),
     type_client: str | None = Query(default=None, pattern="^(expert_comptable|sec)$"),
     import_id: uuid.UUID | None = Query(default=None),
+    exercice: int | None = Query(default=None, ge=1900, le=2100),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     tenant_id: int = Depends(get_current_tenant_id),
@@ -156,6 +166,9 @@ async def lister_notes(
     Les totaux portent sur toute la sélection filtrée, jamais sur la seule page.
     """
     portee = await _portee_encaissements(db, user, tenant_id)
+    # Les tests de service appellent parfois la fonction directement : dans ce
+    # cas FastAPI n'a pas remplacé l'objet `Query` par sa valeur par défaut.
+    exercice = exercice if isinstance(exercice, int) else None
     vide = {"items": [], "total": 0, "totaux": {"montant_total": "0", "montant_paye": "0", "reste_du": "0"}}
     if portee is None:
         return vide
@@ -174,6 +187,10 @@ async def lister_notes(
         conditions.append(Encaissement.type_client == type_client)
     if import_id:
         conditions.append(Encaissement.note_debit_import_id == import_id)
+    if exercice is not None:
+        conditions.append(
+            func.coalesce(Encaissement.exercice, extract("year", Encaissement.date_encaissement)) == exercice
+        )
     if q and q.strip():
         motif = f"%{q.strip()}%"
         conditions.append(
@@ -181,6 +198,7 @@ async def lister_notes(
                 ExpertComptable.numero_ordre.ilike(motif),
                 ExpertComptable.nom_denomination.ilike(motif),
                 Encaissement.numero_recu.ilike(motif),
+                Encaissement.numero_note_externe.ilike(motif),
                 Encaissement.libelle.ilike(motif),
             )
         )
@@ -216,6 +234,8 @@ async def lister_notes(
             {
                 "id": str(note.id),
                 "numero_recu": note.numero_recu,
+                "numero_note_externe": note.numero_note_externe,
+                "exercice": note.exercice,
                 "date_encaissement": note.date_encaissement.isoformat() if note.date_encaissement else None,
                 "jours": (maintenant - note.date_encaissement).days if note.date_encaissement else 0,
                 "libelle": note.libelle,
@@ -331,6 +351,11 @@ async def _articles_par_note(db: AsyncSession, note_ids: list[uuid.UUID]) -> dic
         resultat.setdefault(article.encaissement_id, []).append(
             {
                 "libelle": article.libelle,
+                "categorie": article.categorie or LEGACY,
+                "categorie_libelle": libelle_categorie(article.categorie, article.libelle),
+                "exercice": article.exercice,
+                "reference_decision": article.reference_decision,
+                "observation": article.description,
                 "quantite": str(article.quantite),
                 "prix_unitaire": str(article.prix_unitaire),
                 "montant": str(article.montant),
@@ -343,9 +368,23 @@ async def _articles_par_note(db: AsyncSession, note_ids: list[uuid.UUID]) -> dic
 def _document_note(note: Encaissement, expert: ExpertComptable, articles: list[dict[str, Any]]) -> dict[str, Any]:
     """Ce qu'une note imprime : une ligne par article, faute d'article l'en-tête."""
     reste = (note.montant_total or 0) - (note.montant_paye or 0)
+    articles_document = [
+        {
+            **article,
+            "exercice": article.get("exercice")
+            or note.exercice
+            or (note.date_encaissement.year if note.date_encaissement else None),
+        }
+        for article in articles
+    ]
     return {
         "id": str(note.id),
         "numero_recu": note.numero_recu,
+        "numero_note_externe": note.numero_note_externe,
+        "exercice": note.exercice or (note.date_encaissement.year if note.date_encaissement else None),
+        "date_echeance": note.date_echeance.isoformat() if note.date_echeance else None,
+        "reference_decision": note.reference_decision,
+        "observation": note.description,
         "date_encaissement": note.date_encaissement.isoformat() if note.date_encaissement else None,
         "libelle": note.libelle,
         "type_client": note.type_client,
@@ -354,10 +393,15 @@ def _document_note(note: Encaissement, expert: ExpertComptable, articles: list[d
         "montant_total": str(note.montant_total),
         "montant_paye": str(note.montant_paye),
         "reste_du": str(max(reste, 0)),
-        "articles": articles
+        "articles": articles_document
         or [
             {
                 "libelle": note.libelle,
+                "categorie": LEGACY,
+                "categorie_libelle": libelle_categorie(LEGACY),
+                "exercice": note.exercice or (note.date_encaissement.year if note.date_encaissement else None),
+                "reference_decision": note.reference_decision,
+                "observation": note.description,
                 "quantite": "1.00",
                 "prix_unitaire": str(note.montant_total),
                 "montant": str(note.montant_total),
@@ -526,7 +570,8 @@ async def _notes_jusqu_a(db: AsyncSession, user: User, tenant_id: int, annee: in
     """Les notes non annulées émises jusqu'à la fin de `annee`, sous la portée de l'utilisateur.
 
     Une note annulée ne réclame plus rien et n'a rien émis : le tableau de bord
-    l'écarte quel que soit le droit de la voir.
+    l'écarte quel que soit le droit de la voir. Une note d'un exercice passé
+    saisie après coup (reprise d'une note historique) compte pour son exercice.
     """
     fin = datetime(annee + 1, 1, 1, tzinfo=timezone.utc)
     return await _notes_visibles(
@@ -534,7 +579,7 @@ async def _notes_jusqu_a(db: AsyncSession, user: User, tenant_id: int, annee: in
         user,
         tenant_id,
         Encaissement.statut_operation != "ANNULEE",
-        Encaissement.date_encaissement < fin,
+        or_(Encaissement.date_encaissement < fin, Encaissement.exercice <= annee),
         *conditions,
     )
 
@@ -560,7 +605,11 @@ async def tableau_de_bord(
     maintenant = datetime.now(timezone.utc)
     annee = annee or maintenant.year
     lignes = await _notes_jusqu_a(db, user, tenant_id, annee)
-    de_l_annee = [(n, e) for n, e in lignes if n.date_encaissement and n.date_encaissement.year == annee]
+    de_l_annee = [
+        (n, e)
+        for n, e in lignes
+        if (n.exercice or (n.date_encaissement.year if n.date_encaissement else None)) == annee
+    ]
     dues = [(n, e) for n, e in lignes if _reste(n) > 0]
 
     zero = Decimal("0.00")
@@ -579,7 +628,16 @@ async def tableau_de_bord(
         if total <= 0:
             continue
         part = sum(
-            (Decimal(a["montant"]) for a in articles.get(note.id, []) if "penalit" in _sans_accents_minuscules(a["libelle"])),
+            (
+                Decimal(a["montant"])
+                for a in articles.get(note.id, [])
+                if a.get("categorie")
+                in {PENALITE_APO, ARRIERE_PENALITE_APO, AUTRE_PENALITE, ARRIERE_AUTRE_PENALITE}
+                or (
+                    a.get("categorie") == LEGACY
+                    and "penalit" in _sans_accents_minuscules(a["libelle"])
+                )
+            ),
             zero,
         )
         penalites += (part * _reste(note) / total).quantize(Decimal("0.01"))
@@ -695,7 +753,7 @@ async def regularite_membres(
     }
     for note, expert in lignes:
         m = membres[str(expert.id)]
-        if note.date_encaissement and note.date_encaissement.year == annee:
+        if (note.exercice or (note.date_encaissement.year if note.date_encaissement else None)) == annee:
             m["nb_notes_annee"] += 1
         reste = _reste(note)
         if reste > 0:

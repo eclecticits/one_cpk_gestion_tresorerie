@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -69,6 +69,11 @@ class EncaissementArticleBase(DecimalBaseModel):
     #: Poste de recette de cette ligne. Vide = la ligne suit le poste de
     #: l'encaissement, comme avant les postes par article.
     budget_poste_id: int | None = None
+    categorie: str | None = Field(default=None, max_length=40)
+    exercice: int | None = Field(default=None, ge=1900, le=2100)
+    reference_decision: str | None = Field(default=None, max_length=255)
+    #: Alias API explicite du champ historique `description`.
+    observation: str | None = None
 
 
 class EncaissementArticleCreate(EncaissementArticleBase):
@@ -87,6 +92,7 @@ class EncaissementArticleResponse(EncaissementArticleBase):
 
 class EncaissementBase(DecimalBaseModel):
     numero_recu: str | None = Field(default=None, max_length=50)
+    numero_note_externe: str | None = Field(default=None, max_length=100)
     numero_proforma: str | None = Field(default=None, max_length=50)
     est_proforma: bool = False
     source_proforma_id: UUID | None = None
@@ -104,6 +110,9 @@ class EncaissementBase(DecimalBaseModel):
     client_sexe: str | None = None
     libelle: str = Field(max_length=255)
     description: str | None = None
+    exercice: int | None = Field(default=None, ge=1900, le=2100)
+    date_echeance: date | None = None
+    reference_decision: str | None = Field(default=None, max_length=255)
     montant: Decimal = Field(ge=0)
     montant_total: Decimal = Field(gt=0)
     mode_paiement: ModePaiement = "cash"

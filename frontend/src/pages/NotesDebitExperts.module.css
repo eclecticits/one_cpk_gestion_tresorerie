@@ -133,6 +133,16 @@
   font-size: 14px;
 }
 
+.filtreAnnee {
+  width: 120px;
+  min-height: var(--control-h);
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 14px;
+}
+
 .puceFiltre {
   display: inline-flex;
   align-items: center;
@@ -847,6 +857,34 @@ button.smart:hover {
   border-radius: var(--radius-sm);
 }
 
+.groupesCreances {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.groupeCreance {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-muted);
+  font-size: 13px;
+}
+
+.groupeCreance > strong {
+  color: var(--color-title);
+}
+
+.groupeCreance > b {
+  margin-top: 3px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+  color: var(--tenant-primary);
+}
+
 .table tfoot td {
   padding: 6px 10px;
   font-size: 13px;
@@ -931,6 +969,13 @@ button.smart:hover {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+/* Exports PDF / Excel, poussés à droite de leur barre. */
+.exports {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .bordEntete select {

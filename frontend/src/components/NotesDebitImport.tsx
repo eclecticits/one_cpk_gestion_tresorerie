@@ -18,6 +18,15 @@ const montant = (valeur: string | number) =>
 
 type ModeDoublons = 'ignorer' | 'importer'
 
+/** Le modèle Excel d'une catégorie : sa feuille de notes et, s'il y a des arriérés, leur ventilation. */
+interface Modele {
+  feuille: string
+  entetes: string[]
+  exemple: (string | number)[]
+  /** Lignes de « Détail créances » (sans l'en-tête) : un arriéré par exercice. */
+  detail: (string | number)[][]
+}
+
 interface ConfigCategorie {
   title: string
   shortTitle: string
@@ -26,68 +35,100 @@ interface ConfigCategorie {
   optional: string[]
   templateName: string
   accent: string
-  example: Record<string, string | number>
+  modele: (annee: number, jour: string) => Modele
 }
+
+const ENTETES_DETAIL = ['N° note externe', "N° d'ordre", 'Catégorie', 'Exercice', 'Montant', 'Motif / Libellé', 'Référence / décision', 'Observation']
+const COMPLEMENTS = ['Date échéance', 'Référence / décision', 'Observation']
 
 /**
  * Mêmes onglets, même parcours que « Importer la liste nationale des
  * experts-comptables » : chaque catégorie a son modèle, sa validation, son
  * aperçu et son rapport. La différence est de portée — la liste nationale est
  * l'affaire du Conseil National, ces notes celles du seul conseil connecté.
+ *
+ * Chaque onglet n'accepte que ses créances (le serveur refuse une pénalité
+ * dans « Cotisations EC ») : son modèle ne porte donc que ses colonnes.
  */
 const categories: Record<CategorieImportNotes, ConfigCategorie> = {
   ec: {
     title: 'Cotisations des experts-comptables',
     shortTitle: 'Cotisations EC',
     description: 'Experts personnes physiques : en cabinet, indépendants, salariés.',
-    required: ["N° d'ordre", 'Nom', 'une colonne par libellé (ex. « Cotisation 2026 »)'],
-    optional: ['Pénalité AG', 'Arriérés', 'Total (contrôle)'],
+    required: ["N° d'ordre", 'Exercice N', 'Cotisation N'],
+    optional: ['N° note externe', 'Date note', 'Nom', 'Arriérés cotisations', 'Autres créances', 'Total note', ...COMPLEMENTS],
     templateName: 'modele_notes_debit_ec.xlsx',
     accent: 'expertAccentIndependant',
-    example: { "N° d'ordre": 'EC/18.00003', Nom: 'KABONGO Jean', 'Cotisation 2026': 600, Arriérés: 450, Total: 1050 },
+    modele: (annee, jour) => ({
+      feuille: 'Cotisations EC',
+      entetes: ['N° note externe', 'Date note', "N° d'ordre", 'Nom', 'Exercice N', 'Cotisation N', 'Arriérés cotisations', 'Autres créances', 'Total note', ...COMPLEMENTS],
+      exemple: [`ND/${annee}/00001`, jour, 'EC/18.00003', 'KABONGO Jean', annee, 600, 1200, 0, 1800, `${annee}-12-31`, '', ''],
+      detail: [
+        [`ND/${annee}/00001`, 'EC/18.00003', 'ARRIERE_COTISATION', annee - 2, 600, `Cotisation ${annee - 2}`, '', ''],
+        [`ND/${annee}/00001`, 'EC/18.00003', 'ARRIERE_COTISATION', annee - 1, 600, `Cotisation ${annee - 1}`, '', ''],
+      ],
+    }),
   },
   sec: {
     title: "Cotisations des sociétés d'expertise comptable",
     shortTitle: 'Cotisations SEC',
     description: "Montant calculé par la Comptabilité sur le chiffre d'affaires déclaré.",
-    required: ["N° d'ordre", 'Dénomination', 'une colonne par libellé (ex. « Cotisation 2026 »)'],
-    optional: ['Arriérés', 'Total (contrôle)'],
+    required: ["N° d'ordre", 'Exercice N', 'Cotisation N'],
+    optional: ['N° note externe', 'Date note', 'Dénomination', 'Arriérés cotisations', 'Autres créances', 'Total note', ...COMPLEMENTS],
     templateName: 'modele_notes_debit_sec.xlsx',
     accent: 'expertAccentSec',
-    example: { "N° d'ordre": 'SEC/001', Dénomination: 'Cabinet Expert Conseil', 'Cotisation 2026': 4200, Arriérés: 1500, Total: 5700 },
+    modele: (annee, jour) => ({
+      feuille: 'Cotisations SEC',
+      entetes: ['N° note externe', 'Date note', "N° d'ordre", 'Dénomination', 'Exercice N', 'Cotisation N', 'Arriérés cotisations', 'Autres créances', 'Total note', ...COMPLEMENTS],
+      exemple: [`ND/${annee}/00002`, jour, 'SEC/001', 'Cabinet Expert Conseil', annee, 4200, 1500, 0, 5700, `${annee}-12-31`, '', `CA ${annee - 1}`],
+      detail: [[`ND/${annee}/00002`, 'SEC/001', 'ARRIERE_COTISATION', annee - 1, 1500, `Cotisation ${annee - 1}`, '', '']],
+    }),
   },
   penalites: {
     title: 'Pénalités',
     shortTitle: 'Pénalités',
     description: "Absences à l'Assemblée générale, aux réunions du Conseil, autres pénalités.",
-    required: ["N° d'ordre", 'Nom', 'une colonne par pénalité (ex. « Pénalité AG »)'],
-    optional: ['Arriérés', 'Total (contrôle)'],
+    required: ["N° d'ordre", 'Exercice N', 'au moins une colonne de pénalité'],
+    optional: [
+      'N° note externe', 'Date note', 'Nom', 'Pénalité APO N', 'Arriérés pénalité APO', 'Autre pénalité',
+      'Arriérés autres pénalités', 'Total note', 'Date échéance', 'Référence / décision',
+      'Observation (motif, obligatoire pour « Autre pénalité »)',
+    ],
     templateName: 'modele_notes_debit_penalites.xlsx',
     accent: 'expertAccentSalarie',
-    example: { "N° d'ordre": 'EC/18.00003', Nom: 'KABONGO Jean', 'Pénalité AG': 100, Total: 100 },
+    modele: (annee, jour) => ({
+      feuille: 'Pénalités',
+      entetes: ['N° note externe', 'Date note', "N° d'ordre", 'Nom', 'Exercice N', 'Pénalité APO N', 'Arriérés pénalité APO', 'Autre pénalité', 'Arriérés autres pénalités', 'Total note', ...COMPLEMENTS],
+      exemple: [`ND/${annee}/00003`, jour, 'EC/18.00003', 'KABONGO Jean', annee, 100, 100, 50, 0, 250, `${annee}-12-31`, `DEC/${annee}/012`, 'Absence à la réunion du Conseil'],
+      detail: [[`ND/${annee}/00003`, 'EC/18.00003', 'ARRIERE_PENALITE_APO', annee - 1, 100, `Pénalité APO ${annee - 1}`, `DEC/${annee - 1}/045`, '']],
+    }),
   },
   toutes: {
     title: 'Fichier mixte',
     shortTitle: 'Toutes catégories',
     description: 'EC, SEC et pénalités dans une même feuille.',
-    required: ["N° d'ordre", 'Nom', 'une colonne par libellé'],
-    optional: ['Arriérés', 'Total (contrôle)'],
+    required: ["N° d'ordre", 'Exercice N', 'au moins une colonne de créance'],
+    optional: ['N° note externe', 'Date note', 'Nom / Raison sociale', 'Type membre', 'toutes les colonnes de créance', 'Total note', ...COMPLEMENTS],
     templateName: 'modele_notes_debit.xlsx',
     accent: 'expertAccentNational',
-    example: {
-      "N° d'ordre": 'EC/18.00003',
-      Nom: 'KABONGO Jean',
-      'Cotisation 2026': 600,
-      'Pénalité AG': 100,
-      Arriérés: 450,
-      Total: 1150,
-    },
+    modele: (annee, jour) => ({
+      feuille: 'Notes de débit',
+      entetes: [
+        'N° note externe', 'Date note', "N° d'ordre", 'Nom / Raison sociale', 'Type membre', 'Exercice N',
+        'Cotisation N', 'Arriérés cotisations', 'Pénalité APO N', 'Arriérés pénalité APO', 'Autre pénalité',
+        'Arriérés autres pénalités', 'Autres créances', 'Total note', ...COMPLEMENTS,
+      ],
+      exemple: [`ND/${annee}/00004`, jour, 'EC/18.00003', 'KABONGO Jean', 'EC', annee, 600, 600, 100, 0, 0, 0, 0, 1300, `${annee}-12-31`, '', ''],
+      detail: [[`ND/${annee}/00004`, 'EC/18.00003', 'ARRIERE_COTISATION', annee - 1, 600, `Cotisation ${annee - 1}`, '', '']],
+    }),
   },
 }
 
 interface MessageLigne {
+  feuille: string
   ligne: number
   colonne: string
+  valeur: string
   erreur: string
   code: 'ERREUR' | 'AVERTISSEMENT'
 }
@@ -159,7 +200,8 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
   const postesManquants = colonnesUtiles.filter((c) => postes[c.cle] == null)
   const erreursColonnes = (analyse?.colonnes ?? []).filter((c) => c.erreur)
   const lignes = analyse?.lignes ?? []
-  const aCreer = lignes.filter((l) => l.statut !== 'erreur' && (modeDoublons === 'importer' || !l.doublon))
+  const modeDoublonsEffectif = analyse?.format_import === 'structure' ? 'ignorer' : modeDoublons
+  const aCreer = lignes.filter((l) => l.statut !== 'erreur' && (modeDoublonsEffectif === 'importer' || !l.doublon))
   const totalACreer = aCreer.reduce((somme, l) => somme + Number(l.total), 0)
   const membresReconnus = lignes.filter((l) => l.expert).length
   // Un administrateur peut émettre hors service, comme à la saisie ; un agent de
@@ -168,17 +210,31 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
 
   const messages: MessageLigne[] = useMemo(() => {
     if (!analyse) return []
+    if (analyse.problemes.length) {
+      return analyse.problemes.map((probleme) => ({
+        feuille: probleme.feuille,
+        ligne: probleme.ligne,
+        colonne: probleme.champ,
+        valeur: probleme.valeur,
+        erreur: probleme.message,
+        code: probleme.niveau,
+      }))
+    }
     const parColonne: MessageLigne[] = analyse.colonnes.flatMap((c) => [
-      ...(c.erreur ? [{ ligne: analyse.ligne_entete, colonne: c.libelle, erreur: c.erreur, code: 'ERREUR' as const }] : []),
+      ...(c.erreur
+        ? [{ feuille: 'Feuille principale', ligne: analyse.ligne_entete, colonne: c.libelle, valeur: '', erreur: c.erreur, code: 'ERREUR' as const }]
+        : []),
       ...(c.avertissement
-        ? [{ ligne: analyse.ligne_entete, colonne: c.libelle, erreur: c.avertissement, code: 'AVERTISSEMENT' as const }]
+        ? [{ feuille: 'Feuille principale', ligne: analyse.ligne_entete, colonne: c.libelle, valeur: '', erreur: c.avertissement, code: 'AVERTISSEMENT' as const }]
         : []),
     ])
     const parLigne = analyse.lignes.flatMap((l) => [
-      ...l.erreurs.map((m) => ({ ligne: l.ligne, colonne: l.numero_ordre || l.nom, erreur: m, code: 'ERREUR' as const })),
+      ...l.erreurs.map((m) => ({ feuille: 'Feuille principale', ligne: l.ligne, colonne: l.numero_ordre || l.nom, valeur: '', erreur: m, code: 'ERREUR' as const })),
       ...l.avertissements.map((m) => ({
+        feuille: 'Feuille principale',
         ligne: l.ligne,
         colonne: l.numero_ordre || l.nom,
+        valeur: '',
         erreur: m,
         code: 'AVERTISSEMENT' as const,
       })),
@@ -195,7 +251,8 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
     postesManquants.length === 0 &&
     erreursColonnes.length === 0 &&
     !serviceRequis &&
-    analyse.exercice_ouvert
+    analyse.exercice_ouvert &&
+    !(analyse.format_import === 'structure' && analyse.resume.nb_erreurs > 0)
 
   const lancerImport = async () => {
     if (!fichier || !peutImporter) return
@@ -205,7 +262,7 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
       const reponse = await importerNotes(fichier, {
         service_id: serviceId,
         postes,
-        importer_doublons: modeDoublons === 'importer',
+        importer_doublons: modeDoublonsEffectif === 'importer',
         categorie,
       })
       setResultat(reponse)
@@ -218,17 +275,20 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
   }
 
   const telechargerModele = () => {
-    const feuille = XLSX.utils.json_to_sheet([config.example])
+    // Date du jour, au sens du serveur (UTC) : antidater est réservé au super administrateur.
+    const jour = new Date().toISOString().slice(0, 10)
+    const modele = config.modele(new Date().getFullYear(), jour)
     const classeur = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(classeur, feuille, config.shortTitle.slice(0, 31))
+    XLSX.utils.book_append_sheet(classeur, XLSX.utils.aoa_to_sheet([modele.entetes, modele.exemple]), modele.feuille)
+    XLSX.utils.book_append_sheet(classeur, XLSX.utils.aoa_to_sheet([ENTETES_DETAIL, ...modele.detail]), 'Détail créances')
     XLSX.writeFile(classeur, config.templateName)
   }
 
   const telechargerCsv = () => {
     if (!messages.length) return
     const csv = [
-      ['ligne', 'code', 'colonne', 'message'],
-      ...messages.map((m) => [String(m.ligne), m.code, m.colonne, m.erreur]),
+      ['feuille', 'ligne', 'code', 'champ', 'valeur reçue', 'message'],
+      ...messages.map((m) => [m.feuille, String(m.ligne), m.code, m.colonne, m.valeur, m.erreur]),
     ]
       .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
       .join('\n')
@@ -326,7 +386,12 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
 
         <section className={styles.importCard}>
           <h3>Gestion des conflits</h3>
-          <div className={styles.expertConflictGrid}>
+          {analyse?.format_import === 'structure' ? (
+            <p className={styles.expertCardHint}>
+              Mode sécurisé : un numéro externe ou une cotisation déjà existante bloque la ligne. Aucune dette
+              existante n'est écrasée ou cumulée automatiquement.
+            </p>
+          ) : <div className={styles.expertConflictGrid}>
             <label className={`${styles.conflictChoice} ${styles.conflictUpdate}`}>
               <input
                 type="radio"
@@ -355,7 +420,7 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
                 <small>Pour une seconde émission voulue : la dette s'ajoute à la précédente.</small>
               </span>
             </label>
-          </div>
+          </div>}
         </section>
 
         <section className={styles.importGridSection}>
@@ -381,7 +446,7 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
                 dont arriérés<strong>{montant(analyse?.resume.total_arrieres ?? 0)}</strong>
               </span>
               <span>
-                Mode conflit<strong>{modeDoublons === 'ignorer' ? 'Doublons ignorés' : 'Doublons créés'}</strong>
+                Mode conflit<strong>{modeDoublonsEffectif === 'ignorer' ? 'Doublons ignorés' : 'Doublons créés'}</strong>
               </span>
             </div>
             {analyse && (
@@ -390,6 +455,10 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
                 <span>À vérifier : {analyse.resume.nb_avertissements}</span>
                 <span>Écartées : {nbErreurs + (modeDoublons === 'ignorer' ? analyse.resume.nb_doublons : 0)}</span>
                 <span>Exercice : {analyse.exercice}</span>
+                {analyse.resume.membres_introuvables > 0 && <span>Membres introuvables : {analyse.resume.membres_introuvables}</span>}
+                {analyse.resume.numeros_existants > 0 && <span>N° externes existants : {analyse.resume.numeros_existants}</span>}
+                {analyse.resume.montants_incoherents > 0 && <span>Montants incohérents : {analyse.resume.montants_incoherents}</span>}
+                {analyse.resume.arrieres_non_ventiles > 0 && <span>Arriérés non ventilés : {analyse.resume.arrieres_non_ventiles}</span>}
               </div>
             )}
           </div>
@@ -400,9 +469,9 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
               <div className={styles.expertPreviewList}>
                 {lignes.slice(0, 5).map((l) => (
                   <div className={styles.expertPreviewRow} key={l.ligne}>
-                    <strong>{l.expert?.numero_ordre ?? l.numero_ordre}</strong>
+                    <strong>{l.numero_note_externe || l.expert?.numero_ordre || l.numero_ordre}</strong>
                     <span>{l.expert?.nom ?? l.nom}</span>
-                    <em>{montant(l.total)}</em>
+                    <em>{l.exercice ? `${l.exercice} · ` : ''}{montant(l.total)}</em>
                   </div>
                 ))}
                 {lignes.length > 5 && <p>{lignes.length - 5} ligne(s) supplémentaires.</p>}
@@ -493,8 +562,13 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
             <span>Colonnes obligatoires : {config.required.join(', ')}.</span>
             <span>Colonnes optionnelles : {config.optional.join(', ')}.</span>
             <span>
-              Une cellule vide ou à 0 ne crée pas de ligne. « Arriérés » est reconnue d'office ; « Total » sert de
-              contrôle et n'est pas importée.
+              La feuille « {config.modele(new Date().getFullYear(), '').feuille} » porte une note par ligne. Les
+              arriérés sont ventilés par exercice dans « Détail créances » ; « Total note » doit être égal à la somme
+              exacte des lignes. Les montants sont en USD.
+            </span>
+            <span>
+              L'ancien format (une colonne par libellé, plus « Arriérés ») reste accepté : il est reconnu à l'absence
+              de colonne « Exercice N ».
             </span>
             <span>Le fichier est validé pour la catégorie active ; les notes créées ne concernent que votre conseil.</span>
           </section>
@@ -534,7 +608,8 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
               <div className={styles.errorList}>
                 {(detail ? messages : messages.slice(0, 5)).map((m, index) => (
                   <span key={`${m.ligne}-${index}`}>
-                    Ligne {m.ligne} · {m.code === 'ERREUR' ? 'Erreur' : 'À vérifier'} · {m.colonne} : {m.erreur}
+                    {m.feuille} · ligne {m.ligne} · {m.code === 'ERREUR' ? 'Erreur' : 'À vérifier'} · {m.colonne}
+                    {m.valeur ? ` (« ${m.valeur} »)` : ''} : {m.erreur}
                   </span>
                 ))}
                 {messages.length > 5 && (

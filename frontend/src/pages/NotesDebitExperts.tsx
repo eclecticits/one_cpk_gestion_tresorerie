@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { format } from 'date-fns'
-import { History, LayoutDashboard, List, Printer, Settings2, Upload, X } from 'lucide-react'
+import { FileSpreadsheet, FileText, History, LayoutDashboard, List, Printer, Settings2, Upload, X } from 'lucide-react'
 import {
   documentsNotesDebit,
+  LIBELLE_STATUT_NOTE,
   listerImportsNotes,
   listerNotesDebit,
+  listerToutesNotesDebit,
   PERMISSION_IMPORT_NOTES_DEBIT,
   type ImportNotesDebit,
   type ListeNotesDebit,
@@ -16,6 +18,7 @@ import NoteDebitFiche from '../components/NoteDebitFiche'
 import NotesDebitImport from '../components/NotesDebitImport'
 import NotesDebitTableauDeBord, { type FiltreListe } from '../components/NotesDebitTableauDeBord'
 import PaymentManager from '../components/PaymentManager'
+import { useAuth } from '../contexts/AuthContext'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { usePermissions } from '../hooks/usePermissions'
 import { useToast } from '../hooks/useToast'
@@ -37,13 +40,6 @@ async function imprimerNotes(params: { ids?: string[]; import_id?: string }) {
 }
 
 type Onglet = 'bord' | 'liste' | 'imports'
-
-const LIBELLE_STATUT: Record<string, string> = {
-  non_paye: 'Émise',
-  partiel: 'Partiellement payée',
-  complet: 'Payée',
-  avance: 'Payée (avance)',
-}
 
 /**
  * Notes de débit des experts-comptables et des SEC.
@@ -175,14 +171,15 @@ function ListeNotes({
   const rechercheStable = useDebouncedValue(recherche)
   const [statut, setStatut] = useState<StatutNotes>(filtreInitial.statut ?? 'impayees')
   const [typeClient, setTypeClient] = useState(filtreInitial.type_client ?? '')
+  const [exercice, setExercice] = useState('')
   const [page, setPage] = useState(0)
   const [donnees, setDonnees] = useState<ListeNotesDebit | null>(null)
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState<string | null>(null)
   const [noteEnPaiement, setNoteEnPaiement] = useState<Encaissement | null>(null)
 
-  useEffect(() => setPage(0), [rechercheStable, statut, typeClient, importFiltre?.id])
-  useEffect(() => setSelection(new Set()), [rechercheStable, statut, typeClient, importFiltre?.id, page])
+  useEffect(() => setPage(0), [rechercheStable, statut, typeClient, exercice, importFiltre?.id])
+  useEffect(() => setSelection(new Set()), [rechercheStable, statut, typeClient, exercice, importFiltre?.id, page])
 
   const basculer = (id: string) =>
     setSelection((avant) => {
@@ -212,6 +209,7 @@ function ListeNotes({
           q: rechercheStable.trim(),
           statut,
           type_client: typeClient,
+          exercice: exercice ? Number(exercice) : undefined,
           import_id: importFiltre?.id,
           limit: PAR_PAGE,
           offset: page * PAR_PAGE,
@@ -222,7 +220,7 @@ function ListeNotes({
     } finally {
       setChargement(false)
     }
-  }, [rechercheStable, statut, typeClient, importFiltre?.id, page])
+  }, [rechercheStable, statut, typeClient, exercice, importFiltre?.id, page])
 
   useEffect(() => {
     void charger()
@@ -239,6 +237,42 @@ function ListeNotes({
       )
     } catch (err) {
       setErreur(err instanceof ApiError ? err.message : "Impossible d'ouvrir cette note de débit.")
+    }
+  }
+
+  const { user } = useAuth()
+  const [export_, setExport] = useState<'pdf' | 'excel' | null>(null)
+
+  /** Toute la sélection filtrée, pas la seule page affichée. */
+  const exporter = async (formatExport: 'pdf' | 'excel') => {
+    setExport(formatExport)
+    try {
+      const { items, totaux } = await listerToutesNotesDebit({
+        q: rechercheStable.trim(),
+        statut,
+        type_client: typeClient,
+        exercice: exercice ? Number(exercice) : undefined,
+        import_id: importFiltre?.id,
+      })
+      const filtres = [
+        { label: 'Statut', value: { impayees: 'Non soldées', soldees: 'Soldées', toutes: 'Toutes' }[statut] },
+        { label: 'Membres', value: typeClient === 'sec' ? 'SEC' : typeClient ? 'Experts-comptables' : 'EC et SEC' },
+        rechercheStable.trim() && { label: 'Recherche', value: rechercheStable.trim() },
+        exercice && { label: 'Exercice', value: exercice },
+        importFiltre && { label: 'Import', value: importFiltre.fichier },
+      ].filter((f): f is { label: string; value: string } => Boolean(f))
+      const mod = await import('../utils/exportNotesDebit')
+      const params = {
+        notes: items,
+        totaux,
+        filtres,
+        organisation: user?.organisation_name || user?.organisation_slug || 'ONEC',
+      }
+      await (formatExport === 'pdf' ? mod.exporterListeNotesPDF(params) : mod.exporterListeNotesExcel(params))
+    } catch (err) {
+      notifyError('Export', err instanceof ApiError ? err.message : "Impossible d'exporter ces notes de débit.")
+    } finally {
+      setExport(null)
     }
   }
 
@@ -268,6 +302,16 @@ function ListeNotes({
           <option value="expert_comptable">Experts-comptables</option>
           <option value="sec">SEC</option>
         </select>
+        <input
+          type="number"
+          min={1900}
+          max={2100}
+          className={styles.filtreAnnee}
+          placeholder="Exercice"
+          value={exercice}
+          onChange={(e) => setExercice(e.target.value)}
+          aria-label="Exercice de la note"
+        />
         {importFiltre && (
           <span className={styles.puceFiltre}>
             Import : {importFiltre.fichier}
@@ -276,6 +320,26 @@ function ListeNotes({
             </button>
           </span>
         )}
+        <div className={styles.exports}>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={() => void exporter('pdf')}
+            disabled={export_ !== null || total === 0}
+            title="Exporter toutes les notes de la sélection en PDF"
+          >
+            <FileText size={16} aria-hidden /> {export_ === 'pdf' ? 'Export…' : 'PDF'}
+          </button>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={() => void exporter('excel')}
+            disabled={export_ !== null || total === 0}
+            title="Exporter toutes les notes de la sélection en Excel"
+          >
+            <FileSpreadsheet size={16} aria-hidden /> {export_ === 'excel' ? 'Export…' : 'Excel'}
+          </button>
+        </div>
       </section>
 
       <section className={styles.summaryStrip} aria-label="Totaux de la sélection">
@@ -338,6 +402,7 @@ function ListeNotes({
                 </th>
                 <th>N° note</th>
                 <th>Date</th>
+                <th>Exercice</th>
                 <th>Membre</th>
                 <th>Libellés</th>
                 <th className={styles.num}>Montant</th>
@@ -350,13 +415,13 @@ function ListeNotes({
             <tbody>
               {chargement && !donnees ? (
                 <tr>
-                  <td colSpan={10} className={styles.vide}>
+                  <td colSpan={11} className={styles.vide}>
                     Chargement…
                   </td>
                 </tr>
               ) : donnees && donnees.items.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className={styles.vide}>
+                  <td colSpan={11} className={styles.vide}>
                     Aucune note de débit pour ces critères.
                   </td>
                 </tr>
@@ -372,7 +437,7 @@ function ListeNotes({
                         type="checkbox"
                         checked={selection.has(note.id)}
                         onChange={() => basculer(note.id)}
-                        aria-label={`Sélectionner la note ${note.numero_recu ?? ''}`}
+                        aria-label={`Sélectionner la note ${note.numero_note_externe || note.numero_recu || ''}`}
                       />
                     </td>
                     <td className={styles.numero}>
@@ -384,10 +449,12 @@ function ListeNotes({
                           setFicheOuverte(note.id)
                         }}
                       >
-                        {note.numero_recu ?? '—'}
+                        {note.numero_note_externe || note.numero_recu || '—'}
                       </button>
+                      {note.numero_note_externe && <small className={styles.muted}>{note.numero_recu || '—'}</small>}
                     </td>
                     <td>{note.date_encaissement ? format(new Date(note.date_encaissement), 'dd/MM/yyyy') : '—'}</td>
+                    <td>{note.exercice ?? '—'}</td>
                     <td>
                       <div className={styles.membre}>
                         <strong>{note.expert.nom}</strong>
@@ -472,7 +539,7 @@ function StatutNote({ note }: { note: NoteDebitExpert }) {
       : note.statut_paiement === 'partiel'
         ? styles.badgeWarn
         : styles.badgeOk
-  return <span className={`${styles.badge} ${classe}`}>{LIBELLE_STATUT[note.statut_paiement] ?? note.statut_paiement}</span>
+  return <span className={`${styles.badge} ${classe}`}>{LIBELLE_STATUT_NOTE[note.statut_paiement] ?? note.statut_paiement}</span>
 }
 
 function HistoriqueImports({ onVoirNotes }: { onVoirNotes: (imp: ImportNotesDebit) => void }) {

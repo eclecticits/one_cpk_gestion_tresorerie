@@ -106,6 +106,10 @@ export interface EncaissementArticle {
   encaissement_id: string
   libelle: string
   description?: string | null
+  observation?: string | null
+  categorie?: string | null
+  exercice?: number | null
+  reference_decision?: string | null
   quantite: Money
   prix_unitaire: Money
   montant: Money
@@ -118,6 +122,7 @@ export interface EncaissementArticle {
 export interface Encaissement {
   id: string
   numero_recu?: string | null
+  numero_note_externe?: string | null
   numero_proforma?: string | null
   est_proforma?: boolean
   source_proforma_id?: string | null
@@ -127,6 +132,9 @@ export interface Encaissement {
   client_nom?: string
   libelle: string
   description: string
+  exercice?: number | null
+  date_echeance?: string | null
+  reference_decision?: string | null
   montant: Money
   montant_total: Money
   montant_paye: Money

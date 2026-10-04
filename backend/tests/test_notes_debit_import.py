@@ -8,6 +8,7 @@ refusé, et ce qui en est créé.
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 
@@ -50,6 +51,83 @@ def _classeur(lignes: list[list]) -> bytes:
     tampon = BytesIO()
     wb.save(tampon)
     return tampon.getvalue()
+
+
+def _classeur_structure(principales: list[list], details: list[list] | None = None) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cotisations EC"
+    for ligne in principales:
+        ws.append(ligne)
+    if details is not None:
+        detail = wb.create_sheet("Détail créances")
+        for ligne in details:
+            detail.append(ligne)
+    tampon = BytesIO()
+    wb.save(tampon)
+    return tampon.getvalue()
+
+
+ENTETE_STRUCTURE = [
+    "N° note externe", "Date note", "N° d'ordre", "Nom / Raison sociale", "Type membre",
+    "Exercice N", "Cotisation N", "Arriérés cotisations", "Pénalité APO N",
+    "Arriérés pénalité APO", "Autre pénalité", "Arriérés autres pénalités",
+    "Autres créances", "Total note", "Devise", "Date échéance", "Référence / décision", "Observation",
+]
+ENTETE_DETAIL = [
+    "N° note externe", "N° d'ordre", "Catégorie", "Exercice", "Montant", "Devise",
+    "Motif / Libellé", "Référence / décision", "Observation",
+]
+
+
+AUJOURDHUI = datetime.now(timezone.utc).date()
+ECHEANCE = AUJOURDHUI + timedelta(days=30)
+
+
+def _ligne_structure(expert, **changements):
+    valeurs = {
+        "numero_externe": "ND/CPK/2026/00125",
+        # Le jour même : antidater est réservé au super administrateur.
+        "date_note": AUJOURDHUI.isoformat(),
+        "numero_ordre": expert.numero_ordre,
+        "nom": expert.nom_denomination,
+        "type_membre": "SEC" if expert.type_ec == "SEC" else "EC",
+        "exercice": 2026,
+        "cotisation": 300,
+        "arrieres_cotisation": 0,
+        "penalite_apo": 0,
+        "arrieres_apo": 0,
+        "autre_penalite": 0,
+        "arrieres_autres": 0,
+        "autres_creances": 0,
+        "total": 300,
+        "devise": "USD",
+        "date_echeance": ECHEANCE.isoformat(),
+        "reference": "DEC-2026-01",
+        "observation": "",
+    }
+    valeurs.update(changements)
+    return [
+        valeurs["numero_externe"], valeurs["date_note"], valeurs["numero_ordre"], valeurs["nom"],
+        valeurs["type_membre"], valeurs["exercice"], valeurs["cotisation"],
+        valeurs["arrieres_cotisation"], valeurs["penalite_apo"], valeurs["arrieres_apo"],
+        valeurs["autre_penalite"], valeurs["arrieres_autres"], valeurs["autres_creances"],
+        valeurs["total"], valeurs["devise"], valeurs["date_echeance"], valeurs["reference"],
+        valeurs["observation"],
+    ]
+
+
+def _postes_structure(analyse, postes):
+    correspondance = {
+        "COTISATION_ANNUELLE": postes["cot"].id,
+        "ARRIERE_COTISATION": postes["arr"].id,
+        "PENALITE_APO": postes["pen"].id,
+        "ARRIERE_PENALITE_APO": postes["pen"].id,
+        "AUTRE_PENALITE": postes["pen"].id,
+        "ARRIERE_AUTRE_PENALITE": postes["pen"].id,
+        "AUTRE_CREANCE": postes["cot"].id,
+    }
+    return {colonne["cle"]: correspondance[colonne["categorie"]] for colonne in analyse.colonnes}
 
 
 # ---------------------------------------------------------------------------
@@ -590,3 +668,312 @@ async def test_les_notes_d_un_conseil_n_existent_pas_pour_un_autre(db_session):
     # Les mêmes membres, dans l'autre conseil : rien n'y est encore émis.
     analyse_b = await analyser(db, tenant_id=org_b.id, user=user_b, contenu=contenu, service_id=service_b.id)
     assert not any(l.doublon for l in analyse_b.lignes)
+
+
+# ---------------------------------------------------------------------------
+# Modèle structuré : en-tête + détail des créances par exercice
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_structure_cotisation_arrieres_apo_et_numero_externe(db_session):
+    """La ventilation détaillée devient bien une ligne métier par exercice."""
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    numero = "ND/CPK/2026/00125"
+    contenu = _classeur_structure(
+        [
+            ENTETE_STRUCTURE,
+            _ligne_structure(
+                experts["ec"], numero_externe=numero, cotisation=300,
+                arrieres_cotisation=900, penalite_apo=100, arrieres_apo=100, total=1400,
+            ),
+        ],
+        [
+            ENTETE_DETAIL,
+            [numero, experts["ec"].numero_ordre, "ARRIERE_COTISATION", 2023, 300, "USD", "Cotisation 2023", "", ""],
+            [numero, experts["ec"].numero_ordre, "ARRIERE_COTISATION", 2024, 300, "USD", "Cotisation 2024", "", ""],
+            [numero, experts["ec"].numero_ordre, "ARRIERE_COTISATION", 2025, 300, "USD", "Cotisation 2025", "", ""],
+            [numero, experts["ec"].numero_ordre, "ARRIERE_PENALITE_APO", 2025, 100, "USD", "Pénalité APO 2025", "DEC-2025", ""],
+        ],
+    )
+    analyse = await analyser(
+        db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id, categorie="toutes"
+    )
+    assert analyse.format_import == "structure"
+    assert analyse.lignes[0].erreurs == []
+    assert [(c.categorie, c.exercice, c.montant) for c in analyse.lignes[0].creances] == [
+        ("ARRIERE_COTISATION", 2023, Decimal("300.00")),
+        ("ARRIERE_COTISATION", 2024, Decimal("300.00")),
+        ("ARRIERE_COTISATION", 2025, Decimal("300.00")),
+        ("ARRIERE_PENALITE_APO", 2025, Decimal("100.00")),
+        ("COTISATION_ANNUELLE", 2026, Decimal("300.00")),
+        ("PENALITE_APO", 2026, Decimal("100.00")),
+    ]
+
+    resultat = await importer(
+        db, tenant_id=org.id, user=user, fichier="structure.xlsx", contenu=contenu,
+        service_id=service.id, postes=_postes_structure(analyse, postes), categorie="toutes",
+    )
+    note = await db.get(Encaissement, uuid.UUID(resultat["notes"][0]["id"]))
+    assert note.numero_note_externe == numero
+    assert note.numero_recu.startswith("ND-") and note.numero_recu != numero
+    assert note.exercice == 2026 and note.date_echeance == ECHEANCE
+    lignes = (
+        await db.execute(
+            select(EncaissementArticle)
+            .where(EncaissementArticle.encaissement_id == note.id)
+            .order_by(EncaissementArticle.sort_order)
+        )
+    ).scalars().all()
+    assert [(ligne.categorie, ligne.exercice) for ligne in lignes] == [
+        ("ARRIERE_COTISATION", 2023),
+        ("ARRIERE_COTISATION", 2024),
+        ("ARRIERE_COTISATION", 2025),
+        ("ARRIERE_PENALITE_APO", 2025),
+        ("COTISATION_ANNUELLE", 2026),
+        ("PENALITE_APO", 2026),
+    ]
+    assert Decimal(resultat["montant_arrieres"]) == Decimal("1000.00")
+
+
+@pytest.mark.asyncio
+async def test_import_structure_sans_numero_externe_et_autre_penalite_motivee(db_session):
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    contenu = _classeur_structure(
+        [
+            ENTETE_STRUCTURE,
+            _ligne_structure(
+                experts["ec"], numero_externe="", cotisation=300, autre_penalite=75,
+                total=375, observation="Absence non justifiée à la réunion",
+            ),
+        ]
+    )
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    assert not analyse.lignes[0].erreurs
+    resultat = await importer(
+        db, tenant_id=org.id, user=user, fichier="sans-numero.xlsx", contenu=contenu,
+        service_id=service.id, postes=_postes_structure(analyse, postes),
+    )
+    note = await db.get(Encaissement, uuid.UUID(resultat["notes"][0]["id"]))
+    assert note.numero_note_externe is None and note.numero_recu.startswith("ND-")
+    autre = (
+        await db.execute(
+            select(EncaissementArticle).where(
+                EncaissementArticle.encaissement_id == note.id,
+                EncaissementArticle.categorie == "AUTRE_PENALITE",
+            )
+        )
+    ).scalar_one()
+    assert autre.libelle == "Absence non justifiée à la réunion"
+
+
+@pytest.mark.asyncio
+async def test_structure_bloque_numero_externe_et_cotisation_deja_emis(db_session):
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    premier = _classeur_structure([ENTETE_STRUCTURE, _ligne_structure(experts["ec"])])
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=premier, service_id=service.id)
+    await importer(
+        db, tenant_id=org.id, user=user, fichier="premier.xlsx", contenu=premier,
+        service_id=service.id, postes=_postes_structure(analyse, postes),
+    )
+
+    meme_numero = await analyser(db, tenant_id=org.id, user=user, contenu=premier, service_id=service.id)
+    codes = {p.code for p in meme_numero.lignes[0].problemes}
+    assert {"NUMERO_EXTERNE_EXISTANT", "DOUBLON_COTISATION"} <= codes
+
+    autre_numero = _classeur_structure(
+        [ENTETE_STRUCTURE, _ligne_structure(experts["ec"], numero_externe="ND/CPK/2026/99999")]
+    )
+    seconde = await analyser(db, tenant_id=org.id, user=user, contenu=autre_numero, service_id=service.id)
+    assert any(p.code == "DOUBLON_COTISATION" for p in seconde.lignes[0].problemes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("changements", "code"),
+    [
+        ({"numero_ordre": "EC/INCONNU"}, "MEMBRE_INTROUVABLE"),
+        ({"exercice": 1899}, "EXERCICE_INVALIDE"),
+        ({"cotisation": -1, "total": -1}, "MONTANT_INVALIDE"),
+        ({"devise": "EUR"}, "DEVISE_INVALIDE"),
+        # Les montants sont tenus en USD : une note en CDF serait relue en dollars.
+        ({"devise": "CDF"}, "DEVISE_INVALIDE"),
+        ({"date_note": (AUJOURDHUI - timedelta(days=40)).isoformat()}, "DATE_ANTERIEURE"),
+        ({"total": 999}, "TOTAL_INCOHERENT"),
+        ({"arrieres_cotisation": 300, "total": 600}, "ARRIERE_NON_VENTILE"),
+    ],
+)
+async def test_structure_signale_precisement_les_valeurs_invalides(db_session, changements, code):
+    db = db_session
+    org, user, service, _postes, experts = await _contexte(db)
+    contenu = _classeur_structure([ENTETE_STRUCTURE, _ligne_structure(experts["ec"], **changements)])
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    probleme = next(p for p in analyse.lignes[0].problemes if p.code == code)
+    assert probleme.ligne == 2 and probleme.champ and probleme.message
+
+
+@pytest.mark.asyncio
+async def test_structure_refuse_categorie_inconnue_et_autre_penalite_sans_motif(db_session):
+    db = db_session
+    org, user, service, _postes, experts = await _contexte(db)
+    numero = "ND/CPK/2026/00125"
+    contenu = _classeur_structure(
+        [ENTETE_STRUCTURE, _ligne_structure(experts["ec"], cotisation=0, total=50)],
+        [
+            ENTETE_DETAIL,
+            [numero, experts["ec"].numero_ordre, "PENALITE_INVENTEE", 2026, 25, "USD", "?", "", ""],
+            [numero, experts["ec"].numero_ordre, "AUTRE_PENALITE", 2026, 25, "USD", "", "", ""],
+        ],
+    )
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    assert {p.code for p in analyse.lignes[0].problemes} >= {"CATEGORIE_INCONNUE", "LIBELLE_REQUIS"}
+
+
+@pytest.mark.asyncio
+async def test_recherche_numero_externe_et_document_pdf_detaille(db_session):
+    from app.api.v1.endpoints.notes_debit import documents_a_imprimer, lister_notes
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    numero = "ND/CPK/2026/00888"
+    contenu = _classeur_structure(
+        [ENTETE_STRUCTURE, _ligne_structure(experts["ec"], numero_externe=numero, cotisation=300, penalite_apo=100, total=400)]
+    )
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    resultat = await importer(
+        db, tenant_id=org.id, user=user, fichier="pdf.xlsx", contenu=contenu,
+        service_id=service.id, postes=_postes_structure(analyse, postes),
+    )
+    liste = await lister_notes(
+        q="00888", statut="toutes", type_client=None, import_id=None, exercice=2026,
+        limit=50, offset=0, tenant_id=org.id, user=user, db=db,
+    )
+    assert liste["total"] == 1 and liste["items"][0]["numero_note_externe"] == numero
+    documents = await documents_a_imprimer(
+        ids=resultat["notes"][0]["id"], import_id=None, tenant_id=org.id, user=user, db=db
+    )
+    document = documents["notes"][0]
+    assert document["numero_note_externe"] == numero
+    assert document["numero_recu"].startswith("ND-")
+    assert [(a["categorie"], a["exercice"]) for a in document["articles"]] == [
+        ("COTISATION_ANNUELLE", 2026), ("PENALITE_APO", 2026),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ancienne_note_sans_metadonnees_reste_consultable(db_session):
+    from app.api.v1.endpoints.notes_debit import fiche_note
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    note = Encaissement(
+        organisation_id=org.id, numero_recu="ND-LEGACY-1", type_client="expert_comptable",
+        expert_comptable_id=experts["ec"].id, libelle="Ancienne cotisation", montant=Decimal("250"),
+        montant_total=Decimal("250"), montant_paye=0, montant_percu=0, devise_perception="USD",
+        taux_change_applique=1, budget_poste_id=postes["cot"].id, service_id=service.id,
+        statut_paiement="non_paye", mode_paiement="cash", canal="CAISSE", created_by=user.id,
+    )
+    db.add(note)
+    await db.flush()
+    db.add(EncaissementArticle(
+        organisation_id=org.id, encaissement_id=note.id, libelle="Ancienne cotisation",
+        quantite=1, prix_unitaire=250, montant=250, budget_poste_id=postes["cot"].id,
+    ))
+    await db.commit()
+
+    fiche = await fiche_note(note_id=note.id, tenant_id=org.id, user=user, db=db)
+    assert Decimal(fiche["montant_total"]) == Decimal("250.00")
+    assert fiche["articles"][0]["categorie"] == "LEGACY"
+
+
+@pytest.mark.asyncio
+async def test_structure_super_admin_reprend_une_note_a_sa_date(db_session):
+    """Reprise d'une note historique : la date du fichier est retenue pour le seul super administrateur."""
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    user.role = "super_admin"
+    await db.commit()
+    jour = AUJOURDHUI - timedelta(days=40)
+    contenu = _classeur_structure([ENTETE_STRUCTURE, _ligne_structure(experts["ec"], date_note=jour.isoformat())])
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    assert not analyse.lignes[0].erreurs
+    resultat = await importer(
+        db, tenant_id=org.id, user=user, fichier="reprise.xlsx", contenu=contenu,
+        service_id=service.id, postes=_postes_structure(analyse, postes),
+    )
+    note = await db.get(Encaissement, uuid.UUID(resultat["notes"][0]["id"]))
+    assert note.date_encaissement.date() == jour
+
+
+@pytest.mark.asyncio
+async def test_tableau_de_bord_compte_une_note_reprise_dans_son_exercice(db_session):
+    """Une note de l'exercice passé saisie aujourd'hui compte pour cet exercice-là."""
+    from app.api.v1.endpoints.notes_debit import tableau_de_bord
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    passe = AUJOURDHUI.year - 1
+    contenu = _classeur_structure(
+        [ENTETE_STRUCTURE, _ligne_structure(experts["ec"], exercice=passe, numero_externe="ND/OLD/1")]
+    )
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    assert not analyse.lignes[0].erreurs
+    await importer(
+        db, tenant_id=org.id, user=user, fichier="passe.xlsx", contenu=contenu,
+        service_id=service.id, postes=_postes_structure(analyse, postes),
+    )
+    bord = await tableau_de_bord(annee=passe, tenant_id=org.id, user=user, db=db)
+    assert Decimal(bord["kpi"]["emis"]) == Decimal("300.00")
+
+
+def _classeur_onglet(entete: list[str], ligne: list, titre: str) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = titre
+    ws.append(entete)
+    ws.append(ligne)
+    tampon = BytesIO()
+    wb.save(tampon)
+    return tampon.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_modele_penalites_sans_colonne_cotisation_est_reconnu(db_session):
+    """Le modèle « Pénalités » n'a pas de colonne « Cotisation N » : il reste le format structuré."""
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    expert = experts["ec"]
+    contenu = _classeur_onglet(
+        ["N° note externe", "Date note", "N° d'ordre", "Nom", "Exercice N", "Pénalité APO N",
+         "Autre pénalité", "Total note", "Référence / décision", "Observation"],
+        ["ND/PEN/1", AUJOURDHUI.isoformat(), expert.numero_ordre, expert.nom_denomination,
+         AUJOURDHUI.year, 100, 50, 150, "DEC-1", "Absence au Conseil"],
+        "Pénalités",
+    )
+    analyse = await analyser(
+        db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id, categorie="penalites"
+    )
+    assert analyse.format_import == "structure"
+    assert not analyse.lignes[0].erreurs
+    assert {c.categorie for c in analyse.lignes[0].creances} == {"PENALITE_APO", "AUTRE_PENALITE"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("onglet", "changements"),
+    [
+        ("ec", {"penalite_apo": 100, "total": 400}),
+        ("penalites", {}),
+    ],
+)
+async def test_chaque_onglet_refuse_les_creances_d_un_autre(db_session, onglet, changements):
+    db = db_session
+    org, user, service, _postes, experts = await _contexte(db)
+    contenu = _classeur_structure([ENTETE_STRUCTURE, _ligne_structure(experts["ec"], **changements)])
+    analyse = await analyser(
+        db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id, categorie=onglet
+    )
+    assert any(p.code == "CATEGORIE_HORS_ONGLET" for p in analyse.lignes[0].problemes)

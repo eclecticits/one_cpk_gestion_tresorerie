@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { AlertTriangle, CalendarClock, CheckCircle2 } from 'lucide-react'
+import { AlertTriangle, CalendarClock, CheckCircle2, FileSpreadsheet, FileText } from 'lucide-react'
 import { LIBELLE_TRANCHE } from '../api/creances'
 import { tableauDeBordNotes, type StatutNotes, type TableauDeBordNotes } from '../api/notesDebit'
+import { useAuth } from '../contexts/AuthContext'
+import { useToast } from '../hooks/useToast'
 import { ApiError } from '../lib/apiClient'
 import styles from '../pages/NotesDebitExperts.module.css'
 
@@ -55,6 +57,25 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
     }
   }, [annee])
 
+  const { user } = useAuth()
+  const { notifyError } = useToast()
+  const [export_, setExport] = useState<'pdf' | 'excel' | null>(null)
+
+  const exporter = async (formatExport: 'pdf' | 'excel') => {
+    if (!donnees) return
+    setExport(formatExport)
+    try {
+      const mod = await import('../utils/exportNotesDebit')
+      if (formatExport === 'pdf') await mod.exporterTableauDeBordPDF(donnees)
+      else
+        await mod.exporterTableauDeBordExcel(donnees, user?.organisation_name || user?.organisation_slug || 'ONEC')
+    } catch {
+      notifyError('Export', "Impossible d'exporter le tableau de bord.")
+    } finally {
+      setExport(null)
+    }
+  }
+
   const kpi = donnees?.kpi
   const maxType = Math.max(1, ...(donnees?.par_type ?? []).map((t) => Number(t.emis)))
   const maxAge = Math.max(1, ...(donnees?.anciennete ?? []).map((t) => Number(t.reste)))
@@ -74,6 +95,26 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
           </select>
         </label>
         <CompteARebours annee={annee} />
+        <div className={styles.exports}>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={() => void exporter('pdf')}
+            disabled={!donnees || donnees.annee !== annee || export_ !== null}
+            title={`Exporter le tableau de bord ${annee} en PDF`}
+          >
+            <FileText size={16} aria-hidden /> {export_ === 'pdf' ? 'Export…' : 'PDF'}
+          </button>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={() => void exporter('excel')}
+            disabled={!donnees || donnees.annee !== annee || export_ !== null}
+            title={`Exporter le tableau de bord ${annee} en Excel`}
+          >
+            <FileSpreadsheet size={16} aria-hidden /> {export_ === 'excel' ? 'Export…' : 'Excel'}
+          </button>
+        </div>
       </div>
 
       {erreur && (

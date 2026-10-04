@@ -174,14 +174,18 @@ const lieu = (identity: TenantIdentity) => {
 }
 
 const dessinerNote = (doc: jsPDF, identity: TenantIdentity, note: DocumentNote, comptes: CompteDePaiement[]) => {
-  const numero = note.numero_recu || '—'
+  const numero = note.numero_note_externe || note.numero_recu || '—'
+  const referenceInterne = note.numero_recu || '—'
   const emise = note.date_encaissement ? dateLongue(note.date_encaissement) : '—'
   let y = drawTenantHeader(doc, identity, { title: 'Note de débit', subtitle: `N° ${numero} · émise le ${emise}` })
-  const { date: echeance, annee } = echeanceCotisation(note.date_encaissement)
+  const echeanceCalculee = echeanceCotisation(note.date_encaissement)
+  const annee = note.exercice ?? echeanceCalculee.annee
+  const echeance = note.date_echeance ? new Date(note.date_echeance) : echeanceCalculee.date
   const emiseApresEcheance = note.date_encaissement ? new Date(note.date_encaissement) > echeance : false
 
   y = blocDebiteur(doc, y + 2, note.expert, [
     ['N° de note', numero],
+    ...(note.numero_note_externe ? [['Référence ONEC Smart', referenceInterne] as [string, string]] : []),
     ['Exercice', String(annee)],
     ['Échéance', emiseApresEcheance ? 'À réception' : format(echeance, 'dd/MM/yyyy')],
   ])
@@ -189,12 +193,17 @@ const dessinerNote = (doc: jsPDF, identity: TenantIdentity, note: DocumentNote, 
   const total = toNumber(note.montant_total)
   const paye = toNumber(note.montant_paye)
   const reste = toNumber(note.reste_du)
-  const corps = note.articles.map((a) => [
-    a.libelle,
-    toNumber(a.quantite) === 1 ? '1' : formatAmount(a.quantite, toNumber(a.quantite) % 1 ? 2 : 0),
-    formatAmount(a.prix_unitaire),
-    formatAmount(a.montant),
-  ])
+  // La désignation reste le libellé de la ligne (celui de la colonne Excel) ;
+  // la référence d'une décision et l'observation s'y ajoutent en dessous.
+  const corps = note.articles.map((a) => {
+    const complements = [a.reference_decision ? `Réf. ${a.reference_decision}` : null, a.observation].filter(Boolean)
+    return [
+      `${a.libelle}${complements.length ? `\n${complements.join(' · ')}` : ''}`,
+      toNumber(a.quantite) === 1 ? '1' : formatAmount(a.quantite, toNumber(a.quantite) % 1 ? 2 : 0),
+      formatAmount(a.prix_unitaire),
+      formatAmount(a.montant),
+    ]
+  })
   const pied: any[] = [
     [{ content: 'Total de la note', colSpan: 3, styles: { halign: 'right' } }, formatAmount(total)],
   ]
@@ -235,6 +244,16 @@ const dessinerNote = (doc: jsPDF, identity: TenantIdentity, note: DocumentNote, 
   doc.text(enLettres, MARGE, y)
   y += enLettres.length * 4.5 + 5
 
+  if (note.reference_decision || note.observation) {
+    y = encadre(
+      doc,
+      y,
+      [note.reference_decision ? `Référence / décision : ${note.reference_decision}` : null, note.observation]
+        .filter(Boolean)
+        .join(' — '),
+      VERT,
+    )
+  }
   y = blocPaiement(doc, y, comptes, numero)
   if (reste > 0) {
     y = encadre(
@@ -302,7 +321,7 @@ export async function generateMiseEnDemeurePDF(releve: MiseEnDemeure) {
     startY: y,
     head: [['N° de note', 'Date', 'Libellés', 'Montant', 'Réglé', 'Reste dû']],
     body: releve.notes.map((n) => [
-      n.numero_recu || '—',
+      n.numero_note_externe || n.numero_recu || '—',
       n.date_encaissement ? format(new Date(n.date_encaissement), 'dd/MM/yyyy') : '—',
       n.articles.map((a) => a.libelle).join(', '),
       formatAmount(n.montant_total),

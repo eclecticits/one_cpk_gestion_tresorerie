@@ -23,6 +23,7 @@ from app.core.auth_user import AuthUser, cached_permission_codes
 from app.core.config import settings as app_settings
 from app.core.horodatage import resoudre_date_operation
 from app.db.session import get_db
+from app.domain.notes_debit import CATEGORIES, normaliser_categorie
 from app.models.budget import BudgetPoste
 from app.models.client import Client
 from app.models.cloture_caisse import ClotureCaisse
@@ -625,6 +626,7 @@ def _encaissement_to_response(
     return {
         "id": str(enc.id),
         "numero_recu": enc.numero_recu,
+        "numero_note_externe": getattr(enc, "numero_note_externe", None),
         "numero_proforma": enc.numero_proforma,
         "est_proforma": enc.est_proforma,
         "source_proforma_id": str(enc.source_proforma_id) if enc.source_proforma_id else None,
@@ -636,6 +638,9 @@ def _encaissement_to_response(
         "derniere_relance_le": getattr(enc, "derniere_relance_le", None),
         "libelle": enc.libelle,
         "description": enc.description,
+        "exercice": getattr(enc, "exercice", None),
+        "date_echeance": getattr(enc, "date_echeance", None),
+        "reference_decision": getattr(enc, "reference_decision", None),
         "montant": enc.montant,
         "montant_total": enc.montant_total,
         "montant_paye": enc.montant_paye,
@@ -689,6 +694,10 @@ def _encaissement_to_response(
                 "encaissement_id": str(article.encaissement_id),
                 "libelle": article.libelle,
                 "description": article.description,
+                "observation": article.description,
+                "categorie": getattr(article, "categorie", None),
+                "exercice": getattr(article, "exercice", None),
+                "reference_decision": getattr(article, "reference_decision", None),
                 "quantite": article.quantite,
                 "prix_unitaire": article.prix_unitaire,
                 "montant": article.montant,
@@ -802,14 +811,21 @@ def _normalize_article_payloads(payload: EncaissementCreate, montant_total: Deci
         if prix_unitaire < 0 or montant < 0:
             raise HTTPException(status_code=400, detail="montant article invalide")
 
+        categorie = normaliser_categorie(article.categorie) if article.categorie else None
+        if article.categorie and categorie not in CATEGORIES:
+            raise HTTPException(status_code=400, detail=f"catégorie d'article inconnue : {article.categorie}")
+
         normalized.append(
             {
                 "libelle": libelle,
-                "description": article.description,
+                "description": article.observation if article.observation is not None else article.description,
                 "quantite": quantite,
                 "prix_unitaire": prix_unitaire,
                 "montant": montant,
                 "budget_poste_id": article.budget_poste_id,
+                "categorie": categorie,
+                "exercice": article.exercice or payload.exercice,
+                "reference_decision": article.reference_decision,
                 "sort_order": idx,
             }
         )
@@ -823,6 +839,9 @@ def _normalize_article_payloads(payload: EncaissementCreate, montant_total: Deci
                 "prix_unitaire": montant_total,
                 "montant": montant_total,
                 "budget_poste_id": payload.budget_poste_id,
+                "categorie": None,
+                "exercice": payload.exercice,
+                "reference_decision": payload.reference_decision,
                 "sort_order": 0,
             }
         )
@@ -927,6 +946,9 @@ def _add_encaissement_articles(
                 quantite=article["quantite"],
                 prix_unitaire=article["prix_unitaire"],
                 montant=article["montant"],
+                categorie=article.get("categorie"),
+                exercice=article.get("exercice"),
+                reference_decision=article.get("reference_decision"),
                 # Le poste de l'encaissement reste le repli : une ligne qui n'en
                 # désigne pas s'impute là où l'encaissement s'impute.
                 budget_poste_id=article.get("budget_poste_id") or encaissement.budget_poste_id,
@@ -1054,7 +1076,10 @@ async def suggerer_numeros_note_debit(
         return []
 
     condition_recherche = condition_numero(
-        q, Encaissement.numero_recu, Encaissement.numero_proforma
+        q,
+        Encaissement.numero_recu,
+        Encaissement.numero_note_externe,
+        Encaissement.numero_proforma,
     )
     if condition_recherche is None:
         return []
@@ -1069,6 +1094,7 @@ async def suggerer_numeros_note_debit(
     return [
         {
             "numero": enc.numero_recu or enc.numero_proforma or "",
+            "numero_note_externe": enc.numero_note_externe,
             "est_proforma": bool(enc.est_proforma),
             "client_nom": enc.client_nom or "",
             "montant_total": str(enc.montant_total or 0),
@@ -1593,7 +1619,10 @@ async def list_encaissements(
         # `numero_proforma` est cherché aussi : une pro forma de note de débit
         # porte un numéro que l'utilisateur lit sur le même écran.
         condition_numero_recu = condition_numero(
-            numero_recu, Encaissement.numero_recu, Encaissement.numero_proforma
+            numero_recu,
+            Encaissement.numero_recu,
+            Encaissement.numero_note_externe,
+            Encaissement.numero_proforma,
         )
         if condition_numero_recu is not None:
             conditions.append(condition_numero_recu)
@@ -1936,6 +1965,7 @@ async def create_proforma(
     project_activity_id = await _resolve_project_activity(db, payload.project_activity_id, tenant_id)
     encaissement = Encaissement(
         numero_recu=None,
+        numero_note_externe=payload.numero_note_externe,
         numero_proforma=numero_proforma,
         est_proforma=True,
         source_proforma_id=None,
@@ -1946,6 +1976,9 @@ async def create_proforma(
         client_id=proforma_client_id,
         libelle=payload.libelle.strip(),
         description=payload.description,
+        exercice=payload.exercice,
+        date_echeance=payload.date_echeance,
+        reference_decision=payload.reference_decision,
         montant=montant,
         montant_total=montant_total,
         montant_paye=Decimal("0.00"),
@@ -2334,6 +2367,7 @@ async def create_encaissement(
         project_activity_id = await _resolve_project_activity(db, payload.project_activity_id, tenant_id)
         encaissement = Encaissement(
             numero_recu=numero_recu,
+            numero_note_externe=(payload.numero_note_externe or "").strip() or None,
             numero_proforma=None,
             est_proforma=False,
             source_proforma_id=None,
@@ -2344,6 +2378,9 @@ async def create_encaissement(
             client_id=client_id,
             libelle=payload.libelle.strip(),
             description=payload.description,
+            exercice=payload.exercice,
+            date_echeance=payload.date_echeance,
+            reference_decision=payload.reference_decision,
             montant=montant,
             montant_total=montant_total,
             montant_paye=Decimal("0.00"),
@@ -2442,6 +2479,8 @@ async def create_encaissement(
                     status_code=500,
                     detail="Erreur de configuration côté serveur. Contactez l'administrateur.",
                 )
+            if constraint == "uq_enc_org_num_note_externe":
+                raise HTTPException(status_code=409, detail="numero_note_externe déjà utilisé")
             if constraint and constraint != "uq_encaissements_org_numero":
                 logger.error("Erreur d'intégrité encaissement: %s", exc, exc_info=True)
                 raise HTTPException(status_code=500, detail="Erreur d'intégrité lors de la création")
