@@ -186,6 +186,14 @@ class Encaissement(Base):
         nullable=True,
     )
     bank_statement_ref: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: Import Excel dont la note est issue (notes de débit des experts). Nul
+    #: pour une note saisie au formulaire.
+    note_debit_import_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("notes_debit_imports.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     service = relationship("Service", back_populates="encaissements")
     compte_bancaire = relationship("CompteBancaire", back_populates="encaissements")

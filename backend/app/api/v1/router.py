@@ -30,6 +30,7 @@ from app.api.v1.endpoints import (
     hr_attendance_agent,
     imports_history,
     lignes_requisition,
+    notes_debit,
     online_payments,
     ordres_decaissement,
     organisation,
@@ -103,6 +104,7 @@ api_router.include_router(whatsapp.router, prefix="/whatsapp", tags=["whatsapp"]
 
 # Routes métier
 api_router.include_router(experts.router, prefix="/experts-comptables", tags=["experts-comptables"])
+api_router.include_router(notes_debit.router, prefix="/notes-debit", tags=["notes-debit"], dependencies=[Depends(has_permission("experts_comptables"))])
 api_router.include_router(payments.router, prefix="/payment-history", tags=["payment-history"])
 api_router.include_router(online_payments.router, prefix="/online-payments", tags=["online-payments"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])

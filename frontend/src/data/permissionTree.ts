@@ -258,6 +258,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
           { code: 'treso.experts_comptables.update', label: 'Modifier un expert-comptable', kind: 'update', deferred: true },
           { code: 'treso.experts_comptables.delete', label: 'Supprimer un expert-comptable', kind: 'delete', deferred: true },
           { code: 'treso.experts_comptables.export', label: 'Exporter la liste des experts', kind: 'export' },
+          { code: 'treso.experts_comptables.import_notes_debit', label: 'Importer des notes de débit (Excel)', kind: 'create' },
         ],
       },
       {

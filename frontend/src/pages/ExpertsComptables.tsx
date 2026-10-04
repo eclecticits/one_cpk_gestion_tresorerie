@@ -10,6 +10,7 @@ import CategoryChange from '../components/CategoryChange'
 import SuccessNotification from '../components/SuccessNotification'
 import LoadingScreen from '../components/LoadingScreen'
 import DeactivateExpertModal from '../components/DeactivateExpertModal'
+import RegulariteExpert from '../components/RegulariteExpert'
 import { downloadExcel } from '../utils/download'
 import styles from './ExpertsComptables.module.css'
 import { useToast } from '../hooks/useToast'
@@ -1255,6 +1256,11 @@ export default function ExpertsComptables() {
                 <div><dt>Type</dt><dd>{detailExpert.type_ec || '-'}</dd></div>
                 <div><dt>Statut</dt><dd>{detailExpert.active === false ? 'Inactif' : 'Actif'}</dd></div>
               </dl>
+            </section>
+
+            <section className={styles.detailSection}>
+              <h3>Notes de débit</h3>
+              <RegulariteExpert expertId={detailExpert.id} numeroOrdre={detailExpert.numero_ordre} />
             </section>
 
             <section className={styles.detailSection}>

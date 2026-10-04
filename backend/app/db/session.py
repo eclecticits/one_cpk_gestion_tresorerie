@@ -55,6 +55,7 @@ from app.models.fonds_tiers_operation import FondsTiersOperation
 from app.models.mouvement_budget_imputation import MouvementBudgetImputation
 from app.models.regularisation_budgetaire import RegularisationBudgetaire
 from app.models.report_creance import ReportCreance
+from app.models.note_debit_import import NoteDebitImport
 from app.models.hr import HRAttendance, HRAttendanceAgent, HRAttendanceAgentCommand, HRAttendanceAgentEnrollment, HRAttendanceAgentRelease, HRAttendanceDevice, HRAttendanceDeviceEmployeeMapping, HRAttendancePunch, HRAttendanceUnmappedPunch, HRContract, HRDocument, HREmployee, HRFunction, HRLeave, HRReference, HRService
 from app.modules.secretariat.models import (
     OAuthConnection,
