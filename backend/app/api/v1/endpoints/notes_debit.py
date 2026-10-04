@@ -53,13 +53,16 @@ async def _lire_fichier(fichier: UploadFile) -> bytes:
 async def analyser_import(
     fichier: UploadFile = File(...),
     service_id: int | None = Form(default=None),
+    categorie: str = Form(default="toutes"),
     tenant_id: int = Depends(get_current_tenant_id),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Ce que l'import ferait du fichier, sans rien écrire."""
     contenu = await _lire_fichier(fichier)
-    analyse = await analyser(db, tenant_id=tenant_id, user=user, contenu=contenu, service_id=service_id)
+    analyse = await analyser(
+        db, tenant_id=tenant_id, user=user, contenu=contenu, service_id=service_id, categorie=categorie
+    )
     return {"fichier": fichier.filename, **analyse_en_reponse(analyse)}
 
 
@@ -74,7 +77,8 @@ async def importer_notes(
     """Crée les notes du fichier — toutes ou aucune.
 
     `options` (JSON) : `service_id`, `postes` (clé de colonne → id de poste),
-    `importer_doublons` (créer aussi les lignes déjà émises cette année).
+    `importer_doublons` (créer aussi les lignes déjà émises cette année),
+    `categorie` (onglet d'import : toutes, ec, sec, penalites).
     """
     try:
         reglages = json.loads(options or "{}")
@@ -93,6 +97,7 @@ async def importer_notes(
         service_id=service_id,
         postes=postes,
         importer_doublons=bool(reglages.get("importer_doublons")),
+        categorie=str(reglages.get("categorie") or "toutes"),
     )
     await invalidate_report_summary_cache(tenant_id)
     return resultat

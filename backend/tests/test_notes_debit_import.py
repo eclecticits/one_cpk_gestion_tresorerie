@@ -531,3 +531,62 @@ async def test_la_regularite_distingue_en_regle_debiteur_et_sans_note(db_session
     assert membres[str(experts["ec"].id)]["reste_du"] == "600.00"
     assert membres[str(experts["sal"].id)]["statut"] == "en_regle"
     assert membres[str(experts["sec"].id)]["statut"] == "sans_note"
+
+
+# ---------------------------------------------------------------------------
+# Catégories d'import (onglets, comme l'import national des experts)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_l_onglet_ec_refuse_une_sec_et_l_onglet_sec_un_expert(db_session):
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    contenu = _fichier(experts)
+
+    onglet_ec = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id, categorie="ec")
+    erreurs_ec = {l.expert.id: l.statut for l in onglet_ec.lignes}
+    assert erreurs_ec[experts["sec"].id] == "erreur"
+    assert erreurs_ec[experts["ec"].id] != "erreur"
+
+    onglet_sec = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id, categorie="sec")
+    statuts_sec = {l.expert.id: l.statut for l in onglet_sec.lignes}
+    assert statuts_sec[experts["sec"].id] != "erreur"
+    assert statuts_sec[experts["ec"].id] == "erreur"
+
+
+@pytest.mark.asyncio
+async def test_l_onglet_penalites_signale_une_colonne_qui_n_en_est_pas_une(db_session):
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    analyse = await analyser(
+        db, tenant_id=org.id, user=user, contenu=_fichier(experts), service_id=service.id, categorie="penalites"
+    )
+    avertis = {c["libelle"]: c["avertissement"] for c in analyse.colonnes}
+    assert avertis["Pénalité AG"] is None and avertis["Arriérés"] is None
+    assert avertis["Cotisation 2026"]
+
+
+@pytest.mark.asyncio
+async def test_les_notes_d_un_conseil_n_existent_pas_pour_un_autre(db_session):
+    """Chaque tenant est indépendant : ni ses notes, ni ses doublons ne débordent."""
+    from app.api.v1.endpoints.notes_debit import lister_notes
+
+    db = db_session
+    org_a, user_a, service_a, postes_a, experts = await _contexte(db)
+    contenu = _fichier(experts)
+    analyse = await analyser(db, tenant_id=org_a.id, user=user_a, contenu=contenu, service_id=service_a.id)
+    await importer(
+        db, tenant_id=org_a.id, user=user_a, fichier="a.xlsx", contenu=contenu,
+        service_id=service_a.id, postes=_postes_choisis(analyse.colonnes, postes_a),
+    )
+
+    org_b, user_b, service_b, postes_b, _ = await _contexte(db)
+    vue_b = await lister_notes(
+        q=None, statut="toutes", type_client=None, import_id=None, limit=50, offset=0,
+        tenant_id=org_b.id, user=user_b, db=db,
+    )
+    assert vue_b["total"] == 0
+    # Les mêmes membres, dans l'autre conseil : rien n'y est encore émis.
+    analyse_b = await analyser(db, tenant_id=org_b.id, user=user_b, contenu=contenu, service_id=service_b.id)
+    assert not any(l.doublon for l in analyse_b.lignes)

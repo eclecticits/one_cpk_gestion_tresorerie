@@ -62,6 +62,16 @@ LIGNES_AVANT_ENTETE = 15
 #: En-têtes de numérotation de lignes, pas de montants : « N° » vaut 1, 2, 3…
 ENTETES_INDEX = {"n", "no", "n°", "nº", "#", "num", "numero", "n° ligne", "ordre"}
 
+#: Catégories d'import, comme les onglets de l'import national des experts :
+#: chacune a son modèle et sa validation. Une SEC déposée dans l'onglet des
+#: experts-comptables (ou l'inverse) est une erreur de fichier, pas un détail.
+CATEGORIES = {
+    "toutes": "Toutes catégories",
+    "ec": "Cotisations EC",
+    "sec": "Cotisations SEC",
+    "penalites": "Pénalités",
+}
+
 #: Mots qui désignent une colonne d'information même quand elle ne contient
 #: que des nombres (un téléphone, une année, un nombre d'experts).
 MOTS_INFORMATION = {
@@ -448,6 +458,7 @@ class Analyse:
     service_id: int | None
     #: index de colonne → (tarif, poste du tarif)
     tarifs: dict[int, tuple[Any, BudgetPoste | None]]
+    categorie: str = "toutes"
 
 
 def _montant_texte(valeur: Decimal) -> str:
@@ -461,7 +472,10 @@ async def analyser(
     user: Any,
     contenu: bytes,
     service_id: int | None,
+    categorie: str = "toutes",
 ) -> Analyse:
+    if categorie not in CATEGORIES:
+        raise HTTPException(status_code=400, detail="Catégorie d'import inconnue")
     feuille = lire_feuille(contenu)
     services = await services_disponibles(db, user, tenant_id)
     # L'aperçu ne bloque pas sur le service : un agent de plusieurs services le
@@ -506,8 +520,13 @@ async def analyser(
                 suggere = postes_arrieres[0]
             else:
                 suggere = next((p for p in postes if "arri" in normaliser_entete(p.libelle)), None)
+        if categorie == "penalites" and not colonne.arrieres and "penalit" not in normaliser_entete(colonne.libelle):
+            avertissement = f"« {colonne.libelle} » ne ressemble pas à une pénalité : vérifiez l'onglet choisi."
+        else:
+            avertissement = None
         colonnes.append(
             {
+                "avertissement": avertissement,
                 "cle": str(colonne.index),
                 "libelle": colonne.libelle,
                 "arrieres": colonne.arrieres,
@@ -599,6 +618,17 @@ async def analyser(
                     f"{_montant_texte(ligne.total)} — la somme est retenue"
                 )
 
+        if ligne.expert is not None and categorie in {"ec", "sec"}:
+            est_sec = ligne.expert.type_ec == "SEC"
+            if categorie == "ec" and est_sec:
+                ligne.erreurs.append(
+                    f"{ligne.expert.nom_denomination} est une SEC : importez-la dans l'onglet « Cotisations SEC »"
+                )
+            elif categorie == "sec" and not est_sec:
+                ligne.erreurs.append(
+                    f"{ligne.expert.nom_denomination} n'est pas une SEC : importez-le dans l'onglet « Cotisations EC »"
+                )
+
         if ligne.expert is not None and not ligne.expert.active:
             ligne.avertissements.append("Expert inactif dans la liste")
         lignes.append(ligne)
@@ -633,6 +663,7 @@ async def analyser(
         services=services,
         service_id=service_retenu,
         tarifs=tarifs,
+        categorie=categorie,
     )
 
 
@@ -640,6 +671,7 @@ def analyse_en_reponse(analyse: Analyse) -> dict[str, Any]:
     valides = [l for l in analyse.lignes if not l.erreurs]
     arrieres = {c.index for c in analyse.feuille.colonnes if c.arrieres}
     return {
+        "categorie": analyse.categorie,
         "ligne_entete": analyse.feuille.ligne_entete,
         "exercice": analyse.annee,
         "exercice_ouvert": analyse.exercice is not None,
@@ -702,6 +734,7 @@ async def importer(
     service_id: int | None,
     postes: dict[str, int],
     importer_doublons: bool = False,
+    categorie: str = "toutes",
 ) -> dict[str, Any]:
     """Crée les notes du fichier, toutes ou aucune."""
     # Importé ici : l'endpoint des encaissements importe déjà ce module-ci par
@@ -711,7 +744,9 @@ async def importer(
     from app.core.horodatage import resoudre_date_operation
 
     user_id = getattr(user, "id", None)
-    analyse = await analyser(db, tenant_id=tenant_id, user=user, contenu=contenu, service_id=service_id)
+    analyse = await analyser(
+        db, tenant_id=tenant_id, user=user, contenu=contenu, service_id=service_id, categorie=categorie
+    )
     service_retenu = await resoudre_service(db, user, tenant_id, service_id)
     if analyse.exercice is None:
         raise HTTPException(status_code=400, detail="Aucun exercice budgétaire : ouvrez l'exercice avant d'importer.")
@@ -878,6 +913,7 @@ async def importer(
         target_table="notes_debit_imports",
         target_id=str(enregistrement.id),
         new_value={
+            "categorie": categorie,
             "fichier": enregistrement.fichier,
             "nb_notes": len(notes),
             "montant_total": str(total),
@@ -886,6 +922,7 @@ async def importer(
     )
     await db.commit()
     return {
+        "categorie": categorie,
         "import_id": str(enregistrement.id),
         "fichier": enregistrement.fichier,
         "nb_notes": len(notes),

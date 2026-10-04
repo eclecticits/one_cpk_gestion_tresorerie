@@ -36,7 +36,7 @@ async function imprimerNotes(params: { ids?: string[]; import_id?: string }) {
   return notes.length
 }
 
-type Onglet = 'bord' | 'liste' | 'import' | 'imports'
+type Onglet = 'bord' | 'liste' | 'imports'
 
 const LIBELLE_STATUT: Record<string, string> = {
   non_paye: 'Émise',
@@ -72,6 +72,8 @@ export default function NotesDebitExperts() {
     setOnglet('liste')
   }
 
+  const [importOuvert, setImportOuvert] = useState(false)
+
   const ouvrirListe = (filtre: FiltreListe) => {
     setImportFiltre(null)
     setFiltreListe((avant) => ({ cle: avant.cle + 1, filtre }))
@@ -85,11 +87,18 @@ export default function NotesDebitExperts() {
           <h1>Notes de débit</h1>
           <p>Cotisations, pénalités et arriérés des experts-comptables et des SEC.</p>
         </div>
-        {hasPermission('settings') && (
-          <Link to="/settings?tab=general&sub=encaissements" className={styles.lienDiscret}>
-            <Settings2 size={16} aria-hidden /> Montants par défaut (tarifs)
-          </Link>
-        )}
+        <div className={styles.actionsLigne}>
+          {hasPermission('settings') && (
+            <Link to="/settings?tab=general&sub=encaissements" className={styles.lienDiscret}>
+              <Settings2 size={16} aria-hidden /> Montants par défaut (tarifs)
+            </Link>
+          )}
+          {peutImporter && (
+            <button type="button" className={styles.primaryBtn} onClick={() => setImportOuvert(true)}>
+              <Upload size={16} aria-hidden /> Importer (Excel)
+            </button>
+          )}
+        </div>
       </header>
 
       <div className={styles.onglets} role="tablist" aria-label="Notes de débit">
@@ -112,26 +121,15 @@ export default function NotesDebitExperts() {
           <List size={16} aria-hidden /> Liste
         </button>
         {peutImporter && (
-          <>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={onglet === 'import'}
-              className={onglet === 'import' ? styles.ongletActif : styles.onglet}
-              onClick={() => setOnglet('import')}
-            >
-              <Upload size={16} aria-hidden /> Importer (Excel)
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={onglet === 'imports'}
-              className={onglet === 'imports' ? styles.ongletActif : styles.onglet}
-              onClick={() => setOnglet('imports')}
-            >
-              <History size={16} aria-hidden /> Imports
-            </button>
-          </>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={onglet === 'imports'}
+            className={onglet === 'imports' ? styles.ongletActif : styles.onglet}
+            onClick={() => setOnglet('imports')}
+          >
+            <History size={16} aria-hidden /> Imports
+          </button>
         )}
       </div>
 
@@ -145,8 +143,11 @@ export default function NotesDebitExperts() {
           onVoirImport={(imp) => setImportFiltre(imp)}
         />
       )}
-      {onglet === 'import' && peutImporter && (
-        <NotesDebitImport onVoirNotes={(id, fichier) => voirNotesImport({ id, fichier })} />
+      {importOuvert && peutImporter && (
+        <NotesDebitImport
+          onClose={() => setImportOuvert(false)}
+          onImported={(resultat) => voirNotesImport({ id: resultat.import_id, fichier: resultat.fichier })}
+        />
       )}
       {onglet === 'imports' && peutImporter && <HistoriqueImports onVoirNotes={voirNotesImport} />}
     </div>

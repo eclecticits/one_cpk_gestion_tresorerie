@@ -49,6 +49,9 @@ export const listerNotesDebit = (params: {
     ),
   })
 
+/** Onglets d'import, comme ceux de l'import national des experts. */
+export type CategorieImportNotes = 'toutes' | 'ec' | 'sec' | 'penalites'
+
 export interface ColonneAnalysee {
   /** Index de la colonne dans la feuille : la clé des montants et des postes. */
   cle: string
@@ -59,6 +62,8 @@ export interface ColonneAnalysee {
   poste_impose: boolean
   poste_suggere_id: number | null
   erreur: string | null
+  /** Non bloquant : une colonne qui ne correspond pas à l'onglet choisi. */
+  avertissement: string | null
   total: string
   nb_lignes: number
 }
@@ -78,6 +83,7 @@ export interface LigneAnalysee {
 
 export interface AnalyseImport {
   fichier: string
+  categorie: CategorieImportNotes
   ligne_entete: number
   exercice: number
   exercice_ouvert: boolean
@@ -100,6 +106,7 @@ export interface AnalyseImport {
 }
 
 export interface ResultatImport {
+  categorie: CategorieImportNotes
   import_id: string
   fichier: string
   nb_notes: number
@@ -109,16 +116,22 @@ export interface ResultatImport {
   notes: { id: string; numero_recu: string; numero_ordre: string; nom: string; montant_total: string }[]
 }
 
-export const analyserImportNotes = (fichier: File, serviceId: number | null) => {
+export const analyserImportNotes = (fichier: File, serviceId: number | null, categorie: CategorieImportNotes) => {
   const corps = new FormData()
   corps.append('fichier', fichier)
+  corps.append('categorie', categorie)
   if (serviceId != null) corps.append('service_id', String(serviceId))
   return apiRequest<AnalyseImport>('POST', '/notes-debit/import/analyse', { body: corps })
 }
 
 export const importerNotes = (
   fichier: File,
-  options: { service_id: number | null; postes: Record<string, number>; importer_doublons: boolean },
+  options: {
+    service_id: number | null
+    postes: Record<string, number>
+    importer_doublons: boolean
+    categorie: CategorieImportNotes
+  },
 ) => {
   const corps = new FormData()
   corps.append('fichier', fichier)
