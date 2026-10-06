@@ -31,6 +31,7 @@ from app.modules.comptabilite.models import (
     RUBRIQUE_PAIE_ORGANISMES_SOCIAUX,
     RUBRIQUE_PAIE_PERSONNEL_DU,
     RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
+    RUBRIQUE_RECETTE_A_IDENTIFIER,
     ComptaCompte,
     ComptaMappingCompteBancaire,
     ComptaMappingPosteBudgetaire,
@@ -44,7 +45,7 @@ COMPTE_PRODUIT_DEFAUT_NUMERO = "758"  # Produits divers
 COMPTE_BANQUE_DEFAUT_NUMERO = "512"   # Banques
 COMPTE_CAISSE_DEFAUT_NUMERO = "571"   # Caisse siège
 
-# Rubriques techniques (Lot 3) → compte de démarrage. Ces cinq comptes
+# Rubriques techniques (Lot 3) → compte de démarrage. Ces comptes
 # existent dans les deux plans livrés (SYSCOHADA et SYSCEBNL).
 RUBRIQUES_DEFAUT: dict[str, str] = {
     RUBRIQUE_PAIE_CHARGES_PERSONNEL: "661",   # Rémunérations directes versées au personnel
@@ -52,6 +53,7 @@ RUBRIQUES_DEFAUT: dict[str, str] = {
     RUBRIQUE_PAIE_ORGANISMES_SOCIAUX: "431",  # Sécurité sociale (CNSS)
     RUBRIQUE_PAIE_ETAT_IPR: "447",            # État, impôts retenus à la source
     RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE: COMPTE_PRODUIT_DEFAUT_NUMERO,
+    RUBRIQUE_RECETTE_A_IDENTIFIER: "4718",   # Recettes à identifier (compte d'attente)
 }
 
 

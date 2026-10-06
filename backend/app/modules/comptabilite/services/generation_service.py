@@ -328,6 +328,7 @@ async def generer_ecriture_encaissement(
     type_origine: str = "encaissement",
     objet_origine_id: str | None = None,
     imputations: list[tuple[int, Decimal]] | None = None,
+    rubrique_contrepartie: str | None = None,
 ) -> ComptaEcriture:
     """Débit Trésorerie / Crédit Produit — cf. catalogue §4.5 du dossier d'architecture.
 
@@ -345,6 +346,12 @@ async def generer_ecriture_encaissement(
     produit par poste `(budget_poste_id, montant_ligne)`, qui remplace
     `budget_poste_id` quand elle est fournie. Même convention que
     `generer_ecriture_sortie_fonds`, et la somme doit égaler `montant`.
+
+    `rubrique_contrepartie` : rubrique technique débitée À LA PLACE de la
+    trésorerie, au journal des opérations diverses. Sert au reclassement d'une
+    recette identifiée : l'argent est entré en banque à sa réception, sur le
+    compte d'attente ; l'identifier solde ce compte d'attente vers le produit,
+    sans repasser par la banque.
     """
     origine_id = objet_origine_id or encaissement_id
     existing = await _find_existing_ecriture(db, organisation_id, "encaissements", type_origine, origine_id)
@@ -369,10 +376,17 @@ async def generer_ecriture_encaissement(
 
     societe = await _get_default_societe(db, organisation_id)
     exercice = await _get_exercice_for_date(db, organisation_id, societe.id, date_operation)
-    journal_code = "BQ" if canal == "BANQUE" else "CA"
+    if rubrique_contrepartie is not None:
+        journal_code = "OD"
+    else:
+        journal_code = "BQ" if canal == "BANQUE" else "CA"
     journal = await _get_journal(db, organisation_id, societe.id, journal_code)
 
-    compte_tresorerie = await resolve_compte_tresorerie(db, organisation_id, societe, canal, compte_bancaire_id)
+    compte_tresorerie = (
+        await resolve_compte_rubrique(db, organisation_id, rubrique_contrepartie)
+        if rubrique_contrepartie is not None
+        else await resolve_compte_tresorerie(db, organisation_id, societe, canal, compte_bancaire_id)
+    )
     lignes_produit: list[tuple[int, Decimal]] = []
     if imputations:
         for poste_id, montant_ligne in imputations:

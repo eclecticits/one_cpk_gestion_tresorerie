@@ -19,6 +19,7 @@ from app.modules.comptabilite.services.generation_service import (
     annuler_ecriture_operation,
     generer_ecriture_encaissement,
 )
+from app.modules.comptabilite.models import RUBRIQUE_RECETTE_A_IDENTIFIER
 from app.modules.comptabilite.services.integration_mode import get_accounting_integration_mode
 from app.services.audit_service import log_action
 from app.services.encaissement_repartition import repartir
@@ -26,6 +27,13 @@ from app.services.mouvements_budgetaires import (
     cancel_budget_imputations,
     create_budget_imputation,
     encaissement_a_des_imputations,
+)
+from app.services.recettes_a_identifier import (
+    est_recette_a_identifier,
+    journaliser_identification,
+    prelever,
+    restituer,
+    verrouiller_recette,
 )
 from app.services.report_creances import lignes_de_recouvrement, verifier_postes_ouverts
 
@@ -273,13 +281,33 @@ async def record_encaissement_payment(
     date_paiement: datetime | None = None,
     ip_address: str | None = None,
     rubrique_produit_defaut: str | None = None,
+    identification_source_id: uuid.UUID | None = None,
 ) -> PaymentHistory:
+    """Enregistre un versement sur une note.
+
+    `identification_source_id` : le versement est tiré d'une recette à
+    identifier. Il reprend la destination et la date de valeur du versement
+    d'origine, n'entre pas une seconde fois en trésorerie, et sa contrepartie
+    comptable est le compte d'attente au lieu de la banque.
+    """
     encaissement = await _lock_encaissement(db, organisation_id=organisation_id, encaissement_id=encaissement_id)
     montant = clean_money(montant)
     if montant <= 0:
         raise HTTPException(status_code=400, detail="montant invalide")
 
     devise = (encaissement.devise_perception or "USD").upper()
+    source = versement_source = None
+    if identification_source_id is not None:
+        if est_recette_a_identifier(encaissement):
+            raise HTTPException(status_code=400, detail="Une recette à identifier ne s'identifie pas vers une autre")
+        source, versement_source = await verrouiller_recette(
+            db, organisation_id=organisation_id, source_id=identification_source_id, devise=devise
+        )
+        if versement_source is None:
+            raise HTTPException(status_code=400, detail="Cette recette à identifier n'a pas de versement")
+        canal = versement_source.canal
+        compte_bancaire_id = versement_source.compte_bancaire_id
+        date_paiement = versement_source.date_paiement
     canal, compte_bancaire_id = await _resolve_destination(
         db,
         organisation_id=organisation_id,
@@ -324,6 +352,8 @@ async def record_encaissement_payment(
     remaining = clean_money((encaissement.montant_total or 0) - (encaissement.montant_paye or 0))
     if montant - remaining > Decimal("0.01"):
         raise HTTPException(status_code=400, detail=f"Montant trop élevé. Restant dû: {remaining}")
+    if source is not None:
+        montant = prelever(source, versement_source, montant)
 
     payment_date = date_paiement or now
     if payment_date.tzinfo is None:
@@ -376,9 +406,20 @@ async def record_encaissement_payment(
         created_by=user_id,
         statut=PAYMENT_STATUS_ACTIVE,
         statut_comptabilisation=PAYMENT_COMPTA_NON_APPLICABLE,
+        identification_source_id=identification_source_id,
     )
     db.add(payment)
     await db.flush()
+    if source is not None:
+        await journaliser_identification(
+            db,
+            user_id=user_id,
+            source=source,
+            destination_id=encaissement.id,
+            versement_id=payment.id,
+            montant=montant,
+            ip_address=ip_address,
+        )
 
     previous_paid = clean_money(encaissement.montant_paye or 0)
     new_paid = clean_money(previous_paid + montant)
@@ -393,6 +434,13 @@ async def record_encaissement_payment(
     if recent_payment is None and previous_paid == 0:
         encaissement.canal = canal
         encaissement.compte_bancaire_id = compte_bancaire_id
+        # Une note née d'une recette à identifier ne porte que cet argent-là :
+        # la ligne du relevé déjà rapprochée l'est aussi pour elle.
+        if source is not None and source.is_reconciled and not encaissement.is_reconciled:
+            encaissement.is_reconciled = True
+            encaissement.reconciled_at = source.reconciled_at
+            encaissement.reconciled_by_id = source.reconciled_by_id
+            encaissement.bank_statement_ref = source.bank_statement_ref
 
     if impact_budgetaire:
         for poste_id, part in repartition:
@@ -416,15 +464,17 @@ async def record_encaissement_payment(
                 created_by=user_id,
             )
 
-    # Trésorerie en dernier : voir ORDRE DES VERROUS en tête de module.
-    await _credit_treasury(
-        db,
-        organisation_id=organisation_id,
-        canal=canal,
-        devise=devise,
-        compte_bancaire_id=compte_bancaire_id,
-        montant=montant,
-    )
+    # Trésorerie en dernier : voir ORDRE DES VERROUS en tête de module. Un
+    # versement tiré d'une recette à identifier est déjà en banque.
+    if source is None:
+        await _credit_treasury(
+            db,
+            organisation_id=organisation_id,
+            canal=canal,
+            devise=devise,
+            compte_bancaire_id=compte_bancaire_id,
+            montant=montant,
+        )
 
     integration_mode = await get_accounting_integration_mode(db, organisation_id)
     if integration_mode == "manual":
@@ -437,7 +487,9 @@ async def record_encaissement_payment(
             db,
             organisation_id=organisation_id,
             encaissement_id=str(encaissement.id),
-            date_operation=payment_date.date(),
+            # Un reclassement se passe le jour où l'on identifie le payeur ;
+            # l'entrée en banque, elle, est déjà écrite à sa date de valeur.
+            date_operation=(datetime.now(timezone.utc) if source is not None else payment_date).date(),
             montant=montant,
             devise=devise,
             canal=canal,  # type: ignore[arg-type]
@@ -451,6 +503,30 @@ async def record_encaissement_payment(
             # Une recette répartie porte un produit par poste : l'écriture suit
             # la même répartition que le budget, sinon les deux se contrediraient.
             imputations=repartition if len(repartition) > 1 else None,
+            **({"rubrique_contrepartie": RUBRIQUE_RECETTE_A_IDENTIFIER} if source is not None else {}),
+        )
+        payment.statut_comptabilisation = PAYMENT_COMPTA_RECORDED
+        payment.message_comptabilisation = None
+        encaissement.statut_comptabilisation = "COMPTABILISEE"
+        encaissement.message_comptabilisation = None
+    elif integration_mode == "automatic" and est_recette_a_identifier(encaissement):
+        # Débit Banque / Crédit compte d'attente : l'argent est entré, son
+        # origine reste à établir.
+        await generer_ecriture_encaissement(
+            db,
+            organisation_id=organisation_id,
+            encaissement_id=str(encaissement.id),
+            date_operation=payment_date.date(),
+            montant=montant,
+            devise=devise,
+            canal=canal,  # type: ignore[arg-type]
+            compte_bancaire_id=compte_bancaire_id,
+            budget_poste_id=None,
+            libelle=encaissement.libelle,
+            created_by=user_id,
+            type_origine="payment_history",
+            objet_origine_id=str(payment.id),
+            rubrique_produit_defaut=RUBRIQUE_RECETTE_A_IDENTIFIER,
         )
         payment.statut_comptabilisation = PAYMENT_COMPTA_RECORDED
         payment.message_comptabilisation = None
@@ -579,15 +655,26 @@ async def cancel_encaissement_payment(
                 direction=-1,
             )
 
-    # Trésorerie en dernier : voir ORDRE DES VERROUS en tête de module.
-    await _debit_treasury(
+    # Trésorerie en dernier : voir ORDRE DES VERROUS en tête de module. Un
+    # versement tiré d'une recette à identifier retourne attendre sur celle-ci :
+    # l'argent n'a pas quitté la banque. Seule une recette d'origine annulée
+    # entre-temps le renvoie au cas ordinaire.
+    rendu_a_la_source = payment.identification_source_id is not None and await restituer(
         db,
         organisation_id=organisation_id,
-        canal=canal,
-        devise=devise,
-        compte_bancaire_id=compte_bancaire_id,
+        source_id=payment.identification_source_id,
         montant=montant,
+        versement_annule_id=payment.id,
     )
+    if not rendu_a_la_source:
+        await _debit_treasury(
+            db,
+            organisation_id=organisation_id,
+            canal=canal,
+            devise=devise,
+            compte_bancaire_id=compte_bancaire_id,
+            montant=montant,
+        )
 
     await annuler_ecriture_operation(
         db,

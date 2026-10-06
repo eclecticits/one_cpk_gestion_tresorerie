@@ -25,6 +25,7 @@ from app.api.v1.endpoints import (
     export_jobs,
     exports,
     fonds_tiers,
+    recettes_a_identifier,
     health,
     hr,
     hr_attendance_agent,
@@ -112,6 +113,7 @@ api_router.include_router(settings.router, prefix="/print-settings", tags=["prin
 api_router.include_router(domain.router, tags=["domain"])
 api_router.include_router(encaissements.router, prefix="/encaissements", tags=["encaissements"])
 api_router.include_router(fonds_tiers.router, prefix="/fonds-tiers", tags=["fonds-tiers"])
+api_router.include_router(recettes_a_identifier.router, prefix="/recettes-a-identifier", tags=["recettes-a-identifier"])
 api_router.include_router(
     clients.router,
     prefix="/clients",

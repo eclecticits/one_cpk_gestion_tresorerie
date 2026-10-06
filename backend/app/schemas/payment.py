@@ -14,7 +14,7 @@ from app.schemas.requisition import UserInfo
 ModePaiement = Literal["cash", "mobile_money", "virement", "card", "cheque"]
 StatutPaiement = Literal["non_paye", "partiel", "complet", "avance"]
 CanalPaiement = Literal["CAISSE", "BANQUE"]
-PaymentHistoryStatut = Literal["ACTIF", "ANNULE"]
+PaymentHistoryStatut = Literal["ACTIF", "ANNULE", "TRANSFERE"]
 PaymentAccountingStatut = Literal["NON_APPLICABLE", "EN_ATTENTE", "COMPTABILISE"]
 
 
@@ -52,6 +52,7 @@ class PaymentHistoryResponse(PaymentHistoryBase):
     annule_par_id: UUID | None = None
     motif_annulation: str | None = None
     annulation_ip: str | None = None
+    identification_source_id: UUID | None = None
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 
@@ -125,9 +126,12 @@ class EncaissementBase(DecimalBaseModel):
     devise_perception: Literal["USD", "CDF"] = "USD"
     taux_change_applique: Decimal = Field(ge=0, default=1)
     statut_paiement: StatutPaiement = "non_paye"
-    nature_mouvement: Literal["BUDGETAIRE", "HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS", "TRANSFERT_INTERNE"] = "BUDGETAIRE"
+    nature_mouvement: Literal["BUDGETAIRE", "HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS", "TRANSFERT_INTERNE", "A_IDENTIFIER"] = "BUDGETAIRE"
     impact_budgetaire: bool | None = None
-    hors_budget_status: Literal["A_REGULARISER", "PARTIELLEMENT_AFFECTE", "AFFECTE_BUDGET", "MAINTENU_HORS_BUDGET", "ANNULE"] | None = None
+    hors_budget_status: Literal[
+        "A_REGULARISER", "PARTIELLEMENT_AFFECTE", "AFFECTE_BUDGET", "MAINTENU_HORS_BUDGET", "ANNULE",
+        "A_IDENTIFIER", "PARTIELLEMENT_IDENTIFIE", "IDENTIFIE",
+    ] | None = None
     fonds_tiers_display_name: str | None = None
     fonds_tiers_type: Literal["ORGANISATION", "EXTERNE", "LEGACY"] | None = None
     statut_operation: Literal["ACTIVE", "ANNULEE"] = "ACTIVE"
@@ -197,6 +201,10 @@ class EncaissementCreate(EncaissementBase):
     #: Renseigné uniquement quand `nature_mouvement` vaut `FONDS_DE_TIERS` :
     #: décrit le tiers pour qui l'argent est encaissé.
     fonds_tiers: FondsTiersCreate | None = None
+    #: Recette à identifier dont cet encaissement est tiré. Son versement
+    #: initial n'entre pas en banque : il y est déjà, sur la recette d'origine,
+    #: et en est seulement déplacé.
+    identification_source_id: UUID | None = None
 
 
 class BudgetAffectationLine(DecimalBaseModel):

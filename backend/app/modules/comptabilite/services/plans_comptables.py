@@ -84,6 +84,7 @@ SYSCOHADA_SEED: list[CompteSeed] = [
     CompteSeed("46", "Débiteurs et créditeurs divers", "ACTIF", "DEBIT"),
     CompteSeed("47", "Débiteurs et créditeurs divers — régularisations", "ACTIF", "DEBIT"),
     CompteSeed("4713", "Virements de fonds (compte d'attente rapprochement bancaire)", "ACTIF", "DEBIT", parent_numero="47"),
+    CompteSeed("4718", "Recettes à identifier (compte d'attente)", "PASSIF", "CREDIT", parent_numero="47"),
     # Classe 5 — Trésorerie
     CompteSeed("51", "Valeurs à encaisser / Banques", "ACTIF", "DEBIT"),
     CompteSeed("512", "Banques", "ACTIF", "DEBIT", parent_numero="51"),
@@ -158,6 +159,7 @@ SYSCEBNL_SEED: list[CompteSeed] = [
     CompteSeed("447", "État, impôts retenus à la source", "PASSIF", "CREDIT", parent_numero="44"),
     CompteSeed("46", "Débiteurs et créditeurs divers", "ACTIF", "DEBIT"),
     CompteSeed("4713", "Virements de fonds (compte d'attente rapprochement bancaire)", "ACTIF", "DEBIT"),
+    CompteSeed("4718", "Recettes à identifier (compte d'attente)", "PASSIF", "CREDIT"),
     # Classe 5 — Trésorerie (identique SYSCOHADA)
     CompteSeed("51", "Valeurs à encaisser / Banques", "ACTIF", "DEBIT"),
     CompteSeed("512", "Banques", "ACTIF", "DEBIT", parent_numero="51"),

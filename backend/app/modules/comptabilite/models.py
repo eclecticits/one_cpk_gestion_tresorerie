@@ -730,6 +730,7 @@ RUBRIQUE_PAIE_PERSONNEL_DU = "PAIE_PERSONNEL_DU"
 RUBRIQUE_PAIE_ORGANISMES_SOCIAUX = "PAIE_ORGANISMES_SOCIAUX"
 RUBRIQUE_PAIE_ETAT_IPR = "PAIE_ETAT_IPR"
 RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE = "PRODUIT_PAIEMENT_EN_LIGNE"
+RUBRIQUE_RECETTE_A_IDENTIFIER = "RECETTE_A_IDENTIFIER"
 
 RUBRIQUES_TECHNIQUES = (
     RUBRIQUE_PAIE_CHARGES_PERSONNEL,
@@ -737,6 +738,7 @@ RUBRIQUES_TECHNIQUES = (
     RUBRIQUE_PAIE_ORGANISMES_SOCIAUX,
     RUBRIQUE_PAIE_ETAT_IPR,
     RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
+    RUBRIQUE_RECETTE_A_IDENTIFIER,
 )
 
 # Libellé et rôle de chaque rubrique, affichés dans l'écran de paramétrage :
@@ -761,6 +763,11 @@ RUBRIQUES_DESCRIPTIONS: dict[str, tuple[str, str]] = {
     RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE: (
         "Produit — paiement en ligne",
         "Crédité lors d'un encaissement par carte ou mobile money, qui n'a pas de poste budgétaire.",
+    ),
+    RUBRIQUE_RECETTE_A_IDENTIFIER: (
+        "Compte d'attente — recettes à identifier",
+        "Crédité d'un versement reçu en banque dont le payeur est inconnu, débité quand il est "
+        "identifié et reclassé vers son produit (compte 47x).",
     ),
 }
 

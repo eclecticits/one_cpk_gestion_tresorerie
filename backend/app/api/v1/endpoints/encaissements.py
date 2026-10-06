@@ -82,6 +82,7 @@ from app.services.mouvements_budgetaires import (
     normalize_nature,
     sum_active_by_encaissement,
 )
+from app.services.recettes_a_identifier import est_recette_a_identifier
 from app.services.regularisations_budgetaires import affecter_encaissement_hors_budget
 from app.services.reimputation_encaissement import (
     apercu_reimputation_encaissement,
@@ -473,6 +474,35 @@ def _normalize_text(value: str | None) -> str:
     return " ".join((value or "").strip().lower().split())
 
 
+def _cle_fonds_tiers(
+    tiers_organisation_id: int | None,
+    tiers_nom_libre: str | None,
+    payeur_origine: str | None,
+    reference: str | None,
+) -> str:
+    """Ce qui distingue deux fonds de tiers par ailleurs identiques.
+
+    Un fonds de tiers part sans client : sans cette clé, deux versements du
+    même montant le même jour pour des payeurs différents passaient pour un
+    doublon.
+    """
+    return "|".join(
+        [
+            str(tiers_organisation_id or ""),
+            _normalize_text(tiers_nom_libre),
+            _normalize_text(payeur_origine),
+            _normalize_text(reference),
+        ]
+    )
+
+
+def _cle_fonds_tiers_payload(payload: EncaissementCreate) -> str | None:
+    ft = payload.fonds_tiers
+    if ft is None:
+        return None
+    return _cle_fonds_tiers(ft.tiers_organisation_id, ft.tiers_nom_libre, ft.payeur_origine, ft.reference)
+
+
 def _build_duplicate_identity(
     tenant_id: int,
     payload: EncaissementCreate,
@@ -498,6 +528,7 @@ def _build_duplicate_identity(
             str(montant_total),
             str(montant_paye),
             date_encaissement.date().isoformat(),
+            _cle_fonds_tiers_payload(payload) or "",
         ]
     )
 
@@ -576,7 +607,26 @@ async def _find_duplicate_encaissement(
     existing = (await db.execute(query)).scalars().all()
     expected_client = _normalize_text(payload.client_nom)
     expected_libelle = _normalize_text(payload.libelle)
+    expected_fonds_tiers = _cle_fonds_tiers_payload(payload)
+    cles_fonds_tiers: dict[uuid.UUID, str] = {}
+    if expected_fonds_tiers is not None and existing:
+        operations = (
+            await db.execute(
+                select(FondsTiersOperation).where(
+                    FondsTiersOperation.organisation_id == tenant_id,
+                    FondsTiersOperation.encaissement_id.in_([enc.id for enc in existing]),
+                )
+            )
+        ).scalars().all()
+        cles_fonds_tiers = {
+            op.encaissement_id: _cle_fonds_tiers(
+                op.tiers_organisation_id, op.tiers_nom_libre, op.payeur_origine, op.reference
+            )
+            for op in operations
+        }
     for enc in existing:
+        if expected_fonds_tiers is not None and cles_fonds_tiers.get(enc.id) != expected_fonds_tiers:
+            continue
         same_client = (
             payload.type_client in TYPES_CLIENT_EXPERT
             and enc.expert_comptable_id == payload.expert_comptable_id
@@ -2126,6 +2176,35 @@ async def create_encaissement(
         raise HTTPException(status_code=401, detail="Utilisateur invalide")
     if payload.type_client not in TYPE_CLIENTS:
         raise HTTPException(status_code=400, detail="type_client invalide")
+
+    # Recette identifiée : l'argent est déjà en banque, sur la recette à
+    # identifier. La nouvelle note en reprend la destination, la devise et le
+    # taux du jour de réception — c'est ce même argent, pas un nouveau.
+    source_identification: Encaissement | None = None
+    if payload.identification_source_id is not None:
+        if not await _user_has_permission(db, user, "treso.encaissements.identifier"):
+            raise HTTPException(status_code=403, detail="Vous n'avez pas le droit d'identifier une recette")
+        source_identification = (
+            await db.execute(
+                select(Encaissement).where(
+                    Encaissement.id == payload.identification_source_id,
+                    Encaissement.organisation_id == tenant_id,
+                    Encaissement.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if source_identification is None or not est_recette_a_identifier(source_identification):
+            raise HTTPException(status_code=404, detail="Recette à identifier introuvable")
+        payload = payload.model_copy(
+            update={
+                "canal": source_identification.canal,
+                "compte_bancaire_id": source_identification.compte_bancaire_id,
+                "devise_perception": source_identification.devise_perception,
+                "mode_paiement": source_identification.mode_paiement,
+                "reference": payload.reference or source_identification.reference,
+            }
+        )
+
     if payload.statut_paiement not in STATUT_PAIEMENT:
         raise HTTPException(status_code=400, detail="statut_paiement invalide")
     if payload.mode_paiement not in MODE_PAIEMENT:
@@ -2177,6 +2256,8 @@ async def create_encaissement(
             taux_change = Decimal("0.00")
         if taux_change <= 0:
             raise HTTPException(status_code=400, detail="Taux de change invalide (paramètres)")
+        if source_identification is not None:
+            taux_change = _clean_money(source_identification.taux_change_applique or 0)
 
     montant_percu = _clean_money(payload.montant_percu or 0)
     montant_total = _clean_money(payload.montant_total or 0)
@@ -2205,6 +2286,13 @@ async def create_encaissement(
     nature_mouvement = normalize_nature(payload.nature_mouvement)
     if nature_mouvement == "TRANSFERT_INTERNE":
         raise HTTPException(status_code=400, detail="Un encaissement ne crée pas un transfert interne")
+    if nature_mouvement == "A_IDENTIFIER":
+        raise HTTPException(
+            status_code=400,
+            detail="Une recette dont le payeur est inconnu se saisit dans « Recettes à identifier »",
+        )
+    if source_identification is not None and initial_montant_paye <= 0:
+        raise HTTPException(status_code=400, detail="Le montant identifié doit être porté en paiement")
 
     statut_paiement = payload.statut_paiement
     if montant_paye > montant_total and statut_paiement != "avance":
@@ -2448,6 +2536,7 @@ async def create_encaissement(
                     notes=notes_paiement,
                     user_id=current_user_id,
                     date_paiement=date_encaissement,
+                    identification_source_id=payload.identification_source_id,
                 )
 
             await db.commit()
@@ -3310,6 +3399,23 @@ async def cancel_encaissement_operation(
             organisation_id=tenant_id,
             encaissement_id=encaissement.id,
         )
+    if est_recette_a_identifier(encaissement):
+        # Annuler la recette d'origine laisserait ses identifications sans
+        # endroit où rendre l'argent si on les annulait ensuite.
+        deja_identifiee = (
+            await db.execute(
+                select(PaymentHistory.id).where(
+                    PaymentHistory.organisation_id == tenant_id,
+                    PaymentHistory.identification_source_id == encaissement.id,
+                    PaymentHistory.statut == "ACTIF",
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+        if deja_identifiee is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Des encaissements sont tirés de cette recette à identifier : annulez-les d'abord.",
+            )
 
     active_payments = (
         await db.execute(

@@ -57,6 +57,15 @@ class PaymentHistory(Base):
     mode_paiement: Mapped[str] = mapped_column(String(30), nullable=False, default="cash")
     
     reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: Recette à identifier dont ce versement est tiré : l'argent est entré en
+    #: banque sur celle-ci, il n'est que déplacé ici. Sa trésorerie est déjà
+    #: comptée ; l'annuler le rend à la recette d'origine, pas à la banque.
+    identification_source_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("encaissements.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

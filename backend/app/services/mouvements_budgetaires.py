@@ -18,6 +18,7 @@ NatureMouvement = Literal[
     "HORS_BUDGET_A_REGULARISER",
     "FONDS_DE_TIERS",
     "TRANSFERT_INTERNE",
+    "A_IDENTIFIER",
 ]
 
 HORS_BUDGET_STATUSES = {
@@ -26,6 +27,10 @@ HORS_BUDGET_STATUSES = {
     "AFFECTE_BUDGET",
     "MAINTENU_HORS_BUDGET",
     "ANNULE",
+    # Recette à identifier : l'argent est en banque, le payeur reste à trouver.
+    "A_IDENTIFIER",
+    "PARTIELLEMENT_IDENTIFIE",
+    "IDENTIFIE",
 }
 
 BUDGET_IMPACT_BY_NATURE: dict[str, bool] = {
@@ -33,6 +38,7 @@ BUDGET_IMPACT_BY_NATURE: dict[str, bool] = {
     "HORS_BUDGET_A_REGULARISER": False,
     "FONDS_DE_TIERS": False,
     "TRANSFERT_INTERNE": False,
+    "A_IDENTIFIER": False,
 }
 
 
@@ -50,6 +56,8 @@ def impact_for_nature(nature: str | None) -> bool:
 def hors_budget_initial_status(nature: str) -> str | None:
     if nature == "HORS_BUDGET_A_REGULARISER":
         return "A_REGULARISER"
+    if nature == "A_IDENTIFIER":
+        return "A_IDENTIFIER"
     return None
 
 

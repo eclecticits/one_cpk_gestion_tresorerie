@@ -59,6 +59,7 @@ export const NATURE_MOUVEMENT_LABELS: Record<NatureMouvement, string> = {
   HORS_BUDGET_A_REGULARISER: 'Hors budget',
   FONDS_DE_TIERS: 'Fonds de tiers',
   TRANSFERT_INTERNE: 'Transfert interne',
+  A_IDENTIFIER: 'Recette à identifier',
 }
 
 export const HORS_BUDGET_STATUS_LABELS: Record<HorsBudgetStatus, string> = {
@@ -67,6 +68,9 @@ export const HORS_BUDGET_STATUS_LABELS: Record<HorsBudgetStatus, string> = {
   AFFECTE_BUDGET: 'Affecté au budget',
   MAINTENU_HORS_BUDGET: 'Maintenu hors budget',
   ANNULE: 'Annulé',
+  A_IDENTIFIER: 'À identifier',
+  PARTIELLEMENT_IDENTIFIE: 'Partiellement identifiée',
+  IDENTIFIE: 'Identifiée',
 }
 
 export const FONDS_TIERS_STATUT_LABELS: Record<FondsTiersOperation['statut'], string> = {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format } from 'date-fns'
 import { AlertTriangle, Lock, Unlock } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, NatureMouvement, TypeClient, Service } from '../types'
 import { toNumber } from '../utils/amount'
@@ -10,6 +11,7 @@ import type { CompteBancaire } from '../types/banque'
 import { uploadEncaissementPiece } from '../api/encaissementPieces'
 import { listerNotesImpayees } from '../api/creances'
 import { listEncaissementTarifs, type EncaissementTarif } from '../api/encaissementTarifs'
+import { listRecettesAIdentifier, type RecetteAIdentifier } from '../api/recettesAIdentifier'
 import { usePermissions } from '../hooks/usePermissions'
 import NotesImpayeesPanel, { type CiblePayeur } from './NotesImpayeesPanel'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
@@ -231,6 +233,49 @@ export default function EncaissementForm({
   const [justificatifs, setJustificatifs] = useState<File[]>([])
   const submitLockRef = useRef(false)
   const isPage = variant === 'page'
+
+  // Identification d'une recette reçue en banque sans payeur connu : la note
+  // reprend le versement déjà en banque — même compte, même devise, même mode —
+  // et n'y fait rien entrer de plus.
+  const [searchParams] = useSearchParams()
+  const identifierId = isPage ? searchParams.get('identifier') : null
+  const [recetteSource, setRecetteSource] = useState<RecetteAIdentifier | null>(null)
+  const verrouBanque = destinationLock?.canal === 'BANQUE' || recetteSource !== null
+  useEffect(() => {
+    if (!identifierId) {
+      setRecetteSource(null)
+      return
+    }
+    let annule = false
+    listRecettesAIdentifier('ouvertes')
+      .then(({ items }) => {
+        if (annule) return
+        const source = items.find((item) => item.id === identifierId)
+        if (!source) {
+          onError('Recette introuvable', "Ce versement n'est plus en attente d'identification.")
+          return
+        }
+        const reste = toNumber(source.reste)
+        // Le reste est tenu en dollars ; en francs, le montant se saisit au taux
+        // du jour où l'argent est arrivé, pas à celui d'aujourd'hui.
+        const montantSaisi = source.devise === 'CDF' ? reste * toNumber(source.taux_change_applique) : reste
+        setRecetteSource(source)
+        setFormData(prev => ({
+          ...prev,
+          canal: 'BANQUE',
+          compte_bancaire_id: source.compte_bancaire_id ? String(source.compte_bancaire_id) : '',
+          devise_perception: source.devise,
+          mode_paiement: (source.mode_paiement || 'virement') as ModePaiement,
+          reference: source.reference || prev.reference,
+          montant_paye: String(Math.round(montantSaisi * 100) / 100),
+        }))
+      })
+      .catch((e: any) => !annule && onError('Recette introuvable', e?.message || 'Chargement impossible.'))
+    return () => {
+      annule = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identifierId])
 
   // Un encaissement hors budget ou pour compte de tiers alimente la caisse sans
   // rien apporter au budget : le poste budgétaire n'a alors pas de sens et le
@@ -882,6 +927,7 @@ export default function EncaissementForm({
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
         created_by: user?.id,
         articles: buildArticlePayload(),
+        identification_source_id: recetteSource?.id ?? null,
       })
 
       const encCreated = Array.isArray(created) ? created[0] : created
@@ -1177,7 +1223,7 @@ export default function EncaissementForm({
         : 'Référence de paiement'
 
   const selectCanal = (nextCanal: 'CAISSE' | 'BANQUE') => {
-    if (destinationLock) return
+    if (destinationLock || recetteSource) return
     setFormData(prev => ({
       ...prev,
       canal: nextCanal,
@@ -1237,7 +1283,26 @@ export default function EncaissementForm({
       ? `Vous êtes actuellement en mode BANQUE — ${selectedCompte.banque?.nom || 'Banque'} — ${selectedCompte.intitule} (${selectedCompte.devise}). Cet encaissement sera enregistré sur ce compte bancaire.`
       : 'Vous êtes actuellement en mode BANQUE. Sélectionnez le compte bancaire sur lequel cet encaissement sera enregistré.'
 
-  const renderDestinationContext = () => (
+  const renderDestinationContext = () => recetteSource ? (
+    <div className={`${styles.destinationContext} ${styles.destinationContextLocked}`} data-canal="banque">
+      <div className={styles.destinationContextCopy} role="status" aria-live="polite">
+        <span className={styles.destinationContextEyebrow}>Identification d'une recette reçue en banque</span>
+        <strong className={styles.destinationContextTitle}>
+          {recetteSource.numero} — {new Date(recetteSource.date_valeur).toLocaleDateString('fr-FR')}
+          <Lock size={16} aria-label="Destination imposée" />
+        </strong>
+        <p>
+          « {recetteSource.libelle} » sur {recetteSource.compte_bancaire || 'le compte bancaire'}. Reste à
+          identifier : {toNumber(recetteSource.reste).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD
+          {recetteSource.devise === 'CDF' ? ' (contre-valeur)' : ''}.
+        </p>
+        <small>
+          L'argent est déjà en banque : cette note le reprend sans nouveau mouvement de trésorerie. Le budget est
+          imputé aujourd'hui ; le paiement garde la date de valeur bancaire.
+        </small>
+      </div>
+    </div>
+  ) : (
     <div
       className={`${styles.destinationContext} ${destinationLock ? styles.destinationContextLocked : ''}`}
       data-canal={formData.canal.toLowerCase()}
@@ -1297,7 +1362,7 @@ export default function EncaissementForm({
                   : styles.segmentedItem
               }
               onClick={() => selectCanal(value)}
-              disabled={destinationLock !== null || (value === 'CAISSE' && isCashClosed)}
+              disabled={destinationLock !== null || recetteSource !== null || (value === 'CAISSE' && isCashClosed)}
             >
               {libelle}
             </button>
@@ -1943,7 +2008,7 @@ export default function EncaissementForm({
                   ...prev,
                   devise_perception: e.target.value === 'CDF' ? 'CDF' : 'USD',
                 }))}
-                disabled={destinationLock?.canal === 'BANQUE'}
+                disabled={verrouBanque}
                 title={destinationLock?.canal === 'BANQUE' ? 'Déverrouillez la destination pour changer de devise' : undefined}
               >
                 <option value="USD">USD</option>
@@ -1970,7 +2035,7 @@ export default function EncaissementForm({
                 <select
                   value={formData.compte_bancaire_id}
                   onChange={(e) => setFormData(prev => ({ ...prev, compte_bancaire_id: e.target.value }))}
-                  disabled={destinationLock?.canal === 'BANQUE'}
+                  disabled={verrouBanque}
                   required
                 >
                   <option value="">Sélectionner un compte bancaire</option>
@@ -1991,6 +2056,7 @@ export default function EncaissementForm({
                 <select
                   value={formData.mode_paiement}
                   onChange={e => setFormData(prev => ({ ...prev, mode_paiement: e.target.value as ModePaiement }))}
+                  disabled={recetteSource !== null}
                 >
                   <option value="mobile_money">Mobile Money</option>
                   <option value="card">Carte</option>

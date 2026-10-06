@@ -92,6 +92,8 @@ export type NatureMouvement =
   | 'HORS_BUDGET_A_REGULARISER'
   | 'FONDS_DE_TIERS'
   | 'TRANSFERT_INTERNE'
+  /** Reçu en banque, payeur inconnu : en attente d'identification. */
+  | 'A_IDENTIFIER'
 
 /** Où en est un mouvement hors budget dans son parcours de régularisation. */
 export type HorsBudgetStatus =
@@ -100,6 +102,9 @@ export type HorsBudgetStatus =
   | 'AFFECTE_BUDGET'
   | 'MAINTENU_HORS_BUDGET'
   | 'ANNULE'
+  | 'A_IDENTIFIER'
+  | 'PARTIELLEMENT_IDENTIFIE'
+  | 'IDENTIFIE'
 
 export interface EncaissementArticle {
   id: string

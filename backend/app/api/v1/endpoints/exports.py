@@ -2003,6 +2003,7 @@ NATURE_MOUVEMENT_LIBELLES = {
     "HORS_BUDGET_A_REGULARISER": "Hors budget",
     "FONDS_DE_TIERS": "Fonds de tiers",
     "TRANSFERT_INTERNE": "Transfert interne",
+    "A_IDENTIFIER": "Recette à identifier",
 }
 
 HORS_BUDGET_STATUS_LIBELLES = {
@@ -2011,6 +2012,9 @@ HORS_BUDGET_STATUS_LIBELLES = {
     "AFFECTE_BUDGET": "affecté au budget",
     "MAINTENU_HORS_BUDGET": "maintenu hors budget",
     "ANNULE": "annulé",
+    "A_IDENTIFIER": "à identifier",
+    "PARTIELLEMENT_IDENTIFIE": "partiellement identifiée",
+    "IDENTIFIE": "identifiée",
 }
 
 
@@ -2025,14 +2029,14 @@ def _nature_budgetaire_label(mouvement: Any) -> str:
     nature = (getattr(mouvement, "nature_mouvement", None) or "BUDGETAIRE").upper()
     label = NATURE_MOUVEMENT_LIBELLES.get(nature, nature)
     statut = (getattr(mouvement, "hors_budget_status", None) or "").upper()
-    if nature == "HORS_BUDGET_A_REGULARISER" and statut in HORS_BUDGET_STATUS_LIBELLES:
+    if nature in {"HORS_BUDGET_A_REGULARISER", "A_IDENTIFIER"} and statut in HORS_BUDGET_STATUS_LIBELLES:
         return f"{label} ({HORS_BUDGET_STATUS_LIBELLES[statut]})"
     return label
 
 
 def _impact_budgetaire_label(mouvement: Any) -> str:
     nature = (getattr(mouvement, "nature_mouvement", None) or "BUDGETAIRE").upper()
-    if nature in {"HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS", "TRANSFERT_INTERNE"}:
+    if nature in {"HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS", "TRANSFERT_INTERNE", "A_IDENTIFIER"}:
         return "Non"
     return "Oui" if getattr(mouvement, "impact_budgetaire", True) else "Non"
 

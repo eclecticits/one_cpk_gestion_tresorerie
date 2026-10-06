@@ -119,6 +119,10 @@ export const PERMISSION_TREE: PermissionModule[] = [
           // l'administrateur ne l'a pas d'office, elle se règle ici rôle par rôle
           // (par défaut secrétaire exécutif et comptable ; ni caissier ni trésorier).
           { code: 'treso.encaissements.reimputer', label: 'Corriger le poste budgétaire (après paiement)', kind: 'manage', explicit: true },
+          // Reclasser une recette reçue en banque sans payeur connu vers sa vraie
+          // destination (nouvelle recette ou note existante). Par défaut :
+          // administrateur, comptables et trésorier ; pas le caissier.
+          { code: 'treso.encaissements.identifier', label: 'Identifier une recette reçue sans payeur connu', kind: 'manage' },
           { code: 'cancel_encaissement', label: 'Annuler un encaissement', kind: 'cancel' },
         ],
       },

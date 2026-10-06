@@ -38,6 +38,14 @@
   border-color: #bae6fd;
 }
 
+/* Argent en banque dont le payeur reste à trouver : il appelle lui aussi une
+   action, mais d'une autre nature qu'une imputation budgétaire. */
+.aIdentifier {
+  background: #ffe4e6;
+  color: #9f1239;
+  border-color: #fecdd3;
+}
+
 .regularise {
   background: #dcfce7;
   color: #166534;

@@ -1667,3 +1667,51 @@ async def test_un_fonds_retenu_par_une_requisition_en_cours_n_est_plus_disponibl
     [out] = await list_fonds_tiers(statut=None, tenant_id=org.id, db=db)
     assert out.montant_reserve == Decimal("0.00")
     assert await proposer(Decimal("300")) == [(op.id, Decimal("300.00"))]
+
+
+async def test_fonds_tiers_meme_montant_payeurs_differents_ne_sont_pas_des_doublons(db_session, monkeypatch):
+    # Un fonds de tiers part sans client : le payeur d'origine doit suffire à
+    # distinguer deux versements du même montant le même jour.
+    db = db_session
+    org = await _org(db, "ft-doublon")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+
+    from app.api.v1.endpoints.encaissements import create_encaissement
+
+    def payload(payeur: str) -> EncaissementCreate:
+        return EncaissementCreate(
+            type_client="autre",
+            client_nom=None,
+            libelle="Cotisation pour compte",
+            montant=Decimal("100"),
+            montant_total=Decimal("100"),
+            montant_paye=Decimal("100"),
+            nature_mouvement="FONDS_DE_TIERS",
+            mode_paiement="virement",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            fonds_tiers=FondsTiersCreate(tiers_nom_libre="Association ABC", payeur_origine=payeur),
+        )
+
+    async def creer(payeur: str):
+        return await create_encaissement(
+            payload=payload(payeur),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+
+    await creer("Jean Mukendi")
+    await creer("Marie Kabila")
+
+    with pytest.raises(HTTPException) as exc:
+        await creer(" jean  MUKENDI ")
+    assert exc.value.status_code == 409

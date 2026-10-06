@@ -65,7 +65,7 @@ class Encaissement(Base):
             name="ck_encaissements_compte_bancaire",
         ),
         CheckConstraint(
-            "(nature_mouvement = 'FONDS_DE_TIERS') OR "
+            "(nature_mouvement IN ('FONDS_DE_TIERS','A_IDENTIFIER')) OR "
             "(type_client IN ('expert_comptable','sec') AND expert_comptable_id IS NOT NULL) OR "
             "(type_client NOT IN ('expert_comptable','sec') AND client_nom IS NOT NULL AND length(trim(client_nom)) > 0)",
             name="ck_encaissements_client_ref",

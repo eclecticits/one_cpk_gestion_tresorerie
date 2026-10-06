@@ -23,6 +23,7 @@ const ChangePassword = lazyWithRetry(() => import('./pages/ChangePassword'))
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'))
 const Encaissements = lazyWithRetry(() => import('./pages/Encaissements'))
 const FondsTiers = lazyWithRetry(() => import('./pages/FondsTiers'))
+const RecettesAIdentifier = lazyWithRetry(() => import('./pages/RecettesAIdentifier'))
 const Requisitions = lazyWithRetry(() => import('./pages/Requisitions'))
 const SortieDirecteProgrammee = lazyWithRetry(() => import('./pages/SortieDirecteProgrammee'))
 const ExamenDossier = lazyWithRetry(() => import('./pages/ExamenDossier'))
@@ -305,6 +306,7 @@ function AppRoutes() {
         <Route path="validation" element={<ProtectedRoute permission="validation"><Suspense fallback={<LoadingFallback />}><Validation /></Suspense></ProtectedRoute>} />
         <Route path="validation/requisition/:id" element={<ProtectedRoute permission="validation"><Suspense fallback={<LoadingFallback />}><RequisitionDetail /></Suspense></ProtectedRoute>} />
         <Route path="fonds-tiers" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><FondsTiers /></Suspense></ProtectedRoute>} />
+        <Route path="recettes-a-identifier" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><RecettesAIdentifier /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds/nouvelle" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
         <Route path="rapports" element={<ProtectedRoute permission="rapports"><Suspense fallback={<LoadingFallback />}><Rapports /></Suspense></ProtectedRoute>} />

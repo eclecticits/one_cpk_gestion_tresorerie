@@ -23,6 +23,7 @@ const CLASSE_PAR_NATURE: Record<NatureMouvement, string> = {
   HORS_BUDGET_A_REGULARISER: styles.horsBudget,
   FONDS_DE_TIERS: styles.fondsTiers,
   TRANSFERT_INTERNE: styles.transfert,
+  A_IDENTIFIER: styles.aIdentifier,
 }
 
 export default function NatureMouvementBadge({
@@ -33,9 +34,9 @@ export default function NatureMouvementBadge({
   const valeur: NatureMouvement = nature || 'BUDGETAIRE'
   if (valeur === 'BUDGETAIRE' && !afficherBudgetaire) return null
 
-  const estRegularise = horsBudgetStatus === 'AFFECTE_BUDGET'
+  const estRegularise = horsBudgetStatus === 'AFFECTE_BUDGET' || horsBudgetStatus === 'IDENTIFIE'
   const libelle =
-    valeur === 'HORS_BUDGET_A_REGULARISER' && horsBudgetStatus
+    (valeur === 'HORS_BUDGET_A_REGULARISER' || valeur === 'A_IDENTIFIER') && horsBudgetStatus
       ? HORS_BUDGET_STATUS_LABELS[horsBudgetStatus]
       : NATURE_MOUVEMENT_LABELS[valeur]
 
