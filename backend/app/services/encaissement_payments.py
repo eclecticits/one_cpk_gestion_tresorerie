@@ -32,6 +32,7 @@ from app.services.recettes_a_identifier import (
     est_recette_a_identifier,
     journaliser_identification,
     prelever,
+    recalculer_statut,
     restituer,
     verrouiller_recette,
 )
@@ -297,10 +298,11 @@ async def record_encaissement_payment(
 
     devise = (encaissement.devise_perception or "USD").upper()
     source = versement_source = None
+    bloque = Decimal("0.00")
     if identification_source_id is not None:
         if est_recette_a_identifier(encaissement):
             raise HTTPException(status_code=400, detail="Une recette à identifier ne s'identifie pas vers une autre")
-        source, versement_source = await verrouiller_recette(
+        source, versement_source, bloque = await verrouiller_recette(
             db, organisation_id=organisation_id, source_id=identification_source_id, devise=devise
         )
         if versement_source is None:
@@ -353,7 +355,7 @@ async def record_encaissement_payment(
     if montant - remaining > Decimal("0.01"):
         raise HTTPException(status_code=400, detail=f"Montant trop élevé. Restant dû: {remaining}")
     if source is not None:
-        montant = prelever(source, versement_source, montant)
+        montant = prelever(source, versement_source, montant, bloque)
 
     payment_date = date_paiement or now
     if payment_date.tzinfo is None:
@@ -411,6 +413,7 @@ async def record_encaissement_payment(
     db.add(payment)
     await db.flush()
     if source is not None:
+        await recalculer_statut(db, organisation_id=organisation_id, source=source)
         await journaliser_identification(
             db,
             user_id=user_id,

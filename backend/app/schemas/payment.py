@@ -130,7 +130,7 @@ class EncaissementBase(DecimalBaseModel):
     impact_budgetaire: bool | None = None
     hors_budget_status: Literal[
         "A_REGULARISER", "PARTIELLEMENT_AFFECTE", "AFFECTE_BUDGET", "MAINTENU_HORS_BUDGET", "ANNULE",
-        "A_IDENTIFIER", "PARTIELLEMENT_IDENTIFIE", "IDENTIFIE",
+        "A_IDENTIFIER", "PARTIELLEMENT_IDENTIFIE", "IDENTIFIE", "REMBOURSEE",
     ] | None = None
     fonds_tiers_display_name: str | None = None
     fonds_tiers_type: Literal["ORGANISATION", "EXTERNE", "LEGACY"] | None = None

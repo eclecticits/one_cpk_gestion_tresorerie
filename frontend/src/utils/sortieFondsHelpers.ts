@@ -29,6 +29,7 @@ export const CATEGORIES_SORTIE: CategorieTypeSortie[] = [
     types: [
       { value: 'remboursement_fonds_tiers', label: 'Reversement de fonds de tiers' },
       { value: 'depense_hors_budget', label: 'Dépense hors budget (à régulariser)' },
+      { value: 'remboursement_recette_a_identifier', label: "Remboursement d'une recette à identifier" },
     ]
   },
 ]
@@ -41,6 +42,7 @@ export const TYPES_SORTIE_LABELS: Record<TypeSortieFonds, string> = {
   sortie_directe: 'Sortie directe (max 100$)',
   remboursement_fonds_tiers: 'Reversement de fonds de tiers',
   depense_hors_budget: 'Dépense hors budget',
+  remboursement_recette_a_identifier: "Remboursement d'une recette à identifier",
 }
 
 /** Nature imposée par le type de sortie. Le type dit ce qu'on fait ; la nature
@@ -48,6 +50,7 @@ export const TYPES_SORTIE_LABELS: Record<TypeSortieFonds, string> = {
 export function natureDuTypeSortie(type: TypeSortieFonds): NatureMouvement {
   if (type === 'remboursement_fonds_tiers') return 'FONDS_DE_TIERS'
   if (type === 'depense_hors_budget') return 'HORS_BUDGET_A_REGULARISER'
+  if (type === 'remboursement_recette_a_identifier') return 'A_IDENTIFIER'
   if (type === 'versement_banque' || type === 'approvisionnement_caisse') return 'TRANSFERT_INTERNE'
   return 'BUDGETAIRE'
 }

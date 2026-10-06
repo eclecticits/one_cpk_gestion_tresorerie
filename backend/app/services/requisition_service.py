@@ -54,6 +54,8 @@ from app.services.historical_snapshots import (
     requisition_examinee,
     ensure_requisition_historical_snapshot,
 )
+from app.services.recettes_a_identifier import NATURE_REQUISITION as NATURE_RECETTE_A_IDENTIFIER
+from app.services.recettes_a_identifier import verifier_remboursement
 from app.services.fonds_tiers import (
     lignes_fonds_tiers_requisition,
     remplacer_fonds_tiers_requisition,
@@ -641,6 +643,17 @@ async def create_requisition_logic(
         devise=req_devise,
         montant_total=payload.montant_total,
     )
+    # Remboursement d'une recette à identifier : la réquisition en retient le
+    # montant dès sa création, il ne s'identifie plus ailleurs pendant qu'elle
+    # suit son circuit.
+    if payload.nature_requisition == NATURE_RECETTE_A_IDENTIFIER:
+        await verifier_remboursement(
+            db,
+            organisation_id=tenant_id,
+            recette_id=payload.recette_a_identifier_id,
+            devise=req_devise,
+            montant=payload.montant_total,
+        )
     # Montant converti depuis la devise de la réquisition vers la devise pivot
     # (référence) pour comparer au seuil éventuel.
     amount = await _pivot_amount(db, tenant_id, float(payload.montant_total or 0), req_devise)
@@ -670,6 +683,7 @@ async def create_requisition_logic(
         instance_beneficiaire=payload.instance_beneficiaire,
         tiers_organisation_id=tiers_organisation_id,
         tiers_nom_libre=tiers_nom_libre,
+        recette_a_identifier_id=payload.recette_a_identifier_id,
         notes_a_valoir=payload.notes_a_valoir,
         reference_numero=numero_requisition,
         created_at=_utcnow(),
@@ -889,6 +903,25 @@ async def update_requisition_logic(
     if payload.type_requisition is not None:
         req.type_requisition = payload.type_requisition
     target_nature = payload.nature_requisition or req.nature_requisition or "BUDGETAIRE"
+    # Une réquisition de remboursement désigne sa recette à la création ; elle
+    # ne le devient ni ne cesse de l'être en cours de route.
+    nature_actuelle = (req.nature_requisition or "BUDGETAIRE").upper()
+    if (target_nature == NATURE_RECETTE_A_IDENTIFIER) != (nature_actuelle == NATURE_RECETTE_A_IDENTIFIER):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le remboursement d'une recette à identifier ne change pas de nature : créez une autre réquisition.",
+        )
+    if target_nature == NATURE_RECETTE_A_IDENTIFIER and (
+        payload.montant_total is not None or getattr(payload, "devise", None) is not None
+    ):
+        await verifier_remboursement(
+            db,
+            organisation_id=tenant_id,
+            recette_id=req.recette_a_identifier_id,
+            devise=(getattr(payload, "devise", None) or req.devise or "USD"),
+            montant=(payload.montant_total if payload.montant_total is not None else req.montant_total),
+            exclure_requisition_id=req.id,
+        )
     # Les deux identités du tiers sont exclusives : en désigner une efface
     # l'autre. Sans cela, basculer un tiers du référentiel vers un tiers libre
     # est impossible — l'ancien identifiant survit au payload, les deux

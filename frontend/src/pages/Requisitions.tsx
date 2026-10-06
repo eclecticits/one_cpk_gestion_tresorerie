@@ -666,7 +666,11 @@ export default function Requisitions() {
   }, [formData.mode_paiement, formData.compte_bancaire_id, comptesBancaires])
 
 
-  const requisitionsQueryKey = ['requisitions', filterServiceId, filterBudgetPosteId] as const
+  // Tout paramètre envoyé au serveur doit figurer dans la clé, sinon changer le
+  // filtre ne recharge rien. Statut, mode, recherche et objet sont filtrés côté
+  // client : la liste chargée couvre tous les statuts, ce qui garde « Toutes »
+  // et les compteurs par statut justes.
+  const requisitionsQueryKey = ['requisitions', activeTab, dateDebut, dateFin, filterServiceId, filterBudgetPosteId] as const
 
   const requisitionsQuery = useQuery({
     queryKey: requisitionsQueryKey,
@@ -676,11 +680,7 @@ export default function Requisitions() {
           include: 'demandeur,validateur,approbateur,examinateur,caissier',
           date_debut: dateDebut,
           date_fin: dateFin,
-          status: filterStatut || undefined,
-          mode_paiement: filterModePaiement || undefined,
           type_requisition: activeTab,
-          search: searchQuery || undefined,
-          objet: filterObjet || undefined,
           ...(filterServiceId ? { service_id: Number(filterServiceId) } : {}),
           ...(filterBudgetPosteId ? { budget_poste_id: Number(filterBudgetPosteId) } : {}),
           limit: 5000,

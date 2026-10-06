@@ -127,6 +127,14 @@ class Requisition(Base):
         index=True,
     )
     tiers_nom_libre: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Nature RECETTE_A_IDENTIFIER : la recette reçue sans payeur connu que
+    #: cette réquisition autorise à rembourser.
+    recette_a_identifier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("encaissements.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     notes_a_valoir: Mapped[str | None] = mapped_column(Text, nullable=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     import_source: Mapped[str | None] = mapped_column(String(50), nullable=True)

@@ -82,7 +82,7 @@ from app.services.mouvements_budgetaires import (
     normalize_nature,
     sum_active_by_encaissement,
 )
-from app.services.recettes_a_identifier import est_recette_a_identifier
+from app.services.recettes_a_identifier import engagements_recettes, est_recette_a_identifier
 from app.services.regularisations_budgetaires import affecter_encaissement_hors_budget
 from app.services.reimputation_encaissement import (
     apercu_reimputation_encaissement,
@@ -2195,6 +2195,14 @@ async def create_encaissement(
         ).scalar_one_or_none()
         if source_identification is None or not est_recette_a_identifier(source_identification):
             raise HTTPException(status_code=404, detail="Recette à identifier introuvable")
+        # Une note en francs convertit son montant en dollars à la création,
+        # alors que la recette à identifier est tenue en francs : les deux ne se
+        # prélèvent pas l'un sur l'autre sans fausser la trésorerie.
+        if (source_identification.devise_perception or "USD").upper() != "USD":
+            raise HTTPException(
+                status_code=400,
+                detail="Recette en francs : identifiez-la en réglant une note existante.",
+            )
         payload = payload.model_copy(
             update={
                 "canal": source_identification.canal,
@@ -3415,6 +3423,14 @@ async def cancel_encaissement_operation(
             raise HTTPException(
                 status_code=400,
                 detail="Des encaissements sont tirés de cette recette à identifier : annulez-les d'abord.",
+            )
+        engagement = (
+            await engagements_recettes(db, organisation_id=tenant_id, source_ids=[encaissement.id])
+        ).get(encaissement.id)
+        if engagement is not None and engagement.bloque > 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Un remboursement de cette recette est payé ou en cours : annulez-le d'abord.",
             )
 
     active_payments = (

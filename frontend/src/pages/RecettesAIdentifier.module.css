@@ -666,3 +666,18 @@
     grid-template-columns: 1fr;
   }
 }
+
+.remboursements {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 0.76rem;
+  color: #9a3412;
+}
+
+/* Part promise par une réquisition de remboursement encore en circuit. */
+.reserve {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #92400e;
+}

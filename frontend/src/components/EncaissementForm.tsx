@@ -255,10 +255,8 @@ export default function EncaissementForm({
           onError('Recette introuvable', "Ce versement n'est plus en attente d'identification.")
           return
         }
-        const reste = toNumber(source.reste)
-        // Le reste est tenu en dollars ; en francs, le montant se saisit au taux
-        // du jour où l'argent est arrivé, pas à celui d'aujourd'hui.
-        const montantSaisi = source.devise === 'CDF' ? reste * toNumber(source.taux_change_applique) : reste
+        // Ce qui n'est ni identifié, ni rendu, ni promis au remboursement.
+        const montantSaisi = toNumber(source.disponible)
         setRecetteSource(source)
         setFormData(prev => ({
           ...prev,
@@ -1293,8 +1291,8 @@ export default function EncaissementForm({
         </strong>
         <p>
           « {recetteSource.libelle} » sur {recetteSource.compte_bancaire || 'le compte bancaire'}. Reste à
-          identifier : {toNumber(recetteSource.reste).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD
-          {recetteSource.devise === 'CDF' ? ' (contre-valeur)' : ''}.
+          identifier : {toNumber(recetteSource.disponible).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}{' '}
+          {recetteSource.devise}.
         </p>
         <small>
           L'argent est déjà en banque : cette note le reprend sans nouveau mouvement de trésorerie. Le budget est

@@ -69,9 +69,11 @@ DELETE_TARGETS: tuple[Target, ...] = (
     # encaissements dépendent, après les deux.
     Target("sorties_fonds", "delete", "organisation_id = :organisation_id"),
     Target("fonds_tiers_operations", "delete", "organisation_id = :organisation_id", ("encaissements",), notes="RESTRICT vers encaissements ; référencée en RESTRICT par sorties_fonds."),
+    # Une réquisition de remboursement désigne sa recette à identifier
+    # (RESTRICT vers encaissements) : elle part avant elle.
+    Target("requisitions", "delete", "organisation_id = :organisation_id"),
     Target("encaissements", "delete", "organisation_id = :organisation_id"),
     Target("clients", "delete", "organisation_id = :organisation_id", ("encaissements",), notes="Référentiel client alimenté par les opérations d'encaissement de test."),
-    Target("requisitions", "delete", "organisation_id = :organisation_id"),
     Target("dossiers_requisition", "delete", "organisation_id = :organisation_id", notes="Dossiers d'examen de réquisitions opérationnels."),
     Target("transferts_internes", "delete", "organisation_id = :organisation_id"),
     Target("ouvertures_caisse", "delete", "organisation_id = :organisation_id"),

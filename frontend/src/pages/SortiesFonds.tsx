@@ -616,18 +616,24 @@ export default function SortiesFonds() {
   const requisitionsRemboursement = requisitionsApprouveesList.filter(
     (req) => req?.type_requisition === 'remboursement_transport'
   )
+  const requisitionsRecettesAIdentifier = requisitionsApprouveesList.filter(
+    (req) => String((req as any)?.nature_requisition || '').toUpperCase() === 'RECETTE_A_IDENTIFIER'
+  )
   const requiresApprovedRequisition =
     formData.type_sortie === 'requisition' ||
     formData.type_sortie === 'remboursement' ||
     formData.type_sortie === 'depense_hors_budget' ||
-    formData.type_sortie === 'remboursement_fonds_tiers'
+    formData.type_sortie === 'remboursement_fonds_tiers' ||
+    formData.type_sortie === 'remboursement_recette_a_identifier'
   const approvedRequisitionsForType = formData.type_sortie === 'remboursement'
     ? requisitionsRemboursement
     : formData.type_sortie === 'depense_hors_budget'
       ? requisitionsHorsBudget
       : formData.type_sortie === 'remboursement_fonds_tiers'
         ? requisitionsFondsTiers
-        : requisitionsBudgetaires
+        : formData.type_sortie === 'remboursement_recette_a_identifier'
+          ? requisitionsRecettesAIdentifier
+          : requisitionsBudgetaires
   const noApprovedRequisitionAvailable =
     requiresApprovedRequisition && approvedRequisitionsForType.length === 0
   const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
@@ -832,6 +838,21 @@ export default function SortiesFonds() {
       fonds_tiers_operation_id: fondsTiersOperationParam || prev.fonds_tiers_operation_id,
     }))
   }, [fondsTiersOperationParam, isCreatePage, typeSortieParam])
+
+  // Depuis « Recettes à identifier » : la sortie rembourse une recette dont la
+  // réquisition approuvée se choisit ensuite dans la liste.
+  useEffect(() => {
+    if (!isCreatePage || typeSortieParam !== 'remboursement_recette_a_identifier') return
+    setShowForm(true)
+    setFormData((prev) => ({
+      ...prev,
+      type_sortie: 'remboursement_recette_a_identifier',
+      requisition_id: '',
+      ordre_decaissement_id: '',
+      budget_poste_id: '',
+      rubrique_code: '',
+    }))
+  }, [isCreatePage, typeSortieParam])
 
   const fondsTiersSelectionne = useMemo(
     () => fondsTiersOuverts.find((op) => String(op.id) === String(formData.fonds_tiers_operation_id)) || null,

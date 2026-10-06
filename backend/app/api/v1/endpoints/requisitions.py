@@ -535,6 +535,9 @@ def _requisition_out(
         "mode_paiement": req.mode_paiement,
         "type_requisition": req.type_requisition,
         "nature_requisition": getattr(req, "nature_requisition", None) or "BUDGETAIRE",
+        "recette_a_identifier_id": (
+            str(req.recette_a_identifier_id) if getattr(req, "recette_a_identifier_id", None) else None
+        ),
         "montant_total": req.montant_total or 0,
         "montant_deja_paye": montant_deja_paye,
         "lignes_count": lignes_count,

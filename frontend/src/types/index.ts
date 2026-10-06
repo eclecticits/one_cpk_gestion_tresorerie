@@ -105,6 +105,7 @@ export type HorsBudgetStatus =
   | 'A_IDENTIFIER'
   | 'PARTIELLEMENT_IDENTIFIE'
   | 'IDENTIFIE'
+  | 'REMBOURSEE'
 
 export interface EncaissementArticle {
   id: string
@@ -427,6 +428,8 @@ export type TypeSortieFonds =
   | 'remboursement_fonds_tiers'
   /** Dépense payée sans imputation décidée : à régulariser sur un poste. */
   | 'depense_hors_budget'
+  /** Argent reçu en banque sans payeur connu, rendu à qui l'avait versé. */
+  | 'remboursement_recette_a_identifier'
 
 export interface TrancheDecaissement {
   numero: number

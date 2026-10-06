@@ -21,6 +21,14 @@ export interface IdentificationRecette {
   identifie_le?: string | null
 }
 
+export interface RemboursementRecette {
+  sortie_id: string
+  reference_numero?: string | null
+  beneficiaire?: string | null
+  montant: Money
+  date?: string | null
+}
+
 export interface RecetteAIdentifier {
   id: string
   numero?: string | null
@@ -34,7 +42,14 @@ export interface RecetteAIdentifier {
   taux_change_applique: Money
   montant_initial: Money
   montant_identifie: Money
+  montant_rembourse: Money
+  /** Promis au remboursement par une réquisition en cours. */
+  montant_reserve: Money
   reste: Money
+  /** Ce qui peut encore s'identifier ou se rembourser : le reste moins la réserve. */
+  disponible: Money
+  reservations: string[]
+  remboursements: RemboursementRecette[]
   age_jours: number
   tranche: TrancheAnciennete
   statut?: HorsBudgetStatus | null
@@ -92,6 +107,33 @@ export function createRecetteAIdentifier(payload: RecetteAIdentifierPayload) {
 export function pistesIdentification(recetteId: string, q?: string) {
   const qs = q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ''
   return apiRequest<PisteIdentification[]>('GET', `/recettes-a-identifier/${recetteId}/pistes${qs}`)
+}
+
+export interface RemboursementRequisitionPayload {
+  recette: RecetteAIdentifier
+  objet: string
+  beneficiaire: string
+  montant: number
+  service_id: number
+  mode_paiement: 'virement' | 'cheque' | 'mobile_money' | 'cash'
+  compte_bancaire_id?: number | null
+}
+
+/** Rembourser passe par une réquisition : elle réserve le montant sur la
+ *  recette pendant son circuit de validation, la sortie de fonds le paie. */
+export function createRequisitionRemboursement(p: RemboursementRequisitionPayload) {
+  return apiRequest<{ id: string; numero_requisition: string }>('POST', '/requisitions', {
+    objet: p.objet,
+    mode_paiement: p.mode_paiement,
+    type_requisition: 'classique',
+    nature_requisition: 'RECETTE_A_IDENTIFIER',
+    recette_a_identifier_id: p.recette.id,
+    montant_total: p.montant,
+    devise: p.recette.devise,
+    service_id: p.service_id,
+    compte_bancaire_id: p.mode_paiement === 'cash' ? null : p.compte_bancaire_id ?? null,
+    beneficiaire: p.beneficiaire,
+  })
 }
 
 export function reglerNoteDepuisRecette(recetteId: string, encaissementId: string, montant: number) {

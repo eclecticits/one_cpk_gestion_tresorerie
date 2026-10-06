@@ -91,6 +91,10 @@ from app.services.fonds_tiers import (
     resolve_fonds_tiers_display_name,
 )
 from app.services.regularisations_budgetaires import affecter_sortie_hors_budget
+from app.models.encaissement import Encaissement
+from app.modules.comptabilite.models import RUBRIQUE_RECETTE_A_IDENTIFIER
+from app.services.recettes_a_identifier import NATURE_REQUISITION as NATURE_REQUISITION_RECETTE
+from app.services.recettes_a_identifier import recalculer_statut, verifier_remboursement
 from app.services.mouvements_budgetaires import (
     cancel_budget_imputations,
     create_budget_imputation,
@@ -152,6 +156,8 @@ def _nature_sortie_depuis_requisition(req: Requisition) -> str:
         return "HORS_BUDGET_A_REGULARISER"
     if nature_req == "FONDS_DE_TIERS":
         return "FONDS_DE_TIERS"
+    if nature_req == NATURE_REQUISITION_RECETTE:
+        return "A_IDENTIFIER"
     return "BUDGETAIRE"
 
 
@@ -614,6 +620,7 @@ def _sortie_out(
         impact_budgetaire=getattr(sortie, "impact_budgetaire", None),
         hors_budget_status=getattr(sortie, "hors_budget_status", None),
         fonds_tiers_operation_id=getattr(sortie, "fonds_tiers_operation_id", None),
+        recette_a_identifier_id=getattr(sortie, "recette_a_identifier_id", None),
         montant_affecte_budget=montant_affecte_budget if montant_affecte_budget is not None else Decimal("0"),
         pdf_path=sortie.pdf_path,
         statut=sortie.statut or "VALIDE",
@@ -1648,6 +1655,8 @@ async def create_sortie_fonds(
     # Reversement de fonds de tiers : qui a signé la décharge en caisse. Le
     # tiers créancier, lui, reste porté par `fonds_tiers_operation_id`.
     beneficiaire_fonds_tiers: str | None = None
+    # Remboursement d'une recette à identifier : la recette qu'il diminue.
+    recette_a_identifier: Any = None
     if is_transfert_interne and payload.nature_mouvement != "BUDGETAIRE" and payload.nature_mouvement != "TRANSFERT_INTERNE":
         raise HTTPException(status_code=400, detail="Nature incompatible avec un transfert interne")
     if not is_transfert_interne and nature_mouvement == "TRANSFERT_INTERNE":
@@ -1656,6 +1665,11 @@ async def create_sortie_fonds(
         raise HTTPException(status_code=400, detail="Réquisition HORS_BUDGET approuvée requise")
     if nature_mouvement == "FONDS_DE_TIERS" and requisition_uid is None:
         raise HTTPException(status_code=400, detail="Réquisition FONDS_DE_TIERS approuvée requise")
+    if nature_mouvement == "A_IDENTIFIER" and requisition_uid is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Le remboursement d'une recette à identifier exige une réquisition approuvée",
+        )
     if nature_mouvement != "FONDS_DE_TIERS" and payload.fonds_tiers_operation_id is not None and requisition_uid is None:
         raise HTTPException(status_code=400, detail="fonds_tiers_operation_id réservé aux remboursements FONDS_DE_TIERS")
     if is_transfert_interne:
@@ -2156,6 +2170,22 @@ async def create_sortie_fonds(
             )
             payload.beneficiaire = beneficiaire_fonds_tiers
             fonds_tiers_repartition = [(fonds_tiers_operation, montant_paye)]
+        if nature_mouvement == "A_IDENTIFIER":
+            # Vérifié de nouveau sous verrou : depuis l'approbation, une autre
+            # réquisition ou une identification a pu entamer la recette. Celle
+            # qu'on paie est retirée des réservations — c'est elle qui sort.
+            recette_a_identifier = await verifier_remboursement(
+                db,
+                organisation_id=tenant_id,
+                recette_id=req.recette_a_identifier_id,
+                devise=devise,
+                montant=montant_paye,
+                exclure_requisition_id=req.id,
+                verrouiller=True,
+            )
+            payload.beneficiaire = (
+                (payload.beneficiaire or "").strip() or (req.beneficiaire or "").strip() or payload.beneficiaire
+            )
     elif not is_transfert_interne and ordre is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -2440,8 +2470,11 @@ async def create_sortie_fonds(
         idempotency_payload_hash=payload_hash,
         nature_mouvement=nature_mouvement,
         impact_budgetaire=impact_budgetaire,
-        hors_budget_status=hors_budget_initial_status(nature_mouvement),
+        # Une sortie n'a pas de parcours d'identification : le statut
+        # « à identifier » est celui de la recette, pas du remboursement.
+        hors_budget_status=(None if nature_mouvement == "A_IDENTIFIER" else hors_budget_initial_status(nature_mouvement)),
         fonds_tiers_operation_id=(fonds_tiers_operation.id if fonds_tiers_operation is not None else None),
+        recette_a_identifier_id=(recette_a_identifier.id if recette_a_identifier is not None else None),
         exchange_rate_snapshot=exchange_rate_snapshot,
         statut=payload.statut or "VALIDE",
         motif=snapshot_motif,
@@ -2542,7 +2575,24 @@ async def create_sortie_fonds(
                     created_by=user.id,
                     imputations=([(p.id, m) for p, m in imputations] if multi_poste else None),
                 )
-            if impact_budgetaire or is_versement_banque or is_appro_caisse:
+            elif recette_a_identifier is not None:
+                # Débit compte d'attente / Crédit trésorerie : l'argent reçu
+                # sans payeur connu est rendu, l'attente se solde d'autant.
+                await generer_ecriture_sortie_fonds(
+                    db,
+                    organisation_id=tenant_id,
+                    sortie_fonds_id=str(sortie.id),
+                    date_operation=date_paiement.date(),
+                    montant=montant_paye,
+                    devise=devise,
+                    canal=canal,
+                    compte_bancaire_id=payload.compte_bancaire_id,
+                    budget_poste_id=None,
+                    libelle=libelle_ecriture,
+                    created_by=user.id,
+                    rubrique_debit=RUBRIQUE_RECETTE_A_IDENTIFIER,
+                )
+            if impact_budgetaire or is_versement_banque or is_appro_caisse or recette_a_identifier is not None:
                 sortie.statut_comptabilisation = STATUT_COMPTABILISEE
             else:
                 sortie.statut_comptabilisation = "A_COMPTABILISER_MANUELLEMENT"
@@ -2594,6 +2644,10 @@ async def create_sortie_fonds(
             user=user,
             comment=comment_req,
         )
+
+    if recette_a_identifier is not None:
+        await db.flush()
+        await recalculer_statut(db, organisation_id=tenant_id, source=recette_a_identifier)
 
     # --- Règlement d'un ordre de décaissement (progressif ou sortie directe)
     if ordre is not None:
@@ -3458,6 +3512,18 @@ async def update_sortie_statut(
                 operation_id=operation_id,
             )
             await refresh_fonds_tiers_status(db, organisation_id=tenant_id, operation=fonds_tiers_operation)
+        # Remboursement annulé : la recette retrouve ce qu'il lui avait retiré.
+        if getattr(sortie, "recette_a_identifier_id", None) is not None:
+            recette = (
+                await db.execute(
+                    select(Encaissement)
+                    .where(Encaissement.id == sortie.recette_a_identifier_id, Encaissement.organisation_id == tenant_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if recette is not None:
+                await db.flush()
+                await recalculer_statut(db, organisation_id=tenant_id, source=recette)
     await log_action(
         db,
         user_id=user.id,

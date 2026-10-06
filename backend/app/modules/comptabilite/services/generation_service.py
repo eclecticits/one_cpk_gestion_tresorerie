@@ -509,6 +509,7 @@ async def generer_ecriture_sortie_fonds(
     libelle: str,
     created_by=None,
     imputations: list[tuple[int, Decimal]] | None = None,
+    rubrique_debit: str | None = None,
 ) -> ComptaEcriture:
     """Débit Charge / Crédit Trésorerie — cf. catalogue §4.5 du dossier d'architecture.
 
@@ -516,6 +517,10 @@ async def generer_ecriture_sortie_fonds(
     budgétaires (ordre de décaissement multi-postes) — une ligne de débit par
     poste `(budget_poste_id, montant_ligne)`, remplace `budget_poste_id` quand
     fourni. La somme des montants doit égaler `montant`.
+
+    `rubrique_debit` : rubrique technique débitée à la place d'une charge, pour
+    une sortie qui ne consomme rien — le remboursement d'une recette à
+    identifier solde le compte d'attente où elle avait été reçue.
     """
     existing = await _find_existing_ecriture(db, organisation_id, "sorties_fonds", "sortie_fonds", sortie_fonds_id)
     if existing is not None:
@@ -531,7 +536,7 @@ async def generer_ecriture_sortie_fonds(
                     f"({total_impute}) différente du montant de la sortie ({montant})."
                 ),
             )
-    elif budget_poste_id is None:
+    elif budget_poste_id is None and rubrique_debit is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Sortie de fonds sans poste budgétaire : impossible de résoudre le compte de charge.",
@@ -570,7 +575,10 @@ async def generer_ecriture_sortie_fonds(
     await db.flush()
 
     lignes: list[tuple[int, Decimal, Decimal, str]] = []
-    if imputations:
+    if rubrique_debit is not None:
+        compte_debit = await resolve_compte_rubrique(db, organisation_id, rubrique_debit)
+        lignes.append((compte_debit.id, montant, Decimal("0"), libelle))
+    elif imputations:
         for poste_id, montant_ligne in imputations:
             compte_charge = await resolve_compte_poste_budgetaire(db, organisation_id, poste_id)
             lignes.append((compte_charge.id, montant_ligne, Decimal("0"), libelle))

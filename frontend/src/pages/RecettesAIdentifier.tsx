@@ -4,10 +4,12 @@ import { RefreshCw } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import { ResponsiveModal } from '../components/ResponsiveModal'
 import { listComptesBancaires } from '../api/banques'
+import { getServices } from '../api/services'
 import { HORS_BUDGET_STATUS_LABELS } from '../api/mouvementsHorsBudget'
 import {
   TRANCHE_LABELS,
   createRecetteAIdentifier,
+  createRequisitionRemboursement,
   listRecettesAIdentifier,
   pistesIdentification,
   reglerNoteDepuisRecette,
@@ -17,6 +19,7 @@ import {
   type TrancheAnciennete,
 } from '../api/recettesAIdentifier'
 import type { CompteBancaire } from '../types/banque'
+import type { Service } from '../types'
 import { toNumber } from '../utils/amount'
 import { usePermissions } from '../hooks/usePermissions'
 import styles from './RecettesAIdentifier.module.css'
@@ -54,6 +57,9 @@ export default function RecettesAIdentifier() {
   const { hasPermission } = usePermissions()
   const peutSaisir = hasPermission('encaissements')
   const peutIdentifier = hasPermission('treso.encaissements.identifier')
+  // Rembourser, c'est ouvrir une réquisition : il faut pouvoir en créer une.
+  const peutRembourser = peutIdentifier && (hasPermission('can_create_requisition') || hasPermission('services'))
+  const peutPayer = hasPermission('can_execute_payment')
 
   const [filtre, setFiltre] = useState<Filtre>('ouvertes')
   const [recettes, setRecettes] = useState<RecetteAIdentifier[]>([])
@@ -63,6 +69,7 @@ export default function RecettesAIdentifier() {
   const [message, setMessage] = useState<string | null>(null)
   const [saisieOuverte, setSaisieOuverte] = useState(false)
   const [aRegler, setARegler] = useState<RecetteAIdentifier | null>(null)
+  const [aRembourser, setARembourser] = useState<RecetteAIdentifier | null>(null)
 
   const charger = useCallback(async () => {
     setChargement(true)
@@ -203,6 +210,7 @@ export default function RecettesAIdentifier() {
             ) : (
               recettes.map((r) => {
                 const reste = toNumber(r.reste)
+                const disponible = toNumber(r.disponible)
                 const ouverte = reste > 0 && r.statut_operation === 'ACTIVE'
                 return (
                   <tr key={r.id} className={ouverte && r.age_jours > SEUIL_ALERTE_JOURS ? styles.rowAlerte : undefined}>
@@ -225,6 +233,22 @@ export default function RecettesAIdentifier() {
                             </li>
                           ))}
                         </ul>
+                      )}
+                      {r.remboursements.length > 0 && (
+                        <ul className={styles.remboursements}>
+                          {r.remboursements.map((rb) => (
+                            <li key={rb.sortie_id}>
+                              {formatMontant(rb.montant, r.devise)} rendu à {rb.beneficiaire || '—'}
+                              {rb.reference_numero ? ` · ${rb.reference_numero}` : ''}
+                              {rb.date ? ` · le ${formatDate(rb.date)}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {r.reservations.length > 0 && (
+                        <div className={styles.reserve}>
+                          Remboursement en cours : {formatMontant(r.montant_reserve, r.devise)} · {r.reservations.join(', ')}
+                        </div>
                       )}
                     </td>
                     <td data-label="Reçu">{formatMontant(r.montant_initial, r.devise)}</td>
@@ -249,14 +273,31 @@ export default function RecettesAIdentifier() {
                       </span>
                     </td>
                     <td data-label="Actions">
-                      {ouverte && peutIdentifier && (
+                      {ouverte && (
                         <div className={styles.actions}>
-                          <Link to={`/encaissements/nouveau?identifier=${r.id}`} className={styles.primaryLink}>
-                            Nouvelle recette
-                          </Link>
-                          <button type="button" className={styles.secondaryBtn} onClick={() => setARegler(r)}>
-                            Régler une note
-                          </button>
+                          {peutIdentifier && disponible > 0 && r.devise === 'USD' && (
+                            <Link to={`/encaissements/nouveau?identifier=${r.id}`} className={styles.primaryLink}>
+                              Nouvelle recette
+                            </Link>
+                          )}
+                          {peutIdentifier && disponible > 0 && (
+                            <button type="button" className={styles.secondaryBtn} onClick={() => setARegler(r)}>
+                              Régler une note
+                            </button>
+                          )}
+                          {peutRembourser && disponible > 0 && (
+                            <button type="button" className={styles.secondaryBtn} onClick={() => setARembourser(r)}>
+                              Rembourser
+                            </button>
+                          )}
+                          {peutPayer && r.reservations.length > 0 && (
+                            <Link
+                              to="/sorties-fonds/nouvelle?type_sortie=remboursement_recette_a_identifier"
+                              className={styles.secondaryBtn}
+                            >
+                              Payer le remboursement
+                            </Link>
+                          )}
                         </div>
                       )}
                     </td>
@@ -274,6 +315,19 @@ export default function RecettesAIdentifier() {
           onSuccess={(numero) => {
             setSaisieOuverte(false)
             apresAction(`Versement ${numero} enregistré : la banque est créditée, le payeur reste à identifier.`)
+          }}
+        />
+      )}
+
+      {aRembourser && (
+        <RembourserRecette
+          recette={aRembourser}
+          onClose={() => setARembourser(null)}
+          onSuccess={(numero) => {
+            setARembourser(null)
+            apresAction(
+              `Réquisition ${numero} créée : le montant est réservé sur la recette. Une fois approuvée, elle se paie par une sortie de fonds « Remboursement d'une recette à identifier ».`,
+            )
           }}
         />
       )}
@@ -428,7 +482,7 @@ function ReglerNote({
   const [montant, setMontant] = useState('')
   const [envoi, setEnvoi] = useState(false)
   const [erreur, setErreur] = useState<string | null>(null)
-  const reste = toNumber(recette.reste)
+  const reste = toNumber(recette.disponible)
 
   useEffect(() => {
     let annule = false
@@ -487,7 +541,7 @@ function ReglerNote({
     >
       <div className={styles.form}>
         <p className={styles.hint}>
-          « {recette.libelle} » — reste à identifier : <strong>{formatMontant(recette.reste, recette.devise)}</strong>.
+          « {recette.libelle} » — reste à identifier : <strong>{formatMontant(recette.disponible, recette.devise)}</strong>.
           La note est réglée sans nouveau mouvement en banque : le versement y est déjà.
         </p>
         <label className={styles.field}>
@@ -532,6 +586,123 @@ function ReglerNote({
             <input inputMode="decimal" value={montant} onChange={(e) => setMontant(e.target.value)} />
           </label>
         )}
+        {erreur && <div className={styles.error} role="alert">{erreur}</div>}
+      </div>
+    </ResponsiveModal>
+  )
+}
+
+function RembourserRecette({
+  recette,
+  onClose,
+  onSuccess,
+}: {
+  recette: RecetteAIdentifier
+  onClose: () => void
+  onSuccess: (numero: string) => void
+}) {
+  const disponible = toNumber(recette.disponible)
+  const [objet, setObjet] = useState(`Remboursement du versement ${recette.numero || ''} reçu le ${formatDate(recette.date_valeur)}`)
+  const [beneficiaire, setBeneficiaire] = useState('')
+  const [montant, setMontant] = useState(String(disponible))
+  const [services, setServices] = useState<Service[]>([])
+  const [serviceId, setServiceId] = useState('')
+  const [mode, setMode] = useState<'virement' | 'cheque' | 'mobile_money' | 'cash'>('virement')
+  const [envoi, setEnvoi] = useState(false)
+  const [erreur, setErreur] = useState<string | null>(null)
+
+  useEffect(() => {
+    getServices({ active: true })
+      .then((liste) => {
+        setServices(liste)
+        if (liste.length === 1) setServiceId(String(liste[0].id))
+      })
+      .catch(() => setErreur('Impossible de charger les services.'))
+  }, [])
+
+  const creer = async () => {
+    const valeur = Number(montant.replace(',', '.'))
+    if (!beneficiaire.trim()) return setErreur("Indiquez à qui l'argent est rendu.")
+    if (!(valeur > 0)) return setErreur('Le montant doit être positif.')
+    if (valeur > disponible + 0.01) return setErreur('Le montant dépasse ce qui reste sur la recette.')
+    if (!serviceId) return setErreur('Choisissez le service qui porte la réquisition.')
+    if (objet.trim().length < 3) return setErreur("Précisez l'objet de la réquisition.")
+    setEnvoi(true)
+    setErreur(null)
+    try {
+      const req = await createRequisitionRemboursement({
+        recette,
+        objet: objet.trim(),
+        beneficiaire: beneficiaire.trim(),
+        montant: valeur,
+        service_id: Number(serviceId),
+        mode_paiement: mode,
+        compte_bancaire_id: recette.compte_bancaire_id ?? null,
+      })
+      onSuccess(req.numero_requisition)
+    } catch (e: any) {
+      setErreur(e?.message || "La réquisition n'a pas pu être créée.")
+    } finally {
+      setEnvoi(false)
+    }
+  }
+
+  return (
+    <ResponsiveModal
+      isOpen
+      onClose={onClose}
+      title={`Rembourser ${recette.numero || 'ce versement'}`}
+      size="md"
+      footer={
+        <div className={styles.modalFooter}>
+          <button type="button" className={styles.secondaryBtn} onClick={onClose} disabled={envoi}>
+            Annuler
+          </button>
+          <button type="button" className={styles.primaryBtn} onClick={creer} disabled={envoi}>
+            {envoi ? 'Création…' : 'Créer la réquisition'}
+          </button>
+        </div>
+      }
+    >
+      <div className={styles.form}>
+        <p className={styles.hint}>
+          Le remboursement suit le circuit de validation d'une réquisition. Son montant est réservé sur la recette dès
+          maintenant ; il ne sort de la banque qu'à la sortie de fonds qui paie la réquisition approuvée.
+        </p>
+        <label className={styles.field}>
+          <span>Objet</span>
+          <input value={objet} onChange={(e) => setObjet(e.target.value)} />
+        </label>
+        <label className={styles.field}>
+          <span>Bénéficiaire (celui qui avait versé l'argent)</span>
+          <input value={beneficiaire} onChange={(e) => setBeneficiaire(e.target.value)} />
+        </label>
+        <div className={styles.fieldRow}>
+          <label className={styles.field}>
+            <span>Montant ({recette.devise}) — disponible {formatMontant(disponible, recette.devise)}</span>
+            <input inputMode="decimal" value={montant} onChange={(e) => setMontant(e.target.value)} />
+          </label>
+          <label className={styles.field}>
+            <span>Mode de paiement</span>
+            <select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
+              <option value="virement">Virement</option>
+              <option value="cheque">Chèque</option>
+              <option value="mobile_money">Mobile money</option>
+              <option value="cash">Espèces</option>
+            </select>
+          </label>
+        </div>
+        <label className={styles.field}>
+          <span>Service</span>
+          <select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
+            <option value="">Choisir un service</option>
+            {services.map((sv) => (
+              <option key={sv.id} value={sv.id}>
+                {sv.code} — {sv.libelle}
+              </option>
+            ))}
+          </select>
+        </label>
         {erreur && <div className={styles.error} role="alert">{erreur}</div>}
       </div>
     </ResponsiveModal>

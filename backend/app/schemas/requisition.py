@@ -65,7 +65,7 @@ class RequisitionCreate(DecimalBaseModel):
     objet: str = Field(min_length=3)
     mode_paiement: str
     type_requisition: str
-    nature_requisition: Literal["BUDGETAIRE", "HORS_BUDGET", "FONDS_DE_TIERS"] = "BUDGETAIRE"
+    nature_requisition: Literal["BUDGETAIRE", "HORS_BUDGET", "FONDS_DE_TIERS", "RECETTE_A_IDENTIFIER"] = "BUDGETAIRE"
     montant_total: Decimal = Field(gt=0)
     # Date métier, antidatable. Absente -> le serveur prend l'instant courant.
     date_requisition: datetime | None = None
@@ -84,6 +84,9 @@ class RequisitionCreate(DecimalBaseModel):
     # Fonds de tiers reversés par ce seul versement (FONDS_DE_TIERS). Absents :
     # réquisition historique, le fonds se choisit alors en caisse.
     fonds_tiers_lignes: list[FondsTiersLigneIn] | None = None
+    # Recette reçue sans payeur connu que la réquisition fait rembourser
+    # (RECETTE_A_IDENTIFIER). Son montant y est réservé dès la création.
+    recette_a_identifier_id: UUID | None = None
     notes_a_valoir: str | None = None
     # Lignes créées avec la réquisition. Absentes = création nue (parcours
     # historiques : remboursement transport, imports).
@@ -147,6 +150,15 @@ class RequisitionCreate(DecimalBaseModel):
         # tiers créancier, déjà identifié et imposé au paiement.
         if self.nature_requisition == "HORS_BUDGET" and not self.beneficiaire:
             raise ValueError("beneficiaire est requis pour une réquisition HORS_BUDGET")
+        # Rembourser une recette à identifier, c'est rendre l'argent à quelqu'un
+        # de précis : la recette et le bénéficiaire sont la pièce elle-même.
+        if self.nature_requisition == "RECETTE_A_IDENTIFIER":
+            if self.recette_a_identifier_id is None:
+                raise ValueError("recette_a_identifier_id requis pour rembourser une recette à identifier")
+            if not self.beneficiaire:
+                raise ValueError("beneficiaire est requis pour rembourser une recette à identifier")
+        else:
+            self.recette_a_identifier_id = None
         return self
 
 
@@ -154,7 +166,7 @@ class RequisitionUpdate(DecimalBaseModel):
     objet: str | None = None
     mode_paiement: str | None = None
     type_requisition: str | None = None
-    nature_requisition: Literal["BUDGETAIRE", "HORS_BUDGET", "FONDS_DE_TIERS"] | None = None
+    nature_requisition: Literal["BUDGETAIRE", "HORS_BUDGET", "FONDS_DE_TIERS", "RECETTE_A_IDENTIFIER"] | None = None
     montant_total: Decimal | None = Field(default=None, gt=0)
     service_id: int | None = None
     compte_bancaire_id: int | None = None
@@ -223,7 +235,7 @@ class RequisitionOut(DecimalBaseModel):
     objet: str
     mode_paiement: str
     type_requisition: str
-    nature_requisition: Literal["BUDGETAIRE", "HORS_BUDGET", "FONDS_DE_TIERS"] = "BUDGETAIRE"
+    nature_requisition: Literal["BUDGETAIRE", "HORS_BUDGET", "FONDS_DE_TIERS", "RECETTE_A_IDENTIFIER"] = "BUDGETAIRE"
     montant_total: Decimal
     date_requisition: datetime | None = None
     devise: str | None = "USD"
@@ -259,6 +271,7 @@ class RequisitionOut(DecimalBaseModel):
     tiers_organisation_id: int | None = None
     tiers_nom_libre: str | None = None
     fonds_tiers_lignes: list[FondsTiersLigneOut] | None = None
+    recette_a_identifier_id: UUID | None = None
     notes_a_valoir: str | None = None
     req_titre_officiel_hist: str | None = None
     req_label_gauche_hist: str | None = None

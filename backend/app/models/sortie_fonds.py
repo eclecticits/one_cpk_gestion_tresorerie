@@ -112,6 +112,13 @@ class SortieFonds(Base):
         nullable=True,
         index=True,
     )
+    #: Recette à identifier que cette sortie rend à qui l'avait versée.
+    recette_a_identifier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("encaissements.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDE")
     statut_comptabilisation: Mapped[str] = mapped_column(String(40), nullable=False, default="NON_COMPTABILISEE", index=True)
     message_comptabilisation: Mapped[str | None] = mapped_column(Text, nullable=True)

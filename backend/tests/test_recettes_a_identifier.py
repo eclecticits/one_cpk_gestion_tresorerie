@@ -385,3 +385,174 @@ async def test_comptabilite_passe_par_le_compte_d_attente(db_session, sans_notif
         "4718": (Decimal("250"), Decimal("0")),
         "758": (Decimal("0"), Decimal("250")),
     }
+
+
+# ── Remboursement par réquisition puis sortie de fonds ─────────────────────
+
+
+async def _requisition_remboursement(db, org, source_id, montant, status="APPROUVEE"):
+    from app.models.requisition import Requisition
+
+    req = Requisition(
+        organisation_id=org.id,
+        numero_requisition=f"REQ-{_suffix()}",
+        objet="Remboursement d'un virement reçu par erreur",
+        mode_paiement="virement",
+        type_requisition="classique",
+        nature_requisition="RECETTE_A_IDENTIFIER",
+        recette_a_identifier_id=source_id,
+        status=status,
+        montant_total=Decimal(montant),
+        devise="USD",
+        beneficiaire="Société Kasaï Trading",
+    )
+    db.add(req)
+    await db.flush()
+    return req
+
+
+async def _payer(db, org, user, banque, req, montant):
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+    from app.schemas.sortie_fonds import SortieFondsCreate
+
+    return await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="remboursement_recette_a_identifier",
+            requisition_id=req.id,
+            nature_mouvement="A_IDENTIFIER",
+            montant_paye=Decimal(montant),
+            mode_paiement="virement",
+            devise="USD",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            motif="Remboursement",
+            beneficiaire="",
+        ),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+
+
+@pytest.fixture
+def numeros_sortie(monkeypatch):
+    async def numero(*_a, **_k):
+        return f"PAY-{_suffix()}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", numero)
+
+
+async def test_remboursement_reserve_puis_sort_de_la_banque(db_session, sans_notifications, numeros_sortie):
+    db = db_session
+    org = await _org(db)
+    user = await _user(db, org)
+    poste = await _poste(db, org)
+    banque = await _banque(db, org)
+    await db.commit()
+    source_id = await _saisir(db, org, user, banque, "500")
+
+    # La réquisition en circuit retient sa part : elle ne s'identifie plus.
+    req = await _requisition_remboursement(db, org, source_id, "300", status="EN_ATTENTE")
+    await db.commit()
+    from app.api.v1.endpoints.recettes_a_identifier import lister
+
+    (item,) = (await lister(statut="ouvertes", tenant_id=org.id, db=db))["items"]
+    assert item["disponible"] == "200.00" and item["reservations"] == [req.numero_requisition]
+
+    from app.services.recettes_a_identifier import verifier_remboursement
+
+    with pytest.raises(HTTPException) as exc:
+        await verifier_remboursement(
+            db, organisation_id=org.id, recette_id=source_id, devise="USD", montant=Decimal("250")
+        )
+    assert req.numero_requisition in exc.value.detail
+
+    req.status = "APPROUVEE"
+    await db.commit()
+    sortie = await _payer(db, org, user, banque, req, "300")
+
+    await db.refresh(banque)
+    assert banque.solde_actuel == Decimal("200"), "le remboursement sort réellement de la banque"
+    assert sortie.recette_a_identifier_id == source_id
+    assert sortie.nature_mouvement == "A_IDENTIFIER"
+    assert sortie.beneficiaire == "Société Kasaï Trading"
+    await db.refresh(req)
+    assert req.status == "PAYEE"
+
+    source = await db.get(Encaissement, source_id)
+    await db.refresh(source)
+    assert source.montant_paye == Decimal("500"), "la recette garde ce qui est entré"
+    assert source.hors_budget_status == "PARTIELLEMENT_IDENTIFIE"
+
+    (item,) = (await lister(statut="ouvertes", tenant_id=org.id, db=db))["items"]
+    assert item["reste"] == "200.00" and item["montant_rembourse"] == "300.00"
+
+    # Le reste s'identifie normalement ; la recette est alors soldée.
+    await _creer(db, org, user, _note(poste, "200", paye="200", source=source_id))
+    await db.refresh(source)
+    await db.refresh(banque)
+    assert source.hors_budget_status == "IDENTIFIE"
+    assert banque.solde_actuel == Decimal("200")
+
+
+async def test_remboursement_total_puis_annule(db_session, sans_notifications, numeros_sortie):
+    db = db_session
+    org = await _org(db)
+    user = await _user(db, org)
+    banque = await _banque(db, org)
+    await db.commit()
+    source_id = await _saisir(db, org, user, banque, "120")
+    req = await _requisition_remboursement(db, org, source_id, "120")
+    await db.commit()
+    sortie = await _payer(db, org, user, banque, req, "120")
+
+    source = await db.get(Encaissement, source_id)
+    await db.refresh(source)
+    assert source.hors_budget_status == "REMBOURSEE"
+
+    from app.api.v1.endpoints.sorties_fonds import update_sortie_statut
+    from app.schemas.sortie_fonds import SortieFondsStatusUpdate
+
+    await update_sortie_statut(
+        sortie_id=str(sortie.id),
+        payload=SortieFondsStatusUpdate(statut="ANNULEE", motif_annulation="Virement retourné par la banque"),
+        request=_FakeRequest(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    await db.refresh(source)
+    await db.refresh(banque)
+    assert source.hors_budget_status == "A_IDENTIFIER"
+    assert banque.solde_actuel == Decimal("120")
+
+
+async def test_remboursement_comptabilise_contre_le_compte_d_attente(db_session, sans_notifications, numeros_sortie):
+    db = db_session
+    org = await _org(db)
+    user = await _user(db, org)
+    banque = await _banque(db, org)
+    await _activer_comptabilite(db, org)
+    await db.commit()
+    source_id = await _saisir(db, org, user, banque, "90")
+    req = await _requisition_remboursement(db, org, source_id, "90")
+    await db.commit()
+    sortie = await _payer(db, org, user, banque, req, "90")
+
+    ecriture = (
+        await db.execute(
+            select(ComptaEcriture)
+            .options(selectinload(ComptaEcriture.lignes))
+            .where(ComptaEcriture.type_origine == "sortie_fonds", ComptaEcriture.objet_origine_id == str(sortie.id))
+        )
+    ).scalar_one()
+    comptes = {
+        c.id: c.numero
+        for c in (await db.execute(select(ComptaCompte).where(ComptaCompte.id.in_([l.compte_id for l in ecriture.lignes])))).scalars()
+    }
+    assert {comptes[l.compte_id]: (l.debit, l.credit) for l in ecriture.lignes} == {
+        "4718": (Decimal("90"), Decimal("0")),
+        "512": (Decimal("0"), Decimal("90")),
+    }

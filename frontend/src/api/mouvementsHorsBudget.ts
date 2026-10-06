@@ -71,6 +71,7 @@ export const HORS_BUDGET_STATUS_LABELS: Record<HorsBudgetStatus, string> = {
   A_IDENTIFIER: 'À identifier',
   PARTIELLEMENT_IDENTIFIE: 'Partiellement identifiée',
   IDENTIFIE: 'Identifiée',
+  REMBOURSEE: 'Remboursée',
 }
 
 export const FONDS_TIERS_STATUT_LABELS: Record<FondsTiersOperation['statut'], string> = {

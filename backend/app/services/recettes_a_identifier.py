@@ -17,6 +17,7 @@ versement (`encaissement_flux`), ne voient donc jamais l'argent deux fois.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
@@ -30,6 +31,8 @@ from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.payment_history import PaymentHistory
 from app.models.print_settings import PrintSettings
+from app.models.requisition import Requisition
+from app.models.sortie_fonds import SortieFonds
 from app.services.audit_service import log_action
 from app.services.document_sequences import generate_document_number
 
@@ -38,6 +41,13 @@ NATURE_A_IDENTIFIER = "A_IDENTIFIER"
 STATUT_A_IDENTIFIER = "A_IDENTIFIER"
 STATUT_PARTIELLEMENT_IDENTIFIE = "PARTIELLEMENT_IDENTIFIE"
 STATUT_IDENTIFIE = "IDENTIFIE"
+#: Entièrement rendu à qui l'avait versé, sans rien identifier.
+STATUT_REMBOURSEE = "REMBOURSEE"
+
+#: Réquisition « remboursement de recette à identifier ». Elle désigne une
+#: recette et retient sur elle son montant tant qu'elle n'est pas close.
+NATURE_REQUISITION = "RECETTE_A_IDENTIFIER"
+STATUTS_REQUISITION_CLOS = ("PAYEE", "REJETEE", "ANNULEE")
 
 VERSEMENT_ACTIF = "ACTIF"
 #: Versement d'origine entièrement déplacé vers ses destinations. Il ne pèse
@@ -122,14 +132,12 @@ async def creer_recette_a_identifier(
         raise HTTPException(status_code=400, detail="Compte bancaire invalide : une recette à identifier arrive en banque")
     devise = (compte.devise or "USD").upper()
 
-    # Même conversion qu'un encaissement saisi en francs : les montants de la
-    # note sont tenus en dollars, au taux du jour de la réception.
-    if devise == "CDF":
-        taux = await _taux_cdf(db, organisation_id)
-        montant_note = _money(montant_saisi / taux)
-    else:
-        taux = Decimal("1")
-        montant_note = montant_saisi
+    # Tenue dans la devise du compte, comme un versement : c'est ce montant que
+    # la banque a crédité, et c'est lui qu'un remboursement — une sortie de
+    # fonds, tenue elle aussi dans sa devise — viendra diminuer. Le taux n'est
+    # gardé que pour mémoire.
+    taux = await _taux_cdf(db, organisation_id) if devise == "CDF" else Decimal("1")
+    montant_note = montant_saisi
 
     if date_valeur.tzinfo is None:
         date_valeur = date_valeur.replace(tzinfo=timezone.utc)
@@ -212,8 +220,12 @@ async def verrouiller_recette(
     organisation_id: int,
     source_id: uuid.UUID,
     devise: str,
-) -> tuple[Encaissement, PaymentHistory | None]:
-    """La recette d'origine et son versement, verrouillés pour être prélevés."""
+) -> tuple[Encaissement, PaymentHistory | None, Decimal]:
+    """La recette d'origine, son versement et ce qui n'est pas à prendre.
+
+    Le troisième terme est la part déjà rendue ou promise au remboursement :
+    elle reste sur la recette mais ne s'identifie plus.
+    """
     source = (
         await db.execute(
             select(Encaissement)
@@ -246,29 +258,40 @@ async def verrouiller_recette(
             .with_for_update()
         )
     ).scalar_one_or_none()
-    return source, versement
+    engagement = (await engagements_recettes(db, organisation_id=organisation_id, source_ids=[source.id])).get(source.id)
+    bloque = engagement.bloque if engagement else Decimal("0.00")
+    return source, versement, bloque
 
 
-def prelever(source: Encaissement, versement: PaymentHistory | None, montant: Decimal) -> Decimal:
-    """Retire `montant` de la recette d'origine ; rend le montant réellement prélevé."""
-    reste = _money(source.montant_paye)
-    if versement is None or versement.statut != VERSEMENT_ACTIF or reste <= 0:
-        raise HTTPException(status_code=400, detail="Cette recette est déjà entièrement identifiée")
-    if montant - reste > TOLERANCE:
-        raise HTTPException(status_code=400, detail=f"Montant supérieur au reste à identifier : {reste}")
+def prelever(
+    source: Encaissement,
+    versement: PaymentHistory | None,
+    montant: Decimal,
+    bloque: Decimal = Decimal("0.00"),
+) -> Decimal:
+    """Retire `montant` de la recette d'origine ; rend le montant réellement prélevé.
+
+    Le statut se recalcule ensuite (`recalculer_statut`), une fois le versement
+    de destination écrit.
+    """
+    montant_recette = _money(source.montant_paye)
+    libre = _money(montant_recette - bloque)
+    if versement is None or versement.statut != VERSEMENT_ACTIF or libre <= 0:
+        raise HTTPException(status_code=400, detail="Cette recette n'a plus rien à identifier")
+    if montant - libre > TOLERANCE:
+        raise HTTPException(status_code=400, detail=f"Montant supérieur au reste à identifier : {libre}")
     # Un écart d'arrondi ne doit pas laisser un centime orphelin en attente.
-    if montant > reste or reste - montant <= TOLERANCE:
-        montant = reste
+    if montant > libre or libre - montant <= TOLERANCE:
+        montant = libre
 
-    nouveau_reste = _money(reste - montant)
-    if nouveau_reste <= 0:
+    nouveau_montant = _money(montant_recette - montant)
+    if nouveau_montant <= 0:
         versement.statut = VERSEMENT_TRANSFERE
     else:
         versement.montant = _money(_money(versement.montant) - montant)
     for champ in ("montant", "montant_total", "montant_paye", "montant_percu"):
         setattr(source, champ, max(Decimal("0.00"), _money(_money(getattr(source, champ)) - montant)))
-    source.statut_paiement = "complet" if nouveau_reste > 0 else "non_paye"
-    source.hors_budget_status = STATUT_IDENTIFIE if nouveau_reste <= 0 else STATUT_PARTIELLEMENT_IDENTIFIE
+    source.statut_paiement = "complet" if nouveau_montant > 0 else "non_paye"
     return montant
 
 
@@ -321,19 +344,161 @@ async def restituer(
     for champ in ("montant", "montant_total", "montant_paye", "montant_percu"):
         setattr(source, champ, _money(_money(getattr(source, champ)) + montant))
     source.statut_paiement = "complet"
-
-    encore_identifie = (
-        await db.execute(
-            select(func.count(PaymentHistory.id)).where(
-                PaymentHistory.organisation_id == organisation_id,
-                PaymentHistory.identification_source_id == source.id,
-                PaymentHistory.statut == VERSEMENT_ACTIF,
-                PaymentHistory.id != versement_annule_id,
-            )
-        )
-    ).scalar_one()
-    source.hors_budget_status = STATUT_PARTIELLEMENT_IDENTIFIE if encore_identifie else STATUT_A_IDENTIFIER
+    await recalculer_statut(db, organisation_id=organisation_id, source=source, versement_exclu_id=versement_annule_id)
     return True
+
+
+@dataclass
+class Engagements:
+    """Ce qui, sur une recette, est rendu ou promis au remboursement."""
+
+    rembourse: Decimal = Decimal("0.00")
+    reserve: Decimal = Decimal("0.00")
+    remboursements: list[dict[str, Any]] = field(default_factory=list)
+    reservations: list[str] = field(default_factory=list)
+
+    @property
+    def bloque(self) -> Decimal:
+        return _money(self.rembourse + self.reserve)
+
+
+async def engagements_recettes(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    source_ids: list[uuid.UUID],
+    exclure_requisition_id: uuid.UUID | None = None,
+) -> dict[uuid.UUID, Engagements]:
+    """Remboursements payés et réservés, recette par recette.
+
+    Rendu : les sorties de fonds valides qui la remboursent. L'argent est sorti
+    de la banque par elles ; la recette garde son montant — il est bien entré —
+    mais ce montant n'est plus à identifier.
+
+    Réservé : ce qu'une réquisition non close autorise encore à rembourser, sa
+    part moins ce que ses sorties ont déjà payé. Même règle que les fonds de
+    tiers : une promesse en cours de validation ne s'identifie pas ailleurs.
+    """
+    resultat: dict[uuid.UUID, Engagements] = {}
+    if not source_ids:
+        return resultat
+    sorties = (
+        await db.execute(
+            select(SortieFonds).where(
+                SortieFonds.organisation_id == organisation_id,
+                SortieFonds.recette_a_identifier_id.in_(source_ids),
+                SortieFonds.statut == "VALIDE",
+            ).order_by(SortieFonds.date_paiement.asc())
+        )
+    ).scalars().all()
+    paye_par_requisition: dict[uuid.UUID, Decimal] = {}
+    for sortie in sorties:
+        eng = resultat.setdefault(sortie.recette_a_identifier_id, Engagements())
+        eng.rembourse = _money(eng.rembourse + _money(sortie.montant_paye))
+        eng.remboursements.append(
+            {
+                "sortie_id": str(sortie.id),
+                "reference_numero": sortie.reference_numero,
+                "beneficiaire": sortie.beneficiaire,
+                "montant": str(_money(sortie.montant_paye)),
+                "date": sortie.date_paiement.isoformat() if sortie.date_paiement else None,
+            }
+        )
+        if sortie.requisition_id is not None:
+            paye_par_requisition[sortie.requisition_id] = _money(
+                paye_par_requisition.get(sortie.requisition_id, Decimal("0")) + _money(sortie.montant_paye)
+            )
+
+    query = select(Requisition).where(
+        Requisition.organisation_id == organisation_id,
+        Requisition.recette_a_identifier_id.in_(source_ids),
+        Requisition.is_deleted.is_(False),
+        func.upper(func.coalesce(Requisition.status, "")).notin_(STATUTS_REQUISITION_CLOS),
+    )
+    if exclure_requisition_id is not None:
+        query = query.where(Requisition.id != exclure_requisition_id)
+    for req in (await db.execute(query)).scalars().all():
+        reste = _money(_money(req.montant_total) - paye_par_requisition.get(req.id, Decimal("0")))
+        if reste <= 0:
+            continue
+        eng = resultat.setdefault(req.recette_a_identifier_id, Engagements())
+        eng.reserve = _money(eng.reserve + reste)
+        eng.reservations.append(req.numero_requisition or str(req.id))
+    return resultat
+
+
+async def recalculer_statut(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    source: Encaissement,
+    versement_exclu_id: uuid.UUID | None = None,
+) -> None:
+    """Statut d'une recette d'après ce qui en reste, en est identifié ou rendu."""
+    query = select(func.count(PaymentHistory.id)).where(
+        PaymentHistory.organisation_id == organisation_id,
+        PaymentHistory.identification_source_id == source.id,
+        PaymentHistory.statut == VERSEMENT_ACTIF,
+    )
+    if versement_exclu_id is not None:
+        query = query.where(PaymentHistory.id != versement_exclu_id)
+    identifie = (await db.execute(query)).scalar_one() > 0
+    engagement = (await engagements_recettes(db, organisation_id=organisation_id, source_ids=[source.id])).get(source.id)
+    rembourse = engagement.rembourse if engagement else Decimal("0.00")
+    reste = _money(_money(source.montant_paye) - rembourse)
+    if reste > 0:
+        source.hors_budget_status = (
+            STATUT_PARTIELLEMENT_IDENTIFIE if identifie or rembourse > 0 else STATUT_A_IDENTIFIER
+        )
+    else:
+        source.hors_budget_status = STATUT_IDENTIFIE if identifie else STATUT_REMBOURSEE
+
+
+async def verifier_remboursement(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    recette_id: uuid.UUID,
+    devise: str,
+    montant: Decimal,
+    exclure_requisition_id: uuid.UUID | None = None,
+    verrouiller: bool = False,
+) -> Encaissement:
+    """Un remboursement de `montant` est-il possible sur cette recette ?
+
+    À la réquisition, qui réserve ; à la sortie, qui paie (sous verrou, la
+    réquisition payée étant alors exclue de sa propre réservation).
+    """
+    query = select(Encaissement).where(
+        Encaissement.id == recette_id, Encaissement.organisation_id == organisation_id
+    )
+    if verrouiller:
+        query = query.with_for_update()
+    source = (await db.execute(query)).scalar_one_or_none()
+    if source is None or source.is_deleted or not est_recette_a_identifier(source):
+        raise HTTPException(status_code=404, detail="Recette à identifier introuvable")
+    if (source.statut_operation or "ACTIVE").upper() != "ACTIVE":
+        raise HTTPException(status_code=400, detail="Cette recette à identifier est annulée")
+    if (source.devise_perception or "USD").upper() != (devise or "USD").upper():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Devise incompatible : la recette à identifier est en {source.devise_perception}",
+        )
+    engagement = (
+        await engagements_recettes(
+            db, organisation_id=organisation_id, source_ids=[source.id], exclure_requisition_id=exclure_requisition_id
+        )
+    ).get(source.id) or Engagements()
+    libre = _money(_money(source.montant_paye) - engagement.bloque)
+    montant = _money(montant)
+    if montant <= 0:
+        raise HTTPException(status_code=400, detail="Montant de remboursement invalide")
+    if montant - libre > TOLERANCE:
+        detail = f"Montant supérieur à ce qui reste sur la recette {source.numero_recu} : {libre}"
+        if engagement.reservations:
+            detail += f" (déjà promis par {', '.join(engagement.reservations)})"
+        raise HTTPException(status_code=400, detail=detail)
+    return source
 
 
 def _nom_client(enc: Encaissement, experts: dict[uuid.UUID, str]) -> str | None:
@@ -389,6 +554,9 @@ async def lister_recettes_a_identifier(
         db,
         {dest.expert_comptable_id for lignes in identifications.values() for _v, dest in lignes if dest.expert_comptable_id},
     )
+    engagements = await engagements_recettes(
+        db, organisation_id=organisation_id, source_ids=[r.id for r in recettes]
+    )
     comptes = {}
     compte_ids = {r.compte_bancaire_id for r in recettes if r.compte_bancaire_id}
     if compte_ids:
@@ -400,7 +568,13 @@ async def lister_recettes_a_identifier(
     for recette in recettes:
         lignes = identifications.get(recette.id, [])
         identifie = _money(sum((_money(v.montant) for v, _d in lignes), Decimal("0")))
-        reste = _money(recette.montant_paye) if (recette.statut_operation or "ACTIVE") == "ACTIVE" else Decimal("0.00")
+        engagement = engagements.get(recette.id) or Engagements()
+        active = (recette.statut_operation or "ACTIVE") == "ACTIVE"
+        # Reste : ce qui n'est ni identifié ni rendu. La part réservée par une
+        # réquisition en cours en fait encore partie — elle n'est pas sortie —
+        # mais ne s'identifie plus : `disponible` la retranche.
+        reste = _money(_money(recette.montant_paye) - engagement.rembourse) if active else Decimal("0.00")
+        disponible = max(Decimal("0.00"), _money(reste - engagement.reserve))
         date_valeur = recette.date_encaissement.date() if recette.date_encaissement else aujourd_hui
         age = max(0, (aujourd_hui - date_valeur).days)
         tranche = tranche_anciennete(age)
@@ -420,9 +594,14 @@ async def lister_recettes_a_identifier(
                 "devise": devise,
                 "mode_paiement": recette.mode_paiement,
                 "taux_change_applique": str(recette.taux_change_applique or 1),
-                "montant_initial": str(_money(reste + identifie)),
+                "montant_initial": str(_money(_money(recette.montant_paye) + identifie)),
                 "montant_identifie": str(identifie),
+                "montant_rembourse": str(engagement.rembourse),
+                "montant_reserve": str(engagement.reserve),
                 "reste": str(reste),
+                "disponible": str(disponible),
+                "reservations": engagement.reservations,
+                "remboursements": engagement.remboursements,
                 "age_jours": age,
                 "tranche": tranche,
                 "statut": recette.hors_budget_status,
@@ -486,7 +665,8 @@ async def pistes_identification(
     ).scalar_one_or_none()
     if source is None or not est_recette_a_identifier(source):
         raise HTTPException(status_code=404, detail="Recette à identifier introuvable")
-    reste_source = _money(source.montant_paye)
+    engagement = (await engagements_recettes(db, organisation_id=organisation_id, source_ids=[source.id])).get(source.id)
+    reste_source = _money(_money(source.montant_paye) - (engagement.bloque if engagement else Decimal("0")))
     reste_du = Encaissement.montant_total - Encaissement.montant_paye
 
     base = (
