@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -783,13 +783,14 @@ async def update_brouillon(
     return (await _brouillon_responses(db, [brouillon]))[0]
 
 
-@router.delete("/brouillons/{brouillon_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/brouillons/{brouillon_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def delete_brouillon(
     brouillon_id: str,
     user: User = Depends(has_any_permission(BROUILLON_PERMISSIONS)),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     brouillon = await _get_brouillon(db, user, tenant_id, brouillon_id)
     await db.delete(brouillon)
     await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
