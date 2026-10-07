@@ -73,9 +73,22 @@ interface NavItem {
 
 const TREASURY_NAV: NavItem[] = [
   { path: '/', label: 'Tableau de bord', permission: 'dashboard', icon: <LayoutDashboard size={18} /> },
-  { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', icon: <CircleDollarSign size={18} /> },
-  { path: '/fonds-tiers', label: 'Fonds de tiers', permission: 'encaissements', icon: <Wallet size={18} /> },
-  { path: '/recettes-a-identifier', label: 'Recettes à identifier', permission: 'encaissements', icon: <FileQuestion size={18} /> },
+  {
+    label: 'Encaissements',
+    permission: 'encaissements',
+    icon: <CircleDollarSign size={18} />,
+    subItems: [
+      {
+        path: '/encaissements',
+        label: 'Encaissements',
+        permission: 'encaissements',
+        icon: <CircleDollarSign size={16} />,
+        matchPathPrefixes: ['/encaissements'],
+      },
+      { path: '/fonds-tiers', label: 'Fonds de tiers', permission: 'encaissements', icon: <Wallet size={16} /> },
+      { path: '/recettes-a-identifier', label: 'Recettes à identifier', permission: 'encaissements', icon: <FileQuestion size={16} /> },
+    ],
+  },
   {
     label: 'Réquisitions',
     permission: 'requisitions',
