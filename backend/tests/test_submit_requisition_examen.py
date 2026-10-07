@@ -16,6 +16,7 @@ from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
 from app.models.requisition_annexe import RequisitionAnnexe
+from app.models.remboursement_transport import RemboursementTransport
 from app.models.service import Service
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
@@ -246,6 +247,119 @@ async def test_schedule_bureau_notifications_uses_persisted_examinateur(db_sessi
 
 
 @pytest.mark.asyncio
+async def test_bureau_email_transport_uses_remboursement_reference_and_nature_travail(
+    db_session,
+    monkeypatch,
+):
+    """Le Bureau reçoit le contexte métier du remboursement, pas seulement sa réquisition."""
+    organisation, service = await _seed_service_context(db_session)
+    action_user = User(
+        id=uuid.uuid4(),
+        email=f"action-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Soumetteur",
+        prenom="Bob",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    db_session.add(action_user)
+    db_session.add(
+        SystemSettings(
+            organisation_id=organisation.id,
+            email_expediteur="noreply@example.com",
+            email_president="president@example.com",
+            emails_bureau_cc="membre@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_password="secret",
+        )
+    )
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        created_by=action_user.id,
+    )
+    req.type_requisition = "remboursement_transport"
+    remboursement = RemboursementTransport(
+        organisation_id=organisation.id,
+        numero_remboursement="REM-TEST-001",
+        reference_numero="REM-BUR-2026-001",
+        instance="CPK",
+        type_reunion="bureau",
+        nature_reunion="Préparation de l'assemblée générale",
+        nature_travail=["Analyse des dossiers", "Préparation du procès-verbal"],
+        lieu="Siège ONEC",
+        date_reunion=datetime(2026, 10, 7, tzinfo=timezone.utc),
+        heure_debut="09:00",
+        heure_fin="12:00",
+        montant_total=Decimal("100.00"),
+        requisition_id=req.id,
+        created_by=action_user.id,
+    )
+    db_session.add(remboursement)
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        requisitions_endpoint,
+        "resolve_smtp_config",
+        lambda ns: type(
+            "SMTPConfigStub",
+            (),
+            {
+                "host": "smtp.example.com",
+                "port": 465,
+                "user": "noreply@example.com",
+                "password": "secret",
+                "sender": "noreply@example.com",
+            },
+        )(),
+    )
+
+    async def _skip_pdf(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(requisitions_endpoint, "ensure_remboursement_official_pdf", _skip_pdf)
+    envoyes = []
+    monkeypatch.setattr(
+        mailer_service,
+        "_send_email_message",
+        lambda **kwargs: envoyes.append(kwargs["msg"]),
+    )
+
+    background_tasks = BackgroundTasks()
+    await requisitions_endpoint._schedule_bureau_notifications(
+        db=db_session,
+        background_tasks=background_tasks,
+        req=req,
+        action_user=action_user,
+    )
+
+    assert len(background_tasks.tasks) == 1
+    task = background_tasks.tasks[0]
+    assert task.kwargs["president_email"] == "president@example.com"
+    assert task.kwargs["cc_emails"] == "membre@example.com"
+    assert task.kwargs["requisition_num"] == "REM-BUR-2026-001"
+    assert task.kwargs["nature_travail"] == [
+        "Analyse des dossiers",
+        "Préparation du procès-verbal",
+    ]
+
+    task.func(**task.kwargs)
+    texte = envoyes[0].get_body(preferencelist=("plain",)).get_content()
+    corps_html = envoyes[0].get_body(preferencelist=("html",)).get_content()
+    assert envoyes[0]["To"] == "president@example.com"
+    assert envoyes[0]["Cc"] == "membre@example.com"
+    texte_plat = " ".join(texte.split())
+    assert texte_plat.startswith("Chers membres du Bureau, Prière de trouver ci-dessous")
+    assert "Bonjour Mesdames" not in texte_plat
+    assert "Numéro de remboursement" in texte
+    assert "REM-BUR-2026-001" in texte
+    assert "Nature du travail" in texte
+    assert "Analyse des dossiers ; Préparation du procès-verbal" in texte
+    assert "Nature du travail" in corps_html
+
+
+@pytest.mark.asyncio
 async def test_bureau_email_porte_le_lien_le_bon_et_les_annexes(db_session, monkeypatch):
     """Le mail construit à la validation d'examen, tel qu'il part réellement.
 
@@ -376,15 +490,19 @@ async def test_bureau_email_porte_le_lien_le_bon_et_les_annexes(db_session, monk
     # examen — et cette décision peut être un rejet, ce que le texte doit dire.
     # Les phrases sont repliées à 75 colonnes : on compare hors retours ligne.
     texte_plat = " ".join(texte.split())
-    assert texte_plat.startswith("Chers Membres du Bureau, Nous avons l'honneur de porter")
-    assert "est soumise à votre appréciation. Il vous revient de la valider ou de la rejeter." in texte_plat
+    assert texte_plat.startswith(
+        "Chers membres du Bureau, Prière de trouver ci-dessous, ainsi qu'en pièce "
+        "jointe le bon de réquisition, la réquisition de fonds"
+    )
+    assert "en la validant ou en la rejetant dans ONEC Smart" in texte_plat
+    assert "Nous avons l'honneur" not in texte_plat
     assert "Décision du Bureau requise" in corps_html
     assert "Valider ou rejeter la réquisition" in corps_html
     assert "procéder à l'examen" not in texte
     for fragment in (
         "Service demandeur     : Service Test",
         "Examinée par          : Bob Soumetteur, le 10 septembre 2026",
-        "Pièces jointes : le bon de réquisition signé et 1 annexe.",
+        "Pièces jointes : le bon de réquisition et 1 annexe.",
     ):
         assert fragment in texte
 
@@ -433,7 +551,7 @@ def test_corps_mail_bureau_annonce_le_bon_manquant(monkeypatch, tmp_path):
     texte = envoyes[0].get_body(preferencelist=("plain",)).get_content()
     assert "Pièces jointes : 1 annexe." in texte
     assert (
-        "Le bon de réquisition signé n'est pas joint : il n'a pas encore été téléversé"
+        "Le bon de réquisition n'est pas joint : il n'a pas encore été téléversé"
         in texte
     )
     # La devise vient de la réquisition : une demande en CDF ne s'annonce pas en USD.

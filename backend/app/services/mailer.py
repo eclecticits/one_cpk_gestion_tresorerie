@@ -91,15 +91,39 @@ def _notification_labels(type_requisition: str | None) -> dict[str, str]:
             "subject_prefix": "Remboursement transport",
             "request_label": "demande de remboursement de transport",
             "number_label": "Numéro de remboursement",
-            "official_doc_label": "le bon de remboursement signé",
+            "official_doc_label": "le bon de remboursement",
             "cta_label": "Valider ou rejeter le remboursement",
         }
     return {
         "subject_prefix": "Réquisition",
         "request_label": "réquisition",
         "number_label": "Numéro de réquisition",
-        "official_doc_label": "le bon de réquisition signé",
+        "official_doc_label": "le bon de réquisition",
         "cta_label": "Valider ou rejeter la réquisition",
+    }
+
+
+def _formules_bureau(type_requisition: str | None, official_attached: bool) -> dict[str, str]:
+    """Salutation, introduction et formule finale du courriel au Bureau.
+
+    Usage du Secrétariat : « Chers membres du Bureau, prière de trouver… ».
+    Le bon n'est annoncé « en pièce jointe » que s'il l'est réellement.
+    """
+    labels = _notification_labels(type_requisition)
+    if (type_requisition or "").strip().lower() == "remboursement_transport":
+        demande = "la demande de remboursement des frais de transport des participants"
+    else:
+        demande = "la réquisition de fonds"
+    joint = f", ainsi qu'en pièce jointe {labels['official_doc_label']}," if official_attached else ""
+    return {
+        "salutation": "Chers membres du Bureau,",
+        "intro": (
+            f"Prière de trouver ci-dessous{joint} {demande}, dûment examinée par "
+            "le service technique. Nous vous saurions gré de bien vouloir y donner "
+            "suite en la validant ou en la rejetant dans ONEC Smart."
+        ),
+        "remerciement": "Nous vous remercions pour votre diligence habituelle.",
+        "politesse": "Bien cordialement,",
     }
 
 
@@ -144,9 +168,11 @@ def _generer_corps_mail(
     examinateur: str | None = None,
     examine_le: str | None = None,
     service_name: str | None = None,
+    nature_travail: list[str] | None = None,
     devise: str = "USD",
     pieces_valeur: str = "aucune",
     pieces_note: str = "",
+    official_attached: bool = False,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
     organisation_slug: str | None = None,
@@ -166,6 +192,9 @@ def _generer_corps_mail(
         ("Objet", objet),
         ("Montant", montant_fmt),
     ]
+    travaux = [str(item).strip() for item in (nature_travail or []) if str(item).strip()]
+    if travaux:
+        details.append(("Nature du travail", " ; ".join(travaux)))
     if service_name:
         details.append(("Service demandeur", service_name))
     details.append(("Émise par", created_by))
@@ -173,19 +202,13 @@ def _generer_corps_mail(
         details.append(("Examinée par", examinateur_valeur))
     largeur = max(len(label) for label, _ in details)
 
-    # Les phrases sont écrites d'un seul tenant puis repliées : le libellé
-    # « demande de remboursement de transport » est trois fois plus long que
-    # « réquisition », des retours à la ligne en dur casseraient l'un des deux.
-    intro = (
-        "Nous avons l'honneur de porter à votre connaissance que la "
-        f"{labels['request_label']} reprise ci-dessous a été examinée par le "
-        "service technique et est soumise à votre appréciation. Il vous revient "
-        "de la valider ou de la rejeter."
-    )
+    # Les phrases sont écrites d'un seul tenant puis repliées : selon le type de
+    # demande elles n'ont pas la même longueur, des retours en dur casseraient.
+    formules = _formules_bureau(type_requisition, official_attached)
     lines = [
-        "Chers Membres du Bureau,",
+        formules["salutation"],
         "",
-        *textwrap.wrap(intro, width=75),
+        *textwrap.wrap(formules["intro"], width=75),
         "",
     ]
     lines.extend(f"{label.ljust(largeur)} : {valeur}" for label, valeur in details)
@@ -197,12 +220,9 @@ def _generer_corps_mail(
     lines.extend(
         [
             "",
-            *textwrap.wrap(
-                "Nous vous prions d'agréer, Chers Membres du Bureau, l'expression "
-                "de notre considération distinguée.",
-                width=75,
-            ),
+            formules["remerciement"],
             "",
+            formules["politesse"],
             f"Le Secrétariat — {brand_label}",
             "",
             "Message automatique émis par ONEC Smart. Merci de ne pas y répondre.",
@@ -220,9 +240,11 @@ def _generer_corps_mail_html(
     examinateur: str | None = None,
     examine_le: str | None = None,
     service_name: str | None = None,
+    nature_travail: list[str] | None = None,
     devise: str = "USD",
     pieces_valeur: str = "aucune",
     pieces_note: str = "",
+    official_attached: bool = False,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
     organisation_slug: str | None = None,
@@ -230,6 +252,7 @@ def _generer_corps_mail_html(
 ) -> str:
     brand_label = html.escape(_format_brand_label(brand_name, organisation_name))
     labels = _notification_labels(type_requisition)
+    formules = _formules_bureau(type_requisition, official_attached)
     tenant_url = _tenant_portal_url(organisation_slug)
 
     def _row(label: str, valeur: str) -> str:
@@ -243,6 +266,9 @@ def _generer_corps_mail_html(
         _row("Objet", objet),
         _row("Montant", _format_currency(montant_total, devise)),
     ]
+    travaux = [str(item).strip() for item in (nature_travail or []) if str(item).strip()]
+    if travaux:
+        rows.append(_row("Nature du travail", " ; ".join(travaux)))
     if service_name:
         rows.append(_row("Service demandeur", service_name))
     rows.append(_row("Émise par", created_by))
@@ -283,10 +309,8 @@ def _generer_corps_mail_html(
             <h2 style="margin:6px 0 0; font-size:21px; line-height:1.25;">Décision du Bureau requise</h2>
           </div>
           <div style="padding:22px 24px;">
-            <p style="margin:0 0 14px;">Chers Membres du Bureau,</p>
-            <p style="margin:0 0 18px;">
-              Nous avons l'honneur de porter à votre connaissance que la {html.escape(labels['request_label'])} reprise ci-dessous a été examinée par le service technique et est soumise à votre appréciation. Il vous revient de la valider ou de la rejeter.
-            </p>
+            <p style="margin:0 0 14px;">{html.escape(formules['salutation'])}</p>
+            <p style="margin:0 0 18px;">{html.escape(formules['intro'])}</p>
             <div style="padding:14px 16px; border:1px solid #e2ebe8; border-radius:12px; background:#fbfefd;">
               <div style="font-weight:800; color:#155d4c; margin-bottom:8px;">Détails de la demande</div>
               <table style="border-collapse: collapse; width:100%;">
@@ -294,10 +318,9 @@ def _generer_corps_mail_html(
               </table>
             </div>
             {tenant_link_block}
-            <p style="margin:18px 0 0;">
-              Nous vous prions d'agréer, Chers Membres du Bureau, l'expression de notre considération distinguée.
-            </p>
-            <p style="margin:14px 0 0; font-weight:700;">Le Secrétariat — {brand_label}</p>
+            <p style="margin:18px 0 0;">{html.escape(formules['remerciement'])}</p>
+            <p style="margin:14px 0 0;">{html.escape(formules['politesse'])}</p>
+            <p style="margin:2px 0 0; font-weight:700;">Le Secrétariat — {brand_label}</p>
           </div>
           <div style="padding:14px 24px; background:#f8fafc; color:#7b8d88; font-size:12px; text-align:center;">
             {brand_label} · ONEC Smart<br />
@@ -458,6 +481,7 @@ def send_requisition_notification(
     examinateur: str | None = None,
     examen_le: datetime | None = None,
     service_name: str | None = None,
+    nature_travail: list[str] | None = None,
     devise: str = "USD",
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
@@ -493,9 +517,11 @@ def send_requisition_notification(
         examinateur=examinateur,
         examine_le=_format_date_fr(examen_le),
         service_name=service_name,
+        nature_travail=nature_travail,
         devise=devise,
         pieces_valeur=pieces_valeur,
         pieces_note=pieces_note,
+        official_attached=official_attached,
         brand_name=brand_name,
         organisation_name=organisation_name,
         organisation_slug=organisation_slug,

@@ -703,12 +703,24 @@ async def _schedule_bureau_notifications(
     if smtp_cfg is None:
         return
 
+    notification_reference = req.numero_requisition
+    nature_travail: list[str] = []
     if req.type_requisition == "remboursement_transport":
         remb_res = await db.execute(
             select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id).limit(1)
         )
         remboursement = remb_res.scalar_one_or_none()
         if remboursement is not None:
+            notification_reference = (
+                remboursement.reference_numero
+                or remboursement.numero_remboursement
+                or req.numero_requisition
+            )
+            nature_travail = [
+                str(item).strip()
+                for item in (remboursement.nature_travail or [])
+                if str(item).strip()
+            ]
             await ensure_remboursement_official_pdf(db, remboursement, regenerate=not remboursement.pdf_path)
     await db.commit()
 
@@ -766,13 +778,14 @@ async def _schedule_bureau_notifications(
             sender=smtp_cfg.sender,
             president_email=ns.email_president,
             cc_emails=ns.emails_bureau_cc,
-            requisition_num=req.numero_requisition,
+            requisition_num=notification_reference,
             montant_total=float(req.montant_total or 0),
             objet=req.objet or "",
             created_by=created_by_name,
             examinateur=examinateur_name,
             examen_le=req.examen_le,
             service_name=service_name,
+            nature_travail=nature_travail,
             devise=req.devise or "USD",
             official_pdf_path=official_pdf_path,
             attachment_paths=attachment_paths,
