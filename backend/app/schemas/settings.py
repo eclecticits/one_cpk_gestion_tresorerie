@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
@@ -35,6 +36,8 @@ class PrintSettingsBase(BaseModel):
     sortie_directe_nom_autorite: str = ""
     sortie_directe_nom_interim: str = ""
     sortie_directe_mention: str = "Sortie hors réquisition — valable uniquement revêtue de la signature et du cachet de l'Autorité."
+    sortie_autorise_par: str = "LE BUREAU"
+    sortie_req_autorisation: Literal["mention", "signature", "mention_et_signature"] = "mention"
     sortie_sig_hint: str = "Signature & date"
     show_sortie_qr: bool = True
     sortie_qr_base_url: str = ""

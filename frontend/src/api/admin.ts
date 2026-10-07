@@ -217,6 +217,8 @@ export type PrintSettings = {
   sortie_directe_nom_autorite: string
   sortie_directe_nom_interim: string
   sortie_directe_mention: string
+  sortie_autorise_par: string
+  sortie_req_autorisation: 'mention' | 'signature' | 'mention_et_signature'
   sortie_sig_hint: string
   show_sortie_qr: boolean
   sortie_qr_base_url: string

@@ -246,6 +246,8 @@ async def ensure_requisition_historical_snapshot(
         "sortie_sig_label_2",
         "sortie_sig_label_3",
         "sortie_sig_hint",
+        "sortie_autorise_par",
+        "sortie_req_autorisation",
         "default_currency",
         "secondary_currency",
         "exchange_rate",

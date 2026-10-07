@@ -260,20 +260,29 @@ export const generateSortieFondsPDF = async (
     "Sortie hors réquisition — valable uniquement revêtue de la signature et du cachet de l'Autorité."
 
   // Sortie sur réquisition : l'autorité a déjà décidé. Le bon le constate au
-  // lieu de réclamer une seconde signature : autorisation de la tranche si
-  // elle existe, sinon le visa, sinon la première validation.
+  // lieu de réclamer une seconde signature. C'est une instance qui autorise, pas
+  // une personne : le cadre dit « Le Bureau » (réglable) ; les noms restent dans le
+  // circuit de validation. La date retenue est celle de l'autorisation de la
+  // tranche si elle existe, sinon du visa, sinon de la première validation.
   const fmtDay = (d: any) => {
     if (!d) return ''
     const dt = new Date(d)
     return Number.isNaN(dt.getTime()) ? '' : format(dt, 'dd/MM/yyyy')
   }
-  const autorisationAmont: { name: string; date: string } | null = autorisateurTrancheName
-    ? { name: autorisateurTrancheName, date: fmtDay(sortie?.ordre?.autorise_le) }
+  const autorisationAmont: { date: string } | null = autorisateurTrancheName
+    ? { date: fmtDay(sortie?.ordre?.autorise_le) }
     : viseurName !== '—'
-    ? { name: viseurName, date: fmtDay(requisition?.approuvee_le) }
+    ? { date: fmtDay(requisition?.approuvee_le) }
     : autorisateurName !== '—'
-    ? { name: autorisateurName, date: fmtDay(requisition?.validee_le) }
+    ? { date: fmtDay(requisition?.validee_le) }
     : null
+  // « Bon découlant de la réquisition N° … » : le remboursement de transport a
+  // son propre numéro (REMB), qu'on nomme comme tel.
+  const sourceDocLabel =
+    String(requisition?.type_requisition || '').toLowerCase() === 'remboursement_transport' ||
+    String(sortie?.type_sortie || '').toLowerCase() === 'remboursement'
+      ? 'du remboursement de transport'
+      : 'de la réquisition'
   const buildQrValue = () => {
     const base = String(settings?.sortie_qr_base_url || '').trim()
     if (base) {
@@ -469,24 +478,6 @@ export const generateSortieFondsPDF = async (
   doc.setFontSize(8)
   doc.setTextColor(255, 255, 255)
   doc.text(statusLabel, badgeX + badgeW / 2, badgeY + 5.4, { align: 'center' })
-
-  // Avertissement de la sortie directe, entre le titre et le statut : le bon
-  // ne vaut rien sans la signature et le cachet de l'autorité.
-  if (isSortieDirecteDoc) {
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(15)
-    const mentionX = margin + doc.getTextWidth(titre) + 6
-    const mentionW = badgeX - 4 - mentionX
-    setFill(ORANGE_SOFT)
-    setDraw(ORANGE)
-    doc.setLineWidth(0.4)
-    doc.roundedRect(mentionX, badgeY - 1, mentionW, badgeH + 2, 1.5, 1.5, 'FD')
-    doc.setFontSize(7)
-    setText(ORANGE)
-    const mentionLines = doc.splitTextToSize(sortieDirecteMention, mentionW - 6).slice(0, 2)
-    const mentionTop = mentionLines.length > 1 ? badgeY + 2.9 : badgeY + 4.6
-    doc.text(mentionLines, mentionX + 3, mentionTop)
-  }
 
   // --- CARTE D'INFORMATIONS ---
   const infoY = 49
@@ -810,18 +801,71 @@ export const generateSortieFondsPDF = async (
     }
   }
 
+  // Centre du bandeau, entre le QR et le cachet : ce qui fonde le paiement.
+  // Sortie sur réquisition : « Autorisé par le Bureau » et la pièce d'origine.
+  // Sortie directe : l'avertissement (il couvrait autrefois la ligne « Document
+  // source » sous le titre).
+  const midX0 = margin + 82
+  const midX1 = pageWidth - margin - 72
+  const midW = midX1 - midX0
+  const midY = verifY + 2.5
+  const midH = verifH - 5
+  const autoriseParLibelle = String(settings?.sortie_autorise_par || '').trim() || 'LE BUREAU'
+  // Choix de l'administrateur pour le bon sur réquisition : la mention
+  // « Autorisé par » seule, la signature de l'autorité seule, ou les deux.
+  // Sans circuit connu, il n'y a rien à mentionner : l'autorité signe.
+  const modeAutorisation = String(settings?.sortie_req_autorisation || 'mention')
+  const avecMention = Boolean(autorisationAmont) && modeAutorisation !== 'signature'
+  const avecSignatureAutorite = !avecMention || modeAutorisation === 'mention_et_signature'
+  if (isSortieDirecteDoc) {
+    setFill(ORANGE_SOFT)
+    setDraw(ORANGE)
+    doc.setLineWidth(0.5)
+    doc.roundedRect(midX0, midY, midW, midH, 2, 2, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    setText(ORANGE)
+    const mentionLines = doc.splitTextToSize(sortieDirecteMention, midW - 8).slice(0, 3)
+    const mentionLh = doc.getFontSize() * 0.3528 * 1.5
+    const mentionTop = midY + midH / 2 - ((mentionLines.length - 1) * mentionLh) / 2 + 1
+    doc.text(mentionLines, midX0 + midW / 2, mentionTop, { align: 'center', lineHeightFactor: 1.5 })
+  } else if (avecMention && autorisationAmont) {
+    setFill([255, 255, 255])
+    setDraw(GREEN_SOFT)
+    doc.setLineWidth(0.5)
+    doc.roundedRect(midX0, midY, midW, midH, 2, 2, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    setText(MUTED)
+    doc.text('AUTORISÉ PAR', midX0 + midW / 2, midY + 4.5, { align: 'center' })
+    doc.setFontSize(12)
+    setText(GREEN)
+    doc.text(autoriseParLibelle.toUpperCase().slice(0, 40), midX0 + midW / 2, midY + 10, { align: 'center' })
+    const origine = `Bon découlant ${sourceDocLabel} N° ${String(sourceNumero).slice(0, 24)}${
+      autorisationAmont.date ? ` du ${autorisationAmont.date}` : ''
+    }${avecSignatureAutorite ? '' : ' — sans nouvelle signature'}`
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    while (doc.getFontSize() > 5 && doc.getTextWidth(origine) > midW - 6) {
+      doc.setFontSize(doc.getFontSize() - 0.25)
+    }
+    setText(INK)
+    doc.text(origine, midX0 + midW / 2, midY + 14.8, { align: 'center' })
+  }
+
   // --- BLOCS DE SIGNATURE ---
   const sigGap = 6
   const sigW = (pageWidth - margin * 2 - sigGap * 2) / 3
   const sigH = 17
   const sigY = 177
-  // Sortie sur réquisition : Bénéficiaire · Caissier · rappel de l'autorisation
-  // donnée en amont (sans signature). À défaut de circuit connu, le 3e cadre
-  // redevient le signataire paramétrable.
+  // Sortie sur réquisition, mention seule : deux signatures, Bénéficiaire à
+  // gauche et Caissier à droite ; l'autorisation est dans le bandeau. Quand
+  // l'autorité signe (choix des réglages, ou aucun circuit connu), un 3e cadre
+  // porte le signataire paramétrable ; avec la mention, il signe en visa.
   // Sortie directe : l'Autorité passe en tête, en orange — sa signature et son
   // cachet font l'autorisation — puis Caissier et Bénéficiaire.
   const sigHint = settings?.sortie_sig_hint || 'Signature & date'
-  type SigBlock = { label: string; name: string; hint: string; accent?: boolean; info?: boolean }
+  type SigBlock = { label: string; name: string; hint: string; accent?: boolean }
   const blocBeneficiaire: SigBlock = {
     label: settings?.sortie_sig_label_1 || 'BÉNÉFICIAIRE',
     name: beneficiaireSignatureName,
@@ -843,29 +887,30 @@ export const generateSortieFondsPDF = async (
         blocCaissier,
         blocBeneficiaire,
       ]
+    : !avecSignatureAutorite
+    ? [blocBeneficiaire, blocCaissier]
     : [
         blocBeneficiaire,
         blocCaissier,
-        autorisationAmont
-          ? {
-              label: 'AUTORISÉ PAR',
-              name: autorisationAmont.name,
-              hint: `Réf. ${String(sourceNumero).slice(0, 24)}${
-                autorisationAmont.date ? ` du ${autorisationAmont.date}` : ''
-              } — sans nouvelle signature`,
-              info: true,
-            }
-          : { label: settings?.sortie_sig_label_3 || 'AUTORITÉ', name: signataireFinalName, hint: sigHint },
+        {
+          label: settings?.sortie_sig_label_3 || 'AUTORITÉ',
+          name: signataireFinalName,
+          hint: avecMention ? 'Visa, cachet & date' : sigHint,
+        },
       ]
   sigBlocks.forEach((b, i) => {
-    const x = margin + i * (sigW + sigGap)
+    // Deux cadres : l'un à gauche, l'autre à droite.
+    const x =
+      sigBlocks.length === 2 && i === 1
+        ? pageWidth - margin - sigW
+        : margin + i * (sigW + sigGap)
     const head = b.accent ? ORANGE : GREEN
-    setFill(b.info ? CARD_BG : [255, 255, 255])
+    setFill([255, 255, 255])
     doc.rect(x, sigY, sigW, sigH, 'F')
     setDraw(b.accent ? ORANGE : HAIR)
     doc.setLineWidth(b.accent ? 0.7 : 0.3)
     doc.rect(x, sigY, sigW, sigH, 'S')
-    setFill(b.info ? MUTED : head)
+    setFill(head)
     doc.rect(x, sigY, sigW, 6, 'F')
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(7.5)
@@ -875,11 +920,9 @@ export const generateSortieFondsPDF = async (
     doc.setFontSize(8)
     setText(INK)
     doc.text(String(b.name).slice(0, 36), x + sigW / 2, sigY + 11, { align: 'center' })
-    if (!b.info) {
-      setDraw(HAIR)
-      doc.setLineWidth(0.2)
-      doc.line(x + 8, sigY + 13.5, x + sigW - 8, sigY + 13.5)
-    }
+    setDraw(HAIR)
+    doc.setLineWidth(0.2)
+    doc.line(x + 8, sigY + 13.5, x + sigW - 8, sigY + 13.5)
     doc.setFont('helvetica', b.accent ? 'bold' : 'normal')
     doc.setFontSize(6)
     setText(b.accent ? ORANGE : MUTED)

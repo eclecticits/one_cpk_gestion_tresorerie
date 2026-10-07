@@ -220,6 +220,8 @@ def _print_settings_out(ps: PrintSettings) -> PrintSettingsOut:
         sortie_directe_nom_autorite=ps.sortie_directe_nom_autorite,
         sortie_directe_nom_interim=ps.sortie_directe_nom_interim,
         sortie_directe_mention=ps.sortie_directe_mention,
+        sortie_autorise_par=ps.sortie_autorise_par,
+        sortie_req_autorisation=ps.sortie_req_autorisation,
         sortie_sig_hint=ps.sortie_sig_hint,
         show_sortie_qr=ps.show_sortie_qr,
         sortie_qr_base_url=ps.sortie_qr_base_url,

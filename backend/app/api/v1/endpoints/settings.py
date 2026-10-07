@@ -48,6 +48,8 @@ def _settings_to_response(settings: PrintSettings) -> dict:
         "sortie_directe_nom_autorite": settings.sortie_directe_nom_autorite,
         "sortie_directe_nom_interim": settings.sortie_directe_nom_interim,
         "sortie_directe_mention": settings.sortie_directe_mention,
+        "sortie_autorise_par": settings.sortie_autorise_par,
+        "sortie_req_autorisation": settings.sortie_req_autorisation,
         "sortie_sig_hint": settings.sortie_sig_hint,
         "show_sortie_qr": settings.show_sortie_qr,
         "sortie_qr_base_url": settings.sortie_qr_base_url,

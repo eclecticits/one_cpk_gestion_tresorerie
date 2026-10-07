@@ -65,6 +65,12 @@ class PrintSettings(Base):
     sortie_directe_nom_autorite: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     sortie_directe_nom_interim: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     sortie_directe_mention: Mapped[str] = mapped_column(String(300), nullable=False, default=SORTIE_DIRECTE_MENTION_DEFAUT)
+    # Bon sur réquisition : instance qui a autorisé en amont (« Autorisé par … »).
+    sortie_autorise_par: Mapped[str] = mapped_column(String(200), nullable=False, default="LE BUREAU")
+    # Ce que le bon sur réquisition montre de l'autorisation : « mention »
+    # (Autorisé par …, deux signatures), « signature » (l'autorité signe le
+    # bon) ou « mention_et_signature » (les deux : l'autorité vise le bon).
+    sortie_req_autorisation: Mapped[str] = mapped_column(String(30), nullable=False, default="mention")
     show_sortie_qr: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sortie_qr_base_url: Mapped[str] = mapped_column(String(300), nullable=False, default="")
     show_sortie_watermark: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

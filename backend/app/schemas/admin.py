@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, Field
 from uuid import UUID
 
@@ -131,6 +133,8 @@ class PrintSettingsOut(BaseModel):
     sortie_directe_nom_autorite: str
     sortie_directe_nom_interim: str
     sortie_directe_mention: str
+    sortie_autorise_par: str
+    sortie_req_autorisation: str
     sortie_sig_hint: str
     show_sortie_qr: bool
     sortie_qr_base_url: str
@@ -193,6 +197,8 @@ class PrintSettingsUpdateRequest(BaseModel):
     sortie_directe_nom_autorite: str | None = None
     sortie_directe_nom_interim: str | None = None
     sortie_directe_mention: str | None = None
+    sortie_autorise_par: str | None = None
+    sortie_req_autorisation: Literal["mention", "signature", "mention_et_signature"] | None = None
     sortie_sig_hint: str | None = None
     show_sortie_qr: bool | None = None
     sortie_qr_base_url: str | None = None

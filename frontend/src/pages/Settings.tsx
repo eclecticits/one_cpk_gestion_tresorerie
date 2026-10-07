@@ -3148,10 +3148,51 @@ export default function Settings() {
                           <h3>Paramètres des sorties de caisse</h3>
                           <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px', fontSize: '13px', color: '#0c4a6e' }}>
                             <strong>Deux bons de sortie distincts</strong> :<br />
-                            • <strong>Bon sur réquisition</strong> (réquisition, remboursement de transport, recette à identifier) : l'autorité a déjà validé en amont. Le bon porte Bénéficiaire, Caissier et un cadre <em>« Autorisé par »</em> rempli depuis le circuit, sans nouvelle signature. Le bloc 3 ci-dessous ne sert que si aucun circuit n'est connu.<br />
+                            • <strong>Bon sur réquisition</strong> (réquisition, remboursement de transport, recette à identifier) : l'autorité a déjà validé en amont. Par défaut, le bon porte deux signatures, Bénéficiaire à gauche et Caissier à droite, et au-dessus un cadre <em>« Autorisé par le Bureau »</em> avec la mention « Bon découlant de la réquisition N° … du … » (les noms restent dans le circuit de validation). Vous pouvez choisir ci-dessous de faire signer aussi l'autorité (bloc 3).<br />
                             • <strong>Bon de sortie directe</strong> : sans réquisition, la signature de l'autorité <em>est</em> l'autorisation. Titre et cadre en orange, mention d'avertissement, cachet humide obligatoire. Réglages dans la section dédiée plus bas.
                           </div>
-                          <h4 style={{ margin: '4px 0 8px', color: '#334155' }}>Libellés des cadres de signature</h4>
+                          <h4 style={{ margin: '4px 0 8px', color: '#334155' }}>Bon sur réquisition — preuve de l'autorisation</h4>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Le bon porte…</label>
+                              <select
+                                value={printSettings.sortie_req_autorisation || 'mention'}
+                                onChange={(e) =>
+                                  setPrintSettings({
+                                    ...printSettings,
+                                    sortie_req_autorisation: e.target.value as PrintSettings['sortie_req_autorisation'],
+                                  })
+                                }
+                              >
+                                <option value="mention">La mention « Autorisé par » — 2 signatures (Bénéficiaire, Caissier)</option>
+                                <option value="mention_et_signature">La mention et le visa de l'autorité — 3 signatures</option>
+                                <option value="signature">La signature de l'autorité seule — 3 signatures</option>
+                              </select>
+                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>
+                                {(printSettings.sortie_req_autorisation || 'mention') === 'mention'
+                                  ? "L'autorisation donnée en amont suffit : aucune signature de l'autorité sur le bon."
+                                  : (printSettings.sortie_req_autorisation === 'signature'
+                                    ? "L'autorité signe le bon (bloc 3 ci-dessous) ; pas de mention « Autorisé par »."
+                                    : "La mention rappelle l'autorisation ; l'autorité appose en plus son visa et son cachet (bloc 3 ci-dessous).")}
+                                {' '}Sans circuit de validation connu, l'autorité signe toujours.
+                              </small>
+                            </div>
+                            <div className={styles.field}>
+                              <label>Mention « Autorisé par »</label>
+                              <input
+                                type="text"
+                                maxLength={200}
+                                disabled={printSettings.sortie_req_autorisation === 'signature'}
+                                value={printSettings.sortie_autorise_par ?? ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_autorise_par: e.target.value })
+                                }
+                                placeholder="LE BUREAU"
+                              />
+                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Instance qui a autorisé en amont. Vide = LE BUREAU.</small>
+                            </div>
+                          </div>
+                          <h4 style={{ margin: '14px 0 8px', color: '#334155' }}>Libellés des cadres de signature</h4>
                           <div className={styles.fieldRow}>
                             <div className={styles.field}>
                               <label>Bloc 1 · Bénéficiaire — libellé</label>
@@ -3189,7 +3230,7 @@ export default function Settings() {
                                 }
                                 placeholder="Ex: SECRÉTAIRE EXÉCUTIF"
                               />
-                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Choisissez le rôle (Secrétaire Exécutif, Comptable…). Sur un bon sur réquisition, ce cadre n'apparaît que si aucun circuit de validation n'est connu.</small>
+                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Choisissez le rôle (Secrétaire Exécutif, Comptable…). Sur un bon sur réquisition, ce cadre n'apparaît que si l'autorité signe (voir le choix ci-dessus) ou si aucun circuit de validation n'est connu.</small>
                             </div>
                             <div className={styles.field}>
                               <label>Bloc 3 · Autorité — nom du signataire</label>
