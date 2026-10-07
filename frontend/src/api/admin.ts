@@ -213,6 +213,10 @@ export type PrintSettings = {
   sortie_sig_label_1: string
   sortie_sig_label_2: string
   sortie_sig_label_3: string
+  sortie_directe_label_autorite: string
+  sortie_directe_nom_autorite: string
+  sortie_directe_nom_interim: string
+  sortie_directe_mention: string
   sortie_sig_hint: string
   show_sortie_qr: boolean
   sortie_qr_base_url: string

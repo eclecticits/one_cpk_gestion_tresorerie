@@ -171,6 +171,11 @@ export const generateSortieFondsPDF = async (
   }
 
   const sourceNumero = resolveSourceNumero(sortie)
+  // Deux bons distincts. Une sortie sur réquisition (réquisition, remboursement
+  // de transport, remboursement d'une recette à identifier) a été autorisée en
+  // amont : le bon n'est qu'une pièce d'exécution. Une sortie directe n'a aucun
+  // circuit : la signature de l'autorité sur le bon EST l'autorisation.
+  const isSortieDirecteDoc = String(sortie?.type_sortie || '').toLowerCase() === 'sortie_directe'
 
   // Le numéro de référence du bon doit être le numéro du document source (REQ ou REMB)
   const ref = sourceNumero !== '-' ? sourceNumero : (sortie?.reference_numero || sortie?.reference || sortie?.id || 'N/A')
@@ -236,6 +241,39 @@ export const generateSortieFondsPDF = async (
   // figure dans le « Circuit de validation » ci-dessus, pas dans ce bloc.
   const signataireFinalName =
     String(settings?.sortie_nom_signataire || settings?.recu_nom_signataire || '').trim() || '—'
+
+  // Sortie directe : l'autorité signe le bon. Un intérimaire, s'il est désigné,
+  // signe « P.O. » à la place du titulaire.
+  const autoriteDirecteInterim = String(settings?.sortie_directe_nom_interim || '').trim()
+  const autoriteDirecteName = autoriteDirecteInterim
+    ? `P.O. ${autoriteDirecteInterim}`
+    : String(
+        settings?.sortie_directe_nom_autorite ||
+          settings?.secretaire_executif_nom ||
+          settings?.sortie_nom_signataire ||
+          ''
+      ).trim() || '—'
+  const autoriteDirecteLabel =
+    String(settings?.sortie_directe_label_autorite || '').trim() || "L'AUTORITÉ"
+  const sortieDirecteMention =
+    String(settings?.sortie_directe_mention || '').trim() ||
+    "Sortie hors réquisition — valable uniquement revêtue de la signature et du cachet de l'Autorité."
+
+  // Sortie sur réquisition : l'autorité a déjà décidé. Le bon le constate au
+  // lieu de réclamer une seconde signature : autorisation de la tranche si
+  // elle existe, sinon le visa, sinon la première validation.
+  const fmtDay = (d: any) => {
+    if (!d) return ''
+    const dt = new Date(d)
+    return Number.isNaN(dt.getTime()) ? '' : format(dt, 'dd/MM/yyyy')
+  }
+  const autorisationAmont: { name: string; date: string } | null = autorisateurTrancheName
+    ? { name: autorisateurTrancheName, date: fmtDay(sortie?.ordre?.autorise_le) }
+    : viseurName !== '—'
+    ? { name: viseurName, date: fmtDay(requisition?.approuvee_le) }
+    : autorisateurName !== '—'
+    ? { name: autorisateurName, date: fmtDay(requisition?.validee_le) }
+    : null
   const buildQrValue = () => {
     const base = String(settings?.sortie_qr_base_url || '').trim()
     if (base) {
@@ -396,10 +434,13 @@ export const generateSortieFondsPDF = async (
   doc.line(margin, 33, pageWidth - margin, 33)
 
   // --- TITRE + STATUT ---
+  const ORANGE: [number, number, number] = [194, 65, 12]
+  const ORANGE_SOFT: [number, number, number] = [255, 237, 213]
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(15)
-  setText(INK)
-  doc.text('BON DE SORTIE', margin, 41)
+  setText(isSortieDirecteDoc ? ORANGE : INK)
+  const titre = isSortieDirecteDoc ? 'BON DE SORTIE DIRECTE' : 'BON DE SORTIE'
+  doc.text(titre, margin, 41)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
   setText(MUTED)
@@ -428,6 +469,24 @@ export const generateSortieFondsPDF = async (
   doc.setFontSize(8)
   doc.setTextColor(255, 255, 255)
   doc.text(statusLabel, badgeX + badgeW / 2, badgeY + 5.4, { align: 'center' })
+
+  // Avertissement de la sortie directe, entre le titre et le statut : le bon
+  // ne vaut rien sans la signature et le cachet de l'autorité.
+  if (isSortieDirecteDoc) {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(15)
+    const mentionX = margin + doc.getTextWidth(titre) + 6
+    const mentionW = badgeX - 4 - mentionX
+    setFill(ORANGE_SOFT)
+    setDraw(ORANGE)
+    doc.setLineWidth(0.4)
+    doc.roundedRect(mentionX, badgeY - 1, mentionW, badgeH + 2, 1.5, 1.5, 'FD')
+    doc.setFontSize(7)
+    setText(ORANGE)
+    const mentionLines = doc.splitTextToSize(sortieDirecteMention, mentionW - 6).slice(0, 2)
+    const mentionTop = mentionLines.length > 1 ? badgeY + 2.9 : badgeY + 4.6
+    doc.text(mentionLines, mentionX + 3, mentionTop)
+  }
 
   // --- CARTE D'INFORMATIONS ---
   const infoY = 49
@@ -641,7 +700,6 @@ export const generateSortieFondsPDF = async (
 
   // --- CIRCUIT DE VALIDATION & EXÉCUTION ---
   const validationY = amountY + amountH + 12 + retourExtra
-  const isSortieDirecteDoc = String(sortie?.type_sortie || '').toLowerCase() === 'sortie_directe'
   let steps = circuitSteps
   if (isSortieDirecteDoc) {
     const programmeurName = formatUserName(sortie?.programme_par_user, sortie?.programme_par_id)
@@ -745,7 +803,9 @@ export const generateSortieFondsPDF = async (
     setDraw(HAIR)
     doc.setLineWidth(0.3)
     doc.roundedRect(pageWidth - margin - 24, verifY + 2, 20, verifH - 4, 2, 2, 'S')
-    if (stampDataUrl) {
+    // Sortie directe : le cachet numérique ne remplace pas celui de l'autorité,
+    // le cadre reste vide pour le cachet humide.
+    if (stampDataUrl && !isSortieDirecteDoc) {
       doc.addImage(stampDataUrl, 'PNG', pageWidth - margin - 23, verifY + 2.5, 17, 17)
     }
   }
@@ -755,44 +815,76 @@ export const generateSortieFondsPDF = async (
   const sigW = (pageWidth - margin * 2 - sigGap * 2) / 3
   const sigH = 17
   const sigY = 177
-  // Bloc 1 = Bénéficiaire (nom auto) · Bloc 2 = Caissier / exécutant (nom auto) ·
-  // Bloc 3 = signataire paramétrable (libellé + nom depuis les réglages).
-  const sigLabels = [
-    settings?.sortie_sig_label_1 || 'BÉNÉFICIAIRE',
-    settings?.sortie_sig_label_2 || 'CAISSIER',
-    settings?.sortie_sig_label_3 || 'AUTORITÉ',
-  ]
-  const sigNames = [
-    beneficiaireSignatureName,
-    etablisseurName,
-    signataireFinalName,
-  ]
+  // Sortie sur réquisition : Bénéficiaire · Caissier · rappel de l'autorisation
+  // donnée en amont (sans signature). À défaut de circuit connu, le 3e cadre
+  // redevient le signataire paramétrable.
+  // Sortie directe : l'Autorité passe en tête, en orange — sa signature et son
+  // cachet font l'autorisation — puis Caissier et Bénéficiaire.
   const sigHint = settings?.sortie_sig_hint || 'Signature & date'
-  for (let i = 0; i < 3; i += 1) {
+  type SigBlock = { label: string; name: string; hint: string; accent?: boolean; info?: boolean }
+  const blocBeneficiaire: SigBlock = {
+    label: settings?.sortie_sig_label_1 || 'BÉNÉFICIAIRE',
+    name: beneficiaireSignatureName,
+    hint: sigHint,
+  }
+  const blocCaissier: SigBlock = {
+    label: settings?.sortie_sig_label_2 || 'CAISSIER',
+    name: etablisseurName,
+    hint: sigHint,
+  }
+  const sigBlocks: SigBlock[] = isSortieDirecteDoc
+    ? [
+        {
+          label: autoriteDirecteLabel,
+          name: autoriteDirecteName,
+          hint: 'Signature, cachet & date — obligatoire',
+          accent: true,
+        },
+        blocCaissier,
+        blocBeneficiaire,
+      ]
+    : [
+        blocBeneficiaire,
+        blocCaissier,
+        autorisationAmont
+          ? {
+              label: 'AUTORISÉ PAR',
+              name: autorisationAmont.name,
+              hint: `Réf. ${String(sourceNumero).slice(0, 24)}${
+                autorisationAmont.date ? ` du ${autorisationAmont.date}` : ''
+              } — sans nouvelle signature`,
+              info: true,
+            }
+          : { label: settings?.sortie_sig_label_3 || 'AUTORITÉ', name: signataireFinalName, hint: sigHint },
+      ]
+  sigBlocks.forEach((b, i) => {
     const x = margin + i * (sigW + sigGap)
-    setFill([255, 255, 255])
+    const head = b.accent ? ORANGE : GREEN
+    setFill(b.info ? CARD_BG : [255, 255, 255])
     doc.rect(x, sigY, sigW, sigH, 'F')
-    setDraw(HAIR)
-    doc.setLineWidth(0.3)
+    setDraw(b.accent ? ORANGE : HAIR)
+    doc.setLineWidth(b.accent ? 0.7 : 0.3)
     doc.rect(x, sigY, sigW, sigH, 'S')
-    setFill(GREEN)
+    setFill(b.info ? MUTED : head)
     doc.rect(x, sigY, sigW, 6, 'F')
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(7.5)
     doc.setTextColor(255, 255, 255)
-    doc.text(sigLabels[i], x + sigW / 2, sigY + 4.2, { align: 'center' })
+    doc.text(String(b.label).slice(0, 40), x + sigW / 2, sigY + 4.2, { align: 'center' })
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
     setText(INK)
-    doc.text(String(sigNames[i]).slice(0, 36), x + sigW / 2, sigY + 11, { align: 'center' })
-    setDraw(HAIR)
-    doc.setLineWidth(0.2)
-    doc.line(x + 8, sigY + 13.5, x + sigW - 8, sigY + 13.5)
-    doc.setFont('helvetica', 'normal')
+    doc.text(String(b.name).slice(0, 36), x + sigW / 2, sigY + 11, { align: 'center' })
+    if (!b.info) {
+      setDraw(HAIR)
+      doc.setLineWidth(0.2)
+      doc.line(x + 8, sigY + 13.5, x + sigW - 8, sigY + 13.5)
+    }
+    doc.setFont('helvetica', b.accent ? 'bold' : 'normal')
     doc.setFontSize(6)
-    setText(MUTED)
-    doc.text(sigHint, x + sigW / 2, sigY + 16, { align: 'center' })
-  }
+    setText(b.accent ? ORANGE : MUTED)
+    doc.text(b.hint, x + sigW / 2, sigY + 16, { align: 'center' })
+  })
 
   // --- MICROTEXTE DE SÉCURITÉ (ligne fine répétée : réf + clé) ---
   const microUnit = ` ONEC-RDC · CONSEIL PROVINCIAL DE KINSHASA · BON ${ref} · CLE ${securityToken} ·`
@@ -811,7 +903,8 @@ export const generateSortieFondsPDF = async (
   doc.setFontSize(7.5)
   doc.setTextColor(90)
   doc.text(format(new Date(), 'dd/MM/yyyy HH:mm'), margin, pageHeight - 6)
-  doc.text(orgName ? `Bon de sortie - ${orgName}` : 'Bon de sortie', pageWidth / 2, pageHeight - 6, { align: 'center' })
+  const piedTitre = isSortieDirecteDoc ? 'Bon de sortie directe' : 'Bon de sortie'
+  doc.text(orgName ? `${piedTitre} - ${orgName}` : piedTitre, pageWidth / 2, pageHeight - 6, { align: 'center' })
   doc.text('Page 1/1', pageWidth - margin, pageHeight - 6, { align: 'right' })
 
   if (output === 'blob') {

@@ -31,6 +31,10 @@ class PrintSettingsBase(BaseModel):
     sortie_sig_label_1: str = "CAISSIER"
     sortie_sig_label_2: str = "COMPTABLE"
     sortie_sig_label_3: str = "AUTORITÉ (TRÉSORERIE)"
+    sortie_directe_label_autorite: str = "L'AUTORITÉ"
+    sortie_directe_nom_autorite: str = ""
+    sortie_directe_nom_interim: str = ""
+    sortie_directe_mention: str = "Sortie hors réquisition — valable uniquement revêtue de la signature et du cachet de l'Autorité."
     sortie_sig_hint: str = "Signature & date"
     show_sortie_qr: bool = True
     sortie_qr_base_url: str = ""

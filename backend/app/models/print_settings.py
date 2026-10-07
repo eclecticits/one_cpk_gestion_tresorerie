@@ -10,6 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 
+SORTIE_DIRECTE_MENTION_DEFAUT = (
+    "Sortie hors réquisition — valable uniquement revêtue de la signature et du cachet de l'Autorité."
+)
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -54,6 +59,12 @@ class PrintSettings(Base):
     sortie_sig_label_2: Mapped[str] = mapped_column(String(200), nullable=False, default="COMPTABLE")
     sortie_sig_label_3: Mapped[str] = mapped_column(String(200), nullable=False, default="AUTORITÉ (TRÉSORERIE)")
     sortie_sig_hint: Mapped[str] = mapped_column(String(200), nullable=False, default="Signature & date")
+    # Bon de sortie directe : sans réquisition en amont, la signature de
+    # l'autorité sur le bon EST l'autorisation. Réglages propres à ce bon.
+    sortie_directe_label_autorite: Mapped[str] = mapped_column(String(200), nullable=False, default="L'AUTORITÉ")
+    sortie_directe_nom_autorite: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    sortie_directe_nom_interim: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    sortie_directe_mention: Mapped[str] = mapped_column(String(300), nullable=False, default=SORTIE_DIRECTE_MENTION_DEFAUT)
     show_sortie_qr: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sortie_qr_base_url: Mapped[str] = mapped_column(String(300), nullable=False, default="")
     show_sortie_watermark: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

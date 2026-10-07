@@ -3147,10 +3147,9 @@ export default function Settings() {
                         <div className={styles.tabPanel}>
                           <h3>Paramètres des sorties de caisse</h3>
                           <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px', fontSize: '13px', color: '#0c4a6e' }}>
-                            <strong>Blocs de signature du bon de sortie</strong> — 3 cadres en bas du bon :<br />
-                            • <strong>Bloc 1 — Bénéficiaire</strong> : le nom est rempli <em>automatiquement</em> (bénéficiaire défini en amont).<br />
-                            • <strong>Bloc 2 — Caissier</strong> : le nom est rempli <em>automatiquement</em> (l'utilisateur qui exécute la sortie).<br />
-                            • <strong>Bloc 3 — Autorité</strong> : <em>paramétrable</em> ci-dessous (libellé + nom : ex. Secrétaire Exécutif, Comptable…).
+                            <strong>Deux bons de sortie distincts</strong> :<br />
+                            • <strong>Bon sur réquisition</strong> (réquisition, remboursement de transport, recette à identifier) : l'autorité a déjà validé en amont. Le bon porte Bénéficiaire, Caissier et un cadre <em>« Autorisé par »</em> rempli depuis le circuit, sans nouvelle signature. Le bloc 3 ci-dessous ne sert que si aucun circuit n'est connu.<br />
+                            • <strong>Bon de sortie directe</strong> : sans réquisition, la signature de l'autorité <em>est</em> l'autorisation. Titre et cadre en orange, mention d'avertissement, cachet humide obligatoire. Réglages dans la section dédiée plus bas.
                           </div>
                           <h4 style={{ margin: '4px 0 8px', color: '#334155' }}>Libellés des cadres de signature</h4>
                           <div className={styles.fieldRow}>
@@ -3190,7 +3189,7 @@ export default function Settings() {
                                 }
                                 placeholder="Ex: SECRÉTAIRE EXÉCUTIF"
                               />
-                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Choisissez le rôle (Secrétaire Exécutif, Comptable…).</small>
+                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Choisissez le rôle (Secrétaire Exécutif, Comptable…). Sur un bon sur réquisition, ce cadre n'apparaît que si aucun circuit de validation n'est connu.</small>
                             </div>
                             <div className={styles.field}>
                               <label>Bloc 3 · Autorité — nom du signataire</label>
@@ -3203,6 +3202,57 @@ export default function Settings() {
                                 placeholder="Ex: Esther BIMPE"
                               />
                               <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Nom affiché sous le libellé du bloc 3.</small>
+                            </div>
+                          </div>
+                          <h4 style={{ margin: '14px 0 8px', color: '#c2410c' }}>Bon de sortie directe — signature de l'autorité</h4>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Autorité — libellé du cadre</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_directe_label_autorite || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_directe_label_autorite: e.target.value })
+                                }
+                                placeholder="Ex: LE SECRÉTAIRE EXÉCUTIF"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Autorité — nom du titulaire</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_directe_nom_autorite || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_directe_nom_autorite: e.target.value })
+                                }
+                                placeholder="Vide = nom du Secrétaire exécutif"
+                              />
+                            </div>
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Intérimaire (signe « P.O. »)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_directe_nom_interim || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_directe_nom_interim: e.target.value })
+                                }
+                                placeholder="Laisser vide hors intérim"
+                              />
+                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Renseigné, il remplace le titulaire sur le bon. À vider au retour du titulaire.</small>
+                            </div>
+                            <div className={styles.field}>
+                              <label>Mention d'avertissement</label>
+                              <input
+                                type="text"
+                                maxLength={300}
+                                value={printSettings.sortie_directe_mention || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_directe_mention: e.target.value })
+                                }
+                                placeholder="Sortie hors réquisition — valable uniquement revêtue de la signature et du cachet de l'Autorité."
+                              />
                             </div>
                           </div>
                           <h4 style={{ margin: '14px 0 8px', color: '#334155' }}>Cachet / pied de page</h4>

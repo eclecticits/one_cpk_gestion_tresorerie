@@ -127,6 +127,10 @@ class PrintSettingsOut(BaseModel):
     sortie_sig_label_1: str
     sortie_sig_label_2: str
     sortie_sig_label_3: str
+    sortie_directe_label_autorite: str
+    sortie_directe_nom_autorite: str
+    sortie_directe_nom_interim: str
+    sortie_directe_mention: str
     sortie_sig_hint: str
     show_sortie_qr: bool
     sortie_qr_base_url: str
@@ -185,6 +189,10 @@ class PrintSettingsUpdateRequest(BaseModel):
     sortie_sig_label_1: str | None = None
     sortie_sig_label_2: str | None = None
     sortie_sig_label_3: str | None = None
+    sortie_directe_label_autorite: str | None = None
+    sortie_directe_nom_autorite: str | None = None
+    sortie_directe_nom_interim: str | None = None
+    sortie_directe_mention: str | None = None
     sortie_sig_hint: str | None = None
     show_sortie_qr: bool | None = None
     sortie_qr_base_url: str | None = None

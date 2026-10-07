@@ -101,6 +101,8 @@ PRINT_SETTINGS_TEMPLATE_FIELDS = (
     "sortie_sig_label_1",
     "sortie_sig_label_2",
     "sortie_sig_label_3",
+    "sortie_directe_label_autorite",
+    "sortie_directe_mention",
     "sortie_sig_hint",
     "show_sortie_qr",
     "sortie_qr_base_url",
