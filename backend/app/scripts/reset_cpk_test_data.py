@@ -60,6 +60,7 @@ DELETE_TARGETS: tuple[Target, ...] = (
     Target("lignes_requisition", "delete", "organisation_id = :organisation_id", ("requisitions",)),
     Target("requisition_fonds_tiers", "delete", "organisation_id = :organisation_id", ("requisitions", "fonds_tiers_operations"), notes="RESTRICT vers fonds_tiers_operations : à supprimer avant."),
     Target("sortie_fonds_tiers", "delete", "organisation_id = :organisation_id", ("sorties_fonds", "fonds_tiers_operations"), notes="RESTRICT vers fonds_tiers_operations : à supprimer avant."),
+    Target("remboursements_transport_brouillons", "delete", "organisation_id = :organisation_id"),
     Target("participants_transport", "delete", "organisation_id = :organisation_id", ("remboursements_transport",)),
     Target("remboursements_transport", "delete", "organisation_id = :organisation_id"),
     # Chaîne imposée par les fonds de tiers : une sortie de remboursement pointe

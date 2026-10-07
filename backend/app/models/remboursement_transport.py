@@ -86,3 +86,31 @@ class ParticipantTransport(Base):
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class RemboursementTransportBrouillon(Base):
+    """Remboursement en préparation, avant la réunion ou avant d'en connaître
+    les montants. Il ne prend ni numéro REM ni réquisition : ceux-ci ne naissent
+    qu'à la finalisation, qui supprime le brouillon. Le contenu est celui du
+    formulaire, tel quel, pour qu'un membre du service puisse le reprendre."""
+
+    __tablename__ = "remboursements_transport_brouillons"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    service_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("services.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    contenu: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

@@ -5,7 +5,13 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { Requisition, Money, Service, CommissionMember } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
-import { uploadRemboursementTransportPdf } from '../api/remboursementsTransport'
+import {
+  deleteRemboursementTransportBrouillon,
+  listRemboursementTransportBrouillons,
+  saveRemboursementTransportBrouillon,
+  uploadRemboursementTransportPdf,
+  type RemboursementTransportBrouillon,
+} from '../api/remboursementsTransport'
 import { getServiceMembers, getServices } from '../api/services'
 import { getPrintSettings, type PrintSettings } from '../api/settings'
 import { toNumber } from '../utils/amount'
@@ -24,6 +30,10 @@ function loadPdfGeneratorRemboursementModule(): Promise<PdfGeneratorRemboursemen
 const generateRemboursementTransportPDF: PdfGeneratorRemboursementModule['generateRemboursementTransportPDF'] = async (...args) => {
   const mod = await loadPdfGeneratorRemboursementModule()
   return mod.generateRemboursementTransportPDF(...args)
+}
+const generateListePresencePDF: PdfGeneratorRemboursementModule['generateListePresencePDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorRemboursementModule()
+  return mod.generateListePresencePDF(...args)
 }
 import { numberToWords } from '../utils/numberToWords'
 import { getTenantSlug } from '../utils/tenant'
@@ -74,7 +84,11 @@ interface Participant {
   montant: Money
   type_participant: 'principal' | 'assistant'
   expert_comptable_id?: string
+  // Coché d'après la liste de présence signée : un absent n'est pas remboursé.
+  present?: boolean
 }
+
+const isPresent = (p: Participant) => p.present !== false
 
 interface ExpertComptable {
   id: string
@@ -162,6 +176,10 @@ export default function RemboursementTransport() {
 
   const [assistants, setAssistants] = useState<Participant[]>([])
   const [showAssistants, setShowAssistants] = useState(false)
+  // Brouillon repris ou enregistré : la création finale le supprime.
+  const [draftId, setDraftId] = useState<string | null>(null)
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [brouillons, setBrouillons] = useState<RemboursementTransportBrouillon[]>([])
   const [showExpertSearch, setShowExpertSearch] = useState<number | null>(null)
   const [showAssistantExpertSearch, setShowAssistantExpertSearch] = useState<number | null>(null)
 
@@ -421,6 +439,15 @@ export default function RemboursementTransport() {
         setSubmitting(false)
         return
       }
+      if (!participants.some((p) => p.nom.trim() !== '' && isPresent(p))) {
+        setNotification({
+          show: true,
+          type: 'error',
+          message: 'Aucun participant marqué présent : cochez au moins un présent.'
+        })
+        setSubmitting(false)
+        return
+      }
       const periodeReunion = getMeetingPeriodLabel(formData.heure_debut, formData.heure_fin)
       const objetRequisition = [
         'Remboursement des frais de transport des participants',
@@ -474,8 +501,8 @@ export default function RemboursementTransport() {
       const remboursementData: any = await apiRequest('POST', '/remboursements-transport', remboursementInsert)
 
       const allParticipants = [
-        ...participants.filter(p => p.nom.trim() !== ''),
-        ...assistants.filter(p => p.nom.trim() !== '')
+        ...participants.filter(p => p.nom.trim() !== '' && isPresent(p)),
+        ...assistants.filter(p => p.nom.trim() !== '' && isPresent(p))
       ]
 
       if (allParticipants.length > 0) {
@@ -516,6 +543,7 @@ export default function RemboursementTransport() {
           type: 'warning',
           message: `Remboursement ${remboursementData.numero_remboursement} créé, mais le PDF officiel n'a pas pu être généré automatiquement.`,
         })
+        await discardDraftAfterCreation()
         clearNewParam()
         setShowForm(false)
         resetForm()
@@ -523,6 +551,7 @@ export default function RemboursementTransport() {
         return
       }
 
+      await discardDraftAfterCreation()
       setNotification({
         show: true,
         type: 'success',
@@ -560,6 +589,147 @@ export default function RemboursementTransport() {
     setParticipants([{ nom: '', titre_fonction: '', montant: 0, type_participant: 'principal' }])
     setAssistants([])
     setShowAssistants(false)
+    setDraftId(null)
+  }
+
+  // --- Brouillons -------------------------------------------------------
+  const loadBrouillons = async () => {
+    try {
+      const res = await listRemboursementTransportBrouillons(serviceContextId || null)
+      setBrouillons(Array.isArray(res) ? res : [])
+    } catch {
+      setBrouillons([])
+    }
+  }
+
+  useEffect(() => {
+    loadBrouillons()
+  }, [serviceContextId])
+
+  const saveDraft = async () => {
+    const serviceId = Number(formData.service_id)
+    if (!formData.service_id || !Number.isFinite(serviceId)) {
+      setNotification({ show: true, type: 'error', message: 'Choisissez la commission / le service avant d\u2019enregistrer le brouillon.' })
+      return
+    }
+    setSavingDraft(true)
+    try {
+      const saved = await saveRemboursementTransportBrouillon(draftId, serviceId, {
+        formData,
+        participants,
+        assistants,
+        showAssistants,
+      })
+      setDraftId(saved.id)
+      setNotification({
+        show: true,
+        type: 'success',
+        message: 'Brouillon enregistré. Vous pourrez le reprendre après la réunion pour cocher les présents et saisir les montants.',
+      })
+      loadBrouillons()
+    } catch (error: any) {
+      setNotification({ show: true, type: 'error', message: error?.message || 'Enregistrement du brouillon impossible.' })
+    } finally {
+      setSavingDraft(false)
+    }
+  }
+
+  const openDraft = (brouillon: RemboursementTransportBrouillon) => {
+    const contenu = brouillon.contenu || {}
+    const saved = contenu.formData || {}
+    setFormData({
+      instance: tenantInstance,
+      service_id: String(brouillon.service_id),
+      budget_poste_id: saved.budget_poste_id || '',
+      type_reunion: saved.type_reunion || 'bureau',
+      nature_reunion: saved.nature_reunion || '',
+      nature_travail: Array.isArray(saved.nature_travail) && saved.nature_travail.length ? saved.nature_travail : [''],
+      lieu: saved.lieu || '',
+      date_reunion: saved.date_reunion || format(new Date(), 'yyyy-MM-dd'),
+      heure_debut: saved.heure_debut || '',
+      heure_fin: saved.heure_fin || '',
+    })
+    const savedParticipants: Participant[] = Array.isArray(contenu.participants) ? contenu.participants : []
+    const savedAssistants: Participant[] = Array.isArray(contenu.assistants) ? contenu.assistants : []
+    setParticipants(
+      savedParticipants.length
+        ? savedParticipants
+        : [{ nom: '', titre_fonction: '', montant: 0, type_participant: 'principal' }]
+    )
+    setAssistants(savedAssistants)
+    setShowAssistants(Boolean(contenu.showAssistants) || savedAssistants.length > 0)
+    setDraftId(brouillon.id)
+    setShowForm(true)
+    const params = new URLSearchParams(location.search)
+    params.set('new', '1')
+    params.set('service_id', String(brouillon.service_id))
+    navigate({ pathname: location.pathname, search: `?${params.toString()}` }, { replace: true, state: location.state })
+  }
+
+  const removeDraft = async (brouillon: RemboursementTransportBrouillon) => {
+    const ok = await confirm({
+      title: 'Supprimer le brouillon',
+      description: 'Ce brouillon de remboursement sera supprimé. Aucun remboursement ni réquisition n\u2019a encore été créé.',
+      confirmText: 'Supprimer',
+      variant: 'danger',
+    })
+    if (!ok) return
+    try {
+      await deleteRemboursementTransportBrouillon(brouillon.id)
+      if (draftId === brouillon.id) setDraftId(null)
+      loadBrouillons()
+    } catch (error: any) {
+      setNotification({ show: true, type: 'error', message: error?.message || 'Suppression du brouillon impossible.' })
+    }
+  }
+
+  // La création finale remplace le brouillon : on le retire pour qu'il ne
+  // soit pas repris une seconde fois.
+  const discardDraftAfterCreation = async () => {
+    if (!draftId) return
+    try {
+      await deleteRemboursementTransportBrouillon(draftId)
+    } catch (error) {
+      console.error('Brouillon non supprimé après création', error)
+    }
+    setDraftId(null)
+    loadBrouillons()
+  }
+
+  const serviceInfo = (serviceId: string | number) => {
+    const service = services.find((s) => String(s.id) === String(serviceId))
+    return { service_code: service?.code || null, service_libelle: service?.libelle || null }
+  }
+
+  const printListePresence = async (source?: RemboursementTransportBrouillon) => {
+    const contenu = source?.contenu
+    const data = contenu?.formData || formData
+    const people: Participant[] = source
+      ? [...(contenu?.participants || []), ...(contenu?.assistants || [])]
+      : [...participants, ...assistants]
+    try {
+      await generateListePresencePDF(
+        {
+          ...(source
+            ? { service_code: source.service_code, service_libelle: source.service_libelle }
+            : serviceInfo(formData.service_id)),
+          instance: tenantInstance,
+          type_reunion: data.type_reunion,
+          nature_reunion: data.nature_reunion,
+          nature_travail: data.nature_travail,
+          lieu: data.lieu,
+          date_reunion: data.date_reunion,
+          heure_debut: data.heure_debut,
+          heure_fin: data.heure_fin,
+        },
+        people
+          .filter((p) => String(p?.nom || '').trim())
+          .map((p) => ({ nom: p.nom, titre_fonction: p.titre_fonction, type_participant: p.type_participant })),
+      )
+    } catch (error) {
+      console.error('Liste de présence', error)
+      setNotification({ show: true, type: 'error', message: 'Impression de la liste de présence impossible.' })
+    }
   }
 
   const addNatureTravail = () => {
@@ -751,13 +921,13 @@ export default function RemboursementTransport() {
   }
 
   const calculateTotal = () => {
-    const participantsTotal = participants.reduce((sum, p) => sum + (toNumber(p.montant) || 0), 0)
-    const assistantsTotal = assistants.reduce((sum, p) => sum + (toNumber(p.montant) || 0), 0)
+    const participantsTotal = participants.filter(isPresent).reduce((sum, p) => sum + (toNumber(p.montant) || 0), 0)
+    const assistantsTotal = assistants.filter(isPresent).reduce((sum, p) => sum + (toNumber(p.montant) || 0), 0)
     return participantsTotal + assistantsTotal
   }
 
   const previewParticipants = [...participants, ...assistants].filter(
-    (p) => p.nom.trim() !== '' || p.titre_fonction.trim() !== ''
+    (p) => isPresent(p) && (p.nom.trim() !== '' || p.titre_fonction.trim() !== '')
   )
   const previewTotal = calculateTotal()
   const previewMontantLettres = numberToWords(previewTotal)
@@ -1239,8 +1409,12 @@ export default function RemboursementTransport() {
         <section className={styles.workspace}>
           <div className={styles.workspaceHeader}>
             <div>
-              <h2>Nouvelle demande de remboursement</h2>
-              <p>Formulaire structuré et aperçu temps réel du document officiel.</p>
+              <h2>{draftId ? 'Brouillon de remboursement' : 'Nouvelle demande de remboursement'}</h2>
+              <p>
+                {draftId
+                  ? 'Cochez les présents d\u2019après la liste signée, saisissez les montants, puis créez le remboursement.'
+                  : 'Préparez la réunion : enregistrez en brouillon et imprimez la liste de présence, puis complétez après la séance.'}
+              </p>
             </div>
             <button
               onClick={() => {
@@ -1417,13 +1591,14 @@ export default function RemboursementTransport() {
                           <th style={{ width: '40px' }}>N°</th>
                           <th>Nom du participant *</th>
                           <th>Qualité / Titre / Fonction *</th>
+                          <th style={{ width: '70px', textAlign: 'center' }} title="D'après la liste de présence signée">Présent</th>
                           <th>Montant (USD) *</th>
                           <th>Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {participants.map((p, index) => (
-                          <tr key={index}>
+                          <tr key={index} style={isPresent(p) ? undefined : { opacity: 0.55 }}>
                             <td style={{ textAlign: 'center', verticalAlign: 'middle', fontWeight: 600 }}>{index + 1}</td>
                             <td className={styles.dropdownCell} style={{position: 'relative'}}>
                               <input
@@ -1454,12 +1629,22 @@ export default function RemboursementTransport() {
                               required
                             />
                           </td>
+                          <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                            <input
+                              type="checkbox"
+                              checked={isPresent(p)}
+                              onChange={(e) => updateParticipant(index, 'present', e.target.checked)}
+                              aria-label={`${p.nom || 'Participant'} présent`}
+                            />
+                          </td>
                           <td>
                             <input
                               type="number"
-                              value={p.montant}
+                              value={isPresent(p) ? p.montant : 0}
                               onChange={(e) => updateParticipant(index, 'montant', parseFloat(e.target.value) || 0)}
                               required
+                              disabled={!isPresent(p)}
+                              title={isPresent(p) ? undefined : 'Absent : non remboursé'}
                               min="0"
                               step="0.01"
                             />
@@ -1506,6 +1691,7 @@ export default function RemboursementTransport() {
                             <th style={{ width: '40px' }}>N°</th>
                             <th>Nom</th>
                             <th>Fonction</th>
+                            <th style={{ width: '70px', textAlign: 'center' }}>Présent</th>
                             <th>Montant (USD)</th>
                             <th>Action</th>
                           </tr>
@@ -1513,13 +1699,13 @@ export default function RemboursementTransport() {
                         <tbody>
                           {assistants.length === 0 ? (
                             <tr>
-                              <td colSpan={5} style={{textAlign: 'center', color: '#9ca3af'}}>
+                              <td colSpan={6} style={{textAlign: 'center', color: '#9ca3af'}}>
                                 Aucun assistant administratif
                               </td>
                             </tr>
                           ) : (
                             assistants.map((a, index) => (
-                              <tr key={index}>
+                              <tr key={index} style={isPresent(a) ? undefined : { opacity: 0.55 }}>
                                 <td style={{ textAlign: 'center', verticalAlign: 'middle', fontWeight: 600 }}>{index + 1}</td>
                                 <td className={styles.dropdownCell} style={{position: 'relative'}}>
                                   <input
@@ -1548,11 +1734,20 @@ export default function RemboursementTransport() {
                                     placeholder="Ex: Secrétaire administratif, Assistant à la commission"
                                   />
                                 </td>
+                                <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isPresent(a)}
+                                    onChange={(e) => updateAssistant(index, 'present', e.target.checked)}
+                                    aria-label={`${a.nom || 'Assistant'} présent`}
+                                  />
+                                </td>
                                 <td>
                                   <input
                                     type="number"
-                                    value={a.montant}
+                                    value={isPresent(a) ? a.montant : 0}
                                     onChange={(e) => updateAssistant(index, 'montant', parseFloat(e.target.value) || 0)}
+                                    disabled={!isPresent(a)}
                                     min="0"
                                     step="0.01"
                                   />
@@ -1597,7 +1792,25 @@ export default function RemboursementTransport() {
                 >
                   Annuler
                 </button>
-                <button type="submit" className={styles.primaryBtn} disabled={submitting}>
+                <button
+                  type="button"
+                  onClick={() => printListePresence()}
+                  className={styles.secondaryBtn}
+                  disabled={submitting}
+                  title="Liste à faire signer en séance, avec des lignes libres pour les présents non prévus"
+                >
+                  <Printer size={15} aria-hidden="true" /> Liste de présence
+                </button>
+                <button
+                  type="button"
+                  onClick={saveDraft}
+                  className={styles.secondaryBtn}
+                  disabled={submitting || savingDraft}
+                  title="Enregistrer sans poste ni montants ; à compléter après la réunion"
+                >
+                  {savingDraft ? 'Enregistrement…' : draftId ? 'Mettre à jour le brouillon' : 'Enregistrer en brouillon'}
+                </button>
+                <button type="submit" className={styles.primaryBtn} disabled={submitting || savingDraft}>
                   {submitting ? 'Création en cours...' : 'Créer le remboursement'}
                 </button>
               </div>
@@ -1742,6 +1955,72 @@ export default function RemboursementTransport() {
           </div>
         </div>
       </section>
+      )}
+
+      {canCreate && brouillons.length > 0 && (
+        <section className={styles.filtersSection} aria-labelledby="rt-brouillons-titre">
+          <h3 id="rt-brouillons-titre" style={{ margin: '0 0 8px', fontSize: '15px' }}>
+            Brouillons en préparation ({brouillons.length})
+          </h3>
+          <div className={styles.tableContainer}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Réunion</th>
+                  <th>Commission / Service</th>
+                  <th>Date</th>
+                  <th style={{ textAlign: 'center' }}>Prévus</th>
+                  <th style={{ textAlign: 'center' }}>Présents</th>
+                  <th>Modifié</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {brouillons.map((b) => {
+                  const fd = b.contenu?.formData || {}
+                  const people: Participant[] = [...(b.contenu?.participants || []), ...(b.contenu?.assistants || [])]
+                    .filter((x: Participant) => String(x?.nom || '').trim())
+                  const presents = people.filter(isPresent).length
+                  const dateLabel = fd.date_reunion ? format(new Date(fd.date_reunion), 'dd/MM/yyyy') : '—'
+                  return (
+                    <tr key={b.id}>
+                      <td>
+                        <strong>{getTypeReunionLabel(fd.type_reunion)}</strong>
+                        {fd.nature_reunion ? <div style={{ fontSize: '12px', color: '#6b7280' }}>{fd.nature_reunion}</div> : null}
+                      </td>
+                      <td>{[b.service_code, b.service_libelle].filter(Boolean).join(' - ') || '—'}</td>
+                      <td>{dateLabel}</td>
+                      <td style={{ textAlign: 'center' }}>{people.length}</td>
+                      <td style={{ textAlign: 'center' }}>{presents}</td>
+                      <td style={{ fontSize: '12px' }}>
+                        {format(new Date(b.updated_at), 'dd/MM/yyyy HH:mm')}
+                        {b.updated_by_nom ? <div style={{ color: '#6b7280' }}>{b.updated_by_nom}</div> : null}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          <button type="button" className={styles.primaryBtn} onClick={() => openDraft(b)}>
+                            Reprendre
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.secondaryBtn}
+                            onClick={() => printListePresence(b)}
+                            title="Imprimer la liste de présence"
+                          >
+                            <Printer size={15} aria-hidden="true" /> Liste
+                          </button>
+                          <button type="button" className={styles.secondaryBtn} onClick={() => removeDraft(b)}>
+                            Supprimer
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
 
       <div className={styles.filtersSection}>

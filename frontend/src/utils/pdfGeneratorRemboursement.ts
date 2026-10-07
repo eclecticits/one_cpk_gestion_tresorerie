@@ -696,3 +696,167 @@ export const generateRemboursementTransportPDF = async (
     doc.save(filename)
   }
 }
+
+export type ListePresenceReunion = {
+  service_code?: string | null
+  service_libelle?: string | null
+  instance?: string | null
+  type_reunion?: string | null
+  nature_reunion?: string | null
+  nature_travail?: string[]
+  lieu?: string | null
+  date_reunion?: string | null
+  heure_debut?: string | null
+  heure_fin?: string | null
+}
+
+export type ListePresencePersonne = {
+  nom: string
+  titre_fonction?: string | null
+  type_participant: 'principal' | 'assistant'
+}
+
+/**
+ * Liste de présence à faire remplir en séance, imprimée depuis le brouillon du
+ * remboursement de transport. Les lignes sont vierges : chaque présent y écrit
+ * lui-même son nom, son post-nom, son prénom et sa qualité, puis signe. Il y a
+ * une ligne par participant prévu, plus des lignes de réserve. La liste se
+ * clôt par le décompte et la signature du secrétaire et du président de séance.
+ * Une fois signée, elle sert à cocher les présences dans le brouillon : seuls
+ * les présents seront remboursés.
+ */
+export const generateListePresencePDF = async (
+  reunion: ListePresenceReunion,
+  personnes: ListePresencePersonne[],
+  lignesVierges = 5,
+) => {
+  const settings = await getPrintSettingsData()
+  const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const margin = 15
+  const ACCENT: [number, number, number] = [46, 125, 50]
+  const FILET: [number, number, number] = [205, 210, 205]
+
+  // En-tête : même identité que l'état de frais.
+  const largeurLogo = 27
+  const hauteurLogo = 19
+  if (logoDataUrl) addProportionalLogo(doc, logoDataUrl, margin, 9, largeurLogo, hauteurLogo)
+  const headerX = logoDataUrl ? margin + largeurLogo + 4 : margin
+  const organizationName = settings?.organization_name?.trim() || 'ONEC'
+  const seen = new Set([normalizeHeaderLine(organizationName)])
+  const subtitleLines = [settings?.organization_subtitle, settings?.header_text]
+    .filter((line): line is string => {
+      const n = normalizeHeaderLine(line)
+      if (!n || seen.has(n)) return false
+      seen.add(n)
+      return true
+    })
+    .slice(0, 3)
+  doc.setFont('times', 'bold')
+  doc.setFontSize(12.5)
+  doc.setTextColor(0)
+  doc.text(organizationName.toUpperCase(), headerX, 15)
+  doc.setFont('times', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(95)
+  subtitleLines.forEach((line, i) => doc.text(line, headerX, 20.5 + i * 3.8))
+  const hauteurTexte = 11.5 + Math.max(0, subtitleLines.length - 1) * 3.8 + 2
+  const yLigne = 9 + (logoDataUrl ? Math.max(hauteurLogo, hauteurTexte) : hauteurTexte) + 2.5
+  doc.setDrawColor(ACCENT[0], ACCENT[1], ACCENT[2])
+  doc.setLineWidth(0.8)
+  doc.line(margin, yLigne, pageWidth - margin, yLigne)
+
+  doc.setFont('times', 'bold')
+  doc.setFontSize(15)
+  doc.setTextColor(0)
+  doc.setCharSpace(0.6)
+  doc.text('LISTE DE PRÉSENCE', pageWidth / 2, yLigne + 9, { align: 'center' })
+  doc.setCharSpace(0)
+
+  const commission = formatCommissionBeneficiaire(reunion)
+  const dateReunion = reunion.date_reunion ? new Date(reunion.date_reunion) : null
+  const dateLabel = dateReunion && !Number.isNaN(dateReunion.getTime()) ? format(dateReunion, 'dd/MM/yyyy') : '....../....../..........'
+  const travaux = (reunion.nature_travail || []).map((t) => String(t || '').trim()).filter(Boolean)
+  const objet = [String(reunion.nature_reunion || '').trim(), ...travaux.map((t, i) => `${i + 1}. ${t}`)]
+    .filter(Boolean)
+    .join('\n')
+
+  autoTable(doc, {
+    startY: yLigne + 14,
+    theme: 'grid',
+    body: [
+      ['Commission / Service', commission.toUpperCase(), 'Date', dateLabel],
+      ['Type de réunion', getTypeReunionLabel(reunion.type_reunion), 'Horaires', getMeetingSchedule(reunion.heure_debut, reunion.heure_fin)],
+      ['Lieu', String(reunion.lieu || '').trim() || '................................', 'Prévus', `${personnes.length}`],
+      ...(objet ? [[{ content: 'Objet', styles: { fillColor: [246, 247, 246] as [number, number, number], fontStyle: 'bold' as const, textColor: 70 } }, { content: objet, colSpan: 3 }]] : []),
+    ],
+    styles: { font: 'times', fontSize: 9, cellPadding: 1.6, lineColor: FILET, lineWidth: 0.1, textColor: 25, valign: 'middle' },
+    columnStyles: {
+      0: { cellWidth: 34, fillColor: [246, 247, 246], fontStyle: 'bold', textColor: 70 },
+      1: { cellWidth: 74 },
+      2: { cellWidth: 22, fillColor: [246, 247, 246], fontStyle: 'bold', textColor: 70 },
+    },
+    margin: { left: margin, right: margin },
+  })
+
+  // Tableau d'émargement vierge : une ligne haute par présent, la place
+  // d'écrire à la main et de signer. Au moins 15 lignes, pour remplir la page.
+  const nbLignes = Math.max(personnes.length + lignesVierges, 15)
+  const body = Array.from({ length: nbLignes }, (_, i) => [String(i + 1), '', '', '', '', ''])
+
+  autoTable(doc, {
+    startY: (doc as any).lastAutoTable.finalY + 5,
+    theme: 'grid',
+    head: [['N°', 'Nom', 'Post-nom', 'Prénom', 'Qualité / Fonction', 'Signature']],
+    body,
+    styles: { font: 'times', fontSize: 9.5, cellPadding: 1.8, lineColor: [150, 155, 150], lineWidth: 0.2, textColor: 20, valign: 'middle', minCellHeight: 10 },
+    headStyles: { fillColor: ACCENT, textColor: 255, fontStyle: 'bold', fontSize: 9.5, minCellHeight: 8, halign: 'center' },
+    columnStyles: {
+      0: { cellWidth: 9, halign: 'center', textColor: 90 },
+      1: { cellWidth: 33 },
+      2: { cellWidth: 33 },
+      3: { cellWidth: 30 },
+      4: { cellWidth: 34 },
+      5: { cellWidth: 'auto' },
+    },
+    margin: { left: margin, right: margin, bottom: 16 },
+  })
+
+  // Clôture : décompte et signatures de séance.
+  let y = (doc as any).lastAutoTable.finalY + 8
+  if (y > pageHeight - 42) {
+    doc.addPage()
+    y = 25
+  }
+  doc.setFont('times', 'normal')
+  doc.setFontSize(10)
+  doc.setTextColor(0)
+  doc.text(
+    'Arrêtée la présente liste à ........ personnes présentes.',
+    margin,
+    y,
+  )
+  y += 12
+  doc.setFont('times', 'bold')
+  doc.text('Le Secrétaire de séance', margin + 30, y, { align: 'center' })
+  doc.text('Le Président de séance', pageWidth - margin - 30, y, { align: 'center' })
+  doc.setDrawColor(150)
+  doc.setLineWidth(0.2)
+  doc.line(margin + 5, y + 16, margin + 55, y + 16)
+  doc.line(pageWidth - margin - 55, y + 16, pageWidth - margin - 5, y + 16)
+
+  const pageCount = doc.getNumberOfPages()
+  for (let i = 1; i <= pageCount; i += 1) {
+    doc.setPage(i)
+    doc.setFont('times', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(100)
+    doc.text(format(new Date(), 'dd/MM/yyyy HH:mm'), margin, pageHeight - 6)
+    doc.text(`Liste de présence - ${organizationName}`, pageWidth / 2, pageHeight - 6, { align: 'center' })
+    doc.text(`Page ${i}/${pageCount}`, pageWidth - margin, pageHeight - 6, { align: 'right' })
+  }
+
+  openPdfInNewTab(doc)
+}

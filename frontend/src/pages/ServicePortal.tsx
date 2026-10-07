@@ -23,6 +23,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { getService, getServiceMembers } from '../api/services'
+import { listRemboursementTransportBrouillons } from '../api/remboursementsTransport'
 import BackButton from '../components/BackButton'
 import BudgetGauge from '../components/ServicePortal/BudgetGauge'
 import styles from './ServicePortal.module.css'
@@ -139,6 +140,7 @@ export default function ServicePortal() {
   const [summary, setSummary] = useState<ServiceSummary | null>(null)
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
   const [transports, setTransports] = useState<TransportItem[]>([])
+  const [transportDraftCount, setTransportDraftCount] = useState(0)
   const [rubriques, setRubriques] = useState<BudgetLine[]>([])
   const [members, setMembers] = useState<CommissionMember[]>([])
   const [serviceInfo, setServiceInfo] = useState<Service | null>(null)
@@ -234,6 +236,10 @@ export default function ServicePortal() {
         apiRequest<{ lignes: BudgetLine[] }>('GET', '/budget/lines/autorisees', { params: { active: true, type: 'DEPENSE', service_id: activeServiceId } }),
         getServiceMembers(activeServiceId),
       ])
+      // Les brouillons ne bloquent pas l'espace : un échec vaut « aucun ».
+      listRemboursementTransportBrouillons(activeServiceId)
+        .then((items) => setTransportDraftCount(Array.isArray(items) ? items.length : 0))
+        .catch(() => setTransportDraftCount(0))
 
       const summaryRes = summaryResult.status === 'fulfilled' ? summaryResult.value : null
       const reqRes = reqResult.status === 'fulfilled' ? reqResult.value : []
@@ -1333,6 +1339,20 @@ export default function ServicePortal() {
             <span className={styles.panelHeaderMeta}>Workflow séparé, mêmes validations</span>
           </div>
           <div className={styles.panelActions}>
+            {transportDraftCount > 0 && (
+              <button
+                type="button"
+                className={styles.panelLink}
+                title="Remboursements en préparation : liste de présence, présences et montants à compléter"
+                onClick={() =>
+                  navigate(`/remboursement-transport?service_id=${activeServiceId}`, {
+                    state: { fromCommission: activeServiceId },
+                  })
+                }
+              >
+                {transportDraftCount} brouillon{transportDraftCount > 1 ? 's' : ''} à compléter
+              </button>
+            )}
             <button
               type="button"
               className={styles.panelLink}

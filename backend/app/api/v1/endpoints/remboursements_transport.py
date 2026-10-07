@@ -17,12 +17,18 @@ from app.api.deps import get_current_tenant_id, get_current_tenant_uuid, get_cur
 from app.db.session import get_db
 from app.models.requisition import Requisition
 from app.models.requisition_annexe import RequisitionAnnexe
-from app.models.remboursement_transport import ParticipantTransport, RemboursementTransport
+from app.models.remboursement_transport import (
+    ParticipantTransport,
+    RemboursementTransport,
+    RemboursementTransportBrouillon,
+)
 from app.models.service import Service
 from app.models.user import User
 from app.schemas.remboursement_transport import (
     ParticipantTransportCreate,
     ParticipantTransportResponse,
+    RemboursementTransportBrouillonResponse,
+    RemboursementTransportBrouillonSave,
     RemboursementTransportCreate,
     RemboursementTransportResponse,
 )
@@ -628,3 +634,162 @@ async def create_participants_transport(
         )
         for p in created
     ]
+
+
+# ----------------------------------------------------------------------
+# Brouillons : un remboursement se prépare avant la réunion (liste de présence
+# à imprimer), puis se complète après (présences, montants). Tant qu'il est
+# brouillon, il n'a ni numéro REM ni réquisition.
+# ----------------------------------------------------------------------
+
+BROUILLON_PERMISSIONS = ["remboursement_transport", "menu_services"]
+
+
+async def _ensure_service_access(db: AsyncSession, user: User, tenant_id: int, service_id: int) -> Service:
+    service_res = await db.execute(
+        select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id)
+    )
+    service = service_res.scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service introuvable")
+    if not await can_view_all_services(db, user):
+        if service_id not in await get_user_service_ids(db, user):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ce service ne vous est pas assigné.")
+    return service
+
+
+async def _get_brouillon(
+    db: AsyncSession, user: User, tenant_id: int, brouillon_id: str
+) -> RemboursementTransportBrouillon:
+    bid = _coerce_uuid(brouillon_id, "brouillon_id")
+    res = await db.execute(
+        select(RemboursementTransportBrouillon).where(
+            RemboursementTransportBrouillon.id == bid,
+            RemboursementTransportBrouillon.organisation_id == tenant_id,
+        )
+    )
+    brouillon = res.scalar_one_or_none()
+    if brouillon is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brouillon introuvable")
+    await _ensure_service_access(db, user, tenant_id, brouillon.service_id)
+    return brouillon
+
+
+def _user_label(u: User | None) -> str | None:
+    if u is None:
+        return None
+    return f"{u.prenom or ''} {u.nom or ''}".strip() or None
+
+
+async def _brouillon_responses(
+    db: AsyncSession, brouillons: list[RemboursementTransportBrouillon]
+) -> list[RemboursementTransportBrouillonResponse]:
+    service_ids = {b.service_id for b in brouillons}
+    user_ids = {u for b in brouillons for u in (b.created_by, b.updated_by) if u}
+    services_map: dict[int, Service] = {}
+    users_map: dict[uuid.UUID, User] = {}
+    if service_ids:
+        res = await db.execute(select(Service).where(Service.id.in_(service_ids)))
+        services_map = {s.id: s for s in res.scalars().all()}
+    if user_ids:
+        res = await db.execute(select(User).where(User.id.in_(list(user_ids))))
+        users_map = {u.id: u for u in res.scalars().all()}
+    out = []
+    for b in brouillons:
+        service = services_map.get(b.service_id)
+        out.append(
+            RemboursementTransportBrouillonResponse(
+                id=b.id,
+                service_id=b.service_id,
+                service_code=service.code if service else None,
+                service_libelle=service.libelle if service else None,
+                contenu=b.contenu or {},
+                created_by=b.created_by,
+                created_by_nom=_user_label(users_map.get(b.created_by)) if b.created_by else None,
+                updated_by_nom=_user_label(users_map.get(b.updated_by)) if b.updated_by else None,
+                created_at=b.created_at,
+                updated_at=b.updated_at,
+            )
+        )
+    return out
+
+
+@router.get("/brouillons", response_model=list[RemboursementTransportBrouillonResponse])
+async def list_brouillons(
+    service_id: int | None = Query(default=None),
+    user: User = Depends(has_any_permission(BROUILLON_PERMISSIONS)),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[RemboursementTransportBrouillonResponse]:
+    query = (
+        select(RemboursementTransportBrouillon)
+        .where(RemboursementTransportBrouillon.organisation_id == tenant_id)
+        .order_by(RemboursementTransportBrouillon.updated_at.desc())
+        .limit(200)
+    )
+    if service_id is not None:
+        query = query.where(RemboursementTransportBrouillon.service_id == service_id)
+    if not await can_view_all_services(db, user):
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            return []
+        query = query.where(RemboursementTransportBrouillon.service_id.in_(service_ids))
+    res = await db.execute(query)
+    return await _brouillon_responses(db, list(res.scalars().all()))
+
+
+@router.post(
+    "/brouillons",
+    response_model=RemboursementTransportBrouillonResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_brouillon(
+    payload: RemboursementTransportBrouillonSave,
+    user: User = Depends(has_any_permission(BROUILLON_PERMISSIONS)),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> RemboursementTransportBrouillonResponse:
+    await _ensure_service_access(db, user, tenant_id, payload.service_id)
+    brouillon = RemboursementTransportBrouillon(
+        organisation_id=tenant_id,
+        service_id=payload.service_id,
+        contenu=payload.contenu,
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    db.add(brouillon)
+    await db.commit()
+    await db.refresh(brouillon)
+    return (await _brouillon_responses(db, [brouillon]))[0]
+
+
+@router.put("/brouillons/{brouillon_id}", response_model=RemboursementTransportBrouillonResponse)
+async def update_brouillon(
+    brouillon_id: str,
+    payload: RemboursementTransportBrouillonSave,
+    user: User = Depends(has_any_permission(BROUILLON_PERMISSIONS)),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> RemboursementTransportBrouillonResponse:
+    brouillon = await _get_brouillon(db, user, tenant_id, brouillon_id)
+    if payload.service_id != brouillon.service_id:
+        await _ensure_service_access(db, user, tenant_id, payload.service_id)
+        brouillon.service_id = payload.service_id
+    brouillon.contenu = payload.contenu
+    brouillon.updated_by = user.id
+    brouillon.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(brouillon)
+    return (await _brouillon_responses(db, [brouillon]))[0]
+
+
+@router.delete("/brouillons/{brouillon_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_brouillon(
+    brouillon_id: str,
+    user: User = Depends(has_any_permission(BROUILLON_PERMISSIONS)),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    brouillon = await _get_brouillon(db, user, tenant_id, brouillon_id)
+    await db.delete(brouillon)
+    await db.commit()

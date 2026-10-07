@@ -71,3 +71,23 @@ class RemboursementTransportResponse(RemboursementTransportBase):
     requisition: RequisitionWithUserOut | None = None
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
+
+
+class RemboursementTransportBrouillonSave(DecimalBaseModel):
+    service_id: int
+    # Contenu du formulaire (réunion, participants, présences) : libre, le
+    # brouillon n'engage rien. La validation a lieu à la finalisation.
+    contenu: dict = Field(default_factory=dict)
+
+
+class RemboursementTransportBrouillonResponse(DecimalBaseModel):
+    id: UUID
+    service_id: int
+    service_code: str | None = None
+    service_libelle: str | None = None
+    contenu: dict
+    created_by: UUID | None = None
+    created_by_nom: str | None = None
+    updated_by_nom: str | None = None
+    created_at: datetime
+    updated_at: datetime
