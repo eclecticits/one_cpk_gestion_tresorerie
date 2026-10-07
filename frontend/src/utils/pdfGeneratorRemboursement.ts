@@ -96,9 +96,41 @@ const getStampDataUrl = async () => {
   }
 }
 
-const addLogo = (doc: jsPDF, x: number, y: number, size: number, dataUrl?: string | null) => {
-  if (!dataUrl) return
-  doc.addImage(dataUrl, 'PNG', x, y, size, size)
+/**
+ * Place le logo dans une boîte fixe sans jamais le déformer.
+ *
+ * Les logos institutionnels sont souvent horizontaux. Les forcer dans un
+ * carré rendait le texte et l'emblème visiblement écrasés sur l'état de frais.
+ */
+const addProportionalLogo = (
+  doc: jsPDF,
+  dataUrl: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  maxHeight: number
+) => {
+  try {
+    const props = doc.getImageProperties(dataUrl)
+    const ratio = props.width / props.height
+    let width = maxWidth
+    let height = width / ratio
+    if (height > maxHeight) {
+      height = maxHeight
+      width = height * ratio
+    }
+    const format = String((props as any).fileType || 'PNG').toUpperCase()
+    doc.addImage(
+      dataUrl,
+      format,
+      x + (maxWidth - width) / 2,
+      y + (maxHeight - height) / 2,
+      width,
+      height
+    )
+  } catch {
+    // Mieux vaut omettre une image illisible que déformer l'identité visuelle.
+  }
 }
 
 const normalizeHeaderLine = (value: unknown) =>
@@ -150,6 +182,39 @@ const getTypeReunionLabel = (value: unknown) => {
   }
 }
 
+const formatPersonName = (personne: any) =>
+  personne ? `${personne.prenom || ''} ${personne.nom || ''}`.trim() : ''
+
+const normalizeHour = (value: unknown) => {
+  const hour = String(value || '').trim()
+  const match = hour.match(/^(\d{1,2}):(\d{2})/)
+  return match ? `${match[1].padStart(2, '0')}:${match[2]}` : hour
+}
+
+const getMeetingSchedule = (startValue: unknown, endValue: unknown) => {
+  const start = normalizeHour(startValue)
+  const end = normalizeHour(endValue)
+  if (!start && !end) return 'Non renseigné'
+  if (start && !end) return `Début : ${start}`
+  if (!start && end) return `Fin : ${end}`
+
+  const startMatch = start.match(/^(\d{2}):(\d{2})$/)
+  const endMatch = end.match(/^(\d{2}):(\d{2})$/)
+  let duration = ''
+  if (startMatch && endMatch) {
+    const startMinutes = Number(startMatch[1]) * 60 + Number(startMatch[2])
+    const endMinutes = Number(endMatch[1]) * 60 + Number(endMatch[2])
+    if (endMinutes >= startMinutes) {
+      const durationMinutes = endMinutes - startMinutes
+      const hours = Math.floor(durationMinutes / 60)
+      const minutes = durationMinutes % 60
+      const parts = [hours ? `${hours} h` : '', minutes ? `${minutes} min` : ''].filter(Boolean)
+      duration = parts.length > 0 ? ` · durée ${parts.join(' ')}` : ''
+    }
+  }
+  return `${start} – ${end}${duration}`
+}
+
 const openPdfInNewTab = (doc: jsPDF) => {
   const blob = doc.output('blob')
   const url = URL.createObjectURL(blob)
@@ -165,7 +230,7 @@ const addFooter = (doc: jsPDF, pageNumber: number, pageCount: number, margin: nu
   doc.setTextColor(100)
   doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, margin, pageHeight - 6)
   const tenantLabel = cachedSettings?.organization_name?.trim()
-  doc.text(tenantLabel ? `Remboursement frais de transport - ${tenantLabel}` : 'Remboursement frais de transport', pageWidth / 2, pageHeight - 6, { align: 'center' })
+  doc.text(tenantLabel ? `État de frais de déplacement - ${tenantLabel}` : 'État de frais de déplacement', pageWidth / 2, pageHeight - 6, { align: 'center' })
   doc.text(`Page ${pageNumber}/${pageCount}`, pageWidth - margin, pageHeight - 6, { align: 'right' })
 }
 
@@ -178,7 +243,7 @@ export const generateRemboursementTransportPDF = async (
   onBlob?: (blob: Blob, filename: string) => Promise<void>
 ) => {
   const settings = await getPrintSettingsData()
-  const logoDataUrl = await getLogoDataUrl()
+  const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
   const stampDataUrl = await getStampDataUrl()
   const isA5 = paperFormat === 'a5'
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: paperFormat })
@@ -190,11 +255,17 @@ export const generateRemboursementTransportPDF = async (
 
   const montantTotal = toNumber(remboursement.montant_total)
   const montantEnLettres = numberToWords(montantTotal)
-  const itineraire = remboursement.lieu || 'N/A'
-  const motif =
-    remboursement.nature_reunion ||
-    (Array.isArray(remboursement.nature_travail) ? remboursement.nature_travail.join(' / ') : '') ||
-    'N/A'
+  const lieu = String(remboursement.lieu || '').trim() || 'N/A'
+  const objetReunion = String(remboursement.nature_reunion || '').trim() || 'N/A'
+  const travaux: string[] = Array.isArray(remboursement.nature_travail)
+    ? remboursement.nature_travail.map((item: unknown) => String(item || '').trim()).filter(Boolean)
+    : []
+  const horaires = getMeetingSchedule(remboursement.heure_debut, remboursement.heure_fin)
+  const requisitionLiee = remboursement.requisition || {}
+  const nomDemandeurBrut =
+    formatPersonName(requisitionLiee.demandeur || remboursement.demandeur) ||
+    String(_userName || '').trim()
+  const nomDemandeur = nomDemandeurBrut || 'Non renseigné'
 
   const dateReunion = remboursement.date_reunion ? new Date(remboursement.date_reunion) : new Date()
   const formattedDate = Number.isNaN(dateReunion.getTime()) ? 'N/A' : format(dateReunion, 'dd/MM/yyyy')
@@ -218,14 +289,15 @@ export const generateRemboursementTransportPDF = async (
   // hauteur découle désormais de celle du logo, ce qui rend une dizaine de
   // millimètres au tableau dès la première page.
   const hautBandeau = isA5 ? 8 : 9
-  const tailleLogo = isA5 ? 16 : 20
+  const largeurLogo = isA5 ? 21 : 27
+  const hauteurLogo = isA5 ? 15 : 19
   if (logoDataUrl) {
-    addLogo(doc, margin, hautBandeau, tailleLogo, logoDataUrl)
+    addProportionalLogo(doc, logoDataUrl, margin, hautBandeau, largeurLogo, hauteurLogo)
   }
   // Sans logo (paramétrage incomplet ou image indisponible), le texte reprend la
   // marge : décalé de la largeur d'un logo absent, il ouvrait à gauche une
   // encoche vide que rien ne justifiait.
-  const headerX = logoDataUrl ? margin + tailleLogo + 4 : margin
+  const headerX = logoDataUrl ? margin + largeurLogo + 4 : margin
 
   const organizationName = settings?.organization_name?.trim() || 'ONEC'
   const organizationKey = normalizeHeaderLine(organizationName)
@@ -261,7 +333,7 @@ export const generateRemboursementTransportPDF = async (
   // Fixé à 34 mm quel que soit le contenu, il ouvrait jusqu'à 16 mm de blanc
   // au-dessus du titre lorsque le tenant n'avait ni logo ni sous-titre.
   const hauteurTexteEntete = premierSousTitre + Math.max(0, subtitleLines.length - 1) * interligneSousTitre + 2
-  const hauteurBandeau = logoDataUrl ? Math.max(tailleLogo, hauteurTexteEntete) : hauteurTexteEntete
+  const hauteurBandeau = logoDataUrl ? Math.max(hauteurLogo, hauteurTexteEntete) : hauteurTexteEntete
   const yLigne = hautBandeau + hauteurBandeau + (isA5 ? 2 : 2.5)
   doc.setDrawColor(ACCENT[0], ACCENT[1], ACCENT[2])
   doc.setLineWidth(0.8)
@@ -279,18 +351,26 @@ export const generateRemboursementTransportPDF = async (
   // d'un intitulé officiel sans exiger un corps plus gros. jsPDF en tient
   // compte dans le calcul du centrage, l'axe reste juste.
   doc.setCharSpace(isA5 ? 0.3 : 0.5)
-  doc.text(String(transTitre).toUpperCase(), pageWidth / 2, yTitre, { align: 'center' })
+  const lignesTitre = doc.splitTextToSize(
+    String(transTitre).toUpperCase(),
+    pageWidth - margin * 2 - (isA5 ? 4 : 12)
+  ) as string[]
+  const interligneTitre = isA5 ? 4.5 : 5.5
+  lignesTitre.forEach((line, index) => {
+    doc.text(line, pageWidth / 2, yTitre + index * interligneTitre, { align: 'center' })
+  })
   doc.setCharSpace(0)
 
-  let yApresTitre = yTitre
+  let yApresTitre = yTitre + Math.max(0, lignesTitre.length - 1) * interligneTitre
   if (remboursement.reference_numero) {
     // Le numéro est une référence de classement, pas un second titre : maigre et
     // gris, il se lit sans disputer la vedette à l'intitulé.
     doc.setFont('times', 'normal')
     doc.setFontSize(echelle.numero)
     doc.setTextColor(85)
-    doc.text(`N° ${remboursement.reference_numero}`, pageWidth / 2, yTitre + (isA5 ? 4.5 : 5.5), { align: 'center' })
-    yApresTitre = yTitre + (isA5 ? 4.5 : 5.5)
+    const yReference = yApresTitre + (isA5 ? 4.5 : 5.5)
+    doc.text(`N° ${remboursement.reference_numero}`, pageWidth / 2, yReference, { align: 'center' })
+    yApresTitre = yReference
   }
   doc.setFont('times', 'normal')
   doc.setTextColor(0)
@@ -316,7 +396,8 @@ export const generateRemboursementTransportPDF = async (
     body: [
       ['Bénéficiaire', beneficiaire.toUpperCase(), 'Instance', remboursement.instance || 'N/A'],
       ['Type de réunion', getTypeReunionLabel(remboursement.type_reunion), 'Date', formattedDate],
-      ['Motif / Mission', motif, 'Itinéraire', itineraire],
+      ['Lieu', lieu, 'Horaires', horaires],
+      ['Demandeur', nomDemandeur, 'Effectif', `${participants.length} participant${participants.length === 1 ? '' : 's'}`],
     ],
     styles: {
       // Un demi-point de moins que la liste : l'identification est le contexte,
@@ -339,7 +420,40 @@ export const generateRemboursementTransportPDF = async (
     margin: { left: margin, right: margin },
   })
 
-  let yPos = (doc as any).lastAutoTable.finalY + (isA5 ? 4 : 5)
+  let yPos = (doc as any).lastAutoTable.finalY + (isA5 ? 3 : 4)
+
+  // Le lecteur doit comprendre la réunion avant de lire les montants. L'objet
+  // et les travaux saisis sont donc réunis dans un bloc dédié au lieu de se
+  // remplacer mutuellement dans une seule cellule « Motif ».
+  const contexteReunion = [
+    { content: objetReunion, styles: { fontStyle: 'bold' as const, textColor: 20 } },
+    ...travaux.map((travail: string, index: number) => ({
+      content: `${index + 1}. ${travail}`,
+      styles: { textColor: 45 },
+    })),
+  ]
+  autoTable(doc, {
+    startY: yPos,
+    theme: 'grid',
+    head: [[travaux.length > 0 ? 'OBJET ET TRAVAUX DE LA RÉUNION' : 'OBJET DE LA RÉUNION']],
+    body: contexteReunion.map((entry) => [entry]),
+    styles: {
+      font: 'times',
+      fontSize: echelle.identification,
+      cellPadding: { top: isA5 ? 1.2 : 1.4, bottom: isA5 ? 1.2 : 1.4, left: 2.2, right: 2.2 },
+      lineColor: FILET,
+      lineWidth: 0.1,
+      overflow: 'linebreak',
+    },
+    headStyles: {
+      fillColor: ACCENT_CLAIR,
+      textColor: ACCENT,
+      fontStyle: 'bold',
+      lineColor: FILET,
+    },
+    margin: { left: margin, right: margin },
+  })
+  yPos = (doc as any).lastAutoTable.finalY + (isA5 ? 4 : 5)
 
   const totalParticipants = participants.reduce((somme, p: any) => somme + (toNumber(p.montant) || 0), 0)
 
@@ -384,7 +498,7 @@ export const generateRemboursementTransportPDF = async (
       String(p.nom || '').toUpperCase(),
       // Sans repli, un participant sans fonction laissait une cellule vide au
       // milieu du tableau, qu'on ne distingue pas d'un oubli d'impression.
-      String(p.titre_fonction || '—'),
+      `${String(p.titre_fonction || '—')}${p.type_participant === 'assistant' ? '\nAssistant(e)' : ''}`,
       `${formatAmount(p.montant)} $`,
       // Cellule laissée nue : la bordure de la grille fait déjà l'espace de
       // signature, la ligne de pointillés le mangeait.
@@ -489,12 +603,8 @@ export const generateRemboursementTransportPDF = async (
   // réquisition rattachée — c'est le plus souvent la même personne. Sans l'un
   // ni l'autre la ligne reste vierge : un état tiré avant l'examen se signe à
   // la main.
-  const requisitionLiee = remboursement.requisition || {}
-  const nomComplet = (personne: any) =>
-    personne ? `${personne.prenom || ''} ${personne.nom || ''}`.trim() : ''
   const labelSecretaire = settings?.secretaire_executif_label || 'Le Secrétaire exécutif'
-  const nomDemandeur = nomComplet(requisitionLiee.demandeur || remboursement.demandeur)
-  const nomSecretaire = settings?.secretaire_executif_nom || nomComplet(requisitionLiee.examinateur)
+  const nomSecretaire = settings?.secretaire_executif_nom || formatPersonName(requisitionLiee.examinateur)
 
   const colonneDroiteX = pageWidth / 2 + (isA5 ? 4 : 6)
   // Largeur des traits calée pour laisser au QR sa colonne à l'extrême droite :
@@ -523,7 +633,7 @@ export const generateRemboursementTransportPDF = async (
   }
 
   const yRangeeStatutaire = yPos + pasRangeeSignature
-  dessinerSignature(margin, yPos, 'Le demandeur', nomDemandeur)
+  dessinerSignature(margin, yPos, 'Le demandeur', nomDemandeurBrut)
   dessinerSignature(colonneDroiteX, yPos, labelSecretaire, nomSecretaire)
   dessinerSignature(margin, yRangeeStatutaire, labelGauche, nomGauche)
   dessinerSignature(colonneDroiteX, yRangeeStatutaire, labelDroite, nomDroite)

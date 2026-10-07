@@ -7,7 +7,9 @@ import { Requisition, Money, Service, CommissionMember } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import { uploadRemboursementTransportPdf } from '../api/remboursementsTransport'
 import { getServiceMembers, getServices } from '../api/services'
+import { getPrintSettings, type PrintSettings } from '../api/settings'
 import { toNumber } from '../utils/amount'
+import { buildUploadUrl } from '../utils/uploads'
 import type { BudgetDecisionLine } from '../utils/budgetDecision'
 import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import { getStatusMeta } from '../utils/statusMapper'
@@ -89,6 +91,7 @@ export default function RemboursementTransport() {
   const [remboursements, setRemboursements] = useState<RemboursementTransport[]>([])
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [services, setServices] = useState<Service[]>([])
+  const [printSettings, setPrintSettings] = useState<PrintSettings | null>(null)
   const [rubriques, setRubriques] = useState<BudgetPosteSummary[]>([])
   const [isAutoFilling, setIsAutoFilling] = useState(false)
   const [showForm, setShowForm] = useState(false)
@@ -144,6 +147,13 @@ export default function RemboursementTransport() {
       default:
         return value || 'N/A'
     }
+  }
+
+  const getMeetingPeriodLabel = (start?: string | null, end?: string | null) => {
+    if (start && end) return `${start} – ${end}`
+    if (start) return `à partir de ${start}`
+    if (end) return `jusqu'à ${end}`
+    return ''
   }
 
   const [participants, setParticipants] = useState<Participant[]>([
@@ -207,6 +217,20 @@ export default function RemboursementTransport() {
 
   useEffect(() => {
     loadData()
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    getPrintSettings()
+      .then((settings) => {
+        if (active) setPrintSettings(settings)
+      })
+      .catch(() => {
+        if (active) setPrintSettings(null)
+      })
+    return () => {
+      active = false
+    }
   }, [])
 
   useEffect(() => {
@@ -397,7 +421,14 @@ export default function RemboursementTransport() {
         setSubmitting(false)
         return
       }
-      const objetRequisition = `Remboursement transport - ${formData.nature_reunion} - ${formData.lieu} - ${format(new Date(formData.date_reunion), 'dd/MM/yyyy')}`
+      const periodeReunion = getMeetingPeriodLabel(formData.heure_debut, formData.heure_fin)
+      const objetRequisition = [
+        'Remboursement des frais de transport des participants',
+        getTypeReunionLabel(formData.type_reunion),
+        formData.nature_reunion,
+        `${format(new Date(formData.date_reunion), 'dd/MM/yyyy')}${periodeReunion ? `, ${periodeReunion}` : ''}`,
+        formData.lieu,
+      ].filter(Boolean).join(' — ')
 
       const selectedRubrique = rubriques.find((r) => String(r.id) === String(formData.budget_poste_id))
       const rubriqueLabel = selectedRubrique ? `${selectedRubrique.code} - ${selectedRubrique.libelle}` : 'Remboursement transport'
@@ -730,6 +761,13 @@ export default function RemboursementTransport() {
   )
   const previewTotal = calculateTotal()
   const previewMontantLettres = numberToWords(previewTotal)
+  const previewTravaux = formData.nature_travail.map((item) => item.trim()).filter(Boolean)
+  const previewHoraires = getMeetingPeriodLabel(formData.heure_debut, formData.heure_fin) || 'Non renseigné'
+  const previewLogoUrl = printSettings?.show_header_logo === false
+    ? ''
+    : printSettings?.logo_url
+      ? buildUploadUrl(printSettings.logo_url)
+      : '/imge_onec.png'
 
   const printRemboursement = async (remboursement: RemboursementTransport) => {
     try {
@@ -1572,18 +1610,31 @@ export default function RemboursementTransport() {
               <div className={styles.previewStatusBadge}>Brouillon</div>
 
               <div className={styles.previewHeader}>
-                <div className={styles.previewHeaderLeft}>
-                  <div className={styles.previewOrg}>ONEC</div>
-                  <div className={styles.previewSubtitle}>Antenne Provinciale</div>
-                  <div className={styles.previewMeta}>{serviceLabel || 'Commission / service'}</div>
+                <div className={styles.previewIdentity}>
+                  {previewLogoUrl && (
+                    <div className={styles.previewLogoFrame}>
+                      <img
+                        className={styles.previewLogo}
+                        src={previewLogoUrl}
+                        alt={`Logo ${printSettings?.organization_name || 'organisation'}`}
+                      />
+                    </div>
+                  )}
+                  <div className={styles.previewHeaderLeft}>
+                    <div className={styles.previewOrg}>{printSettings?.organization_name || 'ONEC'}</div>
+                    <div className={styles.previewSubtitle}>
+                      {printSettings?.organization_subtitle || 'Antenne provinciale'}
+                    </div>
+                    {printSettings?.header_text && (
+                      <div className={styles.previewMeta}>{printSettings.header_text}</div>
+                    )}
+                  </div>
                 </div>
                 <div className={styles.previewHeaderRight}>
-                  <div className={styles.previewTitle}>État de frais de déplacement</div>
-                  <div className={styles.previewDocRef}>ÉTAT DE FRAIS N° : À générer</div>
-                  <div className={styles.previewMetaRight}>
-                    <div>Réf: {String(formData.type_reunion || '').toUpperCase()}</div>
-                    <div>{format(new Date(formData.date_reunion), 'dd/MM/yyyy')}</div>
+                  <div className={styles.previewTitle}>
+                    {printSettings?.trans_titre_officiel || 'État de frais de déplacement'}
                   </div>
+                  <div className={styles.previewDocRef}>N° À GÉNÉRER</div>
                 </div>
               </div>
 
@@ -1592,34 +1643,44 @@ export default function RemboursementTransport() {
               <div className={styles.previewInfoGrid}>
                 <div className={styles.previewInfoCol}>
                   <div className={styles.previewInfoItem}>
-                    <span>Instance</span>
-                    <strong>{formData.instance}</strong>
+                    <span>Bénéficiaire</span>
+                    <strong>{serviceLabel || 'Commission / service'}</strong>
                   </div>
                   <div className={styles.previewInfoItem}>
                     <span>Type de réunion</span>
                     <strong>{getTypeReunionLabel(formData.type_reunion)}</strong>
                   </div>
                   <div className={styles.previewInfoItem}>
-                    <span>Nature</span>
-                    <strong>{formData.nature_reunion || '—'}</strong>
+                    <span>Lieu</span>
+                    <strong>{formData.lieu || '—'}</strong>
                   </div>
                 </div>
                 <div className={styles.previewInfoCol}>
                   <div className={styles.previewInfoItem}>
-                    <span>Lieu</span>
-                    <strong>{formData.lieu || '—'}</strong>
+                    <span>Instance</span>
+                    <strong>{formData.instance || '—'}</strong>
                   </div>
                   <div className={styles.previewInfoItem}>
                     <span>Date</span>
                     <strong>{format(new Date(formData.date_reunion), 'dd/MM/yyyy')}</strong>
                   </div>
                   <div className={styles.previewInfoItem}>
-                    <span>Heure</span>
-                    <strong>
-                      {formData.heure_debut || '—'} {formData.heure_fin ? `→ ${formData.heure_fin}` : ''}
-                    </strong>
+                    <span>Horaires</span>
+                    <strong>{previewHoraires}</strong>
                   </div>
                 </div>
+              </div>
+
+              <div className={styles.previewMeetingSummary}>
+                <div className={styles.previewMeetingLabel}>
+                  {previewTravaux.length > 0 ? 'Objet et travaux de la réunion' : 'Objet de la réunion'}
+                </div>
+                <div className={styles.previewMeetingTitle}>{formData.nature_reunion || 'À renseigner'}</div>
+                {previewTravaux.length > 0 && (
+                  <ol className={styles.previewWorkList}>
+                    {previewTravaux.map((travail, index) => <li key={`${travail}-${index}`}>{travail}</li>)}
+                  </ol>
+                )}
               </div>
 
               <div className={styles.previewBlock}>
@@ -1642,7 +1703,12 @@ export default function RemboursementTransport() {
                         <tr key={`${p.nom}-${idx}`}>
                           <td style={{ textAlign: 'center' }}>{idx + 1}</td>
                           <td>{p.nom || '—'}</td>
-                          <td>{p.titre_fonction || '—'}</td>
+                          <td>
+                            {p.titre_fonction || '—'}
+                            {p.type_participant === 'assistant' && (
+                              <small className={styles.previewParticipantType}>Assistant(e)</small>
+                            )}
+                          </td>
                           <td>{formatCurrency(p.montant)}</td>
                           <td>________________</td>
                         </tr>
@@ -1660,9 +1726,16 @@ export default function RemboursementTransport() {
                   <div className={styles.previewAmountLetters}>Somme en lettres : {previewMontantLettres}</div>
                 </div>
                 <div className={styles.previewSignatures}>
-                  <div className={styles.previewSignatureBox}>Signature du demandeur</div>
-                  <div className={styles.previewSignatureBox}>Visa Trésorerie</div>
-                  <div className={styles.previewSignatureBox}>Bénéficiaire</div>
+                  <div className={styles.previewSignatureBox}>Le demandeur</div>
+                  <div className={styles.previewSignatureBox}>
+                    {printSettings?.secretaire_executif_label || 'Le Secrétaire exécutif'}
+                  </div>
+                  <div className={styles.previewSignatureBox}>
+                    {printSettings?.trans_label_gauche || 'Vu par la Trésorerie'}
+                  </div>
+                  <div className={styles.previewSignatureBox}>
+                    {printSettings?.trans_label_droite || 'Approuvé par'}
+                  </div>
                 </div>
               </div>
             </div>
@@ -2085,6 +2158,22 @@ export default function RemboursementTransport() {
                     <p><strong>{selectedRemboursementDetails.numero_remboursement}</strong></p>
                   </div>
                   <div className={styles.detailItem}>
+                    <label>Bénéficiaire</label>
+                    <p>
+                      {[selectedRemboursementDetails.service_code, selectedRemboursementDetails.service_libelle]
+                        .filter(Boolean)
+                        .join(' - ') || 'Commission / service non renseigné'}
+                    </p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Instance</label>
+                    <p>{selectedRemboursementDetails.instance || 'Non renseignée'}</p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Type de réunion</label>
+                    <p>{getTypeReunionLabel(selectedRemboursementDetails.type_reunion)}</p>
+                  </div>
+                  <div className={styles.detailItem}>
                     <label>Date de réunion</label>
                     <p>{format(new Date(selectedRemboursementDetails.date_reunion), 'dd/MM/yyyy')}</p>
                   </div>
@@ -2106,6 +2195,16 @@ export default function RemboursementTransport() {
                     <div className={styles.detailItem}>
                       <label>Heure de fin</label>
                       <p>{selectedRemboursementDetails.heure_fin}</p>
+                    </div>
+                  )}
+                  {selectedRemboursementDetails.nature_travail?.filter((item) => item.trim()).length > 0 && (
+                    <div className={`${styles.detailItem} ${styles.detailItemWide}`}>
+                      <label>Travaux / ordre du jour</label>
+                      <ol className={styles.detailWorkList}>
+                        {selectedRemboursementDetails.nature_travail
+                          .filter((item) => item.trim())
+                          .map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                      </ol>
                     </div>
                   )}
                   <div className={styles.detailItem}>

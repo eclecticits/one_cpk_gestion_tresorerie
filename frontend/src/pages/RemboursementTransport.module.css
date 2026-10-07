@@ -172,13 +172,40 @@
 .previewHeader {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 12px;
+}
+
+.previewIdentity {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.previewLogoFrame {
+  width: 58px;
+  height: 46px;
+  flex: 0 0 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.previewLogo {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
 }
 
 .previewHeaderLeft {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
 .previewHeaderRight {
@@ -186,6 +213,8 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-width: 52%;
+  padding-top: 24px;
 }
 
 .previewStatusBadge {
@@ -267,14 +296,57 @@
 }
 
 .previewInfoItem strong {
+  display: block;
   font-size: 13px;
   color: #111827;
+  overflow-wrap: anywhere;
+}
+
+.previewMeetingSummary {
+  border: 1px solid #dbe7df;
+  border-left: 3px solid var(--tenant-primary, #0f766e);
+  background: #f7faf8;
+  padding: 10px 12px;
+}
+
+.previewMeetingLabel {
+  margin-bottom: 4px;
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.previewMeetingTitle {
+  color: #17211c;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.previewWorkList {
+  margin: 7px 0 0 18px;
+  padding: 0;
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.previewParticipantType {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .previewBlock {
   border: 1px solid #e2e8f0;
   padding: 12px;
   background: #ffffff;
+  overflow-x: auto;
 }
 
 .previewBlockTitle {
@@ -341,15 +413,17 @@
 
 .previewSignatures {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 16px;
+  padding-top: 12px;
   font-size: 11px;
   color: #374151;
 }
 
 .previewSignatureBox {
-  border-top: 1px dashed #cbd5f5;
-  padding-top: 8px;
+  min-height: 34px;
+  border-bottom: 1px solid #94a3b8;
+  padding: 0 4px 18px;
   text-align: center;
   font-weight: 600;
 }
@@ -1562,6 +1636,19 @@
   font-weight: 600;
   color: var(--color-title, #0f172a);
   overflow-wrap: anywhere;
+}
+
+.detailModalContent .detailItemWide {
+  grid-column: 1 / -1;
+}
+
+.detailWorkList {
+  margin: 2px 0 0 18px;
+  padding: 0;
+  color: var(--color-title, #0f172a);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 /* Montant mis en avant : même traitement partout au lieu de styles
