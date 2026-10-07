@@ -262,9 +262,10 @@ export const generateRemboursementTransportPDF = async (
     : []
   const horaires = getMeetingSchedule(remboursement.heure_debut, remboursement.heure_fin)
   const requisitionLiee = remboursement.requisition || {}
-  const nomDemandeurBrut =
-    formatPersonName(requisitionLiee.demandeur || remboursement.demandeur) ||
-    String(_userName || '').trim()
+  // Jamais l'utilisateur connecté : c'est souvent un validateur ou la
+  // trésorerie qui imprime, et son nom finirait sous « Le demandeur » d'une
+  // pièce archivée. Demandeur inconnu = ligne vierge, signée à la main.
+  const nomDemandeurBrut = formatPersonName(requisitionLiee.demandeur || remboursement.demandeur)
   const nomDemandeur = nomDemandeurBrut || 'Non renseigné'
 
   const dateReunion = remboursement.date_reunion ? new Date(remboursement.date_reunion) : new Date()
