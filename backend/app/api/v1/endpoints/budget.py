@@ -30,6 +30,7 @@ from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
 from app.modules.comptabilite.models import ComptaMappingPosteBudgetaire
 from app.services.budget_execution import (
+    recettes_realisees_par_poste,
     bornes_periode,
     part_ecoulee,
     realise_par_poste,
@@ -162,26 +163,14 @@ async def _active_recettes_by_poste(
     poste_ids: list[int],
     service_id: int | None = None,
 ) -> dict[int, Decimal]:
+    # Lu dans le registre des imputations, et non plus en cumulant les notes
+    # par poste d'en-tête : une note mêlant deux postes rangeait tout son
+    # montant sous un seul, alors que le paiement l'avait réparti.
     if not poste_ids:
         return {}
-    conditions = [
-        Encaissement.organisation_id == tenant_id,
-        Encaissement.budget_poste_id.in_(poste_ids),
-        Encaissement.est_proforma.is_(False),
-        Encaissement.is_deleted.is_(False),
-        (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
-    ]
-    if service_id is not None:
-        conditions.append(Encaissement.service_id == service_id)
-    res = await db.execute(
-        select(
-            Encaissement.budget_poste_id,
-            func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
-        )
-        .where(*conditions)
-        .group_by(Encaissement.budget_poste_id)
+    return await recettes_realisees_par_poste(
+        db, organisation_id=tenant_id, poste_ids=poste_ids, service_id=service_id
     )
-    return {int(row[0]): Decimal(row[1] or 0) for row in res.all() if row[0]}
 
 
 async def _appliquer_periode(

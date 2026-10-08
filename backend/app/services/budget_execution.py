@@ -26,7 +26,7 @@ from datetime import date, datetime, time, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.encaissement import Encaissement
@@ -102,6 +102,11 @@ def _encaissement_retenu():
             Encaissement.statut_operation.is_(None),
             Encaissement.statut_operation == "ACTIVE",
         ),
+        # Seul ce qui alimente réellement un poste : un fonds de tiers ou un
+        # hors budget qui traînerait un poste résiduel n'a rien réalisé. Repli
+        # sur la valeur historique pour une base en cours de migration.
+        or_(Encaissement.nature_mouvement.is_(None), Encaissement.nature_mouvement == "BUDGETAIRE"),
+        or_(Encaissement.impact_budgetaire.is_(None), Encaissement.impact_budgetaire.is_(True)),
     )
 
 
@@ -147,6 +152,10 @@ async def _recettes_du_registre(
             m.organisation_id == organisation_id,
             m.statut == IMPUTATION_ACTIVE,
             m.sens == "RECETTE_REALISEE",
+            # Une note supprimée, annulée ou pro forma ne compte pas, même si
+            # une imputation est restée active derrière elle — la même règle
+            # que pour les notes hors registre ci-dessous.
+            or_(Encaissement.id.is_(None), and_(*_encaissement_retenu())),
         )
         .group_by(m.budget_poste_id)
     )
@@ -154,6 +163,37 @@ async def _recettes_du_registre(
         query = query.where(Encaissement.service_id == service_id)
     query = _borner(query, date_operation, date_debut, date_fin)
     return {int(r[0]): Decimal(r[1] or 0) for r in (await db.execute(query)).all() if r[0]}
+
+
+async def recettes_realisees_par_poste(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    poste_ids: list[int] | None = None,
+    service_id: int | None = None,
+) -> dict[int, Decimal]:
+    """Réalisé de chaque poste de recette, sur tout l'exercice.
+
+    Lu dans le registre des imputations, qui porte la part de CHAQUE poste
+    d'une note répartie entre plusieurs, avec repli sur l'en-tête pour les
+    paiements d'avant le registre. Le cumul par poste d'en-tête rangeait toute
+    une note mêlant deux postes sous un seul.
+    """
+    totaux: dict[int, Decimal] = {}
+    for source in (_recettes_du_registre, _recettes_sans_registre):
+        partiel = await source(
+            db,
+            organisation_id=organisation_id,
+            date_debut=None,
+            date_fin=None,
+            service_id=service_id,
+        )
+        for poste_id, montant in partiel.items():
+            totaux[poste_id] = totaux.get(poste_id, Decimal("0")) + montant
+    if poste_ids is not None:
+        retenus = set(poste_ids)
+        totaux = {pid: montant for pid, montant in totaux.items() if pid in retenus}
+    return totaux
 
 
 async def _recettes_sans_registre(

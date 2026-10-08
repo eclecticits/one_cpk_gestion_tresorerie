@@ -36,6 +36,7 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.services.budget_execution import (
+    recettes_realisees_par_poste,
     bornes_periode,
     realise_par_poste,
     valider_periode_exercice,
@@ -44,7 +45,7 @@ from app.services.export_jobs import serialiser_job, soumettre, types_asynchrone
 from app.services.export_queue import publier
 from app.db.session import get_db
 from app.utils.excel_io import save_workbook
-from app.models.encaissement import Encaissement
+from app.models.encaissement import Encaissement, EncaissementArticle
 from app.models.client import Client
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
@@ -1253,32 +1254,11 @@ async def construire_classeur_budget(
     recette_ids = [p.id for p in lignes if (p.type or "").upper() == "RECETTE"]
     recettes_affichees: dict[int, Decimal] = {}
     if recette_ids:
-        conditions = [
-            Encaissement.organisation_id == organisation_id,
-            Encaissement.budget_poste_id.in_(recette_ids),
-            # Le classeur budgétaire ne montre que ce qui alimente réellement un
-            # poste : un fonds de tiers ou un hors budget qui traînerait un poste
-            # résiduel n'y a pas sa place. Les deux colonnes sont NOT NULL depuis
-            # le backfill `20260905`, mais on lit une base dont la migration peut
-            # être en cours de déploiement — d'où le repli sur la valeur par
-            # défaut historique, comme le fait `reports.summary`.
-            or_(Encaissement.nature_mouvement.is_(None), Encaissement.nature_mouvement == "BUDGETAIRE"),
-            or_(Encaissement.impact_budgetaire.is_(None), Encaissement.impact_budgetaire.is_(True)),
-            Encaissement.est_proforma.is_(False),
-            Encaissement.is_deleted.is_(False),
-            (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
-        ]
-        if service_id is not None:
-            conditions.append(Encaissement.service_id == service_id)
-        recettes_res = await db.execute(
-            select(
-                Encaissement.budget_poste_id,
-                func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
-            )
-            .where(*conditions)
-            .group_by(Encaissement.budget_poste_id)
+        # Même lecture que l'écran Budget : le registre des imputations porte
+        # la part de chaque poste d'une note répartie entre plusieurs.
+        recettes_actives = await recettes_realisees_par_poste(
+            db, organisation_id=organisation_id, poste_ids=recette_ids, service_id=service_id
         )
-        recettes_actives = {int(row[0]): Decimal(row[1] or 0) for row in recettes_res.all() if row[0]}
         # Surcharge d'AFFICHAGE, pas d'écriture. La version précédente affectait
         # `poste.montant_engage` / `poste.montant_paye` sur les entités de la
         # session : les postes devenaient sales, et le premier `db.execute`
@@ -2046,6 +2026,92 @@ def _hors_budget_status_label(mouvement: Any) -> str:
     return HORS_BUDGET_STATUS_LIBELLES.get(statut, statut or "")
 
 
+async def _articles_avec_poste(
+    db: AsyncSession, organisation_id: int, encaissement_ids: list[Any]
+) -> dict[Any, list[dict[str, Any]]]:
+    """Articles des notes, dans l'ordre de saisie, avec le poste qu'ils désignent."""
+    if not encaissement_ids:
+        return {}
+    res = await db.execute(
+        select(EncaissementArticle, BudgetPoste.code, BudgetPoste.libelle)
+        .outerjoin(BudgetPoste, BudgetPoste.id == EncaissementArticle.budget_poste_id)
+        .where(
+            EncaissementArticle.organisation_id == organisation_id,
+            EncaissementArticle.encaissement_id.in_(encaissement_ids),
+        )
+        .order_by(EncaissementArticle.encaissement_id, EncaissementArticle.sort_order, EncaissementArticle.id)
+    )
+    par_note: dict[Any, list[dict[str, Any]]] = defaultdict(list)
+    for article, code, libelle in res.all():
+        par_note[article.encaissement_id].append(
+            {
+                "libelle": article.libelle or "",
+                "montant": Decimal(str(article.montant or 0)),
+                "poste_id": article.budget_poste_id,
+                "poste_label": f"{code} - {libelle}" if code and libelle else (code or libelle or ""),
+            }
+        )
+    return par_note
+
+
+def _parts_par_article(
+    articles: list[dict[str, Any]],
+    *,
+    poste_entete_id: int | None,
+    poste_entete_label: str,
+    libelle_note: str,
+    montant_total: Decimal,
+    montant_paye: Decimal,
+    montant_percu: Decimal,
+) -> list[dict[str, Any]]:
+    """Une part par article : poste, libellé et montants de la note au prorata.
+
+    Les montants de la note font foi (ils portent la conversion en USD et le
+    paiement) ; l'article ne donne que sa proportion. La dernière part absorbe
+    l'arrondi, si bien que les parts d'une note somment toujours à la note.
+    Une note sans article, ou dont les articles ne pèsent rien, reste une ligne.
+    """
+    poids_total = sum((a["montant"] for a in articles), Decimal("0"))
+    if not articles or poids_total <= 0:
+        return [
+            {
+                "libelle": libelle_note,
+                "poste_id": poste_entete_id,
+                "poste_label": poste_entete_label,
+                "montant_total": _round_money(montant_total),
+                "montant_paye": _round_money(montant_paye),
+                "montant_percu": _round_money(montant_percu),
+            }
+        ]
+    plusieurs = len(articles) > 1
+    parts: list[dict[str, Any]] = []
+    restes = {
+        "montant_total": _round_money(montant_total),
+        "montant_paye": _round_money(montant_paye),
+        "montant_percu": _round_money(montant_percu),
+    }
+    for index, article in enumerate(articles):
+        dernier = index == len(articles) - 1
+        ratio = article["montant"] / poids_total
+        part: dict[str, Any] = {
+            # Une note d'un seul article garde son libellé de note, comme avant.
+            "libelle": article["libelle"] if plusieurs else libelle_note,
+            "poste_id": article["poste_id"] or poste_entete_id,
+            # Article sans poste : il suit l'en-tête, comme à l'imputation.
+            "poste_label": article["poste_label"] if article["poste_id"] else poste_entete_label,
+        }
+        for cle, montant in (
+            ("montant_total", montant_total),
+            ("montant_paye", montant_paye),
+            ("montant_percu", montant_percu),
+        ):
+            valeur = restes[cle] if dernier else _round_money(Decimal(montant or 0) * ratio)
+            part[cle] = valeur
+            restes[cle] -= valeur
+        parts.append(part)
+    return parts
+
+
 async def construire_classeur_encaissements(
     db: AsyncSession,
     organisation_id: int,
@@ -2119,7 +2185,19 @@ async def construire_classeur_encaissements(
         if condition_numero_recu is not None:
             filtres_note.append(condition_numero_recu)
     if budget_poste_id:
-        filtres_note.append(Encaissement.budget_poste_id == budget_poste_id)
+        # Une note mêlant deux postes répond au filtre de chacun : ses lignes
+        # sur l'autre poste sont écartées plus bas, pas la note entière.
+        filtres_note.append(
+            or_(
+                Encaissement.budget_poste_id == budget_poste_id,
+                select(EncaissementArticle.id)
+                .where(
+                    EncaissementArticle.encaissement_id == Encaissement.id,
+                    EncaissementArticle.budget_poste_id == budget_poste_id,
+                )
+                .exists(),
+            )
+        )
     if type_client:
         filtres_note.append(Encaissement.type_client == type_client)
     if mode_paiement:
@@ -2164,6 +2242,10 @@ async def construire_classeur_encaissements(
         organisation_id,
         {enc.annulee_par_id for enc, _, _, _ in rows} | {enc.deleted_by for enc, _, _, _ in rows},
     )
+
+    # Une ligne par article : une note qui mêle deux postes se lit poste par
+    # poste, au lieu de tout ranger sous le poste de l'en-tête.
+    articles_par_note = await _articles_avec_poste(db, organisation_id, [enc.id for enc, _, _, _ in rows])
 
     # Seuls les fonds de tiers ont un tiers à nommer : restreindre le `IN` à
     # ceux-là évite d'envoyer tous les identifiants de la période — un export
@@ -2320,59 +2402,71 @@ async def construire_classeur_encaissements(
                     etat_origine=f"Paiement : {enc.statut_paiement or ''}",
                 )
                 traces.append(trace)
-            if not hors_calcul:
-                total_notes_debit += Decimal(montant_total or 0)
-                total_paye += Decimal(montant_paye or 0)
-
             mode_label = _format_mode_paiement(enc.mode_paiement)
-            if not hors_calcul:
-                totals_by_mode[mode_label or "Non précisé"] += Decimal(montant_paye or 0)
-                totals_by_type_client[enc.type_client or "Non précisé"] += Decimal(montant_total or 0)
-                totals_by_nature[_nature_budgetaire_label(enc)] += Decimal(montant_paye or 0)
-
-            poste_label = (
+            poste_entete = (
                 f"{enc.budget_poste_code} - {enc.budget_poste_libelle}"
                 if enc.budget_poste_code and enc.budget_poste_libelle
                 else (enc.budget_poste_code or enc.budget_poste_libelle or "")
             )
-            entries.append((
-                enc.date_encaissement or enc.created_at,
-                _financial_source_columns("Encaissement", enc.canal, enc.compte_bancaire)
-                + [
-                    enc.date_encaissement.strftime("%d/%m/%Y") if enc.date_encaissement else "",
-                    _format_operation_time(enc.date_encaissement, enc.created_at),
-                    enc.numero_recu,
-                    enc.type_client,
-                    client_label,
-                    # Le sexe ne se lit que sur la fiche client : les
-                    # experts-comptables ont leur propre référentiel, qui ne le
-                    # porte pas, et une institution n'en a pas.
-                    (getattr(client, "sexe", None) or "") if expert is None else "",
-                    (expert.email if expert is not None else getattr(client, "email", None)) or "",
-                    (expert.telephone if expert is not None else getattr(client, "telephone", None)) or "",
-                    enc.libelle or "",
-                    poste_label,
-                    _nature_budgetaire_label(enc),
-                    _impact_budgetaire_label(enc),
-                    fonds_tiers_par_encaissement.get(enc.id, ""),
-                    _hors_budget_status_label(enc),
-                    enc.description or "",
-                    enc.devise_perception or "USD",
-                    float(enc.montant_percu or 0),
-                    float(montant_total or 0),
-                    float(montant_paye or 0),
-                    float(reste or 0),
-                    mode_label,
-                    enc.reference or "",
-                    enc.statut_paiement,
-                    _person_name(encaisseur),
-                    "SUPPRIMÉ" if is_deleted else ("ANNULÉ" if est_annulee else "Actif"),
-                    *_colonnes_trace(trace),
-                ],
-                False,
-                is_deleted,
-                est_annulee and not is_deleted,
-            ))
+            parts = _parts_par_article(
+                articles_par_note.get(enc.id, []),
+                poste_entete_id=enc.budget_poste_id,
+                poste_entete_label=poste_entete,
+                libelle_note=enc.libelle or "",
+                montant_total=montant_total,
+                montant_paye=montant_paye,
+                montant_percu=_round_money(enc.montant_percu or 0),
+            )
+            if budget_poste_id:
+                parts = [part for part in parts if part["poste_id"] == budget_poste_id]
+
+            for part in parts:
+                part_reste = _round_money(part["montant_total"] - part["montant_paye"])
+                if not hors_calcul:
+                    total_notes_debit += part["montant_total"]
+                    total_paye += part["montant_paye"]
+                    totals_by_mode[mode_label or "Non précisé"] += part["montant_paye"]
+                    totals_by_type_client[enc.type_client or "Non précisé"] += part["montant_total"]
+                    totals_by_nature[_nature_budgetaire_label(enc)] += part["montant_paye"]
+
+                entries.append((
+                    enc.date_encaissement or enc.created_at,
+                    _financial_source_columns("Encaissement", enc.canal, enc.compte_bancaire)
+                    + [
+                        enc.date_encaissement.strftime("%d/%m/%Y") if enc.date_encaissement else "",
+                        _format_operation_time(enc.date_encaissement, enc.created_at),
+                        enc.numero_recu,
+                        enc.type_client,
+                        client_label,
+                        # Le sexe ne se lit que sur la fiche client : les
+                        # experts-comptables ont leur propre référentiel, qui ne le
+                        # porte pas, et une institution n'en a pas.
+                        (getattr(client, "sexe", None) or "") if expert is None else "",
+                        (expert.email if expert is not None else getattr(client, "email", None)) or "",
+                        (expert.telephone if expert is not None else getattr(client, "telephone", None)) or "",
+                        part["libelle"],
+                        part["poste_label"],
+                        _nature_budgetaire_label(enc),
+                        _impact_budgetaire_label(enc),
+                        fonds_tiers_par_encaissement.get(enc.id, ""),
+                        _hors_budget_status_label(enc),
+                        enc.description or "",
+                        enc.devise_perception or "USD",
+                        float(part["montant_percu"]),
+                        float(part["montant_total"]),
+                        float(part["montant_paye"]),
+                        float(part_reste),
+                        mode_label,
+                        enc.reference or "",
+                        enc.statut_paiement,
+                        _person_name(encaisseur),
+                        "SUPPRIMÉ" if is_deleted else ("ANNULÉ" if est_annulee else "Actif"),
+                        *_colonnes_trace(trace),
+                    ],
+                    False,
+                    is_deleted,
+                    est_annulee and not is_deleted,
+                ))
 
         # --- Entrées de caisse hors notes de débit : les approvisionnements
         # banque -> caisse. Ce sont des sorties du compte bancaire, mais de l'argent
