@@ -40,6 +40,7 @@ from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
 from app.services.budget_engagement import resynchroniser_engagement_requisition
 from app.services.reimputation_budgetaire import apercu_reimputation, reimputer_requisition
+from app.services.changement_canal_requisition import changer_canal_requisition
 from app.services.report_cache import invalidate_report_summary_cache
 from app.services.mailer import normalize_email_list, send_requisition_notification, send_requisition_workflow_email
 from app.services.email_config import resolve_smtp_config
@@ -2445,3 +2446,61 @@ async def reimputer(
     # mémorisés diraient encore l'ancienne ventilation le temps du TTL.
     await invalidate_report_summary_cache(tenant_id)
     return ReimputationOut(**{k: v for k, v in resultat.items() if k in ReimputationOut.model_fields})
+
+
+class ChangementCanalIn(BaseModel):
+    """Nouveau canal d'une réquisition validée et non payée."""
+    mode_paiement: str = Field(min_length=1, max_length=50)
+    compte_bancaire_id: int | None = None
+    motif: str = Field(min_length=3, max_length=500)
+
+
+@router.post(
+    "/{requisition_id}/canal-paiement",
+    summary="Changer le canal de paiement d'une réquisition validée et non payée",
+    dependencies=[Depends(has_permission("treso.requisitions.changer_canal"))],
+)
+async def changer_canal_paiement(
+    requisition_id: str,
+    payload: ChangementCanalIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict:
+    """Aligne la réquisition et toutes ses lignes sur un seul canal.
+
+    Refusé dès que l'argent est sorti ou en train de sortir (sortie de fonds,
+    ordre de décaissement, statut en décaissement ou payée) : le canal d'une
+    pièce payée est celui par lequel elle l'a été.
+    """
+    req = await _requisition_pour_reimputation(db, requisition_id, tenant_id)
+    req = (
+        await db.execute(select(Requisition).where(Requisition.id == req.id).with_for_update())
+    ).scalar_one()
+
+    resultat = await changer_canal_requisition(
+        db,
+        requisition=req,
+        mode_paiement=payload.mode_paiement,
+        compte_bancaire_id=payload.compte_bancaire_id,
+        tenant_id=tenant_id,
+    )
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="requisition.changement_canal",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={**resultat["avant"], "statut": req.status, "examen": req.examen_status},
+        new_value={**resultat["apres"], "motif": payload.motif.strip()},
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    return {
+        "id": str(req.id),
+        "mode_paiement": req.mode_paiement,
+        "compte_bancaire_id": req.compte_bancaire_id,
+        "lignes_alignees": resultat["lignes_alignees"],
+    }

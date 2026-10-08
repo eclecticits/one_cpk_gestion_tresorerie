@@ -143,6 +143,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
           // aucun rôle par défaut ; super-admin et administrateur y accèdent par le
           // court-circuit de has_permission.
           { code: 'treso.requisitions.reimputer', label: 'Corriger le poste budgétaire (après paiement)', kind: 'manage' },
+          { code: 'treso.requisitions.changer_canal', label: 'Changer le canal de paiement (validée, non payée)', kind: 'manage' },
         ],
       },
       {

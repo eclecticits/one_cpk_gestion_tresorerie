@@ -17,6 +17,7 @@ import { toNumber } from '../utils/amount'
 import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import RequisitionEditModal from '../components/RequisitionEditModal'
 import ReimputationBudgetaire from '../components/ReimputationBudgetaire'
+import ChangementCanalPaiement from '../components/ChangementCanalPaiement'
 import { peutModifierRequisition } from '../utils/requisitionLock'
 import { compareBudgetCodes } from '../utils/budgetCode'
 import { sousTotalGroupeUsd, trouverGroupeEnDepassement } from '../utils/budgetGroups'
@@ -4320,6 +4321,20 @@ export default function Requisitions() {
                   requisitionId={String(selectedRequisition.id)}
                   lignes={selectedLignes}
                   onReimpute={() => void viewDetails(selectedRequisition)}
+                />
+                {/* Même logique : la pièce est verrouillée, mais le canal se
+                    corrige encore tant qu'elle n'est pas payée. */}
+                <ChangementCanalPaiement
+                  requisitionId={String(selectedRequisition.id)}
+                  statut={String((selectedRequisition as any).status ?? (selectedRequisition as any).statut ?? '')}
+                  modeActuel={String(selectedRequisition.mode_paiement || '')}
+                  compteActuelId={(selectedRequisition as any).compte_bancaire_id ?? null}
+                  comptesBancaires={comptesBancaires}
+                  onChange={(canal) => {
+                    const corrigee = { ...selectedRequisition, ...canal } as Requisition
+                    void viewDetails(corrigee)
+                    void refetchRequisitions()
+                  }}
                 />
                 <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn} aria-label="Fermer la fiche"><X size={18} aria-hidden="true" /></button>
               </div>
