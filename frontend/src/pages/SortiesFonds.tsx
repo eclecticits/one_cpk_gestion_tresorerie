@@ -793,6 +793,17 @@ export default function SortiesFonds() {
   // reverser à un tiers l'argent qu'on gardait pour lui, et payer une dépense
   // dont l'imputation reste à décider.
   const isRemboursementFondsTiers = formData.type_sortie === 'remboursement_fonds_tiers'
+  // La réquisition n'impose le bénéficiaire que si elle en désigne un. Un
+  // remboursement transport n'en porte pas (il paie plusieurs participants) :
+  // la caisse nomme alors la personne qui reçoit l'argent et signe la décharge.
+  const beneficiaireDeLaRequisition = String(
+    (selectedRequisition as any)?.beneficiaire || (selectedRequisition as any)?.instance_beneficiaire || ''
+  ).trim()
+  const beneficiaireASaisir = isRequisitionBound && !isProgressif && !beneficiaireDeLaRequisition
+  const beneficiaireVerrouille =
+    !isRemboursementFondsTiers &&
+    !beneficiaireASaisir &&
+    (isRequisitionBound || isProgressif || isSortieDirecte)
   const natureMouvement = natureDuTypeSortie(formData.type_sortie)
   const sansImpactBudgetaire = natureMouvement !== 'BUDGETAIRE'
 
@@ -2937,15 +2948,16 @@ export default function SortiesFonds() {
                   disabled={
                     isRemboursementFondsTiers
                       ? false
-                      : noApprovedRequisitionAvailable || isRequisitionBound || isProgressif || isSortieDirecte
+                      : noApprovedRequisitionAvailable || beneficiaireVerrouille
                   }
-                  className={
-                    !isRemboursementFondsTiers && (isRequisitionBound || isProgressif || isSortieDirecte)
-                      ? styles.lockedSelect
-                      : undefined
-                  }
+                  className={beneficiaireVerrouille ? styles.lockedSelect : undefined}
                   required
                 />
+                {beneficiaireASaisir && (
+                  <small style={{ color: '#6b7280', fontSize: '12px' }}>
+                    La réquisition ne désigne pas de bénéficiaire : indiquez la personne qui reçoit l'argent et signe la décharge.
+                  </small>
+                )}
                 {isRemboursementFondsTiers && (
                   <small style={{ color: '#6b7280', fontSize: '12px' }}>
                     Personne qui a effectivement reçu l'argent et signe la décharge.
