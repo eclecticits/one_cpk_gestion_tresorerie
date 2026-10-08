@@ -1583,3 +1583,76 @@
   border-color: #dc2626;
   color: #ffffff;
 }
+
+/* Dossiers de remboursements transport : plusieurs réunions, un examen. */
+.dossierStrip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.dossierRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dossierInfo {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: #334155;
+}
+
+.dossierInfo span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.dossierSelectionBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  font-size: 12px;
+  font-weight: 600;
+  color: #166534;
+}
+
+.dossierSelect {
+  min-height: var(--control-h-sm, 32px);
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: #fff;
+}
+
+.checkboxCell {
+  width: 32px;
+  text-align: center;
+}
+
+.dossierTag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #3730a3;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.dossierRow button {
+  gap: 5px;
+}

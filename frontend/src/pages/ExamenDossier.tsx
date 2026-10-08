@@ -229,6 +229,23 @@ export default function ExamenDossier() {
     }
   }
 
+  const handlePrintRecapitulatif = async () => {
+    if (!dossier) return
+    try {
+      const mod = await loadPdfGeneratorRemboursementModule()
+      await mod.generateRecapitulatifTransportPDF(dossier, Object.values(transportsByReqId), 'print')
+    } catch (error) {
+      console.error('Error generating transport summary PDF:', error)
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de générer l'état récapitulatif.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
+    }
+  }
+
   const loadRequisitionLines = async (reqId: string) => {
     const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: reqId } })
     return Array.isArray(lignesRes) ? lignesRes : (lignesRes?.items ?? [])
@@ -469,6 +486,16 @@ export default function ExamenDossier() {
           <button type="button" className={styles.ghostAction} onClick={handleDownloadPdf}>
             Télécharger PDF
           </button>
+          {Object.keys(transportsByReqId).length > 1 && (
+            <button
+              type="button"
+              className={styles.ghostAction}
+              onClick={handlePrintRecapitulatif}
+              title="Une ligne par personne, une colonne par réunion : les états de frais sources restent inchangés"
+            >
+              État récapitulatif
+            </button>
+          )}
         </div>
 
         <div className={styles.statusBar}>

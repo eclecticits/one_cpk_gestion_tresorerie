@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import autoTable, { type UserOptions } from 'jspdf-autotable'
 import { format } from 'date-fns'
 import { numberToWords } from './numberToWords'
 import { formatAmount, toNumber } from './amount'
@@ -180,6 +180,13 @@ const getTypeReunionLabel = (value: unknown) => {
     default:
       return String(value || 'N/A')
   }
+}
+
+const formatFonctionParticipant = (p: any) => {
+  const fonction = String(p?.titre_fonction || '').trim()
+  if (p?.type_participant !== 'assistant') return fonction || '—'
+  if (!fonction) return 'Assistant(e)'
+  return /assistant/i.test(fonction) ? fonction : `${fonction}\nAssistant(e)`
 }
 
 const formatPersonName = (personne: any) =>
@@ -499,26 +506,29 @@ export const generateRemboursementTransportPDF = async (
       String(p.nom || '').toUpperCase(),
       // Sans repli, un participant sans fonction laissait une cellule vide au
       // milieu du tableau, qu'on ne distingue pas d'un oubli d'impression.
-      `${String(p.titre_fonction || '—')}${p.type_participant === 'assistant' ? '\nAssistant(e)' : ''}`,
+      // La fonction d'un assistant vaut déjà souvent « Assistant(e) » : la
+      // mention ne s'ajoute que si elle n'y figure pas, sinon elle s'imprimait
+      // deux fois dans la cellule.
+      formatFonctionParticipant(p),
       `${formatAmount(p.montant)} $`,
       // Cellule laissée nue : la bordure de la grille fait déjà l'espace de
       // signature, la ligne de pointillés le mangeait.
       '',
     ])
-    autoTable(doc, {
-      startY: yPos,
-      theme: 'grid',
+    const optionsTableau = (body: any[][], startY: number, avecTotal: boolean): UserOptions => ({
+      startY,
+      theme: 'grid' as const,
       head: [['N°', 'Nom & Postnom', 'Fonction', 'Montant', 'Émargement']],
-      body: participantsData,
+      body,
       // Le total en pied donne au signataire de quoi recouper la somme
       // déclarée sans additionner à la main. Il est fusionné sur les trois
       // premières colonnes et calé à droite pour venir toucher le montant :
       // isolé dans la colonne des noms, il s'en trouvait à deux colonnes.
-      foot: [[
+      foot: avecTotal ? [[
         { content: 'TOTAL GÉNÉRAL', colSpan: 3, styles: { halign: 'right' as const } },
         `${formatAmount(totalParticipants)} $`,
         '',
-      ]],
+      ]] : [],
       styles: {
         font: 'times',
         fontSize: echelle.tableau,
@@ -546,20 +556,46 @@ export const generateRemboursementTransportPDF = async (
       // Une trame très claire une ligne sur deux : sur vingt émargements, elle
       // évite de suivre la ligne du doigt pour rattacher un nom à son montant.
       alternateRowStyles: { fillColor: [248, 250, 248] },
-      margin: { left: margin, right: margin, bottom: hauteurQueue + hauteurPied },
+      // Le tableau descend jusqu'au pied de page. Il réservait auparavant, en
+      // bas de chaque page, la hauteur de la somme en lettres et des
+      // signatures : un bloc qui ne s'imprime qu'une fois, à la fin, laissait
+      // ainsi une dizaine de centimètres vides au bas de la première page.
+      margin: { left: margin, right: margin, top: margin, bottom: hauteurPied },
       // En-tête répété : sur une liste qui déborde, la page suivante n'affichait
       // que des colonnes de chiffres sans intitulé.
-      showHead: 'everyPage',
-      showFoot: 'lastPage',
+      showHead: 'everyPage' as const,
+      showFoot: 'lastPage' as const,
       columnStyles: {
-        0: { cellWidth: isA5 ? 8 : 10, halign: 'center', textColor: 110 },
+        0: { cellWidth: isA5 ? 8 : 10, halign: 'center' as const, textColor: 110 },
         1: { cellWidth: isA5 ? 42 : 52 },
         2: { cellWidth: isA5 ? 34 : 46 },
-        3: { cellWidth: isA5 ? 20 : 24, halign: 'right' },
-        4: { cellWidth: 'auto', halign: 'center' },
+        3: { cellWidth: isA5 ? 20 : 24, halign: 'right' as const },
+        4: { cellWidth: 'auto' as const, halign: 'center' as const },
       },
     })
-    yPos = (doc as any).lastAutoTable.finalY + (isA5 ? 7 : 9)
+    const ecartApresTableau = isA5 ? 7 : 9
+    const queueTient = (finalY: number) => finalY + ecartApresTableau + hauteurQueue <= pageHeight - hauteurPied
+
+    // Mesure à blanc sur un document jetable : la queue (somme en lettres,
+    // signatures) tient-elle sous la dernière ligne ?
+    const essai = new jsPDF({ orientation: 'p', unit: 'mm', format: paperFormat })
+    autoTable(essai, optionsTableau(participantsData, yPos, true))
+    if (queueTient((essai as any).lastAutoTable.finalY)) {
+      autoTable(doc, optionsTableau(participantsData, yPos, true))
+    } else {
+      // Sinon la dernière ligne passe avec le total et les signatures sur la
+      // page suivante : des signatures seules sur une page ne se
+      // rattacheraient à aucun participant. Une seule ligne suffit ; en
+      // reporter davantage creusait un blanc au bas de la page précédente.
+      const lignesReportees = 1
+      const coupure = participantsData.length - lignesReportees
+      if (coupure > 0) {
+        autoTable(doc, optionsTableau(participantsData.slice(0, coupure), yPos, false))
+        doc.addPage()
+      }
+      autoTable(doc, optionsTableau(participantsData.slice(coupure), coupure > 0 ? margin : yPos, true))
+    }
+    yPos = (doc as any).lastAutoTable.finalY + ecartApresTableau
   }
 
   // Pas d'encadré pour le montant : le tableau porte déjà sa ligne TOTAL, un
@@ -859,4 +895,247 @@ export const generateListePresencePDF = async (
   }
 
   openPdfInNewTab(doc)
+}
+
+export type RecapitulatifTransportDossier = {
+  reference?: string | null
+  description?: string | null
+}
+
+const cleRecapitulatif = (p: any) => {
+  if (p?.expert_comptable_id) return `expert:${p.expert_comptable_id}`
+  const nom = String(p?.nom || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+  return `nom:${nom}`
+}
+
+/**
+ * État récapitulatif d'un dossier qui regroupe plusieurs remboursements de
+ * transport, en paysage. Chaque état de frais reste la pièce source, intacte ;
+ * ce document les condense : une ligne par personne, une colonne par réunion.
+ * Une personne présente à la première réunion et absente aux suivantes n'a de
+ * montant que dans la première colonne, « — » ailleurs : on ne rembourse que
+ * les présences portées sur les états sources.
+ */
+export const generateRecapitulatifTransportPDF = async (
+  dossier: RecapitulatifTransportDossier,
+  remboursements: any[],
+  action: 'print' | 'download' = 'print',
+) => {
+  const reunions = [...remboursements].sort((a, b) => {
+    const da = new Date(a?.date_reunion || 0).getTime()
+    const db = new Date(b?.date_reunion || 0).getTime()
+    return (Number.isNaN(da) ? 0 : da) - (Number.isNaN(db) ? 0 : db)
+  })
+
+  type Ligne = { nom: string; fonction: string; assistant: boolean; montants: (number | null)[] }
+  const lignes = new Map<string, Ligne>()
+  reunions.forEach((reunion, index) => {
+    const participants: any[] = Array.isArray(reunion?.participants) ? reunion.participants : []
+    participants.forEach((p) => {
+      if (!String(p?.nom || '').trim()) return
+      const cle = cleRecapitulatif(p)
+      let ligne = lignes.get(cle)
+      if (!ligne) {
+        ligne = {
+          nom: String(p.nom).trim(),
+          fonction: formatFonctionParticipant(p),
+          assistant: p.type_participant === 'assistant',
+          montants: reunions.map(() => null),
+        }
+        lignes.set(cle, ligne)
+      }
+      ligne.montants[index] = (ligne.montants[index] ?? 0) + toNumber(p.montant)
+    })
+  })
+  // Les membres d'abord, les assistants ensuite, comme sur les états sources.
+  const personnes = [...lignes.values()].sort((a, b) => Number(a.assistant) - Number(b.assistant))
+
+  const totauxReunions = reunions.map((_, i) =>
+    personnes.reduce((s, p) => s + (p.montants[i] ?? 0), 0),
+  )
+  const totalGeneral = totauxReunions.reduce((s, v) => s + v, 0)
+
+  const settings = await getPrintSettingsData()
+  const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
+  const doc = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const margin = 12
+  const ACCENT: [number, number, number] = [46, 125, 50]
+  const ACCENT_CLAIR: [number, number, number] = [237, 244, 237]
+  const FILET: [number, number, number] = [205, 210, 205]
+
+  // En-tête : même identité que l'état de frais.
+  const largeurLogo = 24
+  const hauteurLogo = 17
+  if (logoDataUrl) addProportionalLogo(doc, logoDataUrl, margin, 8, largeurLogo, hauteurLogo)
+  const headerX = logoDataUrl ? margin + largeurLogo + 4 : margin
+  const organizationName = settings?.organization_name?.trim() || 'ONEC'
+  const seen = new Set([normalizeHeaderLine(organizationName)])
+  const subtitleLines = [settings?.organization_subtitle, settings?.header_text]
+    .filter((line): line is string => {
+      const n = normalizeHeaderLine(line)
+      if (!n || seen.has(n)) return false
+      seen.add(n)
+      return true
+    })
+    .slice(0, 3)
+  doc.setFont('times', 'bold')
+  doc.setFontSize(12.5)
+  doc.setTextColor(0)
+  doc.text(organizationName.toUpperCase(), headerX, 14)
+  doc.setFont('times', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(95)
+  subtitleLines.forEach((line, i) => doc.text(line, headerX, 19.5 + i * 3.8))
+  const hauteurTexte = 11.5 + Math.max(0, subtitleLines.length - 1) * 3.8 + 2
+  const yLigne = 8 + (logoDataUrl ? Math.max(hauteurLogo, hauteurTexte) : hauteurTexte) + 2.5
+  doc.setDrawColor(ACCENT[0], ACCENT[1], ACCENT[2])
+  doc.setLineWidth(0.8)
+  doc.line(margin, yLigne, pageWidth - margin, yLigne)
+
+  doc.setFont('times', 'bold')
+  doc.setFontSize(14)
+  doc.setTextColor(0)
+  doc.setCharSpace(0.5)
+  doc.text('ÉTAT RÉCAPITULATIF DES FRAIS DE DÉPLACEMENT', pageWidth / 2, yLigne + 8, { align: 'center' })
+  doc.setCharSpace(0)
+  doc.setFont('times', 'normal')
+  doc.setFontSize(10)
+  doc.text(
+    `Dossier ${String(dossier?.reference || '').trim() || 'N/A'} · ${reunions.length} réunion${reunions.length > 1 ? 's' : ''}`,
+    pageWidth / 2,
+    yLigne + 13.5,
+    { align: 'center' },
+  )
+
+  // Les réunions du dossier, chacune renvoyant à son état de frais source.
+  const formatDateReunion = (value: unknown) => {
+    const d = value ? new Date(String(value)) : null
+    return d && !Number.isNaN(d.getTime()) ? format(d, 'dd/MM/yyyy') : 'N/A'
+  }
+  autoTable(doc, {
+    startY: yLigne + 17,
+    theme: 'grid',
+    head: [['Réunion', 'Date', 'État de frais', 'Commission / Service', 'Objet', 'Lieu', 'Présents', 'Montant']],
+    body: reunions.map((r, i) => [
+      `R${i + 1}`,
+      formatDateReunion(r?.date_reunion),
+      String(r?.reference_numero || r?.numero_remboursement || '—'),
+      formatCommissionBeneficiaire(r),
+      String(r?.nature_reunion || '').trim() || 'N/A',
+      String(r?.lieu || '').trim() || 'N/A',
+      String(Array.isArray(r?.participants) ? r.participants.length : 0),
+      `${formatAmount(totauxReunions[i])} $`,
+    ]),
+    styles: { font: 'times', fontSize: 8.5, cellPadding: 1.3, lineColor: FILET, lineWidth: 0.1, textColor: 25, valign: 'middle' },
+    headStyles: { fillColor: ACCENT_CLAIR, textColor: 40, fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 22, halign: 'center' },
+      2: { cellWidth: 32 },
+      3: { cellWidth: 50 },
+      5: { cellWidth: 36 },
+      6: { cellWidth: 18, halign: 'center' },
+      7: { cellWidth: 26, halign: 'right' },
+    },
+    margin: { left: margin, right: margin },
+  })
+
+  autoTable(doc, {
+    startY: (doc as any).lastAutoTable.finalY + 5,
+    theme: 'grid',
+    head: [[
+      'N°',
+      'Nom & Postnom',
+      'Fonction',
+      ...reunions.map((r, i) => `R${i + 1}\n${formatDateReunion(r?.date_reunion)}`),
+      'Séances',
+      'Total',
+      'Émargement',
+    ]],
+    body: personnes.map((p, index) => [
+      index + 1,
+      p.nom.toUpperCase(),
+      p.fonction,
+      ...p.montants.map((m) => (m == null ? '—' : `${formatAmount(m)} $`)),
+      String(p.montants.filter((m) => m != null).length),
+      `${formatAmount(p.montants.reduce<number>((s, m) => s + (m ?? 0), 0))} $`,
+      '',
+    ]),
+    foot: [[
+      { content: 'TOTAL GÉNÉRAL', colSpan: 3, styles: { halign: 'right' as const } },
+      ...totauxReunions.map((t) => `${formatAmount(t)} $`),
+      '',
+      `${formatAmount(totalGeneral)} $`,
+      '',
+    ]],
+    styles: { font: 'times', fontSize: 9, cellPadding: 1.5, lineColor: FILET, lineWidth: 0.1, textColor: 20, valign: 'middle', minCellHeight: 7 },
+    headStyles: { fillColor: ACCENT, textColor: 255, fontStyle: 'bold', halign: 'center' },
+    footStyles: { fillColor: ACCENT_CLAIR, textColor: 20, fontStyle: 'bold', halign: 'right' },
+    columnStyles: {
+      0: { cellWidth: 9, halign: 'center', textColor: 90 },
+      1: { cellWidth: 52 },
+      2: { cellWidth: 36 },
+      ...Object.fromEntries(reunions.map((_, i) => [3 + i, { halign: 'right' as const }])),
+      [3 + reunions.length]: { cellWidth: 16, halign: 'center' },
+      [4 + reunions.length]: { cellWidth: 24, halign: 'right', fontStyle: 'bold' },
+      [5 + reunions.length]: { cellWidth: 30 },
+    },
+    didParseCell: (data) => {
+      if (data.section !== 'body') return
+      const col = data.column.index
+      if (col >= 3 && col < 3 + reunions.length && data.cell.raw === '—') {
+        data.cell.styles.halign = 'center'
+        data.cell.styles.textColor = 150
+      }
+    },
+    margin: { left: margin, right: margin, bottom: 14 },
+  })
+
+  let y = (doc as any).lastAutoTable.finalY + 6
+  if (y > pageHeight - 30) {
+    doc.addPage()
+    y = 20
+  }
+  doc.setFont('times', 'italic')
+  doc.setFontSize(8.5)
+  doc.setTextColor(90)
+  doc.text(
+    '« — » : absent à la réunion, non remboursé. Les montants proviennent des états de frais de chaque réunion, qui restent les pièces sources.',
+    margin,
+    y,
+  )
+  y += 6
+  doc.setFont('times', 'normal')
+  doc.setFontSize(10)
+  doc.setTextColor(0)
+  const lettres = doc.splitTextToSize(
+    `Arrêté le présent état récapitulatif à la somme de ${numberToWords(totalGeneral)} (${formatAmount(totalGeneral)} $).`,
+    pageWidth - 2 * margin,
+  )
+  doc.text(lettres, margin, y)
+
+  const pageCount = doc.getNumberOfPages()
+  for (let i = 1; i <= pageCount; i += 1) {
+    doc.setPage(i)
+    doc.setFont('times', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(100)
+    doc.text(format(new Date(), 'dd/MM/yyyy HH:mm'), margin, pageHeight - 6)
+    doc.text(`État récapitulatif des frais de déplacement - ${organizationName}`, pageWidth / 2, pageHeight - 6, { align: 'center' })
+    doc.text(`Page ${i}/${pageCount}`, pageWidth - margin, pageHeight - 6, { align: 'right' })
+  }
+
+  if (action === 'print') {
+    openPdfInNewTab(doc)
+  } else {
+    const ref = String(dossier?.reference || 'dossier').replace(/[^A-Za-z0-9_-]+/g, '_')
+    doc.save(`Etat_recapitulatif_transport_${ref}.pdf`)
+  }
 }

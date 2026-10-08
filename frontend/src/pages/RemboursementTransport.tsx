@@ -8,6 +8,7 @@ import type { BudgetPosteSummary } from '../types/budget'
 import {
   deleteRemboursementTransportBrouillon,
   listRemboursementTransportBrouillons,
+  loadDossierRemboursementsTransport,
   saveRemboursementTransportBrouillon,
   uploadRemboursementTransportPdf,
   type RemboursementTransportBrouillon,
@@ -1252,6 +1253,22 @@ export default function RemboursementTransport() {
     }
   }
 
+  const handlePrintRecapitulatif = async (dossierId: string) => {
+    try {
+      const [{ dossier, remboursements: reunions }, mod] = await Promise.all([
+        loadDossierRemboursementsTransport(dossierId),
+        loadPdfGeneratorRemboursementModule(),
+      ])
+      await mod.generateRecapitulatifTransportPDF(dossier, reunions, 'print')
+    } catch (error: any) {
+      setNotification({
+        show: true,
+        type: 'error',
+        message: error?.message || "Impossible de générer l'état récapitulatif."
+      })
+    }
+  }
+
   const handleDeleteRemboursement = async (remboursement: RemboursementTransport) => {
     const requisitionId = remboursement.requisition?.id || remboursement.requisition_id
     if (!requisitionId) return
@@ -2166,6 +2183,16 @@ export default function RemboursementTransport() {
                 onClick={() => handleSubmitDossier(selectedDossierId)}
               >
                 Soumettre le dossier à l'examen
+              </button>
+            )}
+            {selectedDossierId && (
+              <button
+                type="button"
+                className={styles.groupingSecondary}
+                onClick={() => handlePrintRecapitulatif(selectedDossierId)}
+                title="Une ligne par personne, une colonne par réunion, en paysage. Les états de frais de chaque réunion restent inchangés."
+              >
+                État récapitulatif
               </button>
             )}
             {hasMixedDossierSelection && (

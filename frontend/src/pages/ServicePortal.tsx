@@ -23,7 +23,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { getService, getServiceMembers } from '../api/services'
-import { listRemboursementTransportBrouillons } from '../api/remboursementsTransport'
+import { listRemboursementTransportBrouillons, loadDossierRemboursementsTransport } from '../api/remboursementsTransport'
 import BackButton from '../components/BackButton'
 import BudgetGauge from '../components/ServicePortal/BudgetGauge'
 import styles from './ServicePortal.module.css'
@@ -116,6 +116,12 @@ type TransportItem = {
   requisition?: RequisitionItem | null
 }
 
+type TransportDossier = {
+  id: string
+  reference: string
+  status: string
+}
+
 const REJECTION_ALERT_WINDOW_MS = 48 * 60 * 60 * 1000
 
 type BudgetLine = {
@@ -141,6 +147,10 @@ export default function ServicePortal() {
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
   const [transports, setTransports] = useState<TransportItem[]>([])
   const [transportDraftCount, setTransportDraftCount] = useState(0)
+  const [transportDossiers, setTransportDossiers] = useState<Record<string, TransportDossier>>({})
+  const [selectedTransportIds, setSelectedTransportIds] = useState<string[]>([])
+  const [targetDraftDossierId, setTargetDraftDossierId] = useState('')
+  const [dossierBusy, setDossierBusy] = useState(false)
   const [rubriques, setRubriques] = useState<BudgetLine[]>([])
   const [members, setMembers] = useState<CommissionMember[]>([])
   const [serviceInfo, setServiceInfo] = useState<Service | null>(null)
@@ -591,6 +601,127 @@ export default function ServicePortal() {
       setSignError(err?.message || "Impossible de soumettre le remboursement transport à l'examen.")
     } finally {
       setSubmittingExamenId(null)
+    }
+  }
+
+  // Dossiers : plusieurs remboursements (une réunion chacun) se regroupent dans
+  // un même dossier, examiné d'un bloc. Chaque état de frais reste tel quel ;
+  // le dossier y ajoute un état récapitulatif. Un dossier encore en brouillon
+  // accueille les réunions suivantes au fil de leur tenue.
+  const transportDossierIds = useMemo(
+    () => Array.from(new Set(transports.map((t) => t.requisition?.dossier_id).filter(Boolean) as string[])),
+    [transports]
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    if (transportDossierIds.length === 0) {
+      setTransportDossiers({})
+      return
+    }
+    Promise.allSettled(
+      transportDossierIds.map((id) => apiRequest<{ id: string; reference: string; status: string }>('GET', `/dossiers/${id}`))
+    ).then((results) => {
+      if (cancelled) return
+      const map: Record<string, TransportDossier> = {}
+      results.forEach((result, index) => {
+        if (result.status !== 'fulfilled' || !result.value) return
+        map[transportDossierIds[index]] = {
+          id: transportDossierIds[index],
+          reference: result.value.reference,
+          status: String(result.value.status || '').toUpperCase(),
+        }
+      })
+      setTransportDossiers(map)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [transportDossierIds])
+
+  const transportsByDossier = useMemo(() => {
+    const map: Record<string, TransportItem[]> = {}
+    transports.forEach((t) => {
+      const dossierId = t.requisition?.dossier_id
+      if (dossierId) (map[dossierId] ||= []).push(t)
+    })
+    return map
+  }, [transports])
+
+  const draftTransportDossiers = Object.values(transportDossiers).filter((d) => d.status === 'BROUILLON')
+
+  // Seul un remboursement signé, hors dossier et soumissible entre dans un
+  // dossier : le dossier part ensuite à l'examen sans autre signature.
+  const canSelectTransportForDossier = canSubmitTransportToExamen
+
+  const selectedTransportRequisitionIds = transports
+    .filter((t) => selectedTransportIds.includes(t.id) && canSelectTransportForDossier(t))
+    .map((t) => String(t.requisition?.id || t.requisition_id))
+
+  const toggleTransportSelection = (id: string) => {
+    setSelectedTransportIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
+  }
+
+  const runDossierAction = async (action: () => Promise<string>, fallbackError: string) => {
+    setDossierBusy(true)
+    setSignError(null)
+    setActionMessage(null)
+    try {
+      setActionMessage(await action())
+      setSelectedTransportIds([])
+      setTargetDraftDossierId('')
+      await loadData()
+    } catch (err: any) {
+      setSignError(err?.message || fallbackError)
+    } finally {
+      setDossierBusy(false)
+    }
+  }
+
+  const handleCreateTransportDossier = () =>
+    runDossierAction(async () => {
+      const res = await apiRequest<{ reference?: string }>('POST', '/dossiers', {
+        requisition_ids: selectedTransportRequisitionIds,
+        description: 'Remboursements transport',
+      })
+      const reference = res?.reference ? ` ${res.reference}` : ''
+      return `Dossier${reference} créé en brouillon. Ajoutez-y les réunions suivantes, puis soumettez-le à l'examen.`
+    }, 'Impossible de créer le dossier.')
+
+  const handleAddToTransportDossier = () => {
+    if (!targetDraftDossierId) return
+    return runDossierAction(async () => {
+      await apiRequest('POST', `/dossiers/${targetDraftDossierId}/add-requisitions`, {
+        requisition_ids: selectedTransportRequisitionIds,
+      })
+      return `Remboursement(s) ajouté(s) au dossier ${transportDossiers[targetDraftDossierId]?.reference || ''}.`
+    }, "Impossible d'ajouter les remboursements au dossier.")
+  }
+
+  const handleRemoveFromTransportDossier = (dossier: TransportDossier, transport: TransportItem) =>
+    runDossierAction(async () => {
+      await apiRequest('POST', `/dossiers/${dossier.id}/remove-requisitions`, {
+        requisition_ids: [String(transport.requisition?.id || transport.requisition_id)],
+      })
+      return `${transport.numero_remboursement} retiré du dossier ${dossier.reference}.`
+    }, 'Impossible de retirer le remboursement du dossier.')
+
+  const handleSubmitTransportDossier = (dossier: TransportDossier) =>
+    runDossierAction(async () => {
+      await apiRequest('POST', `/dossiers/${dossier.id}/submit-examen`)
+      return `Le dossier ${dossier.reference} a été envoyé à l'examen.`
+    }, "Impossible de soumettre le dossier à l'examen.")
+
+  const handlePrintTransportRecapitulatif = async (dossier: TransportDossier) => {
+    setSignError(null)
+    try {
+      const [{ dossier: full, remboursements }, mod] = await Promise.all([
+        loadDossierRemboursementsTransport(dossier.id),
+        import('../utils/pdfGeneratorRemboursement'),
+      ])
+      await mod.generateRecapitulatifTransportPDF(full || dossier, remboursements, 'print')
+    } catch (err: any) {
+      setSignError(err?.message || "Impossible de générer l'état récapitulatif.")
     }
   }
 
@@ -1366,6 +1497,84 @@ export default function ServicePortal() {
             </button>
           </div>
         </div>
+        {!loading && Object.keys(transportsByDossier).length > 0 && (
+          <div className={styles.dossierStrip}>
+            {Object.entries(transportsByDossier).map(([dossierId, items]) => {
+              const dossier = transportDossiers[dossierId]
+              if (!dossier) return null
+              const isDraft = dossier.status === 'BROUILLON'
+              return (
+                <div key={dossierId} className={styles.dossierRow}>
+                  <div className={styles.dossierInfo}>
+                    <strong>Dossier {dossier.reference}</strong>
+                    <span>
+                      {items.length} réunion{items.length > 1 ? 's' : ''} ·{' '}
+                      {items.reduce((sum, t) => sum + Number(t.montant_total || 0), 0).toLocaleString()} USD ·{' '}
+                      {isDraft ? 'Brouillon' : getStatusMeta(dossier.status).label}
+                    </span>
+                  </div>
+                  <div className={styles.rowActions}>
+                    <button
+                      type="button"
+                      className={styles.panelLink}
+                      onClick={() => handlePrintTransportRecapitulatif(dossier)}
+                      title="Une ligne par personne, une colonne par réunion, en paysage. Les états de frais de chaque réunion restent inchangés."
+                    >
+                      <Printer size={13} aria-hidden="true" /> État récapitulatif
+                    </button>
+                    {isDraft && (
+                      <button
+                        type="button"
+                        className={styles.submitExamenBtn}
+                        onClick={() => handleSubmitTransportDossier(dossier)}
+                        disabled={dossierBusy}
+                      >
+                        <Send size={14} /> Soumettre le dossier
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {selectedTransportRequisitionIds.length > 0 && (
+          <div className={styles.dossierSelectionBar}>
+            <span>
+              {selectedTransportRequisitionIds.length} remboursement{selectedTransportRequisitionIds.length > 1 ? 's' : ''} sélectionné
+              {selectedTransportRequisitionIds.length > 1 ? 's' : ''}
+            </span>
+            <button type="button" className={styles.transportWorkflowBtn} onClick={handleCreateTransportDossier} disabled={dossierBusy}>
+              Créer un dossier
+            </button>
+            {draftTransportDossiers.length > 0 && (
+              <>
+                <select
+                  className={styles.dossierSelect}
+                  value={targetDraftDossierId}
+                  onChange={(event) => setTargetDraftDossierId(event.target.value)}
+                  aria-label="Dossier brouillon"
+                >
+                  <option value="">Ajouter à un dossier…</option>
+                  {draftTransportDossiers.map((d) => (
+                    <option key={d.id} value={d.id}>{d.reference}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={styles.transportWorkflowBtn}
+                  onClick={handleAddToTransportDossier}
+                  disabled={dossierBusy || !targetDraftDossierId}
+                >
+                  Ajouter
+                </button>
+              </>
+            )}
+            <button type="button" className={styles.panelLink} onClick={() => setSelectedTransportIds([])}>
+              Annuler
+            </button>
+          </div>
+        )}
         {loading ? (
           <div className={styles.panelState}>Chargement…</div>
         ) : (
@@ -1373,6 +1582,7 @@ export default function ServicePortal() {
             <table className={styles.table}>
               <thead>
                 <tr>
+                  <th className={styles.checkboxCell} aria-label="Sélection pour un dossier" />
                   <th>N°</th>
                   <th>Nature</th>
                   <th>Lieu</th>
@@ -1388,9 +1598,31 @@ export default function ServicePortal() {
                   const status = getTransportStatus(transport)
                   const meta = getStatusMeta(status)
                   const requisitionId = req?.id || transport.requisition_id || ''
+                  const dossierOfTransport = req?.dossier_id ? transportDossiers[req.dossier_id] : undefined
                   return (
                     <tr key={transport.id}>
-                      <td>{transport.numero_remboursement}</td>
+                      <td className={styles.checkboxCell}>
+                        <input
+                          type="checkbox"
+                          checked={selectedTransportIds.includes(transport.id)}
+                          onChange={() => toggleTransportSelection(transport.id)}
+                          disabled={!canSelectTransportForDossier(transport)}
+                          title={
+                            canSelectTransportForDossier(transport)
+                              ? 'Regrouper dans un dossier'
+                              : 'Seul un remboursement signé, hors dossier, peut être regroupé'
+                          }
+                          aria-label={`Sélectionner ${transport.numero_remboursement}`}
+                        />
+                      </td>
+                      <td>
+                        {transport.numero_remboursement}
+                        {dossierOfTransport && (
+                          <span className={styles.dossierTag} title={`Dans le dossier ${dossierOfTransport.reference}`}>
+                            {dossierOfTransport.reference}
+                          </span>
+                        )}
+                      </td>
                       <td title={transport.nature_reunion}>{transport.nature_reunion}</td>
                       <td title={transport.lieu}>{transport.lieu}</td>
                       <td className={styles.amountCell}>{Number(transport.montant_total || 0).toLocaleString()} USD</td>
@@ -1449,6 +1681,21 @@ export default function ServicePortal() {
                               {submittingExamenId === requisitionId ? 'Envoi…' : 'Soumettre'}
                             </button>
                           )}
+                          {dossierOfTransport?.status === 'BROUILLON' && (
+                            <button
+                              type="button"
+                              className={styles.actionBtn}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleRemoveFromTransportDossier(dossierOfTransport, transport)
+                              }}
+                              disabled={dossierBusy}
+                              title="Retirer du dossier (le remboursement revient en brouillon et devra être signé de nouveau)"
+                              aria-label="Retirer du dossier"
+                            >
+                              <X size={15} aria-hidden="true" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1456,7 +1703,7 @@ export default function ServicePortal() {
                 })}
                 {visibleTransports.length === 0 && (
                   <tr>
-                    <td colSpan={7} className={styles.panelState}>
+                    <td colSpan={8} className={styles.panelState}>
                       <div className={styles.emptyPanelState}>
                         <Car size={28} aria-hidden="true" />
                         <strong>Aucun remboursement transport ne correspond aux filtres.</strong>

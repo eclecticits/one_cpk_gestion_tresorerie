@@ -45,3 +45,23 @@ export function saveRemboursementTransportBrouillon(
 export function deleteRemboursementTransportBrouillon(id: string) {
   return apiRequest('DELETE', `/remboursements-transport/brouillons/${id}`)
 }
+
+// Remboursements de transport d'un dossier, avec leurs participants : de quoi
+// dresser l'état récapitulatif sans toucher aux états de frais sources.
+export async function loadDossierRemboursementsTransport(dossierId: string) {
+  const dossier = await apiRequest<any>('GET', `/dossiers/${dossierId}`)
+  const requisitionIds: string[] = (dossier?.requisitions || [])
+    .filter((req: any) => String(req?.type_requisition || '').toLowerCase() === 'remboursement_transport')
+    .map((req: any) => String(req.id))
+  const resultats = await Promise.all(
+    requisitionIds.map((requisitionId) =>
+      apiRequest<any>('GET', '/remboursements-transport', {
+        params: { requisition_id: requisitionId, include: 'participants', limit: 1 },
+      }),
+    ),
+  )
+  const remboursements = resultats
+    .map((res) => (Array.isArray(res) ? res[0] : res?.items?.[0]))
+    .filter(Boolean)
+  return { dossier, remboursements }
+}
