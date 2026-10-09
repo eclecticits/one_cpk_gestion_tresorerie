@@ -34,6 +34,13 @@ from app.services.email_config import resolve_smtp_config
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
 from app.services.budget_engagement import resynchroniser_engagement_requisitions
+from app.services.dossier_rejet import (
+    STATUT_REJET_ACCEPTE,
+    accepter_rejet,
+    cloturer_rejets_echus,
+    cloturer_si_echu,
+    echeance_rejet,
+)
 from app.services.document_sequences import generate_document_number
 from app.services.service_access import can_view_all_services, get_user_service_ids
 
@@ -47,6 +54,15 @@ DOSSIER_EXAMEN_PERMISSIONS = {"can_verify_technical", "can_validate_final", "men
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _rejet_fields(dossier: DossierRequisition) -> dict:
+    return {
+        "rejete_le": dossier.rejete_le,
+        "rejet_echeance": echeance_rejet(dossier),
+        "rejet_accepte_le": dossier.rejet_accepte_le,
+        "rejet_accepte_par": str(dossier.rejet_accepte_par) if dossier.rejet_accepte_par else None,
+    }
 
 
 def _coerce_requisition_uuid(value: uuid.UUID | str) -> uuid.UUID:
@@ -75,6 +91,7 @@ def _dossier_out(
         created_by=str(dossier.created_by) if dossier.created_by else None,
         created_at=dossier.created_at,
         updated_at=dossier.updated_at,
+        **_rejet_fields(dossier),
         requisitions=[
             _requisition_out(
                 r,
@@ -408,6 +425,7 @@ async def list_draft_dossiers(
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[DossierRequisitionOut]:
     await _ensure_dossier_workflow_access(user, db)
+    await cloturer_rejets_echus(db, tenant_id)
     query = select(DossierRequisition).where(
         DossierRequisition.organisation_id == tenant_id,
         DossierRequisition.status == "BROUILLON",
@@ -437,6 +455,7 @@ async def list_draft_dossiers(
             created_by=str(d.created_by) if d.created_by else None,
             created_at=d.created_at,
             updated_at=d.updated_at,
+            **_rejet_fields(d),
             requisitions=[],
         )
         for d in dossiers
@@ -466,8 +485,22 @@ async def submit_examen_dossier(
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
+    # Délai de décision après rejet échu : le rejet est accepté d'office.
+    if await cloturer_si_echu(db, dossier):
+        await db.commit()
 
-    if (dossier.status or "").upper() == "EN_EXAMEN":
+    statut_dossier = (dossier.status or "").upper()
+    if statut_dossier == "REJETE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Dossier rejeté : rouvrez-le pour le corriger avant de le soumettre de nouveau.",
+        )
+    if statut_dossier == STATUT_REJET_ACCEPTE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Rejet accepté (délai de 48 h écoulé ou décision du service) : ce dossier ne peut plus être soumis.",
+        )
+    if statut_dossier != "BROUILLON":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dossier déjà soumis à l'examen")
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
@@ -534,6 +567,9 @@ async def add_requisitions_to_dossier(
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
+    # Délai de décision après rejet échu : le rejet est accepté d'office.
+    if await cloturer_si_echu(db, dossier):
+        await db.commit()
     if (dossier.status or "").upper() != "BROUILLON":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le dossier doit être en brouillon")
     existing_req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
@@ -606,6 +642,9 @@ async def remove_requisitions_from_dossier(
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
+    # Délai de décision après rejet échu : le rejet est accepté d'office.
+    if await cloturer_si_echu(db, dossier):
+        await db.commit()
     if (dossier.status or "").upper() != "BROUILLON":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le dossier doit être en brouillon")
 
@@ -677,6 +716,9 @@ async def delete_dossier_requisition(
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
+    # Délai de décision après rejet échu : le rejet est accepté d'office.
+    if await cloturer_si_echu(db, dossier):
+        await db.commit()
     if (dossier.status or "").upper() != "BROUILLON":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le dossier doit être en brouillon")
 
@@ -720,6 +762,9 @@ async def get_dossier_requisition(
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
+    # Délai de décision après rejet échu : le rejet est accepté d'office.
+    if await cloturer_si_echu(db, dossier):
+        await db.commit()
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     requisitions = req_res.scalars().all()
@@ -740,6 +785,7 @@ async def list_dossiers_requisition(
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[DossierRequisitionOut]:
     await _ensure_dossier_page_access(user, db)
+    await cloturer_rejets_echus(db, tenant_id)
     query = select(DossierRequisition).where(DossierRequisition.organisation_id == tenant_id)
     if status:
         query = query.where(DossierRequisition.status == status)
@@ -765,6 +811,7 @@ async def list_dossiers_requisition(
                 created_by=str(d.created_by) if d.created_by else None,
                 created_at=d.created_at,
                 updated_at=d.updated_at,
+                **_rejet_fields(d),
                 requisitions=[],
             )
             for d in dossiers
@@ -827,6 +874,9 @@ async def update_dossier_requisition(
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
+    # Délai de décision après rejet échu : le rejet est accepté d'office.
+    if await cloturer_si_echu(db, dossier):
+        await db.commit()
 
     if payload.description is not None:
         dossier.description = payload.description
@@ -864,6 +914,9 @@ async def validate_examen_dossier(
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
+    # Délai de décision après rejet échu : le rejet est accepté d'office.
+    if await cloturer_si_echu(db, dossier):
+        await db.commit()
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     requisitions = req_res.scalars().all()
@@ -941,12 +994,19 @@ async def reject_examen_dossier(
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
+    # Délai de décision après rejet échu : le rejet est accepté d'office.
+    if await cloturer_si_echu(db, dossier):
+        await db.commit()
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     requisitions = req_res.scalars().all()
     _ensure_dossier_examen_action_allowed(dossier, requisitions)
 
     dossier.status = "REJETE"
+    # Ouvre le délai de 48 h laissé au service pour rouvrir ou accepter.
+    dossier.rejete_le = _utcnow()
+    dossier.rejet_accepte_le = None
+    dossier.rejet_accepte_par = None
     if payload.commentaires_examen is not None:
         dossier.commentaires_examen = payload.commentaires_examen
     dossier.updated_at = _utcnow()
@@ -961,6 +1021,95 @@ async def reject_examen_dossier(
     # Dossier rejeté : chaque réquisition rend son crédit au poste.
     await resynchroniser_engagement_requisitions(db, list(requisitions))
 
+    await db.commit()
+    await db.refresh(dossier)
+    return await _build_dossier_out(db, dossier, requisitions)
+
+
+async def _charger_dossier_pour_decision(
+    dossier_id: str,
+    db: AsyncSession,
+    user: User,
+    tenant_id: int,
+) -> tuple[DossierRequisition, list[Requisition]]:
+    """Dossier rejeté sur lequel le service décide ; clôt d'abord un délai échu."""
+    await _ensure_dossier_workflow_access(user, db)
+    try:
+        did = uuid.UUID(dossier_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
+    res = await db.execute(
+        select(DossierRequisition).where(
+            DossierRequisition.id == did,
+            DossierRequisition.organisation_id == tenant_id,
+        )
+    )
+    dossier = res.scalar_one_or_none()
+    if not dossier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
+    req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
+    requisitions = list(req_res.scalars().all())
+    await _ensure_dossier_scope(user, db, dossier, requisitions, require_all_requisitions=True)
+    if await cloturer_si_echu(db, dossier):
+        await db.commit()
+    if (dossier.status or "").upper() == STATUT_REJET_ACCEPTE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Délai de 48 h écoulé : le rejet est accepté et ce dossier ne peut plus être resoumis.",
+        )
+    return dossier, requisitions
+
+
+@router.post("/{dossier_id}/rouvrir", response_model=DossierRequisitionOut)
+async def rouvrir_dossier_rejete(
+    dossier_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> DossierRequisitionOut:
+    """Rouvre un dossier rejeté pour le corriger : il revient en brouillon.
+
+    Les pièces y restent, prêtes à être retirées, supprimées, complétées ou
+    resoumises telles quelles. Le délai de 48 h court toujours : passé
+    l'échéance, le dossier rouvert est clos comme un rejet accepté.
+    """
+    dossier, requisitions = await _charger_dossier_pour_decision(dossier_id, db, user, tenant_id)
+    if (dossier.status or "").upper() != "REJETE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Seul un dossier rejeté peut être rouvert")
+
+    now = _utcnow()
+    dossier.status = "BROUILLON"
+    dossier.updated_at = now
+    for req in requisitions:
+        req.examen_status = "NON_EXAMINE"
+        # Une pièce signée le reste : le dossier repart sans nouvelle signature.
+        req.status = "SIGNEE_SERVICE" if req.signed_at else "BROUILLON"
+        req.updated_at = now
+    # Retour au brouillon : aucun crédit engagé tant que le dossier n'est pas resoumis.
+    await resynchroniser_engagement_requisitions(db, list(requisitions))
+
+    await db.commit()
+    await db.refresh(dossier)
+    return await _build_dossier_out(db, dossier, requisitions)
+
+
+@router.post("/{dossier_id}/accepter-rejet", response_model=DossierRequisitionOut)
+async def accepter_rejet_dossier(
+    dossier_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> DossierRequisitionOut:
+    """Le service accepte le rejet : dossier et pièces sont clos définitivement."""
+    dossier, requisitions = await _charger_dossier_pour_decision(dossier_id, db, user, tenant_id)
+    statut_dossier = (dossier.status or "").upper()
+    if statut_dossier not in ("REJETE", "BROUILLON") or dossier.rejete_le is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ce dossier n'a pas de rejet en attente de décision",
+        )
+
+    await accepter_rejet(db, dossier, requisitions, par=user.id)
     await db.commit()
     await db.refresh(dossier)
     return await _build_dossier_out(db, dossier, requisitions)

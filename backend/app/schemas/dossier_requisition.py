@@ -35,6 +35,11 @@ class DossierRequisitionOut(DecimalBaseModel):
     created_by: UUID | None = None
     created_at: datetime
     updated_at: datetime
+    rejete_le: datetime | None = None
+    # Fin du délai de décision après un rejet (rouvrir ou accepter).
+    rejet_echeance: datetime | None = None
+    rejet_accepte_le: datetime | None = None
+    rejet_accepte_par: UUID | None = None
     requisitions: list[RequisitionOut] = []
 
 

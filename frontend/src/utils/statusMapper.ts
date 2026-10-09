@@ -54,6 +54,19 @@ export const STATUS_MAP: Record<string, StatusMeta> = {
     bg: '#fee2e2',
     color: '#dc2626',
   },
+  // Statuts de dossier : rejeté à l'examen (48 h pour décider), puis clos.
+  REJETE: {
+    label: 'Rejeté',
+    description: 'Rejeté à l’examen : 48 h pour corriger et resoumettre, ou accepter le rejet.',
+    bg: '#fee2e2',
+    color: '#dc2626',
+  },
+  REJET_ACCEPTE: {
+    label: 'Rejet accepté',
+    description: 'Rejet définitif : le dossier ne peut plus être resoumis.',
+    bg: '#fee2e2',
+    color: '#991b1b',
+  },
 }
 
 export const getStatusMeta = (raw?: string | null): StatusMeta => {

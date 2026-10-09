@@ -31,6 +31,13 @@ class DossierRequisition(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="BROUILLON", index=True)
     commentaires_examen: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Rejet à l'examen : le service a 48 h pour rouvrir le dossier (corriger puis
+    # resoumettre) ou accepter le rejet ; passé ce délai le rejet est accepté
+    # d'office (status REJET_ACCEPTE) et le dossier ne peut plus être resoumis.
+    rejete_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejet_accepte_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # None quand le rejet a été accepté d'office à l'échéance.
+    rejet_accepte_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

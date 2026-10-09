@@ -22,6 +22,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
+import { useConfirm } from '../contexts/ConfirmContext'
 import { getService, getServiceMembers } from '../api/services'
 import { listRemboursementTransportBrouillons, loadDossierRemboursementsTransport } from '../api/remboursementsTransport'
 import BackButton from '../components/BackButton'
@@ -93,6 +94,7 @@ type RequisitionItem = {
   decaissement_progressif?: boolean | null
   lignes?: any[] | null
   motif_rejet?: string | null
+  examen_commentaire?: string | null
   annexe?: {
     id: string
     filename?: string | null
@@ -120,9 +122,34 @@ type TransportDossier = {
   id: string
   reference: string
   status: string
+  commentaires_examen?: string | null
+  rejet_echeance?: string | null
+  rejet_accepte_le?: string | null
+  rejet_accepte_par?: string | null
 }
 
+// « jeudi 12/10 à 14:05 » : l'échéance de décision après un rejet de dossier.
+const formatEcheance = (value: string) =>
+  new Date(value).toLocaleString('fr-FR', { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+
+const heuresRestantes = (value: string) => Math.max(0, Math.ceil((new Date(value).getTime() - Date.now()) / 3_600_000))
+
 const REJECTION_ALERT_WINDOW_MS = 48 * 60 * 60 * 1000
+
+// Un rejet à l'examen (pièce seule ou dossier entier) ne touche pas le statut de
+// workflow : seul examen_status le porte, et le motif est dans examen_commentaire.
+// L'affichage doit donc le lire, sans quoi la pièce paraît « Validée » ou « Brouillon ».
+const isRejeteeExamen = (req?: Pick<RequisitionItem, 'examen_status'> | null) =>
+  String(req?.examen_status || '').toUpperCase() === 'REJETE'
+
+const displayRequisitionStatus = (req: RequisitionItem) =>
+  isRejeteeExamen(req) ? 'REJETEE' : req.status
+
+const isRejectedForDisplay = (req: RequisitionItem) =>
+  String(displayRequisitionStatus(req) || '').toUpperCase().includes('REJET')
+
+const rejectMotifOf = (req: RequisitionItem) =>
+  req.motif_rejet?.trim() || req.examen_commentaire?.trim() || 'Motif non renseigné.'
 
 const toInputDate = (date: Date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -159,6 +186,7 @@ export default function ServicePortal() {
   const { hasPermission, isAdmin } = usePermissions()
   const { serviceId } = useParams()
   const navigate = useNavigate()
+  const confirm = useConfirm()
   const [summary, setSummary] = useState<ServiceSummary | null>(null)
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
   const [transports, setTransports] = useState<TransportItem[]>([])
@@ -228,7 +256,7 @@ export default function ServicePortal() {
 
   const rejectedCount = useMemo(() => {
     const rejectedRequisitions = requisitions.filter((req) =>
-      isRejectedRecently(req.status, req.updated_at)
+      isRejectedRecently(displayRequisitionStatus(req), req.updated_at)
     ).length
     const rejectedTransports = transports.filter((transport) =>
       isRejectedRecently(getTransportStatus(transport), transport.requisition?.updated_at)
@@ -378,7 +406,10 @@ export default function ServicePortal() {
 
   const textValue = (value: unknown) => String(value || '').toLowerCase()
 
+  // Statut affiché : les gardes de workflow (signature, soumission) lisent
+  // requisition.status directement et ne passent pas par ici.
   function getTransportStatus(transport: TransportItem) {
+    if (isRejeteeExamen(transport.requisition)) return 'REJETEE'
     return transport.requisition?.status || transport.status || transport.statut || 'BROUILLON'
   }
 
@@ -433,7 +464,7 @@ export default function ServicePortal() {
   const filteredRequisitions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     const filtered = requisitions.filter((req) => {
-      const status = normalizeStatusValue(req.status)
+      const status = normalizeStatusValue(displayRequisitionStatus(req))
       const matchesStatus = !statusFilter || status === statusFilter
       const matchesSearch =
         !query ||
@@ -497,7 +528,7 @@ export default function ServicePortal() {
   const statusBreakdown = useMemo(() => {
     const map = new Map<string, number>()
     requisitions.forEach((req) => {
-      const label = getStatusMeta(req.status).label
+      const label = getStatusMeta(displayRequisitionStatus(req)).label
       map.set(label, (map.get(label) || 0) + 1)
     })
     return [...map.entries()].map(([label, count]) => ({ label, count }))
@@ -636,7 +667,7 @@ export default function ServicePortal() {
       return
     }
     Promise.allSettled(
-      transportDossierIds.map((id) => apiRequest<{ id: string; reference: string; status: string }>('GET', `/dossiers/${id}`))
+      transportDossierIds.map((id) => apiRequest<TransportDossier>('GET', `/dossiers/${id}`))
     ).then((results) => {
       if (cancelled) return
       const map: Record<string, TransportDossier> = {}
@@ -646,6 +677,10 @@ export default function ServicePortal() {
           id: transportDossierIds[index],
           reference: result.value.reference,
           status: String(result.value.status || '').toUpperCase(),
+          commentaires_examen: result.value.commentaires_examen,
+          rejet_echeance: result.value.rejet_echeance,
+          rejet_accepte_le: result.value.rejet_accepte_le,
+          rejet_accepte_par: result.value.rejet_accepte_par,
         }
       })
       setTransportDossiers(map)
@@ -728,6 +763,30 @@ export default function ServicePortal() {
       return `Le dossier ${dossier.reference} a été envoyé à l'examen.`
     }, "Impossible de soumettre le dossier à l'examen.")
 
+  // Après un rejet, 48 h pour décider : rouvrir le dossier (le corriger puis le
+  // resoumettre) ou accepter le rejet. Passé l'échéance, le rejet est accepté
+  // d'office et le dossier ne peut plus être resoumis.
+  const handleReopenTransportDossier = (dossier: TransportDossier) =>
+    runDossierAction(async () => {
+      await apiRequest('POST', `/dossiers/${dossier.id}/rouvrir`)
+      const echeance = dossier.rejet_echeance ? ` avant ${formatEcheance(dossier.rejet_echeance)}` : ''
+      return `Dossier ${dossier.reference} rouvert : retirez ou remplacez les réunions à corriger, puis resoumettez-le${echeance}.`
+    }, 'Impossible de rouvrir le dossier.')
+
+  const handleAcceptTransportDossierRejet = async (dossier: TransportDossier) => {
+    const confirmed = await confirm({
+      title: 'Accepter le rejet',
+      description: `Le dossier ${dossier.reference} et ses remboursements seront rejetés définitivement. Il ne pourra plus être resoumis.`,
+      confirmText: 'Accepter le rejet',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+    return runDossierAction(async () => {
+      await apiRequest('POST', `/dossiers/${dossier.id}/accepter-rejet`)
+      return `Rejet du dossier ${dossier.reference} accepté.`
+    }, "Impossible d'accepter le rejet.")
+  }
+
   const handlePrintTransportRecapitulatif = async (dossier: TransportDossier) => {
     setSignError(null)
     try {
@@ -802,7 +861,7 @@ export default function ServicePortal() {
 
   const openRejectMotif = (req: RequisitionItem) => {
     setSelectedRejectTitle(req.numero_requisition)
-    setSelectedRejectMotif(req.motif_rejet?.trim() || 'Motif non renseigné.')
+    setSelectedRejectMotif(rejectMotifOf(req))
     setShowRejectModal(true)
   }
 
@@ -850,7 +909,7 @@ export default function ServicePortal() {
           Objet: req.objet,
           Lieu: '',
           Montant: Number(req.montant_total || 0),
-          Statut: getStatusMeta(req.status).label,
+          Statut: getStatusMeta(displayRequisitionStatus(req)).label,
         }
       })
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Réquisitions')
@@ -910,7 +969,7 @@ export default function ServicePortal() {
               req.objet,
               '',
               Number(req.montant_total || 0).toLocaleString(),
-              getStatusMeta(req.status).label,
+              getStatusMeta(displayRequisitionStatus(req)).label,
             ]
           })
         : []),
@@ -1260,10 +1319,8 @@ export default function ServicePortal() {
                       <td>
                         <div className={styles.reqActionArea}>
                           {(() => {
-                            const meta = getStatusMeta(req.status)
-                            const motif = String(req.status || '').toUpperCase().includes('REJET')
-                              ? (req.motif_rejet?.trim() || 'Motif non renseigné.')
-                              : ''
+                            const meta = getStatusMeta(displayRequisitionStatus(req))
+                            const motif = isRejectedForDisplay(req) ? rejectMotifOf(req) : ''
                             return (
                               <span
                                 className={styles.statusBadge}
@@ -1330,7 +1387,7 @@ export default function ServicePortal() {
                           >
                             <Eye size={15} aria-hidden="true" />
                           </button>
-                          {String(req.status || '').toUpperCase().includes('REJET') && (
+                          {isRejectedForDisplay(req) && (
                             <button
                               type="button"
                               className={styles.actionBtn}
@@ -1520,15 +1577,36 @@ export default function ServicePortal() {
               const dossier = transportDossiers[dossierId]
               if (!dossier) return null
               const isDraft = dossier.status === 'BROUILLON'
+              const isRejected = dossier.status === 'REJETE'
+              const isRejetAccepte = dossier.status === 'REJET_ACCEPTE'
+              // Rouvert après un rejet : à resoumettre avant la même échéance.
+              const echeance = (isRejected || isDraft) && dossier.rejet_echeance ? dossier.rejet_echeance : null
               return (
-                <div key={dossierId} className={styles.dossierRow}>
+                <div
+                  key={dossierId}
+                  className={`${styles.dossierRow} ${isRejected || isRejetAccepte ? styles.dossierRowRejected : ''}`}
+                >
                   <div className={styles.dossierInfo}>
                     <strong>Dossier {dossier.reference}</strong>
                     <span>
                       {items.length} réunion{items.length > 1 ? 's' : ''} ·{' '}
                       {items.reduce((sum, t) => sum + Number(t.montant_total || 0), 0).toLocaleString()} USD ·{' '}
-                      {isDraft ? 'Brouillon' : getStatusMeta(dossier.status).label}
+                      {isDraft
+                        ? (echeance ? 'Rouvert après rejet' : 'Brouillon')
+                        : isRejetAccepte && !dossier.rejet_accepte_par
+                          ? 'Rejet accepté d’office (48 h écoulées)'
+                          : getStatusMeta(dossier.status).label}
                     </span>
+                    {(isRejected || isRejetAccepte || echeance) && dossier.commentaires_examen && (
+                      <span className={styles.dossierMotif}>Motif du rejet : {dossier.commentaires_examen}</span>
+                    )}
+                    {echeance && (
+                      <span className={styles.dossierEcheance}>
+                        {isRejected
+                          ? `Décision à prendre avant ${formatEcheance(echeance)} (${heuresRestantes(echeance)} h) : sans réponse, le rejet sera accepté d’office.`
+                          : `À resoumettre avant ${formatEcheance(echeance)} (${heuresRestantes(echeance)} h), sinon le rejet sera accepté d’office.`}
+                      </span>
+                    )}
                   </div>
                   <div className={styles.rowActions}>
                     <button
@@ -1546,8 +1624,29 @@ export default function ServicePortal() {
                         onClick={() => handleSubmitTransportDossier(dossier)}
                         disabled={dossierBusy}
                       >
-                        <Send size={14} /> Soumettre le dossier
+                        <Send size={14} /> {echeance ? 'Resoumettre le dossier' : 'Soumettre le dossier'}
                       </button>
+                    )}
+                    {isRejected && (
+                      <>
+                        <button
+                          type="button"
+                          className={styles.transportWorkflowBtn}
+                          onClick={() => handleReopenTransportDossier(dossier)}
+                          disabled={dossierBusy}
+                          title="Le dossier revient en brouillon : retirez ou remplacez les réunions à corriger, puis resoumettez-le."
+                        >
+                          Corriger et resoumettre
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.panelLink}
+                          onClick={() => handleAcceptTransportDossierRejet(dossier)}
+                          disabled={dossierBusy}
+                        >
+                          Accepter le rejet
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -1637,6 +1736,8 @@ export default function ServicePortal() {
                         {dossierOfTransport && (
                           <span className={styles.dossierTag} title={`Dans le dossier ${dossierOfTransport.reference}`}>
                             {dossierOfTransport.reference}
+                            {dossierOfTransport.status === 'REJETE' && ' · rejeté'}
+                            {dossierOfTransport.status === 'REJET_ACCEPTE' && ' · rejet accepté'}
                           </span>
                         )}
                       </td>
@@ -1646,7 +1747,7 @@ export default function ServicePortal() {
                       <td>
                         <span
                           className={styles.statusBadge}
-                          title={meta.description || meta.label}
+                          title={req && isRejectedForDisplay(req) ? `${meta.label} · ${rejectMotifOf(req)}` : (meta.description || meta.label)}
                         >
                           {meta.label}
                         </span>
@@ -1666,6 +1767,20 @@ export default function ServicePortal() {
                           >
                             <Eye size={15} aria-hidden="true" />
                           </button>
+                          {req && isRejectedForDisplay(req) && (
+                            <button
+                              type="button"
+                              className={styles.actionBtn}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                openRejectMotif(req)
+                              }}
+                              title="Voir le motif de rejet"
+                              aria-label="Voir le motif de rejet"
+                            >
+                              <AlertCircle size={15} aria-hidden="true" />
+                            </button>
+                          )}
                           {canSignTransport(transport) && (
                             <button
                               type="button"
@@ -1829,12 +1944,12 @@ export default function ServicePortal() {
                   </div>
                   <div className={styles.detailItem}>
                     <label>Statut</label>
-                    <p>{getStatusMeta(selectedRequisition.status).label}</p>
+                    <p>{getStatusMeta(displayRequisitionStatus(selectedRequisition)).label}</p>
                   </div>
-                  {selectedRequisition.motif_rejet && (
+                  {isRejectedForDisplay(selectedRequisition) && (
                     <div className={styles.detailItem}>
                       <label>Motif de rejet</label>
-                      <p>{selectedRequisition.motif_rejet}</p>
+                      <p>{rejectMotifOf(selectedRequisition)}</p>
                     </div>
                   )}
                   {selectedRequisition.annexe?.id && (

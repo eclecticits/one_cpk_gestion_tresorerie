@@ -39,6 +39,7 @@ from app.models.service import Service
 from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
 from app.services.budget_engagement import resynchroniser_engagement_requisition
+from app.services.dossier_rejet import cloturer_si_echu
 from app.services.reimputation_budgetaire import apercu_reimputation, reimputer_requisition
 from app.services.changement_canal_requisition import changer_canal_requisition
 from app.services.report_cache import invalidate_report_summary_cache
@@ -2223,6 +2224,9 @@ async def soft_delete_requisition(
     if req.dossier_id:
         dossier_res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == req.dossier_id))
         dossier = dossier_res.scalar_one_or_none()
+        # Dossier rouvert après rejet dont le délai de 48 h est échu : clos d'abord.
+        if dossier and await cloturer_si_echu(db, dossier):
+            await db.commit()
         if dossier and (dossier.status or "").upper() != "BROUILLON":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

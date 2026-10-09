@@ -253,3 +253,137 @@ async def test_dossier_a_une_seule_requisition_libere_la_requisition(
     etats = await _statuts(app_client, headers, req_id)
     assert etats[req_id]["examen_status"] == "EXAMINE"
     assert etats[req_id]["dossier_id"] is None
+
+
+async def _dossier_rejete(app_client: AsyncClient, headers: dict, db_session, org_id: int):
+    """Un dossier de deux réquisitions, soumis puis rejeté à l'examen."""
+    service = Service(
+        code=f"SRV-DEC-{uuid.uuid4().hex[:6]}", libelle=f"Commission décision {uuid.uuid4().hex[:6]}", organisation_id=org_id
+    )
+    db_session.add(service)
+    await db_session.flush()
+    req_a = await _creer_requisition(db_session, organisation_id=org_id, service_id=service.id)
+    req_b = await _creer_requisition(db_session, organisation_id=org_id, service_id=service.id)
+    await db_session.commit()
+    ids = (str(req_a.id), str(req_b.id))
+
+    resp = await app_client.post("/api/v1/dossiers", json={"requisition_ids": list(ids)}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    dossier_id = resp.json()["id"]
+    resp = await app_client.post(f"/api/v1/dossiers/{dossier_id}/submit-examen", headers=headers)
+    assert resp.status_code == 200, resp.text
+    resp = await app_client.post(
+        f"/api/v1/dossiers/{dossier_id}/reject-examen",
+        json={"commentaires_examen": "Liste de présence illisible"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    corps = resp.json()
+    assert corps["status"] == "REJETE"
+    assert corps["rejete_le"] and corps["rejet_echeance"]
+    return dossier_id, ids
+
+
+async def _vieillir_rejet(db_session, dossier_id: str, heures: int = 49):
+    from datetime import timedelta
+
+    from sqlalchemy import update
+
+    from app.models.dossier_requisition import DossierRequisition
+
+    await db_session.execute(
+        update(DossierRequisition)
+        .where(DossierRequisition.id == uuid.UUID(dossier_id))
+        .values(rejete_le=_utcnow() - timedelta(hours=heures))
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_dossier_rejete_rouvert_corrige_puis_resoumis(
+    app_client: AsyncClient, admin_access_token: str, test_organisation, db_session
+):
+    headers = {"Authorization": f"Bearer {admin_access_token}"}
+    dossier_id, ids = await _dossier_rejete(app_client, headers, db_session, test_organisation.id)
+
+    # Pas de resoumission en l'état : il faut d'abord rouvrir le dossier.
+    resp = await app_client.post(f"/api/v1/dossiers/{dossier_id}/submit-examen", headers=headers)
+    assert resp.status_code == 400, resp.text
+    assert "rouvrez" in resp.json()["detail"]
+
+    resp = await app_client.post(f"/api/v1/dossiers/{dossier_id}/rouvrir", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "BROUILLON"
+    etats = await _statuts(app_client, headers, *ids)
+    assert {e["examen_status"] for e in etats.values()} == {"NON_EXAMINE"}
+    assert {e["dossier_id"] for e in etats.values()} == {dossier_id}
+
+    # Corrigé dans le délai, le même dossier repart à l'examen.
+    resp = await app_client.post(f"/api/v1/dossiers/{dossier_id}/submit-examen", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "EN_EXAMEN"
+
+
+@pytest.mark.asyncio
+async def test_dossier_rejete_rejet_accepte_par_le_service(
+    app_client: AsyncClient, admin_access_token: str, test_organisation, db_session
+):
+    headers = {"Authorization": f"Bearer {admin_access_token}"}
+    dossier_id, ids = await _dossier_rejete(app_client, headers, db_session, test_organisation.id)
+
+    resp = await app_client.post(f"/api/v1/dossiers/{dossier_id}/accepter-rejet", headers=headers)
+    assert resp.status_code == 200, resp.text
+    corps = resp.json()
+    assert corps["status"] == "REJET_ACCEPTE"
+    assert corps["rejet_accepte_le"] and corps["rejet_accepte_par"]
+
+    etats = await _statuts(app_client, headers, *ids)
+    assert {e["status"] for e in etats.values()} == {"REJETEE"}
+    assert {e["examen_commentaire"] for e in etats.values()} == {"Liste de présence illisible"}
+
+    for action in ("submit-examen", "rouvrir"):
+        resp = await app_client.post(f"/api/v1/dossiers/{dossier_id}/{action}", headers=headers)
+        assert resp.status_code == 400, resp.text
+
+
+@pytest.mark.asyncio
+async def test_dossier_rejete_accepte_d_office_apres_48h(
+    app_client: AsyncClient, admin_access_token: str, test_organisation, db_session
+):
+    headers = {"Authorization": f"Bearer {admin_access_token}"}
+    dossier_id, ids = await _dossier_rejete(app_client, headers, db_session, test_organisation.id)
+    await _vieillir_rejet(db_session, dossier_id)
+
+    resp = await app_client.get(f"/api/v1/dossiers/{dossier_id}", headers=headers)
+    assert resp.status_code == 200, resp.text
+    corps = resp.json()
+    assert corps["status"] == "REJET_ACCEPTE"
+    # Accepté d'office : personne n'a décidé.
+    assert corps["rejet_accepte_par"] is None
+    etats = await _statuts(app_client, headers, *ids)
+    assert {e["status"] for e in etats.values()} == {"REJETEE"}
+
+    resp = await app_client.post(f"/api/v1/dossiers/{dossier_id}/rouvrir", headers=headers)
+    assert resp.status_code == 400, resp.text
+    assert "48 h" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_dossier_rouvert_non_resoumis_dans_le_delai_est_clos(
+    app_client: AsyncClient, admin_access_token: str, test_organisation, db_session
+):
+    headers = {"Authorization": f"Bearer {admin_access_token}"}
+    dossier_id, _ids = await _dossier_rejete(app_client, headers, db_session, test_organisation.id)
+    resp = await app_client.post(f"/api/v1/dossiers/{dossier_id}/rouvrir", headers=headers)
+    assert resp.status_code == 200, resp.text
+    await _vieillir_rejet(db_session, dossier_id)
+
+    resp = await app_client.post(f"/api/v1/dossiers/{dossier_id}/submit-examen", headers=headers)
+    assert resp.status_code == 400, resp.text
+    assert "ne peut plus être soumis" in resp.json()["detail"]
+
+    # La liste des dossiers constate aussi l'échéance.
+    resp = await app_client.get("/api/v1/dossiers", params={"limit": 200}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    par_id = {d["id"]: d for d in resp.json()}
+    assert par_id[dossier_id]["status"] == "REJET_ACCEPTE"
