@@ -755,7 +755,8 @@ export type ListePresencePersonne = {
 /**
  * Liste de présence à faire remplir en séance, imprimée depuis le brouillon du
  * remboursement de transport. Les lignes sont vierges : chaque présent y écrit
- * lui-même son nom, son post-nom, son prénom et sa qualité, puis signe. Il y a
+ * lui-même son nom, son post-nom et son prénom dans une même cellule, indique
+ * sa qualité, puis signe. Il y a
  * une ligne par participant prévu, plus des lignes de réserve. La liste se
  * clôt par le décompte et la signature du secrétaire et du président de séance.
  * Une fois signée, elle sert à cocher les présences dans le brouillon : seuls
@@ -840,22 +841,20 @@ export const generateListePresencePDF = async (
   // Tableau d'émargement vierge : une ligne haute par présent, la place
   // d'écrire à la main et de signer. Au moins 15 lignes, pour remplir la page.
   const nbLignes = Math.max(personnes.length + lignesVierges, 15)
-  const body = Array.from({ length: nbLignes }, (_, i) => [String(i + 1), '', '', '', '', ''])
+  const body = Array.from({ length: nbLignes }, (_, i) => [String(i + 1), '', '', ''])
 
   autoTable(doc, {
     startY: (doc as any).lastAutoTable.finalY + 5,
     theme: 'grid',
-    head: [['N°', 'Nom', 'Post-nom', 'Prénom', 'Qualité / Fonction', 'Signature']],
+    head: [['N°', 'Nom, post-nom et prénom', 'Qualité / Fonction', 'Signature']],
     body,
     styles: { font: 'times', fontSize: 9.5, cellPadding: 1.8, lineColor: [150, 155, 150], lineWidth: 0.2, textColor: 20, valign: 'middle', minCellHeight: 10 },
     headStyles: { fillColor: ACCENT, textColor: 255, fontStyle: 'bold', fontSize: 9.5, minCellHeight: 8, halign: 'center' },
     columnStyles: {
       0: { cellWidth: 9, halign: 'center', textColor: 90 },
-      1: { cellWidth: 33 },
-      2: { cellWidth: 33 },
-      3: { cellWidth: 30 },
-      4: { cellWidth: 34 },
-      5: { cellWidth: 'auto' },
+      1: { cellWidth: 85 },
+      2: { cellWidth: 48 },
+      3: { cellWidth: 'auto' },
     },
     margin: { left: margin, right: margin, bottom: 16 },
   })
