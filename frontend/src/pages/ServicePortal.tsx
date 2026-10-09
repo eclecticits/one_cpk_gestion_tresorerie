@@ -124,6 +124,22 @@ type TransportDossier = {
 
 const REJECTION_ALERT_WINDOW_MS = 48 * 60 * 60 * 1000
 
+const toInputDate = (date: Date) => {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+// Période par défaut : du même jour le mois précédent jusqu'à aujourd'hui.
+const defaultDateRange = () => {
+  const today = new Date()
+  const start = new Date(today)
+  start.setMonth(start.getMonth() - 1)
+  // 31 mars → « 31 février » déborde en mars : on se cale sur le dernier jour du mois visé.
+  if (start.getDate() !== today.getDate()) start.setDate(0)
+  return { debut: toInputDate(start), fin: toInputDate(today) }
+}
+
 type BudgetLine = {
   id: number
   code: string
@@ -174,8 +190,8 @@ export default function ServicePortal() {
   const [searchQuery, setSearchQuery] = useState('')
   const [budgetSearch, setBudgetSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-  const [dateDebut, setDateDebut] = useState('')
-  const [dateFin, setDateFin] = useState('')
+  const [dateDebut, setDateDebut] = useState(() => defaultDateRange().debut)
+  const [dateFin, setDateFin] = useState(() => defaultDateRange().fin)
   const [sortField, setSortField] = useState<'date' | 'amount'>('date')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
   // Le bandeau de graphiques occupe ~180 px au-dessus du tableau de travail.
@@ -794,8 +810,9 @@ export default function ServicePortal() {
     setDocumentFilter('all')
     setSearchQuery('')
     setStatusFilter('')
-    setDateDebut('')
-    setDateFin('')
+    const { debut, fin } = defaultDateRange()
+    setDateDebut(debut)
+    setDateFin(fin)
     setSortField('date')
     setSortDirection('desc')
   }
