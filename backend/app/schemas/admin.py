@@ -248,6 +248,7 @@ class NotificationSettingsOut(BaseModel):
     emails_bureau_cc: str
     email_tresorier: str
     emails_bureau_sortie_cc: str
+    emails_paiement_cc: str = ""
     email_validation_1: str
     email_validation_final: str
     max_caisse_amount: int
@@ -270,6 +271,7 @@ class NotificationSettingsUpdateRequest(BaseModel):
     emails_bureau_cc: str | None = None
     email_tresorier: str | None = None
     emails_bureau_sortie_cc: str | None = None
+    emails_paiement_cc: str | None = None
     email_validation_1: str | None = None
     email_validation_final: str | None = None
     max_caisse_amount: int | None = None

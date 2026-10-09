@@ -264,6 +264,7 @@ def _notification_settings_out(ns: SystemSettings) -> dict:
         "emails_bureau_cc": ns.emails_bureau_cc,
         "email_tresorier": ns.email_tresorier,
         "emails_bureau_sortie_cc": ns.emails_bureau_sortie_cc,
+        "emails_paiement_cc": ns.emails_paiement_cc,
         "email_validation_1": ns.email_validation_1,
         "email_validation_final": ns.email_validation_final,
         "max_caisse_amount": ns.max_caisse_amount,
@@ -1229,6 +1230,8 @@ async def upsert_notification_settings(
         data["emails_bureau_cc"] = _normalize_email_list(data.get("emails_bureau_cc"))
     if "emails_bureau_sortie_cc" in data:
         data["emails_bureau_sortie_cc"] = _normalize_email_list(data.get("emails_bureau_sortie_cc"))
+    if "emails_paiement_cc" in data:
+        data["emails_paiement_cc"] = _normalize_email_list(data.get("emails_paiement_cc"))
     if "smtp_password" in data:
         smtp_host = data.get("smtp_host") or ns.smtp_host or "smtp.gmail.com"
         data["smtp_password"] = normalize_smtp_password(

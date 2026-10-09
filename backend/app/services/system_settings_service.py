@@ -46,6 +46,7 @@ async def consolidate_system_settings(db: AsyncSession, organisation_id: int) ->
         "emails_bureau_cc",
         "email_tresorier",
         "emails_bureau_sortie_cc",
+        "emails_paiement_cc",
         "email_validation_1",
         "email_validation_final",
         "smtp_password",

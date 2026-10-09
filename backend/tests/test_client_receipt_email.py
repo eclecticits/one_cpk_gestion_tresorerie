@@ -117,3 +117,38 @@ async def test_complement_annonce_le_versement_du_jour_et_salue_la_sec(monkeypat
 
 def test_montants_au_format_francais():
     assert module._fmt_usd(1250) == "1 250,00 $"
+
+
+@pytest.mark.asyncio
+async def test_copie_des_paiements_visible_et_sans_le_payeur(monkeypatch):
+    async def fake_settings(*_args, **_kwargs):
+        return SimpleNamespace(emails_paiement_cc="compta@onec.cd; CONTACT@beta.cd, tresorier@onec.cd")
+
+    monkeypatch.setattr(module, "get_system_settings", fake_settings)
+    monkeypatch.setattr(
+        module,
+        "resolve_smtp_config",
+        lambda _ns: SimpleNamespace(host="h", port=25, user="u", password="p", sender="s@x.cd"),
+    )
+    expert = SimpleNamespace(email="contact@beta.cd", nom_denomination="Beta", sexe="M", associe_gerant=None)
+    encaissement = SimpleNamespace(
+        id=uuid.uuid4(),
+        type_client="expert_comptable",
+        expert_comptable_id=uuid.uuid4(),
+        client_nom=None,
+        montant_total=Decimal("100"),
+        montant_paye=Decimal("100"),
+        numero_recu="REC-0200",
+        numero_proforma=None,
+        libelle="",
+        date_paiement=None,
+        date_encaissement=datetime(2026, 10, 1, tzinfo=timezone.utc),
+    )
+    tasks = BackgroundTasks()
+    await schedule_client_payment_email(_FakeDb(expert, "ONEC"), tasks, encaissement, 1)
+
+    kwargs = tasks.tasks[0].kwargs
+    assert kwargs["recipient"] == "contact@beta.cd"
+    # Le payeur n'est pas recopié en CC de son propre message.
+    assert kwargs["cc_emails"] == "compta@onec.cd, tresorier@onec.cd"
+

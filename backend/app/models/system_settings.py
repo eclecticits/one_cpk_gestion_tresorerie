@@ -33,6 +33,8 @@ class SystemSettings(Base):
     emails_bureau_cc: Mapped[str] = mapped_column(Text, nullable=False, default="")
     email_tresorier: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     emails_bureau_sortie_cc: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Copie visible (CC) des accusés de réception et relances envoyés au payeur.
+    emails_paiement_cc: Mapped[str] = mapped_column(Text, nullable=False, default="")
     email_validation_1: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     email_validation_final: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     max_caisse_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

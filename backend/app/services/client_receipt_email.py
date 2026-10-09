@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -63,6 +64,22 @@ def salutation_lignes(
         return ["Madame, Monsieur,"]
     civilite = {"M": "Monsieur ", "F": "Madame "}.get((sexe or "").strip().upper(), "")
     return [f"Bonjour {civilite}{nom},"]
+
+
+def _copie_paiement(ns: object, destinataire: str) -> str | None:
+    """Adresses en copie visible (CC) des emails de paiement, configurées dans
+    Paramètres > Notifications > Email ; sans le payeur ni doublon.
+
+    Copie visible : avec « Répondre à tous », la réponse du payeur leur parvient.
+    """
+    candidats = re.split(r"[,\n;]+", getattr(ns, "emails_paiement_cc", "") or "")
+    vus = {destinataire.lower()}
+    adresses: list[str] = []
+    for adresse in (a.strip() for a in candidats):
+        if adresse and adresse.lower() not in vus:
+            vus.add(adresse.lower())
+            adresses.append(adresse)
+    return ", ".join(adresses) or None
 
 
 def signature_ligne(organisation_name: str | None) -> str:
@@ -209,6 +226,7 @@ async def schedule_client_payment_email(
             smtp_password=smtp_cfg.password,
             sender=smtp_cfg.sender,
             recipient=email,
+            cc_emails=_copie_paiement(ns, email),
             subject=subject,
             title=title,
             body_lines=body_lines,

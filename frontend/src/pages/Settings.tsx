@@ -1132,6 +1132,7 @@ export default function Settings() {
         email_validation_final: normalizeEmail(payload.email_validation_final || ''),
         emails_bureau_cc: normalizeEmailList(payload.emails_bureau_cc || ''),
         emails_bureau_sortie_cc: normalizeEmailList(payload.emails_bureau_sortie_cc || ''),
+        emails_paiement_cc: normalizeEmailList(payload.emails_paiement_cc || ''),
         whatsapp_api_url: (payload.whatsapp_api_url || '').trim(),
         whatsapp_api_key: (payload.whatsapp_api_key || '').trim(),
         whatsapp_agents: normalizePhoneList(payload.whatsapp_agents || ''),
@@ -2412,6 +2413,35 @@ export default function Settings() {
                             />
                             <div id="notif-emails-sortie-cc-count" className={styles.mutedText} aria-live="polite">
                               {countCcEmails(notificationSettings.emails_bureau_sortie_cc || '')} adresse(s) détectée(s)
+                            </div>
+                          </div>
+                        </section>
+
+                        <section className={styles.notificationGroup} aria-labelledby="notif-group-paiements">
+                          <div className={styles.notificationGroupHead}>
+                            <h3 id="notif-group-paiements">Paiements reçus</h3>
+                            <p>
+                              Chaque paiement envoie un accusé de réception au payeur, relances de solde comprises.
+                              Les personnes en copie (CC) sont visibles du payeur et reçoivent sa réponse « à tous ».
+                            </p>
+                          </div>
+                          <div className={styles.field}>
+                            <label htmlFor="notif-emails-paiement-cc">Emails en copie des paiements (CC)</label>
+                            <textarea
+                              id="notif-emails-paiement-cc"
+                              rows={3}
+                              value={notificationSettings.emails_paiement_cc || ''}
+                              onChange={(e) =>
+                                setNotificationSettings({
+                                  ...notificationSettings,
+                                  emails_paiement_cc: e.target.value,
+                                })
+                              }
+                              placeholder="comptable@cpk.org, tresorier@cpk.org, ..."
+                              aria-describedby="notif-emails-paiement-cc-count"
+                            />
+                            <div id="notif-emails-paiement-cc-count" className={styles.mutedText} aria-live="polite">
+                              {countCcEmails(notificationSettings.emails_paiement_cc || '')} adresse(s) détectée(s)
                             </div>
                           </div>
                         </section>

@@ -77,6 +77,8 @@ export type NotificationSettings = {
   emails_bureau_cc: string
   email_tresorier: string
   emails_bureau_sortie_cc: string
+  // Copie visible (CC) des accusés de réception et relances envoyés au payeur.
+  emails_paiement_cc: string
   email_validation_1: string
   email_validation_final: string
   max_caisse_amount: number
