@@ -180,8 +180,13 @@
   border: 1px solid #e2e8f0;
   border-radius: 14px;
   background: #fff;
+  /* clip et non hidden : overflow: hidden fait du panneau un conteneur de
+     défilement, ce qui neutralisait le position: sticky de .actionBar (la barre
+     « collait » à un panneau qui ne défile pas). clip rogne les coins arrondis
+     sans créer de conteneur de défilement ; hidden reste en repli. */
   overflow: hidden;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  overflow: clip;
+  /* Plus d'ombre portée : la page n'a plus de cadre englobant, la bordure suffit. */
 }
 
 .panelHeader {
@@ -928,6 +933,23 @@
 
 @media (max-width: 1100px) {
   .templateBody { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 768px) {
+  /* Cibles tactiles : 44 px sous 768 px (--touch-target-min). */
+  /* :not(checkbox) : la case « effacer la clé » vit dans un .field. */
+  .field input:not([type="checkbox"]),
+  .field select,
+  .primaryButton,
+  .secondaryButton { min-height: var(--touch-target-min, 44px); }
+  .miniButton,
+  .miniPrimary,
+  .chip,
+  .chipActive,
+  .eventTab,
+  .eventTabActive { min-height: 36px; }
+  .chip,
+  .chipActive { display: inline-flex; align-items: center; }
 }
 
 @media (max-width: 720px) {

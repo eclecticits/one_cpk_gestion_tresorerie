@@ -1067,67 +1067,58 @@
   gap: 14px;
 }
 
-.notificationCard {
-  max-width: 1180px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-}
+/* ─── Paramètres > Notifications (Email, WhatsApp, Alertes et rapports) ───
+   Un seul en-tête compact par sous-onglet, puis des panneaux à bordure 1px :
+   pas d'ombre portée, la hiérarchie tient au poids des titres et aux fonds. */
 
-.notificationCard:hover {
-  box-shadow: none;
-}
-
-.notificationForm {
-  gap: 18px;
-}
-
-.notificationChannelPanel {
+.notificationPage {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 18px;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  background: #ffffff;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
-}
-
-.notificationChannelPanelWhatsApp {
-  border-color: #bbf7d0;
-  background: linear-gradient(180deg, #f8fffb 0%, #ffffff 72%);
-}
-
-.notificationChannelHeader {
-  display: flex;
-  align-items: flex-start;
   gap: 12px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid #eef2f7;
+  max-width: 1180px;
+  margin: 0 auto;
+  /* Même réserve que .formCard pour un éventuel scrollIntoView sous le bandeau. */
+  scroll-margin-top: 96px;
 }
 
-.notificationChannelHeader h3 {
+/* WhatsApp porte deux tableaux (destinataires, historique) : même largeur que .wideCard. */
+.notificationPageWide {
+  max-width: 1400px;
+}
+
+/* En-tête sur une seule ligne quand la place le permet : icône + titre + description.
+   ~32 px de haut, contre ~110 px pour l'ancien couple h2 de section + en-tête de panneau. */
+.notificationHeader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
+}
+
+.notificationHeader h2 {
   margin: 0;
-  padding: 0;
-  border: 0;
-  color: #0f172a;
   font-size: 17px;
   line-height: 1.25;
   font-weight: 800;
+  color: var(--color-title, #0f172a);
+  letter-spacing: -0.01em;
 }
 
-.notificationChannelHeader p {
-  margin: 4px 0 0;
-  color: #64748b;
-  font-size: 12px;
+/* flex-basis 260px : la description reste à droite du titre en desktop et passe
+   dessous dès qu'elle n'a plus 260 px, sans media query. */
+.notificationHeader p {
+  flex: 1 1 260px;
+  margin: 0;
+  font-size: 12.5px;
   line-height: 1.45;
+  color: var(--color-text-muted, #64748b);
 }
 
 .notificationChannelIcon {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1146,22 +1137,157 @@
   color: #047857;
 }
 
-.notificationSubBlock {
+.notificationPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* Variable locale : la barre d'actions collante s'en sert pour déborder
+     exactement sur ce padding, quel que soit le point de rupture. */
+  --notif-panel-pad: 14px;
+  padding: var(--notif-panel-pad);
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-md, 12px);
+  background: var(--color-surface, #ffffff);
+}
+
+/* Groupes de champs côte à côte : à 1366 px, la zone utile fait ~1000 px,
+   soit deux colonnes de ~490 px — assez pour une adresse email lisible. */
+.notificationGroups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+/* Alertes : le plafond n'a qu'un champ, la régularisation en a deux et un long texte. */
+.notificationGroupsCaisse {
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2.4fr);
+}
+
+.notificationGroup {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px;
-  border: 1px solid #eef2f7;
-  border-radius: 12px;
+  min-width: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
   background: #f8fafc;
 }
 
-.notificationSubBlock h4 {
+/* .field porte flex: 1 (pensé pour les lignes) : dans un groupe en colonne, il
+   étirerait les champs pour égaler la hauteur du groupe voisin de la rangée. */
+.notificationGroup > .field {
+  flex: 0 0 auto;
+}
+
+.notificationGroupHead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notificationGroupHead h3 {
   margin: 0;
-  color: #0f172a;
+  font-size: 13.5px;
+  line-height: 1.3;
+  font-weight: 800;
+  color: var(--color-title, #0f172a);
+}
+
+.notificationGroupHead p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  /* #64748b sur #f8fafc : 4.55:1, conforme AA. */
+  color: var(--color-text-muted, #64748b);
+}
+
+/* Hôte large, port étroit : un numéro de port n'a pas besoin de la moitié de la ligne. */
+.notificationSmtpRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 12px;
+}
+
+/* Barre d'actions du formulaire : collante en bas de .main (le conteneur qui
+   défile), pour que « Enregistrer » reste visible quand les groupes s'empilent. */
+.formActions.notificationActions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  /* Déborde sur le padding du panneau (calc négatif) pour que son fond couvre
+     toute la largeur et masque le contenu qui défile dessous. */
+  margin: 0 calc(-1 * var(--notif-panel-pad, 14px)) calc(-1 * var(--notif-panel-pad, 14px));
+  padding: 10px var(--notif-panel-pad, 14px);
+  border-top: 1px solid #e2e8f0;
+  border-radius: 0 0 var(--radius-md, 12px) var(--radius-md, 12px);
+  background: rgba(255, 255, 255, 0.97);
+}
+
+.formActions.notificationActions .primaryBtn,
+.formActions.notificationActions .secondaryBtn {
+  /* Annule le width: 100% posé sur .primaryBtn à 1024 px : la barre reste alignée à droite. */
+  width: auto;
+  min-height: 36px;
+  padding: 8px 18px;
+  font-size: 13.5px;
+}
+
+.notificationReports {
+  display: grid;
+  /* min(100%, 420px) : deux cartes côte à côte dès ~860 px, sans débordement sur mobile. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 12px;
+}
+
+.notificationReport {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.notificationReport h4 {
+  margin: 0;
   font-size: 13px;
   line-height: 1.3;
   font-weight: 800;
+  color: var(--color-title, #0f172a);
+}
+
+@media (max-width: 1100px) {
+  .notificationGroups,
+  .notificationGroupsCaisse {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .notificationPanel {
+    --notif-panel-pad: 12px;
+  }
+
+  .notificationGroup {
+    padding: 12px;
+  }
+
+  /* Cibles tactiles : 44 px sous 768 px (--touch-target-min). */
+  .notificationPanel .field input,
+  .notificationPanel .field select {
+    min-height: var(--touch-target-min, 44px);
+  }
+
+  /* Surcharge (spécificité 0,2,0) du .formActions { flex-direction: column } générique :
+     les deux boutons se partagent une ligne plutôt que d'empiler 100 px de barre. */
+  .formActions.notificationActions {
+    flex-direction: row;
+  }
+
+  .formActions.notificationActions .primaryBtn,
+  .formActions.notificationActions .secondaryBtn {
+    flex: 1 1 0;
+    min-height: var(--touch-target-min, 44px);
+  }
 }
 
 .field {
@@ -2027,22 +2153,6 @@
     padding: 16px;
   }
 
-  .notificationCard {
-    padding: 0;
-  }
-
-  .notificationChannelPanel {
-    padding: 14px;
-  }
-
-  .notificationChannelHeader {
-    gap: 10px;
-  }
-
-  .notificationSubBlock {
-    padding: 12px;
-  }
-
   .formCard h3 {
     font-size: 16px;
   }
@@ -2130,19 +2240,6 @@
 
   .formCard {
     padding: 12px;
-  }
-
-  .notificationCard {
-    padding: 0;
-  }
-
-  .notificationChannelPanel {
-    padding: 12px;
-    border-radius: 12px;
-  }
-
-  .notificationChannelHeader {
-    flex-direction: column;
   }
 
   .formCard h3 {

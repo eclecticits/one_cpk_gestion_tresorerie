@@ -181,7 +181,7 @@ const TREASURY_NAV: NavItem[] = [
         label: 'Finances & budget',
         permission: 'settings',
         icon: <CircleDollarSign size={16} />,
-        matchSearches: ['?tab=budget&sub=structure', '?tab=general&sub=devise', '?tab=general&sub=workflow'],
+        matchSearches: ['?tab=budget&sub=structure', '?tab=general&sub=devise', '?tab=general&sub=workflow', '?tab=general&sub=approbateurs'],
       },
       {
         path: '/settings?tab=general&sub=banques',
@@ -196,7 +196,7 @@ const TREASURY_NAV: NavItem[] = [
         label: 'Notifications',
         permission: 'settings',
         icon: <Send size={16} />,
-        matchSearches: ['?tab=general&sub=notifications', '?tab=general&sub=approbateurs'],
+        matchSearches: ['?tab=general&sub=notifications', '?tab=general&sub=whatsapp', '?tab=general&sub=alertes'],
       },
       {
         path: '/settings?tab=general&sub=projets',

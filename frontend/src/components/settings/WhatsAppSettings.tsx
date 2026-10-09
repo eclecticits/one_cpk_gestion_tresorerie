@@ -700,10 +700,10 @@ export default function WhatsAppSettings() {
 
       <section className={styles.panel} aria-label="Configuration du canal">
         <header className={styles.panelHeader}>
-          <h4 className={styles.panelTitle}>
+          <h3 className={styles.panelTitle}>
             <Settings2 size={15} aria-hidden="true" />
             Configuration du canal
-          </h4>
+          </h3>
           {configDirty && (
             <span className={styles.dirtyBadge}>
               <AlertTriangle size={12} aria-hidden="true" />
@@ -943,10 +943,10 @@ export default function WhatsAppSettings() {
 
       <section className={styles.panel} aria-label="Destinataires du Bureau">
         <header className={styles.panelHeader}>
-          <h4 className={styles.panelTitle}>
+          <h3 className={styles.panelTitle}>
             <Users size={15} aria-hidden="true" />
             Destinataires du Bureau
-          </h4>
+          </h3>
           <span className={styles.countPill}>{recipients.length} membre(s)</span>
         </header>
 
@@ -1101,10 +1101,10 @@ export default function WhatsAppSettings() {
 
       <section className={styles.panel} aria-label="Gabarits de message">
         <header className={styles.panelHeader}>
-          <h4 className={styles.panelTitle}>
+          <h3 className={styles.panelTitle}>
             <MessageSquareText size={15} aria-hidden="true" />
             Gabarits de message
-          </h4>
+          </h3>
           {changedTemplates.length > 0 && (
             <span className={styles.dirtyBadge}>
               <AlertTriangle size={12} aria-hidden="true" />
@@ -1241,10 +1241,10 @@ export default function WhatsAppSettings() {
 
       <section className={styles.panel} aria-label="Historique récent des envois">
         <header className={styles.panelHeader}>
-          <h4 className={styles.panelTitle}>
+          <h3 className={styles.panelTitle}>
             <History size={15} aria-hidden="true" />
             Historique récent
-          </h4>
+          </h3>
           <div className={styles.panelHeaderActions}>
             <div className={styles.filterChips} role="group" aria-label="Filtrer par statut">
               <button

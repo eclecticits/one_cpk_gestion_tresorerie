@@ -84,7 +84,7 @@ import ReportStatusCard from '../components/settings/ReportStatusCard'
 // Billing moved to Organisation Settings.
 
 type SettingsTab = 'general' | 'permissions' | 'services' | 'budget'
-type GeneralSubTab = 'identite' | 'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'logs' | 'encaissements' | 'devise' | 'banques' | 'projets' | 'comptabilite'
+type GeneralSubTab = 'identite' | 'impression' | 'workflow' | 'notifications' | 'whatsapp' | 'alertes' | 'approbateurs' | 'logs' | 'encaissements' | 'devise' | 'banques' | 'projets' | 'comptabilite'
 type ServicesSubTab = 'commissions' | 'membres' | 'admin' | 'budget'
 type PermissionsSubTab = 'users' | 'permissions'
 type BudgetSubTab = 'structure'
@@ -98,6 +98,8 @@ const SECTION_LABELS: Record<string, string> = {
   'general/impression': 'Modèles de documents',
   'general/workflow': 'Workflow budgétaire',
   'general/notifications': 'Notifications email',
+  'general/whatsapp': 'Notifications WhatsApp',
+  'general/alertes': 'Alertes et rapports',
   'general/approbateurs': 'Approbateurs de réquisitions',
   'general/encaissements': 'Rubriques d’encaissement',
   'general/devise': 'Devise et taux de change',
@@ -113,7 +115,7 @@ const SECTION_LABELS: Record<string, string> = {
   'services/budget': 'Postes budgétaires par unité',
   'budget/structure': 'Structure budgétaire',
 }
-const GENERAL_SUB_TABS = new Set<GeneralSubTab>(['identite', 'impression', 'workflow', 'notifications', 'approbateurs', 'logs', 'encaissements', 'devise', 'banques', 'projets', 'comptabilite'])
+const GENERAL_SUB_TABS = new Set<GeneralSubTab>(['identite', 'impression', 'workflow', 'notifications', 'whatsapp', 'alertes', 'approbateurs', 'logs', 'encaissements', 'devise', 'banques', 'projets', 'comptabilite'])
 const SERVICES_SUB_TABS = new Set<ServicesSubTab>(['commissions', 'membres', 'admin', 'budget'])
 const PERMISSIONS_SUB_TABS = new Set<PermissionsSubTab>(['users', 'permissions'])
 const BUDGET_SUB_TABS = new Set<BudgetSubTab>(['structure'])
@@ -1359,6 +1361,13 @@ export default function Settings() {
         onClick: () => switchGeneralSubTab('workflow'),
       },
       {
+        label: 'Approbateurs',
+        description: 'Validateurs de réquisitions',
+        icon: <ShieldCheck size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'approbateurs',
+        onClick: () => switchGeneralSubTab('approbateurs'),
+      },
+      {
         label: 'Postes par unité',
         description: 'Rubriques autorisées',
         icon: <ListChecks size={16} />,
@@ -1400,21 +1409,28 @@ export default function Settings() {
   const notificationsDomainNav = renderDomainNav(
     'Paramètres',
     'Notifications',
-    'Regroupez les canaux d’alerte et les acteurs de validation.',
+    'Un onglet par canal d’envoi, et les alertes automatiques à part.',
     [
       {
-        label: 'Notifications email',
-        description: 'SMTP, destinataires et rapports',
-        icon: <Send size={16} />,
+        label: 'Email',
+        description: 'SMTP et destinataires',
+        icon: <Mail size={16} />,
         active: activeTab === 'general' && generalSubTab === 'notifications',
         onClick: () => switchGeneralSubTab('notifications'),
       },
       {
-        label: 'Approbateurs',
-        description: 'Validateurs de réquisitions',
-        icon: <ShieldCheck size={16} />,
-        active: activeTab === 'general' && generalSubTab === 'approbateurs',
-        onClick: () => switchGeneralSubTab('approbateurs'),
+        label: 'WhatsApp',
+        description: 'Canal instantané du Bureau',
+        icon: <MessageCircle size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'whatsapp',
+        onClick: () => switchGeneralSubTab('whatsapp'),
+      },
+      {
+        label: 'Alertes et rapports',
+        description: 'Plafond, écarts, rapports',
+        icon: <Send size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'alertes',
+        onClick: () => switchGeneralSubTab('alertes'),
       },
     ],
   )
@@ -1459,11 +1475,11 @@ export default function Settings() {
   const currentGeneralDomainNav =
     generalSubTab === 'identite' || generalSubTab === 'impression'
       ? organizationDomainNav
-      : generalSubTab === 'devise' || generalSubTab === 'workflow'
+      : generalSubTab === 'devise' || generalSubTab === 'workflow' || generalSubTab === 'approbateurs'
         ? financeDomainNav
         : generalSubTab === 'banques' || generalSubTab === 'encaissements'
           ? treasuryDomainNav
-          : generalSubTab === 'notifications' || generalSubTab === 'approbateurs'
+          : generalSubTab === 'notifications' || generalSubTab === 'whatsapp' || generalSubTab === 'alertes'
             ? notificationsDomainNav
             : generalSubTab === 'projets' || generalSubTab === 'logs'
               ? referentialDomainNav
@@ -2273,41 +2289,38 @@ export default function Settings() {
                 </div>
               )}
 
+              {/* Notifications : un seul titre par sous-onglet. Le fil d'Ariane et l'onglet
+                  nomment déjà la section ; l'ancien couple « h2 de section + h3 d'en-tête de
+                  panneau » répétait deux fois le même libellé (~50 px de chrome en plus). */}
               {generalSubTab === 'notifications' && notificationSettings && (
                 <div className={styles.section}>
-                  <div className={styles.sectionHeader}>
-                    <h2>Notifications</h2>
-                  </div>
-                  <div className={`${styles.formCard} ${styles.notificationCard}`}>
-                    <form onSubmit={handleSaveNotificationSettings} className={`${styles.form} ${styles.notificationForm}`}>
-                      <div className={styles.notificationChannelPanel}>
-                        <div className={styles.notificationChannelHeader}>
-                          <span className={`${styles.notificationChannelIcon} ${styles.notificationChannelIconMail}`}>
-                            <Mail size={18} />
-                          </span>
-                          <div>
-                            <h3>Notifications email</h3>
-                            <p>Expéditeur, destinataires, workflow de validation et paramètres SMTP.</p>
-                          </div>
-                        </div>
+                  <form
+                    onSubmit={handleSaveNotificationSettings}
+                    className={styles.notificationPage}
+                    aria-labelledby="notif-email-title"
+                  >
+                    <header className={styles.notificationHeader}>
+                      <span
+                        className={`${styles.notificationChannelIcon} ${styles.notificationChannelIconMail}`}
+                        aria-hidden="true"
+                      >
+                        <Mail size={16} />
+                      </span>
+                      <h2 id="notif-email-title">Notifications email</h2>
+                      <p>Destinataires, circuit de validation, sorties de fonds et serveur d’envoi.</p>
+                    </header>
 
-                        <div className={styles.fieldRow}>
-                          {isSuperAdmin && (
-                            <div className={styles.field}>
-                              <label>Email expéditeur</label>
-                              <input
-                                type="email"
-                                value={notificationSettings.email_expediteur || ''}
-                                onChange={(e) =>
-                                  setNotificationSettings({ ...notificationSettings, email_expediteur: e.target.value })
-                                }
-                                placeholder="expediteur@gmail.com"
-                              />
-                            </div>
-                          )}
+                    <div className={styles.notificationPanel}>
+                      <div className={styles.notificationGroups}>
+                        <section className={styles.notificationGroup} aria-labelledby="notif-group-destinataires">
+                          <div className={styles.notificationGroupHead}>
+                            <h3 id="notif-group-destinataires">Destinataires</h3>
+                            <p>Reçoivent les notifications générales.</p>
+                          </div>
                           <div className={styles.field}>
-                            <label>Email du président</label>
+                            <label htmlFor="notif-email-president">Email du président</label>
                             <input
+                              id="notif-email-president"
                               type="email"
                               value={notificationSettings.email_president || ''}
                               onChange={(e) =>
@@ -2316,70 +2329,76 @@ export default function Settings() {
                               placeholder="president@cpk.org"
                             />
                           </div>
-                        </div>
-
-                        <div className={styles.field}>
-                          <label>Emails du bureau (CC)</label>
-                          <textarea
-                            rows={3}
-                            value={notificationSettings.emails_bureau_cc || ''}
-                            onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, emails_bureau_cc: e.target.value })
-                            }
-                            placeholder="membre1@cpk.org, membre2@cpk.org, ..."
-                          />
-                          <div className={styles.mutedText}>
-                            {countCcEmails(notificationSettings.emails_bureau_cc || '')} adresse(s) détectée(s)
-                          </div>
-                        </div>
-
-                        <div className={styles.notificationSubBlock}>
-                          <h4>Workflow de validation</h4>
-                          <div className={styles.fieldRow}>
-                            <div className={styles.field}>
-                              <label>Email rapporteur (validation 1)</label>
-                              <input
-                                type="email"
-                                value={notificationSettings.email_validation_1 || ''}
-                                onChange={(e) =>
-                                  setNotificationSettings({ ...notificationSettings, email_validation_1: e.target.value })
-                                }
-                                placeholder="rapporteur@cpk.org"
-                              />
-                            </div>
-                            <div className={styles.field}>
-                              <label>Email président (validation finale)</label>
-                              <input
-                                type="email"
-                                value={notificationSettings.email_validation_final || ''}
-                                onChange={(e) =>
-                                  setNotificationSettings({ ...notificationSettings, email_validation_final: e.target.value })
-                                }
-                                placeholder="president@cpk.org"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className={styles.notificationSubBlock}>
-                          <h4>Sorties de fonds</h4>
-                          <div className={styles.fieldRow}>
-                            <div className={styles.field}>
-                              <label>Email du trésorier</label>
-                              <input
-                                type="email"
-                                value={notificationSettings.email_tresorier || ''}
-                                onChange={(e) =>
-                                  setNotificationSettings({ ...notificationSettings, email_tresorier: e.target.value })
-                                }
-                                placeholder="tresorier@cpk.org"
-                              />
-                            </div>
-                          </div>
-
                           <div className={styles.field}>
-                            <label>Emails du bureau (CC) pour les sorties</label>
+                            <label htmlFor="notif-emails-bureau-cc">Emails du bureau (CC)</label>
                             <textarea
+                              id="notif-emails-bureau-cc"
+                              rows={3}
+                              value={notificationSettings.emails_bureau_cc || ''}
+                              onChange={(e) =>
+                                setNotificationSettings({ ...notificationSettings, emails_bureau_cc: e.target.value })
+                              }
+                              placeholder="membre1@cpk.org, membre2@cpk.org, ..."
+                              aria-describedby="notif-emails-bureau-cc-count"
+                            />
+                            <div id="notif-emails-bureau-cc-count" className={styles.mutedText} aria-live="polite">
+                              {countCcEmails(notificationSettings.emails_bureau_cc || '')} adresse(s) détectée(s)
+                            </div>
+                          </div>
+                        </section>
+
+                        <section className={styles.notificationGroup} aria-labelledby="notif-group-workflow">
+                          <div className={styles.notificationGroupHead}>
+                            <h3 id="notif-group-workflow">Workflow de validation</h3>
+                            <p>Une adresse par étape de validation.</p>
+                          </div>
+                          <div className={styles.field}>
+                            <label htmlFor="notif-email-validation-1">Email rapporteur (validation 1)</label>
+                            <input
+                              id="notif-email-validation-1"
+                              type="email"
+                              value={notificationSettings.email_validation_1 || ''}
+                              onChange={(e) =>
+                                setNotificationSettings({ ...notificationSettings, email_validation_1: e.target.value })
+                              }
+                              placeholder="rapporteur@cpk.org"
+                            />
+                          </div>
+                          <div className={styles.field}>
+                            <label htmlFor="notif-email-validation-final">Email président (validation finale)</label>
+                            <input
+                              id="notif-email-validation-final"
+                              type="email"
+                              value={notificationSettings.email_validation_final || ''}
+                              onChange={(e) =>
+                                setNotificationSettings({ ...notificationSettings, email_validation_final: e.target.value })
+                              }
+                              placeholder="president@cpk.org"
+                            />
+                          </div>
+                        </section>
+
+                        <section className={styles.notificationGroup} aria-labelledby="notif-group-sorties">
+                          <div className={styles.notificationGroupHead}>
+                            <h3 id="notif-group-sorties">Sorties de fonds</h3>
+                            <p>Notifiés lors des sorties de fonds.</p>
+                          </div>
+                          <div className={styles.field}>
+                            <label htmlFor="notif-email-tresorier">Email du trésorier</label>
+                            <input
+                              id="notif-email-tresorier"
+                              type="email"
+                              value={notificationSettings.email_tresorier || ''}
+                              onChange={(e) =>
+                                setNotificationSettings({ ...notificationSettings, email_tresorier: e.target.value })
+                              }
+                              placeholder="tresorier@cpk.org"
+                            />
+                          </div>
+                          <div className={styles.field}>
+                            <label htmlFor="notif-emails-sortie-cc">Emails du bureau (CC) pour les sorties</label>
+                            <textarea
+                              id="notif-emails-sortie-cc"
                               rows={3}
                               value={notificationSettings.emails_bureau_sortie_cc || ''}
                               onChange={(e) =>
@@ -2389,35 +2408,54 @@ export default function Settings() {
                                 })
                               }
                               placeholder="membre1@cpk.org, membre2@cpk.org, ..."
+                              aria-describedby="notif-emails-sortie-cc-count"
                             />
-                            <div className={styles.mutedText}>
+                            <div id="notif-emails-sortie-cc-count" className={styles.mutedText} aria-live="polite">
                               {countCcEmails(notificationSettings.emails_bureau_sortie_cc || '')} adresse(s) détectée(s)
                             </div>
                           </div>
-                        </div>
+                        </section>
 
                         {isSuperAdmin && (
-                          <div className={styles.notificationSubBlock}>
-                            <h4>Serveur SMTP</h4>
+                          <section className={styles.notificationGroup} aria-labelledby="notif-group-smtp">
+                            <div className={styles.notificationGroupHead}>
+                              <h3 id="notif-group-smtp">Expéditeur et serveur SMTP</h3>
+                              <p>Compte qui envoie les emails. Réservé au super-administrateur.</p>
+                            </div>
                             <div className={styles.field}>
-                              <label>Mot de passe SMTP (Gmail)</label>
+                              <label htmlFor="notif-email-expediteur">Email expéditeur</label>
                               <input
+                                id="notif-email-expediteur"
+                                type="email"
+                                value={notificationSettings.email_expediteur || ''}
+                                onChange={(e) =>
+                                  setNotificationSettings({ ...notificationSettings, email_expediteur: e.target.value })
+                                }
+                                placeholder="expediteur@gmail.com"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label htmlFor="notif-smtp-password">Mot de passe SMTP (Gmail)</label>
+                              <input
+                                id="notif-smtp-password"
                                 type="password"
+                                autoComplete="new-password"
                                 value={notificationSettings.smtp_password || ''}
                                 onChange={(e) =>
                                   setNotificationSettings({ ...notificationSettings, smtp_password: e.target.value })
                                 }
                                 placeholder="Saisissez votre mot de passe ici"
+                                aria-describedby="notif-smtp-password-hint"
                               />
-                              <div className={styles.mutedText}>
+                              <div id="notif-smtp-password-hint" className={styles.mutedText}>
                                 Si l’envoi échoue, activez la validation en deux étapes et utilisez le code à 16 caractères.
                               </div>
                             </div>
-
-                            <div className={styles.fieldRow}>
+                            <div className={styles.notificationSmtpRow}>
                               <div className={styles.field}>
-                                <label>SMTP host</label>
+                                <label htmlFor="notif-smtp-host">SMTP host</label>
                                 <input
+                                  id="notif-smtp-host"
                                   type="text"
                                   value={notificationSettings.smtp_host || 'smtp.gmail.com'}
                                   onChange={(e) =>
@@ -2426,8 +2464,9 @@ export default function Settings() {
                                 />
                               </div>
                               <div className={styles.field}>
-                                <label>SMTP port</label>
+                                <label htmlFor="notif-smtp-port">SMTP port</label>
                                 <input
+                                  id="notif-smtp-port"
                                   type="number"
                                   value={notificationSettings.smtp_port || 465}
                                   onChange={(e) =>
@@ -2439,71 +2478,116 @@ export default function Settings() {
                                 />
                               </div>
                             </div>
-                          </div>
+                          </section>
                         )}
                       </div>
 
-                      <div className={`${styles.notificationChannelPanel} ${styles.notificationChannelPanelWhatsApp}`}>
-                        <div className={styles.notificationChannelHeader}>
-                          <span className={`${styles.notificationChannelIcon} ${styles.notificationChannelIconWhatsApp}`}>
-                            <MessageCircle size={18} />
-                          </span>
-                          <div>
-                            <h3>Notifications WhatsApp</h3>
-                            <p>Canal instantané, destinataires du Bureau, gabarits et historique des envois.</p>
-                          </div>
-                        </div>
-                        {/* Écran complet du canal WhatsApp : état du service, configuration,
-                            destinataires du Bureau, gabarits et historique des envois.
-                            Il consomme /api/v1/whatsapp et gère ses propres permissions
-                            (treso.notifications.read | .update | .history | .test). */}
-                        <WhatsAppSettings />
+                      <div className={`${styles.formActions} ${styles.notificationActions}`}>
+                        {isSuperAdmin && (
+                          <button type="button" className={styles.secondaryBtn} onClick={handleTestNotificationSettings} disabled={testingNotificationSettings}>
+                            {testingNotificationSettings ? 'Test...' : 'Tester la connexion'}
+                          </button>
+                        )}
+                        <button type="submit" className={styles.primaryBtn} disabled={savingNotificationSettings}>
+                          {savingNotificationSettings ? 'Sauvegarde...' : 'Enregistrer'}
+                        </button>
                       </div>
+                    </div>
+                  </form>
+                </div>
+              )}
 
-                      <div className={styles.notificationChannelPanel}>
-                        <div className={styles.notificationChannelHeader}>
-                          <span className={styles.notificationChannelIcon}>
-                            <Send size={18} />
-                          </span>
-                          <div>
-                            <h3>Alertes et automatisations</h3>
-                            <p>Seuil de caisse, régularisation des écarts et rapport hebdomadaire.</p>
+              {generalSubTab === 'whatsapp' && (
+                <div className={styles.section}>
+                  {/* Plus de panneau englobant : WhatsAppSettings porte déjà ses propres
+                      panneaux bordés, l'enveloppe ajoutait un cadre dans le cadre
+                      (18 px de marge intérieure de chaque côté). */}
+                  <div
+                    className={`${styles.notificationPage} ${styles.notificationPageWide}`}
+                    role="region"
+                    aria-labelledby="notif-whatsapp-title"
+                  >
+                    <header className={styles.notificationHeader}>
+                      <span
+                        className={`${styles.notificationChannelIcon} ${styles.notificationChannelIconWhatsApp}`}
+                        aria-hidden="true"
+                      >
+                        <MessageCircle size={16} />
+                      </span>
+                      <h2 id="notif-whatsapp-title">Notifications WhatsApp</h2>
+                      <p>Canal instantané, destinataires du Bureau, gabarits et historique des envois.</p>
+                    </header>
+                    {/* Écran complet du canal WhatsApp : état du service, configuration,
+                        destinataires du Bureau, gabarits et historique des envois.
+                        Il consomme /api/v1/whatsapp et gère ses propres permissions
+                        (treso.notifications.read | .update | .history | .test). */}
+                    <WhatsAppSettings />
+                  </div>
+                </div>
+              )}
+
+              {generalSubTab === 'alertes' && notificationSettings && (
+                <div className={styles.section}>
+                  <div className={styles.notificationPage} role="region" aria-labelledby="notif-alertes-title">
+                    <header className={styles.notificationHeader}>
+                      <span className={styles.notificationChannelIcon} aria-hidden="true">
+                        <Send size={16} />
+                      </span>
+                      <h2 id="notif-alertes-title">Alertes et rapports</h2>
+                      <p>Seuil de caisse, régularisation des écarts et rapports envoyés automatiquement.</p>
+                    </header>
+
+                    {/* Le formulaire ne couvre que ce qu'« Enregistrer » sauvegarde : les cartes
+                        de rapport, qui ont leurs propres boutons à effet immédiat, vivent dans
+                        le panneau suivant pour ne pas laisser croire qu'elles en dépendent. */}
+                    <form
+                      onSubmit={handleSaveNotificationSettings}
+                      className={styles.notificationPanel}
+                      aria-label="Plafond et régularisation de caisse"
+                    >
+                      <div className={`${styles.notificationGroups} ${styles.notificationGroupsCaisse}`}>
+                        <section className={styles.notificationGroup} aria-labelledby="notif-group-plafond">
+                          <div className={styles.notificationGroupHead}>
+                            <h3 id="notif-group-plafond">Plafond de caisse</h3>
                           </div>
-                        </div>
-
-                        <div className={styles.field}>
-                          <label>Plafond caisse (alerte)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            value={notificationSettings.max_caisse_amount || 0}
-                            onChange={(e) =>
-                              setNotificationSettings({
-                                ...notificationSettings,
-                                max_caisse_amount: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                          <div className={styles.mutedText}>
-                            Une alerte sera affichée si le solde actuel dépasse ce montant.
+                          <div className={styles.field}>
+                            <label htmlFor="notif-max-caisse">Plafond caisse (alerte)</label>
+                            <input
+                              id="notif-max-caisse"
+                              type="number"
+                              min="0"
+                              value={notificationSettings.max_caisse_amount || 0}
+                              onChange={(e) =>
+                                setNotificationSettings({
+                                  ...notificationSettings,
+                                  max_caisse_amount: Number(e.target.value),
+                                })
+                              }
+                              placeholder="0"
+                              aria-describedby="notif-max-caisse-hint"
+                            />
+                            <div id="notif-max-caisse-hint" className={styles.mutedText}>
+                              Une alerte sera affichée si le solde actuel dépasse ce montant.
+                            </div>
                           </div>
-                        </div>
+                        </section>
 
-                        <div className={styles.notificationSubBlock}>
-                          <h4>Régularisation des écarts de caisse</h4>
-                          <div className={styles.mutedText} style={{ marginBottom: 12 }}>
-                            Un comptage physique ne remplace jamais le solde du logiciel : l’écart
-                            constaté donne lieu à une opération identifiable — un encaissement s’il y a
-                            excédent, une sortie s’il y a déficit. Ces deux postes reçoivent
-                            l’imputation budgétaire correspondante. Sans eux, un écart ne peut pas être
-                            régularisé (l’ouverture et la clôture restent possibles).
+                        <section className={styles.notificationGroup} aria-labelledby="notif-group-ecarts">
+                          <div className={styles.notificationGroupHead}>
+                            <h3 id="notif-group-ecarts">Régularisation des écarts de caisse</h3>
+                            <p id="notif-group-ecarts-desc">
+                              Un comptage physique ne remplace jamais le solde du logiciel : l’écart
+                              constaté donne lieu à une opération identifiable — un encaissement s’il y a
+                              excédent, une sortie s’il y a déficit. Ces deux postes reçoivent
+                              l’imputation budgétaire correspondante. Sans eux, un écart ne peut pas être
+                              régularisé (l’ouverture et la clôture restent possibles).
+                            </p>
                           </div>
-
                           <div className={styles.fieldRow}>
                             <div className={styles.field}>
-                              <label>Poste d’excédent de caisse (recette)</label>
+                              <label htmlFor="notif-poste-excedent">Poste d’excédent de caisse (recette)</label>
                               <select
+                                id="notif-poste-excedent"
                                 value={notificationSettings.budget_poste_excedent_caisse_id ?? ''}
                                 onChange={(e) =>
                                   setNotificationSettings({
@@ -2511,6 +2595,7 @@ export default function Settings() {
                                     budget_poste_excedent_caisse_id: e.target.value ? Number(e.target.value) : null,
                                   })
                                 }
+                                aria-describedby="notif-group-ecarts-desc"
                               >
                                 <option value="">— Non configuré —</option>
                                 {postesRecette.map((p) => (
@@ -2519,8 +2604,9 @@ export default function Settings() {
                               </select>
                             </div>
                             <div className={styles.field}>
-                              <label>Poste de déficit de caisse (dépense)</label>
+                              <label htmlFor="notif-poste-deficit">Poste de déficit de caisse (dépense)</label>
                               <select
+                                id="notif-poste-deficit"
                                 value={notificationSettings.budget_poste_deficit_caisse_id ?? ''}
                                 onChange={(e) =>
                                   setNotificationSettings({
@@ -2528,6 +2614,7 @@ export default function Settings() {
                                     budget_poste_deficit_caisse_id: e.target.value ? Number(e.target.value) : null,
                                   })
                                 }
+                                aria-describedby="notif-group-ecarts-desc"
                               >
                                 <option value="">— Non configuré —</option>
                                 {postesDepense.map((p) => (
@@ -2536,9 +2623,23 @@ export default function Settings() {
                               </select>
                             </div>
                           </div>
-                        </div>
+                        </section>
+                      </div>
 
-                        <div className={styles.notificationSubBlock}>
+                      <div className={`${styles.formActions} ${styles.notificationActions}`}>
+                        <button type="submit" className={styles.primaryBtn} disabled={savingNotificationSettings}>
+                          {savingNotificationSettings ? 'Sauvegarde...' : 'Enregistrer'}
+                        </button>
+                      </div>
+                    </form>
+
+                    <section className={styles.notificationPanel} aria-labelledby="notif-rapports-title">
+                      <div className={styles.notificationGroupHead}>
+                        <h3 id="notif-rapports-title">Rapports planifiés</h3>
+                        <p>Leurs boutons agissent immédiatement ; « Enregistrer » ne les concerne pas.</p>
+                      </div>
+                      <div className={styles.notificationReports}>
+                        <div className={styles.notificationReport}>
                           <h4>Rapport hebdomadaire (lundi matin)</h4>
                           <ReportStatusCard
                             status={weeklyStatus}
@@ -2547,14 +2648,14 @@ export default function Settings() {
                             onRefresh={loadWeeklyStatus}
                             onRun={handleRunWeeklyReportNow}
                             hint={<>
-                              L’envoi utilise les paramètres SMTP ci-dessus. Destinataire : l’e-mail du président,
+                              L’envoi utilise le serveur SMTP de l’onglet Notifications email. Destinataire : l’e-mail du président,
                               à défaut celui du trésorier (sauf si <code className={styles.inlineCode}>WEEKLY_REPORT_TO</code>{' '}
                               est défini sur le serveur).
                             </>}
                           />
                         </div>
 
-                        <div className={styles.notificationSubBlock}>
+                        <div className={styles.notificationReport}>
                           <h4>Rapport mensuel (1er du mois)</h4>
                           <ReportStatusCard
                             status={monthlyStatus}
@@ -2568,18 +2669,7 @@ export default function Settings() {
                           />
                         </div>
                       </div>
-
-                      <div className={styles.formActions}>
-                        {isSuperAdmin && (
-                          <button type="button" className={styles.secondaryBtn} onClick={handleTestNotificationSettings} disabled={testingNotificationSettings}>
-                            {testingNotificationSettings ? 'Test...' : 'Tester la connexion'}
-                          </button>
-                        )}
-                        <button type="submit" className={styles.primaryBtn} disabled={savingNotificationSettings}>
-                          {savingNotificationSettings ? 'Sauvegarde...' : 'Enregistrer'}
-                        </button>
-                      </div>
-                    </form>
+                    </section>
                   </div>
                 </div>
               )}
