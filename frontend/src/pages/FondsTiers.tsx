@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { RefreshCw } from 'lucide-react'
+import { FileSpreadsheet, FileText, RefreshCw } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import {
   FONDS_TIERS_STATUT_LABELS,
@@ -9,8 +9,35 @@ import {
   type FondsTiersOperation,
 } from '../api/mouvementsHorsBudget'
 import { toNumber } from '../utils/amount'
+import {
+  createReportListSheet,
+  jourExcel,
+  telechargerClasseur,
+} from '../utils/reportExcelStyles'
+import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import styles from './FondsTiers.module.css'
+
+type XlsxModule = typeof import('xlsx')
+let xlsxModulePromise: Promise<XlsxModule> | null = null
+async function loadXlsxModule(): Promise<XlsxModule> {
+  if (!xlsxModulePromise) {
+    xlsxModulePromise = import('xlsx').then((importedModule) => {
+      const compatibleModule = importedModule as XlsxModule & { default?: XlsxModule }
+      return compatibleModule.utils ? compatibleModule : compatibleModule.default || compatibleModule
+    })
+  }
+  return xlsxModulePromise
+}
+
+type PdfGeneratorReportsModule = typeof import('../utils/pdfGeneratorReports')
+let pdfGeneratorReportsModulePromise: Promise<PdfGeneratorReportsModule> | null = null
+function loadPdfGeneratorReportsModule(): Promise<PdfGeneratorReportsModule> {
+  if (!pdfGeneratorReportsModulePromise) {
+    pdfGeneratorReportsModulePromise = import('../utils/pdfGeneratorReports')
+  }
+  return pdfGeneratorReportsModulePromise
+}
 
 /**
  * Argent détenu pour le compte d'autrui.
@@ -28,6 +55,23 @@ const formatMontant = (valeur: unknown, devise: string) =>
 
 type FiltreStatut = 'A_REVERSER' | 'TOUS' | FondsTiersOperation['statut']
 
+const FILTRES: [FiltreStatut, string][] = [
+  ['A_REVERSER', 'À reverser'],
+  ['REGULARISE', 'Soldés'],
+  ['ANNULE', 'Annulés'],
+  ['TOUS', 'Tous'],
+]
+
+const typeTiersLabel = (type: FondsTiersOperation['tiers_type']) =>
+  type === 'ORGANISATION' ? 'Tenant ONEC' : type === 'EXTERNE' ? 'Tiers externe' : 'Historique'
+
+const dateFichier = () => {
+  const date = new Date()
+  const mois = String(date.getMonth() + 1).padStart(2, '0')
+  const jour = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${mois}-${jour}`
+}
+
 const estAReverser = (op: FondsTiersOperation) =>
   (op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE') && fondsTiersDisponible(op) > 0
 
@@ -35,12 +79,15 @@ export default function FondsTiers() {
   const [operations, setOperations] = useState<FondsTiersOperation[]>([])
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState<string | null>(null)
+  const [exportErreur, setExportErreur] = useState<string | null>(null)
+  const [exportEnCours, setExportEnCours] = useState<'pdf' | 'excel' | null>(null)
   const [filtre, setFiltre] = useState<FiltreStatut>('A_REVERSER')
   // Fonds cochés pour un versement groupé. Le versement passe par une
   // réquisition « Fonds de tiers » qui les nomme ; c'est elle qui désigne
   // l'instance destinataire, pas forcément celle pour qui l'argent a été reçu.
   const [selection, setSelection] = useState<Set<string>>(() => new Set())
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { hasPermission } = usePermissions()
   const peutVerser = hasPermission('requisitions') || hasPermission('services')
 
@@ -116,6 +163,116 @@ export default function FondsTiers() {
     return Array.from(cumul.entries())
   }, [operations])
 
+  const filtreLabel = FILTRES.find(([valeur]) => valeur === filtre)?.[1] || filtre
+  const suffixeExport = `${filtre.toLowerCase()}_${dateFichier()}`
+
+  const exporterExcel = async () => {
+    if (exportEnCours || visibles.length === 0) return
+    setExportEnCours('excel')
+    setExportErreur(null)
+    try {
+      const XLSX = await loadXlsxModule()
+      const organisation = user?.organisation_name || user?.organisation_slug || 'ONEC'
+      const genereLe = new Intl.DateTimeFormat('fr-FR', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+      }).format(new Date())
+      const rows = visibles.map((op) => [
+        op.tiers_display_name,
+        typeTiersLabel(op.tiers_type),
+        op.beneficiaire_reel || '—',
+        op.payeur_origine || '—',
+        op.motif || '—',
+        op.reference || '—',
+        toNumber(op.montant_recu),
+        op.devise,
+        toNumber(op.montant_rembourse),
+        toNumber(op.montant_reserve),
+        toNumber(op.solde_restant),
+        FONDS_TIERS_STATUT_LABELS[op.statut],
+        jourExcel(op.created_at),
+      ])
+      // Comme le bandeau de l'écran : seuls les dossiers ouverts restent à
+      // reverser (un dossier annulé garde un solde égal au montant reçu).
+      const soldesExportes = new Map<string, number>()
+      visibles
+        .filter((op) => op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE')
+        .forEach((op) => {
+          soldesExportes.set(
+            op.devise,
+            (soldesExportes.get(op.devise) || 0) + toNumber(op.solde_restant),
+          )
+        })
+      const sheet = createReportListSheet(XLSX, {
+        title: 'ÉTAT DES FONDS DE TIERS',
+        organisation,
+        subtitle: `Filtre : ${filtreLabel} | Généré le ${genereLe}`,
+        headers: [
+          'Tiers',
+          'Type de tiers',
+          'Bénéficiaire réel',
+          "Payeur d'origine",
+          'Motif',
+          'Référence',
+          'Reçu',
+          'Devise',
+          'Reversé',
+          'Réservé',
+          'Reste',
+          'Statut',
+          'Reçu le',
+        ],
+        rows,
+        widths: [30, 18, 28, 28, 34, 20, 16, 10, 16, 16, 16, 24, 14],
+        moneyColumns: [6, 8, 9, 10],
+        wrapColumns: [0, 2, 3, 4],
+        centerColumns: [1, 7, 11],
+        dateColumns: [12],
+        summaryCards: [
+          { label: 'Dossiers exportés', value: visibles.length, format: 'integer', tone: 'accent' },
+          ...Array.from(soldesExportes.entries()).map(([devise, total]) => ({
+            label: `Reste à reverser (${devise})`,
+            value: total,
+            format: 'money' as const,
+            tone: total > 0 ? ('warning' as const) : ('positive' as const),
+          })),
+        ],
+      })
+      const workbook = XLSX.utils.book_new()
+      workbook.Props = {
+        Title: 'État des fonds de tiers',
+        Subject: `Filtre : ${filtreLabel}`,
+        Author: organisation,
+        Company: organisation,
+      }
+      XLSX.utils.book_append_sheet(workbook, sheet, 'Fonds de tiers')
+      telechargerClasseur(XLSX, workbook, `fonds_tiers_${suffixeExport}.xlsx`)
+    } catch (error) {
+      console.error("Erreur lors de l'export Excel des fonds de tiers :", error)
+      setExportErreur("Impossible de générer l'export Excel des fonds de tiers.")
+    } finally {
+      setExportEnCours(null)
+    }
+  }
+
+  const exporterPDF = async () => {
+    if (exportEnCours || visibles.length === 0) return
+    setExportEnCours('pdf')
+    setExportErreur(null)
+    try {
+      const { generateFondsTiersReportPDF } = await loadPdfGeneratorReportsModule()
+      await generateFondsTiersReportPDF(visibles, {
+        filters: [{ label: 'Statut', value: filtreLabel }],
+        fileName: `fonds_tiers_${suffixeExport}.pdf`,
+      })
+    } catch (error) {
+      console.error("Erreur lors de l'export PDF des fonds de tiers :", error)
+      setExportErreur("Impossible de générer l'export PDF des fonds de tiers.")
+    } finally {
+      setExportEnCours(null)
+    }
+  }
+
   return (
     <div className={styles.page}>
       <PageHeader
@@ -126,6 +283,26 @@ export default function FondsTiers() {
             <Link to="/sorties-fonds/nouvelle" className={styles.primaryLink}>
               Reverser des fonds
             </Link>
+            <button
+              type="button"
+              className={styles.exportBtn}
+              onClick={exporterPDF}
+              disabled={chargement || visibles.length === 0 || exportEnCours !== null}
+              title="Exporter la liste affichée au format PDF"
+            >
+              <FileText size={16} aria-hidden="true" />
+              {exportEnCours === 'pdf' ? 'PDF…' : 'PDF'}
+            </button>
+            <button
+              type="button"
+              className={styles.exportBtn}
+              onClick={exporterExcel}
+              disabled={chargement || visibles.length === 0 || exportEnCours !== null}
+              title="Exporter la liste affichée au format Excel"
+            >
+              <FileSpreadsheet size={16} aria-hidden="true" />
+              {exportEnCours === 'excel' ? 'Excel…' : 'Excel'}
+            </button>
             <button
               type="button"
               className={styles.iconBtn}
@@ -163,12 +340,7 @@ export default function FondsTiers() {
       </section>
 
       <div className={styles.filters} role="group" aria-label="Filtrer les fonds de tiers par statut">
-        {([
-          ['A_REVERSER', 'À reverser'],
-          ['REGULARISE', 'Soldés'],
-          ['ANNULE', 'Annulés'],
-          ['TOUS', 'Tous'],
-        ] as [FiltreStatut, string][]).map(([valeur, label]) => (
+        {FILTRES.map(([valeur, label]) => (
           <button
             key={valeur}
             type="button"
@@ -182,6 +354,7 @@ export default function FondsTiers() {
       </div>
 
       {erreur && <div className={styles.error} role="alert">{erreur}</div>}
+      {exportErreur && <div className={styles.error} role="alert">{exportErreur}</div>}
 
       {peutVerser && (
         <div className={styles.selectionBar} aria-live="polite">
@@ -258,11 +431,7 @@ export default function FondsTiers() {
                     <div>
                     <strong>{op.tiers_display_name}</strong>
                     <div className={styles.sub}>
-                      {op.tiers_type === 'ORGANISATION'
-                        ? 'Tenant ONEC'
-                        : op.tiers_type === 'EXTERNE'
-                          ? 'Tiers externe'
-                          : 'Historique'}
+                      {typeTiersLabel(op.tiers_type)}
                     </div>
                     {op.motif && <div className={styles.sub}>{op.motif}</div>}
                     {toNumber(op.montant_reserve) > 0 && (

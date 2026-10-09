@@ -6,6 +6,7 @@ import { formatAmount, toNumber } from './amount'
 import { buildUploadUrl } from './uploads'
 import { getTenantRequestHint } from './tenant'
 import { getStatusMeta } from './statusMapper'
+import { FONDS_TIERS_STATUT_LABELS, type FondsTiersOperation } from '../api/mouvementsHorsBudget'
 
 // ============================================================================
 //  RAPPORTS DE LISTE (famille visuelle du rapport budgétaire generateBudgetPDF)
@@ -729,5 +730,67 @@ export const generateEncaissementsReportPDF = async (
     summary,
     options,
     fileNameBase: `encaissements_${buildFileSuffix(options)}`,
+  })
+}
+
+/** État des fonds détenus pour compte de tiers, selon le filtre actif à l'écran. */
+export const generateFondsTiersReportPDF = async (
+  rows: FondsTiersOperation[],
+  options: ReportOptions = {},
+): Promise<Blob | null> => {
+  const list = Array.isArray(rows) ? rows : []
+  const montant = (value: unknown, devise: string) =>
+    `${formatAmount(value as any, devise === 'CDF' ? 0 : 2)} ${devise}`
+
+  const body = list.map((operation) => [
+    operation.motif
+      ? `${operation.tiers_display_name}\n${operation.motif}`
+      : operation.tiers_display_name,
+    operation.beneficiaire_reel || '—',
+    operation.payeur_origine || '—',
+    montant(operation.montant_recu, operation.devise),
+    montant(operation.montant_rembourse, operation.devise),
+    montant(operation.montant_reserve, operation.devise),
+    montant(operation.solde_restant, operation.devise),
+    FONDS_TIERS_STATUT_LABELS[operation.statut],
+    formatReportDate(operation.created_at),
+  ])
+
+  // Comme à l'écran : seuls les dossiers ouverts restent à reverser. Un dossier
+  // annulé garde un solde égal au montant reçu, qui ne doit pas gonfler le total.
+  const soldes = new Map<string, number>()
+  list
+    .filter((operation) => operation.statut === 'OUVERT' || operation.statut === 'PARTIELLEMENT_REMBOURSE')
+    .forEach((operation) => {
+      soldes.set(
+        operation.devise,
+        (soldes.get(operation.devise) || 0) + toNumber(operation.solde_restant),
+      )
+    })
+
+  return buildListReport({
+    title: 'ÉTAT DES FONDS DE TIERS',
+    footerLabel: 'État des fonds de tiers',
+    columns: [
+      { header: 'Tiers / Motif', width: 39 },
+      { header: 'Bénéficiaire réel', width: 31 },
+      { header: "Payeur d'origine", width: 31 },
+      { header: 'Reçu', width: 27, halign: 'right' },
+      { header: 'Reversé', width: 27, halign: 'right' },
+      { header: 'Réservé', width: 27, halign: 'right' },
+      { header: 'Reste', width: 27, halign: 'right' },
+      { header: 'Statut', width: 31, halign: 'center' },
+      { header: 'Reçu le', width: 18, halign: 'center' },
+    ],
+    rows: body,
+    summary: [
+      { label: 'Dossiers exportés', value: String(list.length) },
+      ...Array.from(soldes.entries()).map(([devise, total]) => ({
+        label: `Reste à reverser (${devise})`,
+        value: montant(total, devise),
+      })),
+    ],
+    options,
+    fileNameBase: 'fonds_tiers',
   })
 }
