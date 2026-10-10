@@ -309,7 +309,8 @@ function AppRoutes() {
         <Route path="recettes-a-identifier" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><RecettesAIdentifier /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds/nouvelle" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
-        <Route path="rapports" element={<ProtectedRoute permission="rapports"><Suspense fallback={<LoadingFallback />}><Rapports /></Suspense></ProtectedRoute>} />
+        <Route path="rapports" element={<Navigate to="/rapports/synthese" replace />} />
+        <Route path="rapports/:section" element={<ProtectedRoute permission="rapports"><Suspense fallback={<LoadingFallback />}><Rapports /></Suspense></ProtectedRoute>} />
         <Route path="requisitions-ocr" element={<ProtectedRoute permission="requisitions_ocr"><Suspense fallback={<LoadingFallback />}><RequisitionPdfSmart /></Suspense></ProtectedRoute>} />
         <Route path="audit-logs" element={<ProtectedRoute permission="audit_logs"><Suspense fallback={<LoadingFallback />}><AuditLogs /></Suspense></ProtectedRoute>} />
         <Route path="cloture-caisse" element={<ProtectedRoute permission="cloture_caisse"><Suspense fallback={<LoadingFallback />}><ClotureCaisse /></Suspense></ProtectedRoute>} />

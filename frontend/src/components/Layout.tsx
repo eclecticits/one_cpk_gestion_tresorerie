@@ -119,7 +119,19 @@ const TREASURY_NAV: NavItem[] = [
     ],
   },
   { path: '/budget', label: 'Budget', permission: 'budget', icon: <FileBarChart2 size={18} /> },
-  { path: '/rapports', label: 'Rapports', permission: 'rapports', icon: <FileBarChart2 size={18} /> },
+  {
+    label: 'Rapports',
+    permission: 'rapports',
+    icon: <FileBarChart2 size={18} />,
+    subItems: [
+      { path: '/rapports/synthese', label: "Vue d'ensemble", permission: 'rapports', icon: <LayoutDashboard size={16} /> },
+      { path: '/rapports/journal', label: 'Journal de trésorerie', permission: 'rapports', icon: <LayoutList size={16} /> },
+      { path: '/rapports/encaissements', label: 'Encaissements', permission: 'rapports', icon: <CircleDollarSign size={16} /> },
+      { path: '/rapports/sorties', label: 'Sorties de fonds', permission: 'rapports', icon: <Wallet size={16} /> },
+      { path: '/rapports/requisitions', label: 'Réquisitions', permission: 'rapports', icon: <Receipt size={16} /> },
+      { path: '/rapports/annuel', label: 'Synthèse annuelle', permission: 'rapports', icon: <CalendarDays size={16} /> },
+    ],
+  },
   {
     label: 'Experts-Comptables',
     permission: 'experts_comptables',

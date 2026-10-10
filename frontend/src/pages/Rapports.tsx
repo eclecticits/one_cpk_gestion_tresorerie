@@ -2,6 +2,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import { lazyWithRetry } from '../utils/lazyWithRetry'
 import { CheckCircle2, Circle } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Navigate, NavLink, useParams } from 'react-router-dom'
 import { format } from 'date-fns'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
@@ -12,6 +13,7 @@ import { useToast } from '../hooks/useToast'
 import type { ReportSummaryResponse } from '../types/reports'
 import type { ReportJournalResponse } from '../types/reports'
 import { toNumber } from '../utils/amount'
+import { libelleJournalComplet } from '../utils/journalLibelle'
 import { getStatusMeta } from '../utils/statusMapper'
 import type { Money } from '../types'
 import { getTypeSortieLabel } from '../utils/sortieFondsHelpers'
@@ -96,7 +98,26 @@ function formatRapportError(error: any): string {
     : "Impossible de charger les rapports. Vérifie ton accès ou le serveur API."
 }
 
+// Sous-menus du rapport : une page par usage, plutôt qu'un long défilement où
+// le journal du caissier côtoyait la synthèse annuelle de la direction. La
+// période et les données chargées sont partagées : passer d'un onglet à l'autre
+// ne recharge rien et garde les filtres.
+const SECTIONS = [
+  { key: 'synthese', label: "Vue d'ensemble", description: 'Indicateurs, détail par devise et graphiques de la période.' },
+  { key: 'journal', label: 'Journal de trésorerie', description: 'Grand livre avec solde progressif par canal et devise.' },
+  { key: 'encaissements', label: 'Encaissements', description: 'Détail des encaissements de la période.' },
+  { key: 'sorties', label: 'Sorties de fonds', description: 'Détail des sorties et des retours en trésorerie de la période.' },
+  { key: 'requisitions', label: 'Réquisitions', description: 'Réquisitions créées sur la période.' },
+  { key: 'annuel', label: 'Synthèse annuelle', description: 'Comparaison mensuelle des flux de trésorerie.' },
+] as const
+type SectionKey = (typeof SECTIONS)[number]['key']
+const SECTIONS_DETAIL: SectionKey[] = ['encaissements', 'sorties', 'requisitions']
+
 export default function Rapports() {
+  const { section: sectionParam } = useParams<{ section: string }>()
+  const sectionCourante = SECTIONS.find((s) => s.key === sectionParam)
+  const section: SectionKey = sectionCourante?.key ?? 'synthese'
+  const estSectionRapport = section !== 'journal' && section !== 'annuel'
   const { notifyError, notifySuccess } = useToast()
   const { user } = useAuth()
   const queryClient = useQueryClient()
@@ -125,6 +146,7 @@ export default function Rapports() {
   const [journalTableLoading, setJournalTableLoading] = useState(false)
   const [journalData, setJournalData] = useState<ReportJournalResponse | null>(null)
   const [showUnreconciledOnly, setShowUnreconciledOnly] = useState(false)
+  const [journalRecherche, setJournalRecherche] = useState('')
   const [reconcileDraft, setReconcileDraft] = useState<
     Record<string, { transaction_type: 'encaissement' | 'sortie'; transaction_id: string; is_reconciled: boolean }>
   >({})
@@ -159,11 +181,21 @@ export default function Rapports() {
 
   const journalDeviseEffective = ((selectedCompte?.devise || journalDevise || 'USD') as 'USD' | 'CDF')
 
+  // Recherche sur ce que le comptable connaît d'une opération : le nom de celui
+  // qui a payé ou reçu, le libellé, la référence ou le numéro de note.
   const visibleJournalLines = useMemo(() => {
     if (!journalData?.lignes) return []
-    if (!showUnreconciledOnly) return journalData.lignes
-    return journalData.lignes.filter((line) => line.is_reconciled === false)
-  }, [journalData, showUnreconciledOnly])
+    const terme = journalRecherche.trim().toLocaleLowerCase('fr')
+    return journalData.lignes.filter((line) => {
+      if (showUnreconciledOnly && line.is_reconciled !== false) return false
+      if (!terme) return true
+      return [line.libelle, line.tiers, line.reference]
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase('fr')
+        .includes(terme)
+    })
+  }, [journalData, showUnreconciledOnly, journalRecherche])
   const showCompteColumn = useMemo(
     () => visibleJournalLines.some((line) => Boolean(line.compte_label)),
     [visibleJournalLines]
@@ -424,7 +456,7 @@ export default function Rapports() {
     const journalGeneratedAt = format(new Date(), "dd/MM/yyyy 'à' HH:mm")
     const rows = journalData.lignes.map((line) => [
       jourExcel(line.date),
-      `${(line.libelle || '').trim()}${line.reference ? ` (${line.reference})` : ''}`,
+      libelleJournalComplet(line),
       toNumber(line.entree),
       toNumber(line.sortie),
       toNumber(line.solde),
@@ -1148,6 +1180,15 @@ export default function Rapports() {
     setErrorMessage(null)
   }, [dateDebut, dateFin, reportCanal, reportDevise])
 
+  // Les onglets de détail n'ont de sens qu'avec leurs lignes : on les charge à
+  // l'ouverture plutôt que d'attendre un clic sur « Charger détails ».
+  useEffect(() => {
+    if (!SECTIONS_DETAIL.includes(section)) return
+    if (!rapport || detailsLoaded || detailsLoading || detailsError) return
+    void loadDetails()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, rapport, detailsLoaded, detailsLoading, detailsError])
+
   // Formatage dans la devise de la ligne : les totaux par devise ne sont pas
   // convertis, les afficher tous en $ les rendrait faux.
   const formatMoneyDevise = (amount: Money, devise: string) => {
@@ -1730,13 +1771,30 @@ export default function Rapports() {
 
   return (
     <div className={styles.container}>
+      {sectionParam && !sectionCourante && <Navigate to="/rapports/synthese" replace />}
       <div className={styles.header}>
         <div>
           <h1>Rapports d’activités financières</h1>
-          <p>Statistiques et analyses détaillées</p>
+          <p>{SECTIONS.find((s) => s.key === section)?.description}</p>
         </div>
       </div>
 
+      <nav className={styles.sectionTabs} aria-label="Sections des rapports">
+        {SECTIONS.map((s) => (
+          <NavLink
+            key={s.key}
+            to={`/rapports/${s.key}`}
+            className={({ isActive }) => (isActive ? `${styles.sectionTab} ${styles.sectionTabActive}` : styles.sectionTab)}
+          >
+            {s.label}
+          </NavLink>
+        ))}
+      </nav>
+
+      {/* La période est commune à tous les onglets sauf la synthèse annuelle,
+          qui raisonne par exercice. Le journal n'en garde que les dates : canal
+          et devise s'y choisissent compte par compte. */}
+      {section !== 'annuel' && (
       <div className={styles.filters}>
         <div className={styles.field}>
           <label>Date début</label>
@@ -1756,6 +1814,8 @@ export default function Rapports() {
           />
         </div>
 
+        {estSectionRapport && (
+        <>
         <div className={styles.field}>
           <label>Canal</label>
           <select
@@ -1792,17 +1852,23 @@ export default function Rapports() {
             <button onClick={exportToPDF} className={styles.exportBtn}>
               📄 PDF
             </button>
-            <button
-              onClick={loadDetails}
-              className={styles.exportBtn}
-              disabled={detailsLoading || detailsLoaded}
-            >
-              {detailsLoading ? 'Chargement...' : detailsLoaded ? 'Détails chargés' : 'Charger détails'}
-            </button>
+            {section === 'synthese' && (
+              <button
+                onClick={loadDetails}
+                className={styles.exportBtn}
+                disabled={detailsLoading || detailsLoaded}
+              >
+                {detailsLoading ? 'Chargement...' : detailsLoaded ? 'Détails chargés' : 'Charger détails'}
+              </button>
+            )}
           </>
         )}
+        </>
+        )}
       </div>
+      )}
 
+      {section === 'annuel' && (
       <div className={styles.annualCard}>
         <div className={styles.annualHeader}>
           <div>
@@ -1924,6 +1990,10 @@ export default function Rapports() {
         )}
       </div>
 
+      )}
+
+      {section === 'journal' && (
+      <>
       <div className={styles.journalCard}>
         <div>
           <h3>Journal de trésorerie</h3>
@@ -2001,7 +2071,7 @@ export default function Rapports() {
         </div>
       </div>
 
-      {errorMessage && (
+      {estSectionRapport && errorMessage && (
         <div className={styles.alert} role="alert">
           <div>{errorMessage}</div>
           <button onClick={loadRapport} className={styles.retryBtn} disabled={loading}>
@@ -2028,6 +2098,14 @@ export default function Rapports() {
                   />
                   <span>Afficher uniquement les non-pointés</span>
                 </label>
+                <input
+                  type="search"
+                  className={styles.journalSearch}
+                  value={journalRecherche}
+                  onChange={(e) => setJournalRecherche(e.target.value)}
+                  placeholder="Rechercher un nom, une référence, une note…"
+                  aria-label="Rechercher dans le journal"
+                />
               </div>
             </div>
             <div className={styles.journalActions}>
@@ -2076,7 +2154,7 @@ export default function Rapports() {
                 {visibleJournalLines.length === 0 && (
                   <tr>
                     <td colSpan={showCompteColumn ? 7 : 6} className={styles.emptyCell}>
-                      Aucun mouvement sur la période.
+                      {journalRecherche.trim() ? 'Aucun mouvement ne correspond à la recherche.' : 'Aucun mouvement sur la période.'}
                     </td>
                   </tr>
                 )}
@@ -2087,8 +2165,15 @@ export default function Rapports() {
                   <tr key={`${line.date}-${index}`}>
                     <td>{formatReportDate(line.date)}</td>
                     <td>
-                      {(line.libelle || '').trim()}
-                      {line.reference ? ` (${line.reference})` : ''}
+                      {line.precision ? (
+                        <>
+                          <div className={styles.journalLibelle}>{(line.libelle_base || '').trim() || '—'}</div>
+                          <div className={styles.journalPrecision}>({line.precision})</div>
+                        </>
+                      ) : (
+                        <div className={styles.journalLibelle}>{(line.libelle || '').trim()}</div>
+                      )}
+                      {line.reference && <span className={styles.journalReference}>Réf. {line.reference}</span>}
                     </td>
                     {showCompteColumn && <td>{line.compte_label || '-'}</td>}
                     <td className={`${styles.numericCell} ${styles.amountCell}`}>
@@ -2136,7 +2221,14 @@ export default function Rapports() {
         </div>
       )}
 
-      {sortiesWarning && !errorMessage && (
+      </>
+      )}
+
+      {SECTIONS_DETAIL.includes(section) && detailsLoading && (
+        <div className={styles.annualLoading}>Chargement du détail de la période…</div>
+      )}
+
+      {SECTIONS_DETAIL.includes(section) && sortiesWarning && !errorMessage && (
         <div className={styles.alert} role="status">
           <div>{sortiesWarning}</div>
           <button onClick={loadRapport} className={styles.retryBtn} disabled={loading}>
@@ -2145,7 +2237,7 @@ export default function Rapports() {
         </div>
       )}
 
-      {detailsError && !errorMessage && (
+      {SECTIONS_DETAIL.includes(section) && detailsError && !errorMessage && (
         <div className={styles.alert} role="alert">
           <div>{detailsError}</div>
           <button onClick={loadDetails} className={styles.retryBtn} disabled={detailsLoading}>
@@ -2154,15 +2246,17 @@ export default function Rapports() {
         </div>
       )}
 
-      {emptyMessage && !errorMessage && (
+      {estSectionRapport && emptyMessage && !errorMessage && (
         <div className={styles.emptyState}>
           <div className={styles.emptyTitle}>Aucun rapport</div>
           <div className={styles.emptyText}>{emptyMessage}</div>
         </div>
       )}
 
-      {rapport && !errorMessage && !emptyMessage && (
+      {estSectionRapport && rapport && !errorMessage && !emptyMessage && (
         <>
+          {section === 'synthese' && (
+          <>
           <div className={styles.statsGrid}>
             <div className={styles.statCard}>
               <div className={styles.statLabel}>Total encaissements</div>
@@ -2407,6 +2501,10 @@ export default function Rapports() {
             </div>
           </div>
 
+          </>
+          )}
+
+          {section === 'encaissements' && (
           <div className={styles.tableSection}>
             <h3>Encaissements</h3>
             <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
@@ -2441,6 +2539,10 @@ export default function Rapports() {
             </div>
           </div>
 
+          )}
+
+          {section === 'sorties' && (
+          <>
           <div className={styles.tableSection}>
             <h3>Sorties de fonds</h3>
             <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
@@ -2515,6 +2617,10 @@ export default function Rapports() {
             </div>
           )}
 
+          </>
+          )}
+
+          {section === 'requisitions' && (
           <div className={styles.tableSection}>
             <h3>Réquisitions</h3>
             {aiEnabled ? (
@@ -2642,6 +2748,7 @@ export default function Rapports() {
               </table>
             </div>
           </div>
+          )}
         </>
       )}
     </div>

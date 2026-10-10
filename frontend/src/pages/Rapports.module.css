@@ -3,7 +3,52 @@
 }
 
 .header {
-  margin-bottom: 32px;
+  margin-bottom: 16px;
+}
+
+/* Sous-menus du rapport : barre d'onglets collée en haut au défilement, pour
+   changer de vue sans remonter la page. Défile horizontalement sur mobile. */
+.sectionTabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  padding: 4px;
+  overflow-x: auto;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  scrollbar-width: thin;
+}
+
+.sectionTab {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-radius: 7px;
+  color: #475569;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.sectionTab:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.sectionTab:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+}
+
+.sectionTabActive,
+.sectionTabActive:hover {
+  background: #ffffff;
+  color: #1e40af;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
 .header h1 {
@@ -537,9 +582,43 @@
 
 .journalFilters {
   display: flex;
+  align-items: center;
   gap: 12px;
   flex-wrap: wrap;
   margin-top: 6px;
+}
+
+.journalSearch {
+  flex: 1 1 260px;
+  max-width: 380px;
+  padding: 7px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+/* Libellé du journal sur deux niveaux : l'opération, puis entre parenthèses
+   qui a payé ou reçu ; la référence en pastille discrète. */
+.journalLibelle {
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.journalPrecision {
+  margin-top: 1px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.journalReference {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
 }
 
 .journalHeader h3 {
