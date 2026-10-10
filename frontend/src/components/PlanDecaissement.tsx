@@ -52,6 +52,107 @@ const modeLabel = (mode: unknown) => MODE_LABELS[normaliserMode(mode)] || normal
 const cleVolet = (mode: unknown, compteId: unknown) =>
   `${normaliserMode(mode)}|${compteId == null || compteId === '' ? '' : String(compteId)}`
 
+const enMontant = (v: number) => (v > 0.001 ? v.toFixed(2) : '')
+
+const lienStyle: CSSProperties = {
+  background: 'none',
+  border: 'none',
+  padding: 0,
+  color: '#4f46e5',
+  textDecoration: 'underline',
+  cursor: 'pointer',
+  fontSize: '11px',
+}
+
+interface LigneTrancheProps {
+  libelle: string
+  beneficiaire: string
+  reste: number
+  valeur: string
+  /** Reste suggéré ; vide quand il n'y a plus rien à libérer. */
+  proposition: string
+  onChange: (valeur: string) => void
+}
+
+/**
+ * Une ligne de la tranche : libellé et bénéficiaire reliés au montant.
+ * Vide, elle reste en retrait (trait pointillé gris, reste en simple
+ * suggestion) ; elle ne s'affirme qu'une fois un montant saisi ou retenu.
+ */
+function LigneTranche({ libelle, beneficiaire, reste, valeur, proposition, onChange }: LigneTrancheProps) {
+  const solde = reste <= 0.001
+  const saisie = parseFloat(valeur) || 0
+  const retenue = saisie > 0
+  const depasse = saisie > reste + 0.001
+  const accent = depasse ? '#dc2626' : retenue ? '#4f46e5' : '#d1d5db'
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        flexWrap: 'wrap',
+        border: `1px solid ${depasse ? '#fca5a5' : retenue ? '#a5b4fc' : '#e5e7eb'}`,
+        borderLeft: `4px solid ${accent}`,
+        borderRadius: '8px',
+        background: depasse ? '#fef2f2' : retenue ? '#eef2ff' : '#fff',
+        padding: '8px 10px',
+        opacity: solde ? 0.6 : 1,
+      }}
+    >
+      <div style={{ flex: '0 1 auto', minWidth: 0 }}>
+        <div style={{ fontSize: '13px', fontWeight: 600, color: retenue ? '#1f2937' : '#4b5563' }}>{libelle}</div>
+        <div style={{ fontSize: '11px', color: '#6b7280' }}>
+          Bénéficiaire : <strong style={{ color: '#374151' }}>{beneficiaire.trim() || '—'}</strong>
+          {' · '}
+          {solde ? <span style={{ color: '#991b1b' }}>soldé</span> : <>reste {fmtUsd(reste)}</>}
+        </div>
+      </div>
+      <div
+        aria-hidden="true"
+        style={{ flex: '1 1 40px', borderBottom: retenue ? `2px solid ${accent}` : '2px dotted #d1d5db' }}
+      />
+      <div style={{ flex: '0 1 170px', display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          max={reste}
+          value={valeur}
+          disabled={solde}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={solde ? '—' : 'Non retenue'}
+          aria-label={`Montant pour ${libelle}`}
+          style={{
+            width: '100%',
+            padding: '8px',
+            border: `1px solid ${depasse ? '#dc2626' : retenue ? '#6366f1' : '#d1d5db'}`,
+            borderRadius: '6px',
+            background: solde ? '#f3f4f6' : '#fff',
+            textAlign: 'right',
+            fontWeight: retenue ? 700 : 400,
+          }}
+        />
+        {!solde && (
+          <span style={{ textAlign: 'right', marginTop: '3px', fontSize: '11px' }}>
+            {depasse ? (
+              <span style={{ color: '#991b1b' }}>Au-delà du reste ({fmtUsd(reste)})</span>
+            ) : retenue ? (
+              <button type="button" onClick={() => onChange('')} style={{ ...lienStyle, color: '#6b7280' }}>
+                Retirer cette ligne
+              </button>
+            ) : (
+              <button type="button" onClick={() => onChange(proposition)} style={lienStyle}>
+                Retenir le reste ({fmtUsd(reste)})
+              </button>
+            )}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function PlanDecaissement({ requisition, currentUserId, canAuthorize, isAdmin = false, onChanged }: PlanDecaissementProps) {
   const { notifySuccess, notifyError, notifyWarning } = useToast()
   const [ordres, setOrdres] = useState<OrdreDecaissement[]>([])
@@ -207,6 +308,22 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
     () => postes.reduce((s, p) => s + (parseFloat(montantsPoste[p.id] || '') || 0), 0),
     [postes, montantsPoste]
   )
+
+  // Reste suggéré : ce qui reste, plafonné par le volet quand il est connu. Ce
+  // n'est qu'une suggestion : rien n'entre dans la tranche sans un geste de
+  // l'autorisateur, qui peut ne libérer que quelques lignes.
+  const montantPropose = Math.max(0, reliquatVolet != null ? Math.min(reliquat, reliquatVolet) : reliquat)
+  const restePoste = (id: number, enveloppe: number) => Math.max(0, enveloppe - (engagePerPoste[id] || 0))
+  const lignesRetenues = postes.filter((p) => (parseFloat(montantsPoste[p.id] || '') || 0) > 0).length
+  const postesOuverts = postes.filter((p) => restePoste(p.id, p.enveloppe) > 0.001)
+
+  const ouvrirFormulaire = () => {
+    setMontantsPoste({})
+    setMontant('')
+    setShowAddForm(true)
+  }
+  const toutRetenir = () =>
+    setMontantsPoste(Object.fromEntries(postesOuverts.map((p) => [p.id, enMontant(restePoste(p.id, p.enveloppe))])))
 
   const reqStatus = String((requisition as any).status ?? requisition.statut ?? '').toUpperCase()
   const isCreator = !!currentUserId && String(requisition.created_by) === String(currentUserId)
@@ -386,7 +503,7 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
         {peutAutoriser && (
           <button
             type="button"
-            onClick={() => setShowAddForm((v) => !v)}
+            onClick={() => (showAddForm ? setShowAddForm(false) : ouvrirFormulaire())}
             style={{
               background: '#6366f1',
               color: '#fff',
@@ -518,53 +635,91 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
               required
             />
           </div>
-          {isMulti ? (
-            <div style={{ flex: '1 1 100%' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                Répartition par poste budgétaire *
+          {/* Montants de la tranche. Une ligne = un rectangle : le libellé, le
+              bénéficiaire et le montant sont reliés par un trait, pour qu'on ne
+              saisisse plus le montant d'un poste sur la ligne du voisin. Les
+              champs s'ouvrent vides : le reste n'est qu'une suggestion à retenir
+              ligne par ligne, et une ligne laissée vide n'entre pas dans la tranche. */}
+          <div style={{ flex: '1 1 100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151' }}>
+                {isMulti ? 'Répartition par poste budgétaire *' : 'Montant (USD) *'}
+                {isMulti && (
+                  <span style={{ fontWeight: 400, color: '#6b7280' }}>
+                    {' '}— {lignesRetenues} ligne{lignesRetenues > 1 ? 's' : ''} retenue{lignesRetenues > 1 ? 's' : ''} sur {postes.length}
+                  </span>
+                )}
               </label>
-              <div style={{ display: 'grid', gap: '6px' }}>
-                {postes.map((p) => {
-                  const reste = p.enveloppe - (engagePerPoste[p.id] || 0)
+              {isMulti && postesOuverts.length > 1 && (
+                <span style={{ display: 'inline-flex', gap: '10px', fontSize: '11px' }}>
+                  <button type="button" onClick={toutRetenir} style={lienStyle}>Retenir tous les restes</button>
+                  {lignesRetenues > 0 && (
+                    <button type="button" onClick={() => setMontantsPoste({})} style={lienStyle}>Tout vider</button>
+                  )}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'grid', gap: '8px' }}>
+              {isMulti ? (
+                postes.map((p) => {
+                  const reste = restePoste(p.id, p.enveloppe)
                   return (
-                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <span style={{ flex: '1 1 220px', fontSize: '13px', color: '#374151' }}>
-                        {p.libelle}
-                        <span style={{ color: '#6b7280', fontSize: '11px' }}> — reste {fmtUsd(reste)}</span>
-                      </span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        max={reste}
-                        value={montantsPoste[p.id] || ''}
-                        onChange={(e) => setMontantsPoste((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                        placeholder="0.00"
-                        style={{ flex: '0 1 130px', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
-                      />
-                    </div>
+                    <LigneTranche
+                      key={p.id}
+                      libelle={p.libelle}
+                      beneficiaire={beneficiaire}
+                      reste={reste}
+                      valeur={montantsPoste[p.id] || ''}
+                      proposition={enMontant(reste)}
+                      onChange={(v) => setMontantsPoste((prev) => ({ ...prev, [p.id]: v }))}
+                    />
                   )
-                })}
-              </div>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#4338ca', marginTop: '6px' }}>
-                Total de la tranche : {fmtUsd(totalReparti)}
-              </div>
+                })
+              ) : (
+                <LigneTranche
+                  libelle={postes[0]?.libelle || 'Tranche'}
+                  beneficiaire={beneficiaire}
+                  reste={montantPropose}
+                  valeur={montant}
+                  proposition={enMontant(montantPropose)}
+                  onChange={setMontant}
+                />
+              )}
             </div>
-          ) : (
-            <div style={{ flex: '0 1 140px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '4px' }}>Montant (USD) *</label>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                max={reliquatVolet != null ? Math.min(reliquat, reliquatVolet) : reliquat}
-                value={montant}
-                onChange={(e) => setMontant(e.target.value)}
-                placeholder="0.00"
-                style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
-              />
-            </div>
-          )}
+            {isMulti && (() => {
+              const plafond = reliquatVolet != null ? Math.min(reliquat, reliquatVolet) : reliquat
+              const depasse = totalReparti > plafond + 0.001
+              return (
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '6px',
+                    marginTop: '8px',
+                    padding: '8px 10px',
+                    borderRadius: '8px',
+                    background: depasse ? '#fef2f2' : '#eef2ff',
+                    border: `1px solid ${depasse ? '#fca5a5' : '#c7d2fe'}`,
+                    fontSize: '12px',
+                    color: depasse ? '#991b1b' : '#4338ca',
+                  }}
+                >
+                  <span>
+                    {lignesRetenues === 0 ? (
+                      'Aucune ligne retenue : saisissez un montant ou retenez le reste des postes à libérer.'
+                    ) : (
+                      <strong>Total de la tranche : {fmtUsd(totalReparti)}</strong>
+                    )}
+                  </span>
+                  <span>
+                    {depasse ? 'Dépasse ce qui reste : ' : 'Disponible : '}
+                    <strong>{fmtUsd(plafond)}</strong>
+                  </span>
+                </div>
+              )
+            })()}
+          </div>
           {/* Volet réglé par la tranche : c'est ici que la décision se prend. Le
               mode saisi par le demandeur n'est qu'une proposition, et la caisse
               n'aura plus rien à choisir en aval. */}
