@@ -14,6 +14,9 @@ export async function listOrdresDecaissement(params: {
   requisition_id?: string
   sans_requisition?: boolean
   statut?: 'AUTORISE' | 'PAYE' | 'ANNULE'
+  /** Bornes incluses (yyyy-MM-dd), sur la date de création de l'ordre. */
+  date_debut?: string
+  date_fin?: string
   limit?: number
   offset?: number
 }): Promise<OrdresDecaissementListResponse> {

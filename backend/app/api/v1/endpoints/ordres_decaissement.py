@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -34,6 +34,7 @@ from app.schemas.ordre_decaissement import (
     OrdreDecaissementOut,
 )
 from app.services.audit_service import get_request_ip, log_action
+from app.services.budget_execution import bornes_periode
 from app.services.document_sequences import generate_document_number
 from app.services.reglement import (
     CANAL_BANQUE,
@@ -980,6 +981,8 @@ async def list_ordres_decaissement(
     requisition_id: str | None = Query(default=None),
     sans_requisition: bool | None = Query(default=None),
     statut: str | None = Query(default=None),
+    date_debut: date | None = Query(default=None),
+    date_fin: date | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
@@ -1002,6 +1005,12 @@ async def list_ordres_decaissement(
         query = query.where(OrdreDecaissement.requisition_id.is_(None))
     if statut:
         query = query.where(OrdreDecaissement.statut == statut.upper())
+    # Période sur la date de création (« Programmé le »), bornes incluses.
+    debut, fin = bornes_periode(date_debut, date_fin)
+    if debut:
+        query = query.where(OrdreDecaissement.created_at >= debut)
+    if fin:
+        query = query.where(OrdreDecaissement.created_at <= fin)
 
     total = (
         await db.execute(select(func.count()).select_from(query.subquery()))

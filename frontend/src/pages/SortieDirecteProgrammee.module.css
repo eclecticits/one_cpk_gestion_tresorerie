@@ -738,6 +738,11 @@
   background: #ffffff;
 }
 
+.filterField input[type='date'] {
+  width: 150px;
+  background: #ffffff;
+}
+
 /* --- Export ----------------------------------------------------------------
    Emporte ce que la liste montre, filtres compris : exporter autre chose que ce
    qu'on a sous les yeux ferait deux vérités pour une même page. */
@@ -1313,7 +1318,8 @@
 
   .searchField,
   .filterField,
-  .filterField select {
+  .filterField select,
+  .filterField input[type='date'] {
     width: 100%;
   }
 

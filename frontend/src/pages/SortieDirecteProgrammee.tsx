@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { format } from 'date-fns'
+import { format, subMonths } from 'date-fns'
 import {
   ArrowRight,
   AlertCircle,
@@ -201,6 +201,9 @@ export default function SortieDirecteProgrammee() {
   // La liste s'ouvre sur ce qui reste à traiter : les ordres en attente de la
   // caisse (une sortie directe n'a pas de brouillon, elle naît autorisée).
   const [statusFilter, setStatusFilter] = useState<'TOUS' | 'AUTORISE' | 'PAYE' | 'ANNULE'>('AUTORISE')
+  // Période chargée depuis le serveur : le dernier mois par défaut.
+  const [dateDebut, setDateDebut] = useState(() => format(subMonths(new Date(), 1), 'yyyy-MM-dd'))
+  const [dateFin, setDateFin] = useState(() => format(new Date(), 'yyyy-MM-dd'))
 
   const ordreStats = useMemo(
     () => ({
@@ -233,7 +236,12 @@ export default function SortieDirecteProgrammee() {
     setLoading(true)
     setOrdersError(null)
     try {
-      const res = await listOrdresDecaissement({ sans_requisition: true, limit: 100 })
+      const res = await listOrdresDecaissement({
+        sans_requisition: true,
+        date_debut: dateDebut || undefined,
+        date_fin: dateFin || undefined,
+        limit: 100,
+      })
       setOrdres(res.items || [])
       setOrdersTotal(res.total || (res.items || []).length)
     } catch (err) {
@@ -242,7 +250,7 @@ export default function SortieDirecteProgrammee() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [dateDebut, dateFin])
 
   const loadReferences = useCallback(async () => {
     setReferencesLoading(true)
@@ -1052,6 +1060,24 @@ export default function SortieDirecteProgrammee() {
               placeholder="Rechercher dans les ordres affichés…"
             />
           </div>
+          <label className={styles.filterField}>
+            <span>Du</span>
+            <input
+              type="date"
+              value={dateDebut}
+              max={dateFin || undefined}
+              onChange={(e) => setDateDebut(e.target.value)}
+            />
+          </label>
+          <label className={styles.filterField}>
+            <span>Au</span>
+            <input
+              type="date"
+              value={dateFin}
+              min={dateDebut || undefined}
+              onChange={(e) => setDateFin(e.target.value)}
+            />
+          </label>
           <label className={styles.filterField}>
             <span>Statut</span>
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
