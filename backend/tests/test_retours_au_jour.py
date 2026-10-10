@@ -113,3 +113,25 @@ async def test_le_releve_porte_le_retour_a_sa_date_et_dans_son_solde(db_session)
         user=user, db=db_session, tenant_id=org.id,
     )
     assert apres.solde_initial == releve.solde_final
+
+
+@pytest.mark.asyncio
+async def test_le_journal_dit_qui_a_recu_et_qui_a_rendu(db_session):
+    """Le comptable lisait le motif seul : la parenthèse nomme la personne."""
+    org, user, _avance = await _avance_puis_retour(db_session)
+
+    releve = await journal_tresorerie(
+        canal="CAISSE", devise="USD", date_debut="2026-09-01", date_fin="2026-10-31",
+        user=user, db=db_session, tenant_id=org.id,
+    )
+    lignes = {l.type_operation: l for l in releve.lignes}
+
+    sortie = lignes["SORTIE"]
+    assert sortie.libelle == "Remboursement transport réunion (payé à Participants)"
+    assert sortie.libelle_base == "Remboursement transport réunion"
+    assert sortie.precision == "payé à Participants"
+    assert sortie.tiers == "Participants"
+
+    retour = lignes["RETOUR"]
+    assert retour.libelle.startswith("Retour en trésorerie — Transport non utilisé (rendu par Participants · sur ")
+    assert retour.tiers == "Participants"

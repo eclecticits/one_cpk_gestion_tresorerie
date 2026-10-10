@@ -146,7 +146,14 @@ class ReportClotureResponse(DecimalBaseModel):
 
 class ReportJournalLine(DecimalBaseModel):
     date: datetime
+    # Libellé complet, précisions comprises entre parenthèses : c'est lui que
+    # reprennent le PDF et les exports. `libelle_base` et `precision` en sont
+    # les deux morceaux, pour un affichage qui les distingue.
     libelle: str | None = None
+    libelle_base: str | None = None
+    precision: str | None = None
+    # Qui a payé (entrée) ou qui a reçu (sortie) : le nom seul, pour la recherche.
+    tiers: str | None = None
     reference: str | None = None
     compte_label: str | None = None
     entree: Decimal = Decimal("0")

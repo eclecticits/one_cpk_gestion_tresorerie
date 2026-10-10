@@ -8,10 +8,13 @@ import {
   loadTenantIdentity,
   type TenantIdentity,
 } from './pdfTenantIdentity'
+import { libelleJournalComplet } from './journalLibelle'
 
 type JournalLine = {
   date: string | Date
   libelle?: string | null
+  libelle_base?: string | null
+  precision?: string | null
   reference?: string | null
   entree?: number | string | null
   sortie?: number | string | null
@@ -138,7 +141,7 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
 
   const rows = data.map((m) => ({
     date: format(new Date(m.date), 'dd/MM/yyyy'),
-    libelle: `${m.libelle || ''}${m.reference ? ` (${m.reference})` : ''}`.trim(),
+    libelle: libelleJournalComplet(m),
     entree: toNumber(m.entree) > 0 ? formatAmount(toNumber(m.entree)) : '—',
     sortie: toNumber(m.sortie) > 0 ? formatAmount(toNumber(m.sortie)) : '—',
     solde: formatAmount(toNumber(m.solde)),

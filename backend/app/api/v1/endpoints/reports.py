@@ -1604,6 +1604,24 @@ async def retours(
     return lignes
 
 
+def _preciser(mouvement: dict, *precisions: str | None, tiers: str | None = None) -> dict:
+    """Ajoute au libellé du journal ses précisions entre parenthèses.
+
+    Le comptable lisait « Cotisation » ou « Achat fournitures » sans savoir qui
+    avait payé ni qui avait reçu : ce sont les parenthèses qui le disent. Les
+    morceaux restent aussi séparés (`libelle_base`, `precision`, `tiers`) pour
+    l'écran.
+    """
+    base = (mouvement.get("libelle") or "").strip() or None
+    texte = " · ".join(p.strip() for p in precisions if p and p.strip()) or None
+    mouvement["libelle_base"] = base
+    mouvement["precision"] = texte
+    mouvement["tiers"] = (tiers or "").strip() or None
+    if texte:
+        mouvement["libelle"] = f"{base} ({texte})" if base else texte
+    return mouvement
+
+
 @router.get("/journal-tresorerie", response_model=ReportJournalResponse)
 async def journal_tresorerie(
     canal: str,
@@ -1853,9 +1871,12 @@ async def journal_tresorerie(
             Encaissement.is_reconciled,
             Encaissement.reconciled_at,
             Encaissement.bank_statement_ref,
+            func.coalesce(ExpertComptable.nom_denomination, Encaissement.client_nom).label("payeur"),
+            ExpertComptable.numero_ordre.label("payeur_ordre"),
         )
         .select_from(v)
         .join(Encaissement, Encaissement.id == v.c.encaissement_id)
+        .outerjoin(ExpertComptable, ExpertComptable.id == Encaissement.expert_comptable_id)
         .where(
             Encaissement.organisation_id == tenant_id,
             v.c.canal == canal,
@@ -1881,7 +1902,13 @@ async def journal_tresorerie(
             if row.numero_recu:
                 suffixe += f" · note {row.numero_recu}"
             libelle = f"{libelle or ''} — {suffixe}".strip(" —")
-        mouvements.append(
+            note_dans_libelle = bool(row.numero_recu)
+        else:
+            note_dans_libelle = False
+        payeur = row.payeur
+        if payeur and row.payeur_ordre:
+            payeur = f"{payeur} — N° ordre {row.payeur_ordre}"
+        mouvements.append(_preciser(
             {
                 "date": row.date_flux,
                 "libelle": libelle,
@@ -1895,8 +1922,11 @@ async def journal_tresorerie(
                 "is_reconciled": bool(row.is_reconciled),
                 "reconciled_at": row.reconciled_at,
                 "bank_statement_ref": row.bank_statement_ref,
-            }
-        )
+            },
+            f"payé par {payeur}" if payeur else None,
+            f"note {row.numero_recu}" if row.numero_recu and not note_dans_libelle else None,
+            tiers=row.payeur,
+        ))
 
     paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
     sortie_query = select(
@@ -1909,7 +1939,9 @@ async def journal_tresorerie(
         SortieFonds.is_reconciled,
         SortieFonds.reconciled_at,
         SortieFonds.bank_statement_ref,
-    ).where(
+        SortieFonds.beneficiaire,
+        Requisition.numero_requisition,
+    ).outerjoin(Requisition, Requisition.id == SortieFonds.requisition_id).where(
         (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
         SortieFonds.canal == canal,
         SortieFonds.devise == devise,
@@ -1922,8 +1954,11 @@ async def journal_tresorerie(
     if end_dt:
         sortie_query = sortie_query.where(paiement_ts <= end_dt)
     sortie_rows = (await db.execute(sortie_query)).all()
-    for sortie_id, dt, motif, ref_num, ref, montant, is_reconciled, reconciled_at, bank_statement_ref in sortie_rows:
-        mouvements.append(
+    for (
+        sortie_id, dt, motif, ref_num, ref, montant, is_reconciled, reconciled_at, bank_statement_ref,
+        beneficiaire, numero_requisition,
+    ) in sortie_rows:
+        mouvements.append(_preciser(
             {
                 "date": dt,
                 "libelle": motif,
@@ -1937,8 +1972,11 @@ async def journal_tresorerie(
                 "is_reconciled": bool(is_reconciled),
                 "reconciled_at": reconciled_at,
                 "bank_statement_ref": bank_statement_ref,
-            }
-        )
+            },
+            f"payé à {beneficiaire}" if beneficiaire else None,
+            f"réq. {numero_requisition}" if numero_requisition else None,
+            tiers=beneficiaire,
+        ))
 
     # Retours en trésorerie : une ENTRÉE à la date du retour. La sortie
     # d'origine reste à sa date, intacte ; le libellé rappelle laquelle.
@@ -1951,6 +1989,7 @@ async def journal_tresorerie(
             RetourCaisse.montant,
             SortieFonds.reference_numero.label("sortie_reference"),
             func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at).label("sortie_date"),
+            SortieFonds.beneficiaire.label("sortie_beneficiaire"),
         ).join(SortieFonds, SortieFonds.id == RetourCaisse.sortie_fonds_id)
     )
     if start_dt:
@@ -1961,10 +2000,10 @@ async def journal_tresorerie(
         origine = row.sortie_reference or "sortie"
         if row.sortie_date:
             origine += f" du {row.sortie_date.strftime('%d/%m/%Y')}"
-        mouvements.append(
+        mouvements.append(_preciser(
             {
                 "date": row.date_retour,
-                "libelle": f"Retour en trésorerie — {row.motif or 'reliquat rendu'} (sur {origine})",
+                "libelle": f"Retour en trésorerie — {row.motif or 'reliquat rendu'}",
                 "reference": row.reference_numero,
                 "compte_label": compte_label,
                 "entree": Decimal(row.montant or 0),
@@ -1975,8 +2014,33 @@ async def journal_tresorerie(
                 "is_reconciled": None,
                 "reconciled_at": None,
                 "bank_statement_ref": None,
-            }
-        )
+            },
+            # Celui qui rend est celui qui avait reçu la sortie d'origine.
+            f"rendu par {row.sortie_beneficiaire}" if row.sortie_beneficiaire else None,
+            f"sur {origine}",
+            tiers=row.sortie_beneficiaire,
+        ))
+
+    # Noms des comptes, pour dire d'où vient et où va l'argent d'un mouvement
+    # interne : « Transfert interne » seul ne disait ni l'un ni l'autre.
+    comptes_rows = await db.execute(
+        select(CompteBancaire.id, CompteBancaire.intitule, CompteBancaire.account_type, Banque.nom)
+        .outerjoin(Banque, Banque.id == CompteBancaire.banque_id)
+        .where(CompteBancaire.organisation_id == tenant_id)
+    )
+    noms_comptes: dict[int, str] = {}
+    for cid, intitule, account_type, banque_nom in comptes_rows.all():
+        if (account_type or "").upper() == "BANK" and banque_nom:
+            noms_comptes[cid] = f"{banque_nom} - {intitule}"
+        else:
+            noms_comptes[cid] = intitule or f"compte {cid}"
+
+    def _nom_tresorerie(type_: str | None, compte_id: int | None) -> str:
+        if (type_ or "").upper() == "CAISSE" and compte_id is None:
+            return "la caisse"
+        if compte_id is not None:
+            return noms_comptes.get(compte_id, f"compte {compte_id}")
+        return "la banque" if (type_ or "").upper() == "BANQUE" else "la caisse"
 
     # Approvisionnements (banque -> caisse) : ENTRÉES du journal CAISSE.
     if canal == "CAISSE":
@@ -1986,6 +2050,8 @@ async def journal_tresorerie(
             SortieFonds.motif,
             SortieFonds.reference_numero,
             SortieFonds.montant_paye,
+            SortieFonds.compte_bancaire_id,
+            SortieFonds.beneficiaire,
         ).where(
             (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
             SortieFonds.type_sortie == "approvisionnement_caisse",
@@ -1996,8 +2062,8 @@ async def journal_tresorerie(
             appro_query = appro_query.where(_sortie_ts >= start_dt)
         if end_dt:
             appro_query = appro_query.where(_sortie_ts <= end_dt)
-        for appro_id, dt, motif, ref_num, montant in (await db.execute(appro_query)).all():
-            mouvements.append(
+        for appro_id, dt, motif, ref_num, montant, appro_compte_id, appro_benef in (await db.execute(appro_query)).all():
+            mouvements.append(_preciser(
                 {
                     "date": dt,
                     "libelle": motif or "Approvisionnement caisse",
@@ -2011,8 +2077,11 @@ async def journal_tresorerie(
                     "is_reconciled": None,
                     "reconciled_at": None,
                     "bank_statement_ref": None,
-                }
-            )
+                },
+                f"depuis {_nom_tresorerie('BANQUE', appro_compte_id)}",
+                f"retiré par {appro_benef}" if appro_benef else None,
+                tiers=appro_benef,
+            ))
 
     # Versements (caisse -> banque) : ENTRÉES du journal du compte BANQUE crédité.
     if canal == "BANQUE" and compte_bancaire_id:
@@ -2022,6 +2091,7 @@ async def journal_tresorerie(
             SortieFonds.motif,
             SortieFonds.reference_numero,
             SortieFonds.montant_paye,
+            SortieFonds.beneficiaire,
         ).where(
             (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
             SortieFonds.type_sortie == "versement_banque",
@@ -2033,8 +2103,8 @@ async def journal_tresorerie(
             vers_query = vers_query.where(_sortie_ts >= start_dt)
         if end_dt:
             vers_query = vers_query.where(_sortie_ts <= end_dt)
-        for vers_id, dt, motif, ref_num, montant in (await db.execute(vers_query)).all():
-            mouvements.append(
+        for vers_id, dt, motif, ref_num, montant, vers_benef in (await db.execute(vers_query)).all():
+            mouvements.append(_preciser(
                 {
                     "date": dt,
                     "libelle": motif or "Versement à la banque",
@@ -2048,8 +2118,11 @@ async def journal_tresorerie(
                     "is_reconciled": None,
                     "reconciled_at": None,
                     "bank_statement_ref": None,
-                }
-            )
+                },
+                "depuis la caisse",
+                f"déposé par {vers_benef}" if vers_benef else None,
+                tiers=vers_benef,
+            ))
 
     # Transferts internes (module dédié) : listés pour les deux canaux. Pour la
     # caisse, l'identifiant de compte est NULL (caisse unique) ; pour la banque,
@@ -2093,7 +2166,7 @@ async def journal_tresorerie(
                 is_source = src_type == canal
                 is_dest = dst_type == canal
             if is_source:
-                mouvements.append(
+                mouvements.append(_preciser(
                     {
                         "date": dt,
                         "libelle": "Transfert interne",
@@ -2107,10 +2180,11 @@ async def journal_tresorerie(
                         "is_reconciled": None,
                         "reconciled_at": None,
                         "bank_statement_ref": None,
-                    }
-                )
+                    },
+                    f"vers {_nom_tresorerie(dst_type, dst_id)}",
+                ))
             if is_dest:
-                mouvements.append(
+                mouvements.append(_preciser(
                     {
                         "date": dt,
                         "libelle": "Transfert interne",
@@ -2124,8 +2198,9 @@ async def journal_tresorerie(
                         "is_reconciled": None,
                         "reconciled_at": None,
                         "bank_statement_ref": None,
-                    }
-                )
+                    },
+                    f"depuis {_nom_tresorerie(src_type, src_id)}",
+                ))
 
     mouvements.sort(key=lambda m: (m["date"] or datetime.min.replace(tzinfo=timezone.utc)))
     lignes = calculer_journal_avec_solde(mouvements, solde_initial)

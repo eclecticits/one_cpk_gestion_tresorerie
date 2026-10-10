@@ -112,7 +112,12 @@ export interface ReportSummaryResponse {
 
 export interface ReportJournalLine {
   date: string
+  /** Libellé complet, précisions comprises entre parenthèses. */
   libelle?: string | null
+  libelle_base?: string | null
+  /** Qui a payé / qui a reçu, d'où vient ou où va l'argent. */
+  precision?: string | null
+  tiers?: string | null
   reference?: string | null
   compte_label?: string | null
   entree: Money
