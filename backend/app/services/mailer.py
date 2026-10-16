@@ -1335,3 +1335,78 @@ def send_subscription_renewal_alert_email(
     except Exception:
         logger.exception("Failed to send subscription renewal alert")
         return False
+
+
+def _texte_en_html_simple(*, titre: str, sous_titre: str, texte: str, brand_label: str) -> str:
+    """Carte HTML d'un message déjà rédigé en texte : un paragraphe par bloc."""
+    blocs = [b.strip() for b in (texte or "").split("\n\n") if b.strip()]
+    corps = "".join(
+        '<p style="margin:0 0 12px;">' + "<br />".join(html.escape(ligne) for ligne in bloc.splitlines()) + "</p>"
+        for bloc in blocs
+    )
+    return f"""
+    <html>
+      <body style="margin:0; padding:24px; background:#f6faf9; font-family: Arial, sans-serif; color:#1f2937; line-height:1.6;">
+        <div style="max-width:640px; margin:0 auto; border:1px solid #dfe9e6; border-radius:16px; overflow:hidden; background:#ffffff;">
+          <div style="padding:22px 24px; background:#0f7b62; color:#ffffff;">
+            <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; opacity:.86;">{html.escape(brand_label)}</div>
+            <h2 style="margin:6px 0 0; font-size:20px; line-height:1.25;">{html.escape(titre)}</h2>
+            <div style="margin-top:4px; font-size:13px; opacity:.9;">{html.escape(sous_titre)}</div>
+          </div>
+          <div style="padding:22px 24px;">{corps}</div>
+        </div>
+      </body>
+    </html>
+    """.strip()
+
+
+def send_beneficiaire_sortie_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    to_emails: list[str],
+    cc_emails: list[str],
+    subject: str,
+    titre: str,
+    reference: str,
+    texte: str,
+    brand_label: str,
+) -> None:
+    """Message au bénéficiaire d'une sortie (remise des fonds ou relance).
+
+    Le texte est celui du message WhatsApp, rendu par le même gabarit : les deux
+    canaux disent exactement la même chose. Sans adresse du bénéficiaire, la
+    copie passe en destinataire principal — elle doit être informée quand même.
+    """
+    destinataires = [a for a in to_emails if a]
+    copies = [a for a in cc_emails if a and a.lower() not in {d.lower() for d in destinataires}]
+    if not destinataires:
+        destinataires, copies = copies, []
+    if not destinataires:
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(destinataires)
+    if copies:
+        msg["Cc"] = ", ".join(copies)
+    msg.set_content(texte)
+    msg.add_alternative(
+        _texte_en_html_simple(titre=titre, sous_titre=reference, texte=texte, brand_label=brand_label),
+        subtype="html",
+    )
+    try:
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
+        logger.info("Beneficiary email sent for sortie %s", reference)
+    except Exception:
+        logger.exception("Failed to send beneficiary email for sortie %s", reference)

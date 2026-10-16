@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.beneficiaire_externe import BeneficiaireIdentifieMixin
 
 
 def utcnow() -> datetime:
@@ -47,7 +48,7 @@ def normaliser_cle_reunion(value: str | None) -> str:
     return re.sub(r"\s+", " ", (value or "").lower()).strip()
 
 
-class OrdreDecaissement(Base):
+class OrdreDecaissement(BeneficiaireIdentifieMixin, Base):
     """Tranche autorisée d'une réquisition à décaissement progressif.
 
     Créé et autorisé par le demandeur de la réquisition ; la caissière ne peut

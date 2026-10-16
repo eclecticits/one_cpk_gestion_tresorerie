@@ -21,6 +21,7 @@ from app.api.v1.endpoints import (
     domain,
     clients,
     encaissements,
+    beneficiaires,
     experts,
     export_jobs,
     exports,
@@ -129,6 +130,20 @@ api_router.include_router(export_jobs.router, prefix="/exports", tags=["exports"
 api_router.include_router(alertes.router, prefix="/alertes", tags=["alertes"])
 api_router.include_router(requisitions.router, prefix="/requisitions", tags=["requisitions"])
 api_router.include_router(dossiers_requisition.router, prefix="/dossiers", tags=["dossiers"], dependencies=[Depends(has_any_permission(["validation_examens", "requisitions", "services"]))])
+# Recherche ouverte à qui désigne un bénéficiaire : réquisition, ordre de
+# décaissement, sortie directe, ou caisse.
+api_router.include_router(
+    beneficiaires.router,
+    prefix="/beneficiaires",
+    tags=["beneficiaires"],
+    dependencies=[
+        Depends(
+            has_any_permission(
+                ["requisitions", "sorties_fonds", "can_authorize_disbursement", "can_direct_disbursement"]
+            )
+        )
+    ],
+)
 api_router.include_router(sorties_fonds.router, prefix="/sorties-fonds", tags=["sorties-fonds"], dependencies=[Depends(has_permission("sorties_fonds"))])
 api_router.include_router(sorties.router, prefix="/sorties", tags=["sorties"], dependencies=[Depends(has_permission("sorties_fonds"))])
 api_router.include_router(retours_caisse.router, prefix="/retours-caisse", tags=["retours-caisse"], dependencies=[Depends(has_permission("sorties_fonds"))])

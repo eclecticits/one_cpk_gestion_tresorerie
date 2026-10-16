@@ -265,6 +265,11 @@ def _notification_settings_out(ns: SystemSettings) -> dict:
         "email_tresorier": ns.email_tresorier,
         "emails_bureau_sortie_cc": ns.emails_bureau_sortie_cc,
         "emails_paiement_cc": ns.emails_paiement_cc,
+        "sortie_copie_emails": ns.sortie_copie_emails or "",
+        "sortie_copie_whatsapp": ns.sortie_copie_whatsapp or "",
+        "justificatif_autorites_emails": ns.justificatif_autorites_emails or "",
+        "justificatif_autorites_whatsapp": ns.justificatif_autorites_whatsapp or "",
+        "justificatif_postes_codes": list(ns.justificatif_postes_codes or []),
         "email_validation_1": ns.email_validation_1,
         "email_validation_final": ns.email_validation_final,
         "max_caisse_amount": ns.max_caisse_amount,
@@ -1232,6 +1237,15 @@ async def upsert_notification_settings(
         data["emails_bureau_sortie_cc"] = _normalize_email_list(data.get("emails_bureau_sortie_cc"))
     if "emails_paiement_cc" in data:
         data["emails_paiement_cc"] = _normalize_email_list(data.get("emails_paiement_cc"))
+    for field in ("sortie_copie_emails", "justificatif_autorites_emails"):
+        if field in data:
+            data[field] = _normalize_email_list(data.get(field)) or ""
+    for field in ("sortie_copie_whatsapp", "justificatif_autorites_whatsapp"):
+        if field in data:
+            data[field] = _normalize_phone_list(data.get(field)) or ""
+    if "justificatif_postes_codes" in data:
+        codes = data.get("justificatif_postes_codes") or []
+        data["justificatif_postes_codes"] = sorted({c.strip() for c in codes if (c or "").strip()})
     if "smtp_password" in data:
         smtp_host = data.get("smtp_host") or ns.smtp_host or "smtp.gmail.com"
         data["smtp_password"] = normalize_smtp_password(

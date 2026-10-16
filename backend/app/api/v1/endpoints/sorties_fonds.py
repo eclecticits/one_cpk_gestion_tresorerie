@@ -58,6 +58,7 @@ from app.schemas.transfert import TransfertInterneCreate
 # (encaissements) et aux dépenses (sorties de fonds).
 from app.schemas.payment import AffecterBudgetPayload
 from app.schemas.sortie_fonds import (
+    JustificatifDecision,
     SortieFondsCreate,
     SortieFondsDraftCreate,
     SortieFondsOut,
@@ -68,6 +69,8 @@ from app.schemas.sortie_fonds import (
 )
 from app.services.document_sequences import generate_document_number
 from app.services.tranches_decaissement import TrancheDecaissement, tranches_par_sortie
+from app.services import beneficiaires as beneficiaires_service
+from app.services import justificatifs
 from app.services import transferts_delegues
 from app.services.transferts_internes_service import (
     contrepasser_transfer,
@@ -106,12 +109,6 @@ from app.services.mouvements_budgetaires import (
 from app.services.reglement import MODE_PAIEMENT_MIXTE, canal_pour_mode, normaliser_mode
 from app.services.service_access import get_user_service_ids, has_module_menu_access
 from app.services.requisition_service import record_status_history, reject_requisition_at_payment_logic
-from app.services.notifications import (
-    FUND_OUTFLOW,
-    build_settings as build_whatsapp_settings,
-    notify_whatsapp,
-    resolve_outflow_recipients,
-)
 
 #: ORDRE DES VERROUS — ce module fixe la règle que suivent tous les chemins
 #: d'argent : le poste budgétaire d'abord, la trésorerie (caisse centrale ou
@@ -248,9 +245,6 @@ def _idempotency_advisory_key(tenant_id: int, key: str) -> int:
     digest = hashlib.sha256(f"sortie:{tenant_id}:{key}".encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big", signed=True)
 
-#: `entity_type` porté par les lignes de `notification_logs` de ce module.
-NOTIF_ENTITY_SORTIE = "sortie_fonds"
-
 #: Types de sortie qui ne notifient PAS le Bureau. Ce sont des mouvements de
 #: trésorerie internes, pas des dépenses : rien ne quitte l'organisation.
 #:   versement_banque ......... caisse -> banque (cf. is_versement_banque)
@@ -265,7 +259,7 @@ TYPES_SORTIE_SANS_NOTIFICATION = frozenset(
     {"versement_banque", "approvisionnement_caisse", "regularisation_caisse"}
 )
 
-#: Libellés lisibles des modes de paiement, pour les gabarits WhatsApp.
+#: Modes de paiement connus, pour déduire le canal annoncé au bénéficiaire.
 MODE_PAIEMENT_LABELS = {
     "cash": "Espèces",
     "mobile_money": "Mobile money",
@@ -273,26 +267,6 @@ MODE_PAIEMENT_LABELS = {
     "card": "Carte bancaire",
     "cheque": "Chèque",
 }
-
-
-def _fmt_montant(value: Any) -> str:
-    """Montant lisible dans un message : « 1 234.50 ». Sans devise (variable à part)."""
-    try:
-        return f"{float(value or 0):,.2f}".replace(",", " ")
-    except (TypeError, ValueError):
-        return "0.00"
-
-
-def _mode_paiement_label(mode: str | None) -> str:
-    key = (mode or "").strip().lower()
-    return MODE_PAIEMENT_LABELS.get(key, key.replace("_", " ").capitalize() if key else "")
-
-
-def _nom_utilisateur(user: User | None) -> str:
-    if user is None:
-        return ""
-    nom = " ".join(filter(None, [getattr(user, "prenom", ""), getattr(user, "nom", "")])).strip()
-    return nom or (getattr(user, "email", "") or "")
 
 
 def _canal_lisible(mode: str | None, canal: str | None) -> str:
@@ -315,106 +289,28 @@ def _canal_lisible(mode: str | None, canal: str | None) -> str:
     return "Caisse" if (canal or "").upper() == "CAISSE" else "Banque"
 
 
-async def _notify_sortie_fonds_whatsapp(
+async def _notifier_beneficiaire_sortie(
     db: AsyncSession,
     background_tasks,
     *,
     sortie: SortieFonds,
     tenant_id: int,
-    auteur: User | None,
-    validateur: User | None = None,
-    solde_apres: Any = None,
-    tranche: str = "",
 ) -> None:
-    """Prévient le Bureau qu'une sortie de fonds a été enregistrée.
+    """Message du décaissement au bénéficiaire, « Copie au paiement » en copie.
 
-    À appeler **après** le `commit()` : à ce moment l'argent a réellement quitté
-    la caisse ou le compte, et c'est précisément ce que le message annonce.
-
-    Trois choix explicites :
-
-    * **Aucune condition sur `sortie.statut`.** `SortieFondsCreate.statut` n'est
-      pas validé et vaut « VALIDE » par défaut, mais un payload peut poser
-      « BROUILLON » : la trésorerie est débitée quand même (cf. le décrément de
-      `caisse.solde_*` / `compte.solde_actuel`, qui ne regarde pas le statut).
-      Conditionner l'envoi au statut rendrait donc muettes des sorties qui
-      débitent réellement.
-    * **Les transferts internes ne notifient pas** (cf.
-      TYPES_SORTIE_SANS_NOTIFICATION).
-    * **`solde_apres` est reçu en argument**, capturé avant le `commit()` par
-      l'appelant : le relire ici imposerait une requête de plus et exposerait au
-      `MissingGreenlet` classique sur objet rafraîchi hors contexte.
-
-    Ne lève jamais.
+    Point d'accroche unique de l'endpoint : les tests le remplacent pour ne rien
+    envoyer. Les transferts internes ne notifient pas
+    (cf. TYPES_SORTIE_SANS_NOTIFICATION). Ne lève jamais.
     """
-    try:
-        if (sortie.type_sortie or "").lower() in TYPES_SORTIE_SANS_NOTIFICATION:
-            return
-
-        ns = await get_system_settings(db, tenant_id)
-        if ns is None:
-            return
-        org_name = (
-            await db.execute(select(Organisation.nom).where(Organisation.id == tenant_id).limit(1))
-        ).scalar_one_or_none() or ""
-        settings_obj = build_whatsapp_settings(ns, org_name)
-        if not settings_obj.accepts(FUND_OUTFLOW):
-            # Canal fermé : on sort avant d'interroger le Bureau.
-            return
-
-        recipients = await resolve_outflow_recipients(
-            db, tenant_id, fallback_numbers=getattr(ns, "whatsapp_agents", "")
-        )
-        if not recipients:
-            logger.info("WhatsApp : aucun destinataire pour la sortie %s", sortie.id)
-            return
-
-        devise = sortie.devise or "USD"
-        # `budget_poste_libelle` porte déjà « Réparti sur N postes » quand la
-        # dépense est multi-postes : c'est cette mention qu'on veut voir passer,
-        # pas une ligne vide qui laisserait croire à une dépense sans imputation.
-        poste = sortie.budget_poste_libelle or ""
-        if sortie.budget_poste_code and poste:
-            poste = f"{sortie.budget_poste_code} — {poste}"
-        # `rubrique_code` n'est jamais alimenté nulle part dans le dépôt : il
-        # n'entre pas dans le message.
-
-        await notify_whatsapp(
-            db,
-            background_tasks,
-            organisation_id=tenant_id,
-            event_type=FUND_OUTFLOW,
-            entity_type=NOTIF_ENTITY_SORTIE,
-            entity_id=str(sortie.id),
-            recipients=recipients,
-            variables={
-                "reference": sortie.reference_numero or "",
-                "date": (
-                    sortie.date_paiement.strftime("%d/%m/%Y") if sortie.date_paiement else ""
-                ),
-                "beneficiaire": sortie.beneficiaire or "",
-                "motif": sortie.motif or "",
-                "montant": _fmt_montant(sortie.montant_paye),
-                "devise": devise,
-                "canal": _canal_lisible(sortie.mode_paiement, sortie.canal),
-                "mode_paiement": _mode_paiement_label(sortie.mode_paiement),
-                "poste_budgetaire": poste,
-                "auteur": _nom_utilisateur(auteur),
-                "validateur": _nom_utilisateur(validateur),
-                "solde_apres": (
-                    f"{_fmt_montant(solde_apres)} {devise}" if solde_apres is not None else ""
-                ),
-                # Le gabarit insère `{{tranche}}` sur sa propre ligne, sans
-                # étiquette : la valeur doit donc porter son retour à la ligne.
-                "tranche": tranche,
-            },
-            settings=settings_obj,
-        )
-    except Exception:
-        logger.exception(
-            "Échec de préparation de la notification WhatsApp (sortie de fonds %s)",
-            getattr(sortie, "id", None),
-        )
+    if (sortie.type_sortie or "").lower() in TYPES_SORTIE_SANS_NOTIFICATION:
+        return
+    await justificatifs.notifier_remise(
+        db,
+        background_tasks,
+        sortie=sortie,
+        organisation_id=tenant_id,
+        canal=_canal_lisible(sortie.mode_paiement, sortie.canal),
+    )
 
 
 async def _user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:
@@ -554,6 +450,7 @@ def _requisition_out(
         "a_valoir": req.a_valoir,
         "decaissement_progressif": bool(getattr(req, "decaissement_progressif", False)),
         "beneficiaire": getattr(req, "beneficiaire", None),
+        **beneficiaires_service.champs_publics(req),
         "instance_beneficiaire": req.instance_beneficiaire,
         "tiers_organisation_id": getattr(req, "tiers_organisation_id", None),
         "tiers_nom_libre": getattr(req, "tiers_nom_libre", None),
@@ -634,6 +531,18 @@ def _sortie_out(
         exchange_rate_snapshot=sortie.exchange_rate_snapshot,
         motif=sortie.motif,
         beneficiaire=sortie.beneficiaire,
+        beneficiaire_type=getattr(sortie, "beneficiaire_type", None),
+        beneficiaire_email=getattr(sortie, "beneficiaire_email", None),
+        beneficiaire_telephone=getattr(sortie, "beneficiaire_telephone", None),
+        justificatif_statut=justificatifs.statut_affiche(sortie),
+        justificatif_echeance=getattr(sortie, "justificatif_echeance", None),
+        justificatif_relance_le=getattr(sortie, "justificatif_relance_le", None),
+        justificatif_derniere_relance_le=getattr(sortie, "justificatif_derniere_relance_le", None),
+        justificatif_nb_relances=getattr(sortie, "justificatif_nb_relances", None) or 0,
+        justificatif_relance_prevue_le=justificatifs.relance_prevue_le(sortie),
+        justificatif_recu_le=getattr(sortie, "justificatif_recu_le", None),
+        justificatif_pieces=getattr(sortie, "justificatif_pieces", None),
+        justificatif_motif_dispense=getattr(sortie, "justificatif_motif_dispense", None),
         piece_justificative=sortie.piece_justificative,
         commentaire=sortie.commentaire,
         annexes=sortie.annexes,
@@ -2427,6 +2336,46 @@ async def create_sortie_fonds(
                 detail="Bénéficiaire requis",
             )
 
+    # Qui reçoit l'argent, et comment le joindre. Le bénéficiaire est désigné en
+    # amont — à la réquisition, après sa validation, ou à la sortie directe — et
+    # la sortie reprend cette identification. La caisse ne l'identifie elle-même
+    # que lorsqu'elle nomme la personne payée (remboursement de transport,
+    # reversement de fonds de tiers). Un transfert interne ne paie personne.
+    beneficiaire_identifie = None
+    source_identifiee = None
+    if (payload.type_sortie or "").lower() not in justificatifs.TYPES_SANS_BENEFICIAIRE:
+        if ordre is not None and beneficiaires_service.a_identification(ordre):
+            source_identifiee = ordre
+        elif (
+            req is not None
+            and ordre is None
+            and not beneficiaire_fonds_tiers
+            and beneficiaires_service.a_identification(req)
+            and (req.beneficiaire or "").strip() == (snapshot_beneficiaire or "").strip()
+        ):
+            source_identifiee = req
+        else:
+            beneficiaire_identifie = await beneficiaires_service.identifier(
+                db,
+                tenant_id,
+                nom=snapshot_beneficiaire,
+                type_beneficiaire=payload.beneficiaire_type,
+                reference_id=payload.beneficiaire_ref_id,
+                email=payload.beneficiaire_email,
+                telephone=payload.beneficiaire_telephone,
+                created_by=user.id,
+            )
+        if payload.justificatif_requis is not None:
+            justificatif_requis = bool(payload.justificatif_requis)
+        else:
+            ns_justif = await get_system_settings(db, tenant_id)
+            codes_exiges = getattr(ns_justif, "justificatif_postes_codes", None) if ns_justif else None
+            justificatif_requis = any(
+                justificatifs.code_exige_justificatif(codes_exiges, poste.code) for poste, _ in imputations
+            )
+    else:
+        justificatif_requis = False
+
     reference_numero = await generate_document_number(db, "PAY", tenant_id, service_id=service_id)
     settings_res = await db.execute(
         select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
@@ -2485,6 +2434,11 @@ async def create_sortie_fonds(
         # Programmeur (demandeur) : repris de l'ordre pour les sorties directes.
         programme_par_id=(ordre.autorise_par if ordre is not None else None),
     )
+    if source_identifiee is not None:
+        beneficiaires_service.copier(source_identifiee, sortie)
+    elif beneficiaire_identifie is not None:
+        beneficiaires_service.appliquer(sortie, beneficiaire_identifie)
+    justificatifs.poser_attente(sortie, justificatif_requis)
     db.add(sortie)
     await db.flush()  # garantit sortie.id, requis par la génération comptable et par le règlement d'un ordre
     if canal == "CAISSE":
@@ -2716,19 +2670,6 @@ async def create_sortie_fonds(
             repartition=fonds_tiers_repartition,
         )
 
-    # Solde après opération, capturé AVANT le commit. `solde_disponible` a été
-    # lu sous verrou (FOR UPDATE) au moment du contrôle de provision, et
-    # `montant_paye` vient d'en être retranché sur la caisse ou le compte. Le
-    # relire après le commit obligerait à recharger l'objet de trésorerie —
-    # requête inutile, et lecture différée hors contexte qui lèverait un
-    # MissingGreenlet. Ici, ce ne sont plus que deux Decimal.
-    solde_apres_operation = None
-    if solde_disponible is not None:
-        try:
-            solde_apres_operation = Decimal(str(solde_disponible)) - Decimal(str(montant_paye))
-        except (TypeError, ValueError, ArithmeticError):
-            solde_apres_operation = None
-
     await db.commit()
     await invalidate_report_summary_cache(tenant_id)
     await db.refresh(sortie)
@@ -2760,21 +2701,11 @@ async def create_sortie_fonds(
             )
             remboursement_transport = _remboursement_transport_payload(remb_res.scalar_one_or_none())
 
-    # Sortie de fonds : le Bureau est prévenu ici, et seulement ici — c'est le
-    # moment où l'argent a réellement quitté la trésorerie. `requisition`,
-    # `validateur` et `approbateur` sont déjà chargés juste au-dessus : aucune
-    # requête n'est ajoutée pour les besoins du message. `tranche` reste vide,
-    # faute d'une donnée fiable sur le nombre total de tranches (voir
-    # RAPPORT-hooks.md).
-    await _notify_sortie_fonds_whatsapp(
-        db,
-        background_tasks,
-        sortie=sortie,
-        tenant_id=tenant_id,
-        auteur=creator,
-        validateur=validateur,
-        solde_apres=solde_apres_operation,
-    )
+    # Sortie de fonds : le bénéficiaire est prévenu ici, et seulement ici — c'est
+    # le moment où l'argent a réellement quitté la trésorerie. La « Copie au
+    # paiement » reçoit le même message. Le Bureau n'est plus prévenu en entier
+    # à chaque sortie : c'était trop.
+    await _notifier_beneficiaire_sortie(db, background_tasks, sortie=sortie, tenant_id=tenant_id)
 
     # La tranche est rendue dès la création : c'est cette réponse qui alimente
     # le bon imprimé dans la foulée du paiement, et l'objet de la tranche ne
@@ -3569,3 +3500,194 @@ async def update_sortie_statut(
         sortie, requisition, validateur=validateur, approbateur=approbateur,
         tranche=tranches.get(sortie.id),
     )
+
+
+# ── Justificatif attendu après le décaissement ───────────────────────────────
+
+
+async def _sortie_du_tenant(db: AsyncSession, sortie_id: str, tenant_id: int) -> SortieFonds:
+    try:
+        sid = uuid.UUID(sortie_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sortie_id")
+    sortie = (
+        await db.execute(
+            select(SortieFonds).where(SortieFonds.id == sid, SortieFonds.organisation_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if sortie is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+    if (sortie.statut or "").upper() == "ANNULEE":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sortie annulée")
+    # Un brouillon n'a rien décaissé : il n'y a encore rien à justifier.
+    if (sortie.statut or "").upper() == "BROUILLON":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sortie non payée (brouillon)")
+    return sortie
+
+
+@router.get("/justificatifs/en-attente", response_model=list[SortieFondsOut])
+async def lister_justificatifs_en_attente(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> list[SortieFondsOut]:
+    """Sorties dont le justificatif est attendu, les plus anciennes d'abord."""
+    rows = (
+        await db.execute(
+            select(SortieFonds)
+            .where(
+                SortieFonds.organisation_id == tenant_id,
+                SortieFonds.justificatif_statut == justificatifs.STATUT_ATTENDU,
+                SortieFonds.statut != "ANNULEE",
+            )
+            .order_by(SortieFonds.justificatif_echeance.asc().nulls_last())
+        )
+    ).scalars().all()
+    return [_sortie_out(sortie) for sortie in rows]
+
+
+@router.get("/justificatifs/regle")
+async def regle_justificatif(
+    poste_ids: str = "",
+    requisition_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, bool]:
+    """La case « Pièce justificative à rapporter » doit-elle être cochée d'avance ?
+
+    Elle l'est quand un des postes imputés figure parmi les postes désignés
+    dans les paramètres. Ce n'est qu'une proposition : le caissier décide.
+    """
+    ids: set[int] = set()
+    for part in poste_ids.split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    if requisition_id is not None:
+        lignes = (
+            await db.execute(
+                select(LigneRequisition.budget_poste_id)
+                .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
+                .where(LigneRequisition.requisition_id == requisition_id, Requisition.organisation_id == tenant_id)
+            )
+        ).scalars().all()
+        ids.update(int(i) for i in lignes if i is not None)
+    ns = await get_system_settings(db, tenant_id)
+    codes = getattr(ns, "justificatif_postes_codes", None) if ns else None
+    return {"requis": await justificatifs.postes_exigent_justificatif(db, tenant_id, codes, ids)}
+
+
+@router.post("/{sortie_id}/justificatif", response_model=SortieFondsOut)
+async def deposer_justificatif(
+    sortie_id: str,
+    request: Request,
+    fichiers: list[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(has_permission("can_execute_payment")),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
+) -> SortieFondsOut:
+    """Le caissier joint la pièce scannée à la ligne de sortie : elle est reçue."""
+    sortie = await _sortie_du_tenant(db, sortie_id, tenant_id)
+    if not fichiers:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucun fichier joint")
+    safe_ref = _safe_ref(f"{sortie.reference_numero or sortie.reference or sortie.id}-justificatif")
+    chemins = await _save_sortie_annexes(fichiers, safe_ref, tenant_uuid=tenant_uuid)
+    ancien_statut = sortie.justificatif_statut
+    pieces = list(sortie.justificatif_pieces or [])
+    pieces.extend(c for c in chemins if c not in pieces)
+    sortie.justificatif_pieces = pieces
+    sortie.justificatif_statut = justificatifs.STATUT_RECU
+    sortie.justificatif_recu_le = datetime.now(timezone.utc)
+    sortie.justificatif_recu_par_id = user.id
+    await log_action(
+        db,
+        user_id=user.id,
+        action="SORTIE_JUSTIFICATIF_RECU",
+        target_table="sorties_fonds",
+        target_id=str(sortie.id),
+        old_value={"justificatif_statut": ancien_statut},
+        new_value={"justificatif_statut": justificatifs.STATUT_RECU, "pieces": chemins},
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(sortie)
+    return _sortie_out(sortie)
+
+
+@router.post("/{sortie_id}/justificatif/relancer", response_model=SortieFondsOut)
+async def relancer_justificatif(
+    sortie_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(has_permission("can_execute_payment")),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> SortieFondsOut:
+    """Le caissier relance le bénéficiaire, autorités en copie, quand il le juge utile."""
+    sortie = await _sortie_du_tenant(db, sortie_id, tenant_id)
+    if sortie.justificatif_statut != justificatifs.STATUT_ATTENDU:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucun justificatif n'est attendu pour cette sortie")
+    sid = sortie.id
+    if not await justificatifs.relancer_manuellement(
+        db, sortie_id=sid, organisation_id=tenant_id, background_tasks=background_tasks
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Une relance vient de partir : attendez une minute avant d'en envoyer une autre",
+        )
+    await log_action(
+        db,
+        user_id=user.id,
+        action="SORTIE_JUSTIFICATIF_RELANCE",
+        target_table="sorties_fonds",
+        target_id=str(sid),
+        new_value={"manuelle": True},
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    sortie = (await db.execute(select(SortieFonds).where(SortieFonds.id == sid))).scalar_one()
+    await db.refresh(sortie)
+    return _sortie_out(sortie)
+
+
+@router.patch("/{sortie_id}/justificatif", response_model=SortieFondsOut)
+async def decider_justificatif(
+    sortie_id: str,
+    payload: JustificatifDecision,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(has_permission("can_execute_payment")),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> SortieFondsOut:
+    """Exiger, ne plus exiger ou dispenser (motif obligatoire) le justificatif."""
+    sortie = await _sortie_du_tenant(db, sortie_id, tenant_id)
+    ancien_statut = sortie.justificatif_statut
+    if ancien_statut == justificatifs.STATUT_RECU:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le justificatif a déjà été reçu")
+
+    motif = (payload.motif or "").strip()
+    if payload.action == "exiger":
+        if ancien_statut != justificatifs.STATUT_ATTENDU:
+            justificatifs.poser_attente(sortie, True, depart=datetime.now(timezone.utc))
+    elif payload.action == "ne_pas_exiger":
+        justificatifs.poser_attente(sortie, False)
+        sortie.justificatif_motif_dispense = None
+    else:
+        if not motif:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Motif de dispense obligatoire")
+        sortie.justificatif_statut = justificatifs.STATUT_DISPENSE
+        sortie.justificatif_motif_dispense = motif
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="SORTIE_JUSTIFICATIF_DECISION",
+        target_table="sorties_fonds",
+        target_id=str(sortie.id),
+        old_value={"justificatif_statut": ancien_statut},
+        new_value={"justificatif_statut": sortie.justificatif_statut, "action": payload.action, "motif": motif or None},
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(sortie)
+    return _sortie_out(sortie)

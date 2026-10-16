@@ -79,6 +79,13 @@ export type NotificationSettings = {
   emails_bureau_sortie_cc: string
   // Copie visible (CC) des accusés de réception et relances envoyés au payeur.
   emails_paiement_cc: string
+  // Sorties de fonds : le bénéficiaire est prévenu, ces listes en copie.
+  sortie_copie_emails?: string
+  sortie_copie_whatsapp?: string
+  justificatif_autorites_emails?: string
+  justificatif_autorites_whatsapp?: string
+  // Codes des postes dont les sorties proposent la case « justificatif » cochée.
+  justificatif_postes_codes?: string[]
   email_validation_1: string
   email_validation_final: string
   max_caisse_amount: number

@@ -79,6 +79,12 @@ class RequisitionCreate(DecimalBaseModel):
     decaissement_progressif: bool | None = False
     beneficiaire: str | None = Field(default=None, max_length=200)
     instance_beneficiaire: str | None = None
+    #: Qui est le bénéficiaire (EXPERT, PERSONNEL, UTILISATEUR, EXTERNE) et comment le joindre :
+    #: il est prévenu quand les fonds lui sont remis.
+    beneficiaire_type: Literal["EXPERT", "PERSONNEL", "UTILISATEUR", "EXTERNE"] | None = None
+    beneficiaire_ref_id: str | None = Field(default=None, max_length=64)
+    beneficiaire_email: str | None = Field(default=None, max_length=200)
+    beneficiaire_telephone: str | None = Field(default=None, max_length=50)
     tiers_organisation_id: int | None = None
     tiers_nom_libre: str | None = Field(default=None, max_length=255)
     # Fonds de tiers reversés par ce seul versement (FONDS_DE_TIERS). Absents :
@@ -186,6 +192,12 @@ class RequisitionUpdate(DecimalBaseModel):
     decaissement_progressif: bool | None = None
     beneficiaire: str | None = Field(default=None, max_length=200)
     instance_beneficiaire: str | None = None
+    #: Qui est le bénéficiaire (EXPERT, PERSONNEL, UTILISATEUR, EXTERNE) et comment le joindre :
+    #: il est prévenu quand les fonds lui sont remis.
+    beneficiaire_type: Literal["EXPERT", "PERSONNEL", "UTILISATEUR", "EXTERNE"] | None = None
+    beneficiaire_ref_id: str | None = Field(default=None, max_length=64)
+    beneficiaire_email: str | None = Field(default=None, max_length=200)
+    beneficiaire_telephone: str | None = Field(default=None, max_length=50)
     tiers_organisation_id: int | None = None
     tiers_nom_libre: str | None = Field(default=None, max_length=255)
     fonds_tiers_lignes: list[FondsTiersLigneIn] | None = None
@@ -268,6 +280,10 @@ class RequisitionOut(DecimalBaseModel):
     decaissement_progressif: bool | None = False
     beneficiaire: str | None = None
     instance_beneficiaire: str | None = None
+    beneficiaire_type: str | None = None
+    beneficiaire_ref_id: str | None = None
+    beneficiaire_email: str | None = None
+    beneficiaire_telephone: str | None = None
     tiers_organisation_id: int | None = None
     tiers_nom_libre: str | None = None
     fonds_tiers_lignes: list[FondsTiersLigneOut] | None = None

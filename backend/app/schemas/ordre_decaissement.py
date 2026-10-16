@@ -16,6 +16,12 @@ class OrdreDecaissementCreate(DecimalBaseModel):
     # None = ordre de sortie directe (sans réquisition), plafonné à 100 USD
     requisition_id: UUID | None = None
     beneficiaire: str = Field(min_length=2, max_length=200)
+    #: Qui est le bénéficiaire (EXPERT, PERSONNEL, UTILISATEUR, EXTERNE) et comment le joindre :
+    #: il est prévenu quand les fonds lui sont remis.
+    beneficiaire_type: Literal["EXPERT", "PERSONNEL", "UTILISATEUR", "EXTERNE"] | None = None
+    beneficiaire_ref_id: str | None = Field(default=None, max_length=64)
+    beneficiaire_email: str | None = Field(default=None, max_length=200)
+    beneficiaire_telephone: str | None = Field(default=None, max_length=50)
     #: Pour une collation, le total est DÉRIVÉ du nombre de participants et du
     #: prix par tête : ce qui est envoyé ici sert l'affichage, le serveur
     #: recalcule. Entre ce qu'il contrôle et ce qu'il paie, un écart n'aurait
@@ -62,6 +68,10 @@ class OrdreDecaissementOut(DecimalBaseModel):
     requisition_id: UUID | None = None
     numero_ordre: str
     beneficiaire: str
+    beneficiaire_type: str | None = None
+    beneficiaire_ref_id: str | None = None
+    beneficiaire_email: str | None = None
+    beneficiaire_telephone: str | None = None
     montant: Decimal
     montant_usd_snapshot: Decimal | None = None
     devise: str

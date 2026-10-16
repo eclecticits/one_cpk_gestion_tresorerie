@@ -71,6 +71,7 @@ import { apiRequest } from '../lib/apiClient'
 import { User, Service } from '../types'
 import EncaissementTarifsSettings from '../components/settings/EncaissementTarifsSettings'
 import styles from './Settings.module.css'
+import { compareBudgetCodes } from '../utils/budgetCode'
 import ConfirmModal from '../components/ConfirmModal'
 import RolePermissionsEditor from '../components/admin/RolePermissionsEditor'
 import ServiceAdminPanel from '../components/ServiceAdminPanel'
@@ -1133,6 +1134,11 @@ export default function Settings() {
         emails_bureau_cc: normalizeEmailList(payload.emails_bureau_cc || ''),
         emails_bureau_sortie_cc: normalizeEmailList(payload.emails_bureau_sortie_cc || ''),
         emails_paiement_cc: normalizeEmailList(payload.emails_paiement_cc || ''),
+        sortie_copie_emails: normalizeEmailList(payload.sortie_copie_emails || ''),
+        sortie_copie_whatsapp: normalizePhoneList(payload.sortie_copie_whatsapp || ''),
+        justificatif_autorites_emails: normalizeEmailList(payload.justificatif_autorites_emails || ''),
+        justificatif_autorites_whatsapp: normalizePhoneList(payload.justificatif_autorites_whatsapp || ''),
+        justificatif_postes_codes: payload.justificatif_postes_codes || [],
         whatsapp_api_url: (payload.whatsapp_api_url || '').trim(),
         whatsapp_api_key: (payload.whatsapp_api_key || '').trim(),
         whatsapp_agents: normalizePhoneList(payload.whatsapp_agents || ''),
@@ -2413,6 +2419,77 @@ export default function Settings() {
                             />
                             <div id="notif-emails-sortie-cc-count" className={styles.mutedText} aria-live="polite">
                               {countCcEmails(notificationSettings.emails_bureau_sortie_cc || '')} adresse(s) détectée(s)
+                            </div>
+                          </div>
+                        </section>
+
+                        <section className={styles.notificationGroup} aria-labelledby="notif-group-beneficiaires">
+                          <div className={styles.notificationGroupHead}>
+                            <h3 id="notif-group-beneficiaires">Bénéficiaires des sorties</h3>
+                            <p>
+                              À chaque décaissement, le bénéficiaire reçoit un message (WhatsApp, e-mail), avec la
+                              « Copie au paiement » en copie. Si le caissier a demandé une pièce justificative et
+                              qu'elle n'est pas déposée 7 jours après, le message est renvoyé une fois, avec les
+                              « Autorités en relance » en copie.
+                            </p>
+                          </div>
+                          {([
+                            ['sortie_copie_emails', 'Copie au paiement — e-mails', 'tresorier@cpk.org, ...', 'email'],
+                            ['sortie_copie_whatsapp', 'Copie au paiement — numéros WhatsApp', '+243 810 000 000, ...', 'phone'],
+                            ['justificatif_autorites_emails', 'Autorités en relance — e-mails', 'president@cpk.org, ...', 'email'],
+                            ['justificatif_autorites_whatsapp', 'Autorités en relance — numéros WhatsApp', '+243 820 000 000, ...', 'phone'],
+                          ] as const).map(([champ, libelle, exemple, genre]) => (
+                            <div className={styles.field} key={champ}>
+                              <label htmlFor={`notif-${champ}`}>{libelle}</label>
+                              <textarea
+                                id={`notif-${champ}`}
+                                rows={2}
+                                value={notificationSettings[champ] || ''}
+                                onChange={(e) =>
+                                  setNotificationSettings({ ...notificationSettings, [champ]: e.target.value })
+                                }
+                                placeholder={exemple}
+                              />
+                              {genre === 'email' && (
+                                <div className={styles.mutedText} aria-live="polite">
+                                  {countCcEmails(notificationSettings[champ] || '')} adresse(s) détectée(s)
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          <div className={styles.field}>
+                            <span className={styles.postesJustifTitre}>Postes dont la case « justificatif » est cochée d'avance</span>
+                            <p className={styles.mutedText}>
+                              Une proposition seulement : au paiement, le caissier coche ou décoche selon la sortie.
+                              Un poste couvre ses sous-postes.
+                            </p>
+                            <div className={styles.postesJustifListe}>
+                              {Array.from(new Map(postesDepense.map((p) => [p.code, p])).values())
+                                .sort((a, b) => compareBudgetCodes(a.code, b.code))
+                                .map((p) => {
+                                  const codes = notificationSettings.justificatif_postes_codes || []
+                                  const coche = codes.includes(p.code)
+                                  return (
+                                    <label key={p.code} className={styles.postesJustifItem}>
+                                      <input
+                                        type="checkbox"
+                                        checked={coche}
+                                        onChange={(e) =>
+                                          setNotificationSettings({
+                                            ...notificationSettings,
+                                            justificatif_postes_codes: e.target.checked
+                                              ? [...codes, p.code]
+                                              : codes.filter((c) => c !== p.code),
+                                          })
+                                        }
+                                      />
+                                      <span><strong>{p.code}</strong> {p.libelle}</span>
+                                    </label>
+                                  )
+                                })}
+                              {postesDepense.length === 0 && (
+                                <span className={styles.mutedText}>Aucun poste de dépense dans le budget en cours.</span>
+                              )}
                             </div>
                           </div>
                         </section>

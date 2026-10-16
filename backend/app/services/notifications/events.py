@@ -28,12 +28,25 @@ PAYMENT_REMINDER = "PAYMENT_REMINDER"
 # ── Sorties de fonds ─────────────────────────────────────────────────────────
 
 FUND_OUTFLOW = "FUND_OUTFLOW"
-"""Sortie de fonds enregistrée — l'argent a réellement quitté la caisse ou le compte.
+"""Ancien message au Bureau à chaque sortie de fonds — n'est plus émis.
 
-C'est le seul événement de la chaîne de dépense qui notifie le Bureau. Le visa
-final de la réquisition, lui, ne déplace aucun fonds : il annonce une décision,
-pas un décaissement, et il est même absent des tenants configurés en workflow
-« express ».
+Prévenir tout le Bureau à chaque décaissement était trop : le message part
+désormais au bénéficiaire (FUND_OUTFLOW_BENEFICIARY), avec quelques adresses
+choisies en copie. Le code reste au vocabulaire pour que l'historique des envois
+passés garde son libellé.
+"""
+
+FUND_OUTFLOW_BENEFICIARY = "FUND_OUTFLOW_BENEFICIARY"
+"""Sortie de fonds enregistrée — le bénéficiaire est prévenu, la « Copie au paiement » aussi.
+
+Quand la sortie attend un justificatif, le message annonce le délai de 48 h.
+"""
+
+JUSTIFICATIF_RELANCE = "JUSTIFICATIF_RELANCE"
+"""Justificatif non rapporté 7 jours après le décaissement — relance unique.
+
+Part au bénéficiaire avec les « Autorités en relance » en copie. Une seule
+relance par sortie : `sorties_fonds.justificatif_relance_le` en est le verrou.
 """
 
 REQUISITION_APPROVED = "REQUISITION_APPROVED"
@@ -53,7 +66,9 @@ PAYMENT_EVENTS: frozenset[str] = frozenset(
     {PAYMENT_RECEIVED, PAYMENT_PROFORMA_CONVERTED, PAYMENT_COMPLEMENT, PAYMENT_REMINDER}
 )
 
-OUTFLOW_EVENTS: frozenset[str] = frozenset({FUND_OUTFLOW, REQUISITION_APPROVED})
+OUTFLOW_EVENTS: frozenset[str] = frozenset(
+    {FUND_OUTFLOW, FUND_OUTFLOW_BENEFICIARY, JUSTIFICATIF_RELANCE, REQUISITION_APPROVED}
+)
 
 ALL_EVENTS: frozenset[str] = PAYMENT_EVENTS | OUTFLOW_EVENTS | {TEST_MESSAGE}
 
@@ -64,6 +79,8 @@ EVENT_LABELS: dict[str, str] = {
     PAYMENT_COMPLEMENT: "Paiement complémentaire",
     PAYMENT_REMINDER: "Relance de paiement",
     FUND_OUTFLOW: "Sortie de fonds",
+    FUND_OUTFLOW_BENEFICIARY: "Fonds remis au bénéficiaire",
+    JUSTIFICATIF_RELANCE: "Relance de justificatif",
     REQUISITION_APPROVED: "Réquisition approuvée",
     TEST_MESSAGE: "Message de test",
 }

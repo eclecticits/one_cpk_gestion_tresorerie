@@ -20,6 +20,7 @@ from app.db.session import engine
 from app.services.export_queue import NOM_TACHE
 from app.utils.scheduler import (
     start_billing_guard_scheduler,
+    start_justificatifs_relance_scheduler,
     start_monthly_report_scheduler,
     start_monthly_treasury_report_scheduler,
     start_weekly_report_scheduler,
@@ -86,6 +87,7 @@ async def au_demarrage(ctx: dict[str, Any]) -> None:
     start_monthly_report_scheduler()
     start_monthly_treasury_report_scheduler()
     start_billing_guard_scheduler()
+    start_justificatifs_relance_scheduler()
     logger.info("Ordonnanceurs démarrés dans le worker (SCHEDULERS_IN_WORKER=true).")
 
 

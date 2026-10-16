@@ -23,6 +23,7 @@ from app.utils.scheduler import (
     start_monthly_report_scheduler,
     start_monthly_treasury_report_scheduler,
     start_billing_guard_scheduler,
+    start_justificatifs_relance_scheduler,
 )
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
@@ -137,6 +138,7 @@ async def startup_event() -> None:
         start_monthly_report_scheduler()
         start_monthly_treasury_report_scheduler()
         start_billing_guard_scheduler()
+        start_justificatifs_relance_scheduler()
 
 
 @app.on_event("shutdown")

@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Search, Printer, Undo2, Ban, Lock, Paperclip, Pencil, Target } from 'lucide-react'
+import { Search, Printer, Undo2, Ban, Lock, Paperclip, Pencil, Target, FileCheck } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
@@ -64,6 +64,11 @@ import { useTreasuryLock } from '../hooks/useTreasuryLock'
 import PageHeader from '../components/PageHeader'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import RetourCaisseModal, { RetourSortieSource } from '../components/RetourCaisseModal'
+import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, saisieDepuis, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
+import JustificatifModal, { JustificatifBadge, justificatifAttendu } from '../components/JustificatifModal'
+import JustificatifsEnAttente from '../components/JustificatifsEnAttente'
+import { listerJustificatifsEnAttente, regleJustificatif } from '../api/justificatifs'
+import justifStyles from '../components/Justificatif.module.css'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
@@ -171,6 +176,15 @@ export default function SortiesFonds() {
     fonds_tiers_operation_id: '',
   })
   const [justificatifFiles, setJustificatifFiles] = useState<File[]>([])
+  // Qui reçoit l'argent et comment le joindre : il est prévenu de la remise.
+  const [beneficiaireSaisie, setBeneficiaireSaisie] = useState<BeneficiaireSaisie>(BENEFICIAIRE_VIDE)
+  // Le caissier dit, au paiement, si une pièce doit être rapportée sous 48 h.
+  // La case est proposée cochée pour les postes désignés dans les paramètres ;
+  // dès qu'il y touche, sa décision n'est plus recalculée.
+  const [justificatifRequis, setJustificatifRequis] = useState(false)
+  const [justificatifTouche, setJustificatifTouche] = useState(false)
+  const [justificatifSortie, setJustificatifSortie] = useState<SortieFonds | null>(null)
+  const [attenteOuverte, setAttenteOuverte] = useState(false)
   // Fonds encore à reverser : chargés à la demande, quand on choisit ce type.
   const [fondsTiersOuverts, setFondsTiersOuverts] = useState<FondsTiersOperation[]>([])
   const [chargementFondsTiers, setChargementFondsTiers] = useState(false)
@@ -427,6 +441,15 @@ export default function SortiesFonds() {
   const invalidateSortiesFonds = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['sorties-fonds'] })
   }, [queryClient])
+
+  // Même racine de clé que la liste : toute invalidation des sorties la recharge.
+  const attenteQuery = useQuery({
+    queryKey: ['sorties-fonds', 'justificatifs-en-attente'],
+    queryFn: listerJustificatifsEnAttente,
+    enabled: !isCreatePage,
+  })
+  const justificatifsEnAttente = attenteQuery.data ?? []
+  const justificatifsEnRetard = justificatifsEnAttente.filter((s) => s.justificatif_statut === 'EN_RETARD').length
 
   useEffect(() => {
     const loadComptes = async () => {
@@ -804,6 +827,17 @@ export default function SortiesFonds() {
     !isRemboursementFondsTiers &&
     !beneficiaireASaisir &&
     (isRequisitionBound || isProgressif || isSortieDirecte)
+  // Le bénéficiaire est désigné en amont (réquisition, ordre) ; la caisse ne le
+  // nomme elle-même que lorsque la source n'en désigne pas — remboursement de
+  // transport — ou pour un reversement de fonds de tiers.
+  const beneficiaireCaisseDefinit = isRemboursementFondsTiers || beneficiaireASaisir || !beneficiaireVerrouille
+  // Pièce d'où vient l'identification affichée : l'ordre s'il en porte une,
+  // sinon la réquisition.
+  const sourceBeneficiaire = (selectedOrdre as any)?.beneficiaire_type
+    ? selectedOrdre
+    : (selectedRequisition as any)?.beneficiaire_type
+      ? selectedRequisition
+      : null
   const natureMouvement = natureDuTypeSortie(formData.type_sortie)
   const sansImpactBudgetaire = natureMouvement !== 'BUDGETAIRE'
 
@@ -959,6 +993,43 @@ export default function SortiesFonds() {
     : ordrePostes.length === 1
       ? ordrePostes[0].id
       : null
+
+  // Une autre source, un autre bénéficiaire : l'identification et la décision
+  // sur le justificatif repartent de zéro.
+  useEffect(() => {
+    setBeneficiaireSaisie(BENEFICIAIRE_VIDE)
+    setJustificatifTouche(false)
+  }, [formData.type_sortie, formData.requisition_id, formData.ordre_decaissement_id])
+
+  const posteIdsJustificatif = useMemo(() => {
+    const ids = new Set<number>()
+    if (posteMonoId) ids.add(posteMonoId)
+    ordrePostes.forEach((p) => ids.add(p.id))
+    return Array.from(ids).sort((a, b) => a - b)
+  }, [posteMonoId, ordrePostes])
+  const posteIdsCle = posteIdsJustificatif.join(',')
+
+  // Proposition seulement : la case est cochée d'avance pour un poste désigné
+  // dans les paramètres. Le caissier tranche.
+  useEffect(() => {
+    if (justificatifTouche) return
+    if (isTransfertInterne || (!posteIdsCle && !formData.requisition_id)) {
+      setJustificatifRequis(false)
+      return
+    }
+    let actif = true
+    regleJustificatif({ posteIds: posteIdsJustificatif, requisitionId: formData.requisition_id || null })
+      .then((r) => {
+        if (actif) setJustificatifRequis(r.requis)
+      })
+      .catch(() => {
+        if (actif) setJustificatifRequis(false)
+      })
+    return () => {
+      actif = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posteIdsCle, formData.requisition_id, isTransfertInterne, justificatifTouche])
   // La caissière exécute : dès qu'un règlement est imposé en amont, le canal, le
   // mode et le compte source de la sortie recopient cette décision plutôt que
   // d'attendre une saisie qui ne pourrait que la contredire.
@@ -1705,6 +1776,8 @@ export default function SortiesFonds() {
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
         motif: motifEffectif,
         beneficiaire: beneficiaireFinal,
+        ...(isTransfertInterne || !beneficiaireCaisseDefinit ? {} : payloadBeneficiaire(beneficiaireSaisie)),
+        justificatif_requis: isTransfertInterne ? false : justificatifRequis,
         piece_justificative: formData.piece_justificative || null,
         commentaire: formData.commentaire || null,
         created_by: user?.id,
@@ -1893,6 +1966,8 @@ export default function SortiesFonds() {
         fonds_tiers_operation_id: '',
       })
       setJustificatifFiles([])
+      setBeneficiaireSaisie(BENEFICIAIRE_VIDE)
+      setJustificatifTouche(false)
       invalidateSortiesFonds()
       window.dispatchEvent(new Event('dashboard-refresh'))
     } catch (error: any) {
@@ -1966,6 +2041,7 @@ export default function SortiesFonds() {
   }
 
   const canCreate = hasPermission('sorties_fonds')
+  const canExecutePayment = hasPermission('can_execute_payment')
 
   const filteredSorties = sortiesList
 
@@ -2277,6 +2353,10 @@ export default function SortiesFonds() {
               <Link to="/cloture-caisse" className={styles.secondaryBtn}>
                 {isCashClosed ? 'Ouvrir la caisse' : 'Clôture de la journée'}
               </Link>
+              <button type="button" className={styles.secondaryBtn} onClick={() => setAttenteOuverte(true)}>
+                Justificatifs en attente ({justificatifsEnAttente.length}
+                {justificatifsEnRetard > 0 ? `, dont ${justificatifsEnRetard} en retard` : ''})
+              </button>
               <Link to="/sorties-fonds/nouvelle" className={styles.primaryBtn}>
                 + Nouvelle sortie
               </Link>
@@ -2939,33 +3019,59 @@ export default function SortiesFonds() {
 
               {!isTransfertInterne && (
               <div className={styles.field}>
-                <label>Bénéficiaire *</label>
-                <input
-                  type="text"
-                  value={formData.beneficiaire}
-                  onChange={(e) => setFormData({ ...formData, beneficiaire: e.target.value })}
-                  placeholder={getBeneficiairePlaceholder(formData.type_sortie)}
-                  disabled={
-                    isRemboursementFondsTiers
-                      ? false
-                      : noApprovedRequisitionAvailable || beneficiaireVerrouille
-                  }
-                  className={beneficiaireVerrouille ? styles.lockedSelect : undefined}
+                <BeneficiaireIdentification
+                  id="sortie-beneficiaire"
+                  label="Bénéficiaire"
                   required
+                  nom={formData.beneficiaire}
+                  onNomChange={(nom) => setFormData((prev) => ({ ...prev, beneficiaire: nom }))}
+                  value={beneficiaireCaisseDefinit ? beneficiaireSaisie : saisieDepuis(sourceBeneficiaire, formData.beneficiaire)}
+                  onChange={setBeneficiaireSaisie}
+                  lectureSeule={!beneficiaireCaisseDefinit}
+                  placeholder={getBeneficiairePlaceholder(formData.type_sortie)}
+                  disabled={!isRemboursementFondsTiers && noApprovedRequisitionAvailable}
+                  inputClassName={!beneficiaireCaisseDefinit ? styles.lockedSelect : undefined}
+                  aide={
+                    <>
+                      {beneficiaireASaisir && (
+                        <small style={{ color: '#6b7280', fontSize: '12px' }}>
+                          La réquisition ne désigne pas de bénéficiaire : indiquez la personne qui reçoit l'argent et signe la décharge.
+                        </small>
+                      )}
+                      {isRemboursementFondsTiers && (
+                        <small style={{ color: '#6b7280', fontSize: '12px' }}>
+                          Personne qui a effectivement reçu l'argent et signe la décharge.
+                          {fondsTiersSelectionne
+                            ? ` Le tiers créancier (${fondsTiersSelectionne.tiers_display_name}) reste identifié par les fonds sélectionnés.`
+                            : ''}
+                        </small>
+                      )}
+                    </>
+                  }
                 />
-                {beneficiaireASaisir && (
-                  <small style={{ color: '#6b7280', fontSize: '12px' }}>
-                    La réquisition ne désigne pas de bénéficiaire : indiquez la personne qui reçoit l'argent et signe la décharge.
-                  </small>
-                )}
-                {isRemboursementFondsTiers && (
-                  <small style={{ color: '#6b7280', fontSize: '12px' }}>
-                    Personne qui a effectivement reçu l'argent et signe la décharge.
-                    {fondsTiersSelectionne
-                      ? ` Le tiers créancier (${fondsTiersSelectionne.tiers_display_name}) reste identifié par les fonds sélectionnés.`
-                      : ''}
-                  </small>
-                )}
+              </div>
+              )}
+
+              {!isTransfertInterne && (
+              <div className={styles.field}>
+                <label className={justifStyles.caseJustificatif}>
+                  <input
+                    type="checkbox"
+                    checked={justificatifRequis}
+                    onChange={(e) => {
+                      setJustificatifTouche(true)
+                      setJustificatifRequis(e.target.checked)
+                    }}
+                  />
+                  <span className={justifStyles.caseTexte}>
+                    <strong>Pièce justificative à rapporter (48 h)</strong>
+                    <small>
+                      {justificatifRequis
+                        ? 'Le message au bénéficiaire lui demandera la pièce sous 48 h. Sans elle au bout de 7 jours, il sera relancé, autorités en copie.'
+                        : "Le message confirmera seulement la remise des fonds (taxi, frais sans facture…)."}
+                    </small>
+                  </span>
+                </label>
               </div>
               )}
 
@@ -3727,9 +3833,23 @@ export default function SortiesFonds() {
                         <span className={`${styles.cellSecondary} ${styles.referenceValue}`}>{(sortie as any).reference_numero || sortie.reference || '—'}</span>
                       </div>
                     </td>
-                    <td>{renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}</td>
+                    <td>
+                      {renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}
+                      <div><JustificatifBadge sortie={sortie as SortieFonds} /></div>
+                    </td>
                     <td>
                       <div className={styles.actions}>
+                        {canExecutePayment && String((sortie as any)?.statut || '').toUpperCase() !== 'ANNULEE' && (sortie as any).origine !== 'transfert_interne' && justificatifAttendu(sortie as SortieFonds) && (
+                          <button
+                            type="button"
+                            className={`${styles.actionBtn} ${styles.actionIconBtn}`}
+                            onClick={() => setJustificatifSortie(sortie as SortieFonds)}
+                            title="Joindre la pièce justificative scannée"
+                            aria-label="Joindre le justificatif"
+                          >
+                            <FileCheck size={16} /><span className={styles.printLabel}>Justificatif</span>
+                          </button>
+                        )}
                         {(() => {
                           const annexes = getAnnexesList(sortie)
                           const canFetchRequisition = Boolean((sortie as any)?.requisition_id)
@@ -3909,12 +4029,22 @@ export default function SortiesFonds() {
                       <div className={styles.cardLabel}>Statut</div>
                       <div className={styles.cardValue}>
                         {renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}
+                        <div><JustificatifBadge sortie={sortie as SortieFonds} /></div>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 <div className={styles.cardActions}>
+                  {canExecutePayment && String((sortie as any)?.statut || '').toUpperCase() !== 'ANNULEE' && (sortie as any).origine !== 'transfert_interne' && justificatifAttendu(sortie as SortieFonds) && (
+                    <button
+                      type="button"
+                      className={styles.cardActionBtn}
+                      onClick={() => setJustificatifSortie(sortie as SortieFonds)}
+                    >
+                      <FileCheck size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Justificatif
+                    </button>
+                  )}
                   {(() => {
                     const annexes = getAnnexesList(sortie)
                     const canFetchRequisition = Boolean((sortie as any)?.requisition_id)
@@ -3987,6 +4117,23 @@ export default function SortiesFonds() {
           onError={(title, message) => notifyWarning(title, message)}
         />
       )}
+
+      <JustificatifsEnAttente
+        isOpen={attenteOuverte}
+        onClose={() => setAttenteOuverte(false)}
+        sorties={justificatifsEnAttente}
+        chargement={attenteQuery.isLoading}
+        onOuvrir={(s) => {
+          setAttenteOuverte(false)
+          setJustificatifSortie(s)
+        }}
+      />
+
+      <JustificatifModal
+        sortie={justificatifSortie}
+        onClose={() => setJustificatifSortie(null)}
+        onUpdated={() => invalidateSortiesFonds()}
+      />
 
       <RetourCaisseModal
         isOpen={!!retourModalSortie}

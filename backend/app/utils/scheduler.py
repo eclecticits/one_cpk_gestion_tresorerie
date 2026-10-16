@@ -4,6 +4,7 @@ import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import settings
 from app.services.weekly_report import (
@@ -13,6 +14,7 @@ from app.services.weekly_report import (
 )
 from app.services.monthly_report import run_monthly_report, _resolve_timezone as _monthly_tz
 from app.services.billing_guard import run_billing_guard
+from app.services.justificatifs import run_relances_justificatifs
 
 logger = logging.getLogger("onec_cpk_api.scheduler")
 
@@ -192,6 +194,32 @@ def start_billing_guard_scheduler() -> None:
         tz,
         next_run,
     )
+
+
+def start_justificatifs_relance_scheduler() -> None:
+    """Relance, une fois, les justificatifs attendus depuis 7 jours.
+
+    Toutes les heures et non une fois par jour : le délai court à partir de
+    l'heure du décaissement, et une relance ne doit pas attendre le lendemain
+    matin. Le verrou consultatif de `run_relances_justificatifs` départage deux
+    processus ; la colonne `justificatif_relance_le` empêche toute seconde relance.
+    """
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = AsyncIOScheduler(timezone="UTC")
+    scheduler = _scheduler
+    scheduler.add_job(
+        run_relances_justificatifs,
+        IntervalTrigger(hours=1),
+        id="justificatifs_relance_job",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=REPORT_MISFIRE_GRACE_SECONDS,
+    )
+    if not scheduler.running:
+        scheduler.start()
+    logger.info("Justificatifs relance scheduler started: every hour.")
 
 
 def stop_schedulers() -> None:

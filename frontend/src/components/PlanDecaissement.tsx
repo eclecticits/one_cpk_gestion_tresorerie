@@ -6,6 +6,7 @@ import type { OrdreDecaissement, Requisition, VoletReglement } from '../types'
 import type { CompteBancaire } from '../types/banque'
 import { toNumber } from '../utils/amount'
 import { useToast } from '../hooks/useToast'
+import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, type BeneficiaireSaisie } from './BeneficiaireIdentification'
 
 interface PlanDecaissementProps {
   requisition: Requisition
@@ -163,6 +164,9 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
   const [reliquat, setReliquat] = useState<number>(toNumber(requisition.montant_total))
   const [showAddForm, setShowAddForm] = useState(false)
   const [beneficiaire, setBeneficiaire] = useState('')
+  // Sans saisie, l'ordre reprend l'identification de la réquisition quand il
+  // paie le même bénéficiaire.
+  const [beneficiaireSaisie, setBeneficiaireSaisie] = useState<BeneficiaireSaisie>(BENEFICIAIRE_VIDE)
   const [montant, setMontant] = useState('')
   const [motif, setMotif] = useState('')
   const [montantsPoste, setMontantsPoste] = useState<Record<number, string>>({})
@@ -458,6 +462,7 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
       await createOrdreDecaissement({
         requisition_id: String(requisition.id),
         beneficiaire: beneficiaire.trim(),
+        ...payloadBeneficiaire(beneficiaireSaisie),
         montant: montantNum,
         motif: motif.trim() || null,
         lignes,
@@ -466,6 +471,7 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
       })
       notifySuccess('Ordre autorisé', `${fmtUsd(montantNum)} pour ${beneficiaire.trim()} — la caisse peut payer.`)
       setBeneficiaire('')
+      setBeneficiaireSaisie(BENEFICIAIRE_VIDE)
       setMontant('')
       setMotif('')
       setMontantsPoste({})
@@ -625,14 +631,13 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
           }}
         >
           <div style={{ flex: '1 1 180px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '4px' }}>Bénéficiaire *</label>
-            <input
-              type="text"
-              value={beneficiaire}
-              onChange={(e) => setBeneficiaire(e.target.value)}
-              placeholder="Nom du bénéficiaire"
-              style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+            <BeneficiaireIdentification
+              id="plan-beneficiaire"
               required
+              nom={beneficiaire}
+              onNomChange={setBeneficiaire}
+              value={beneficiaireSaisie}
+              onChange={setBeneficiaireSaisie}
             />
           </div>
           {/* Montants de la tranche. Une ligne = un rectangle : le libellé, le

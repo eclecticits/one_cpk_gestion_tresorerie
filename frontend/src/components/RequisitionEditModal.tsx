@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
 import BudgetPosteSelect from './BudgetPosteSelect'
+import BeneficiaireIdentification, { payloadBeneficiaire, saisieDepuis, type BeneficiaireSaisie } from './BeneficiaireIdentification'
 import { apiRequest } from '../lib/apiClient'
 import {
   createLignesRequisition,
@@ -19,6 +20,10 @@ interface RequisitionAModifier {
   numero_requisition?: string | null
   objet?: string | null
   beneficiaire?: string | null
+  beneficiaire_type?: string | null
+  beneficiaire_ref_id?: string | null
+  beneficiaire_email?: string | null
+  beneficiaire_telephone?: string | null
   notes_a_valoir?: string | null
   service_id?: number | null
   status?: string | null
@@ -91,6 +96,16 @@ function aChange(ligne: LigneEditable): boolean {
 export default function RequisitionEditModal({ requisition, utilisateurId, onClose, onSaved }: Props) {
   const [objet, setObjet] = useState(requisition.objet || '')
   const [beneficiaire, setBeneficiaire] = useState(requisition.beneficiaire || '')
+  // Qui il est et comment le joindre : il sera prévenu au paiement.
+  const [beneficiaireSaisie, setBeneficiaireSaisieBrute] = useState<BeneficiaireSaisie>(() =>
+    saisieDepuis(requisition, requisition.beneficiaire),
+  )
+  const [saisieModifiee, setSaisieModifiee] = useState(false)
+  const setBeneficiaireSaisie = (value: BeneficiaireSaisie) => {
+    setBeneficiaireSaisieBrute(value)
+    setSaisieModifiee(true)
+  }
+  const beneficiaireModifie = beneficiaire.trim() !== (requisition.beneficiaire || '') || saisieModifiee
   const [notes, setNotes] = useState(requisition.notes_a_valoir || '')
   const [lignes, setLignes] = useState<LigneEditable[]>([])
   const [supprimees, setSupprimees] = useState<string[]>([])
@@ -199,7 +214,10 @@ export default function RequisitionEditModal({ requisition, utilisateurId, onClo
     setEnregistrement(true)
     setErreur(null)
     try {
-      await updateRequisition(requisition.id, { beneficiaire: beneficiaire.trim() || null })
+      await updateRequisition(requisition.id, {
+        beneficiaire: beneficiaire.trim() || null,
+        ...payloadBeneficiaire(beneficiaireSaisie),
+      })
       onSaved()
       onClose()
     } catch (e: any) {
@@ -243,8 +261,9 @@ export default function RequisitionEditModal({ requisition, utilisateurId, onClo
       // depuis les lignes, inutile de le lui envoyer.
       const enTete: Record<string, unknown> = {}
       if (objet.trim() !== (requisition.objet || '')) enTete.objet = objet.trim()
-      if (beneficiaire.trim() !== (requisition.beneficiaire || '')) {
-        enTete.beneficiaire = beneficiaire.trim() || null
+      if (beneficiaireModifie && beneficiaire.trim()) {
+        enTete.beneficiaire = beneficiaire.trim()
+        Object.assign(enTete, payloadBeneficiaire(beneficiaireSaisie))
       }
       if (notes !== (requisition.notes_a_valoir || '')) enTete.notes_a_valoir = notes || null
       if (Object.keys(enTete).length > 0) {
@@ -291,14 +310,15 @@ export default function RequisitionEditModal({ requisition, utilisateurId, onClo
             <section className={styles.section}>
               <h3>Bénéficiaire</h3>
               <div className={styles.grilleChamps}>
-                <label className={`${styles.champ} ${styles.champLarge}`}>
-                  <span>Bénéficiaire</span>
-                  <input
-                    value={beneficiaire}
-                    onChange={(e) => setBeneficiaire(e.target.value)}
-                    placeholder="Nom du fournisseur ou du destinataire du paiement"
+                <div className={`${styles.champ} ${styles.champLarge}`}>
+                  <BeneficiaireIdentification
+                    id="edit-req-beneficiaire"
+                    nom={beneficiaire}
+                    onNomChange={setBeneficiaire}
+                    value={beneficiaireSaisie}
+                    onChange={setBeneficiaireSaisie}
                   />
-                </label>
+                </div>
               </div>
               <p className={styles.sousTitre}>
                 Seul ce champ reste modifiable : il se renseigne souvent une fois le
@@ -317,10 +337,15 @@ export default function RequisitionEditModal({ requisition, utilisateurId, onClo
                   <span>Objet</span>
                   <input value={objet} onChange={(e) => setObjet(e.target.value)} />
                 </label>
-                <label className={styles.champ}>
-                  <span>Bénéficiaire</span>
-                  <input value={beneficiaire} onChange={(e) => setBeneficiaire(e.target.value)} />
-                </label>
+                <div className={styles.champ}>
+                  <BeneficiaireIdentification
+                    id="edit-req-beneficiaire"
+                    nom={beneficiaire}
+                    onNomChange={setBeneficiaire}
+                    value={beneficiaireSaisie}
+                    onChange={setBeneficiaireSaisie}
+                  />
+                </div>
                 <label className={`${styles.champ} ${styles.champLarge}`}>
                   <span>Notes</span>
                   <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -422,7 +447,7 @@ export default function RequisitionEditModal({ requisition, utilisateurId, onClo
               type="button"
               className={styles.principal}
               onClick={enregistrerBeneficiaire}
-              disabled={enregistrement || beneficiaire.trim() === (requisition.beneficiaire || '')}
+              disabled={enregistrement || !beneficiaireModifie}
             >
               {enregistrement ? 'Enregistrement…' : 'Enregistrer le bénéficiaire'}
             </button>

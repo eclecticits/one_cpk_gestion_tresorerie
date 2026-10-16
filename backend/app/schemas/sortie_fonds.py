@@ -32,6 +32,15 @@ class SortieFondsCreate(DecimalBaseModel):
     statut: str | None = None
     motif: str | None = None
     beneficiaire: str | None = None
+    #: Qui est le bénéficiaire : EXPERT, PERSONNEL, UTILISATEUR ou EXTERNE. Vide pour une
+    #: sortie dont la caisse ne précise rien (le nom seul est alors retenu).
+    beneficiaire_type: Literal["EXPERT", "PERSONNEL", "UTILISATEUR", "EXTERNE"] | None = None
+    #: Identifiant de la fiche choisie ; vide pour un nouvel externe.
+    beneficiaire_ref_id: str | None = Field(default=None, max_length=64)
+    beneficiaire_email: str | None = Field(default=None, max_length=200)
+    beneficiaire_telephone: str | None = Field(default=None, max_length=50)
+    #: Décision du caissier ; None = la règle des postes budgétaires s'applique.
+    justificatif_requis: bool | None = None
     piece_justificative: str | None = None
     commentaire: str | None = None
     created_by: UUID | None = None
@@ -113,6 +122,19 @@ class SortieFondsOut(DecimalBaseModel):
     exchange_rate_snapshot: Decimal | None = None
     motif: str
     beneficiaire: str
+    beneficiaire_type: str | None = None
+    beneficiaire_email: str | None = None
+    beneficiaire_telephone: str | None = None
+    #: NON_REQUIS | ATTENDU | EN_RETARD | RECU | DISPENSE (EN_RETARD est lu de l'échéance).
+    justificatif_statut: str = "NON_REQUIS"
+    justificatif_echeance: datetime | None = None
+    justificatif_relance_le: datetime | None = None
+    justificatif_derniere_relance_le: datetime | None = None
+    justificatif_nb_relances: int = 0
+    justificatif_relance_prevue_le: datetime | None = None
+    justificatif_recu_le: datetime | None = None
+    justificatif_pieces: list[str] | None = None
+    justificatif_motif_dispense: str | None = None
     piece_justificative: str | None = None
     commentaire: str | None = None
     annexes: list[str] | None = None
@@ -162,3 +184,10 @@ class SortieFondsStatusUpdate(DecimalBaseModel):
 
 class SortieFondsPaymentRejectPayload(DecimalBaseModel):
     motif_rejet: str
+
+
+class JustificatifDecision(DecimalBaseModel):
+    """Décision du caissier sur le justificatif d'une sortie déjà payée."""
+
+    action: Literal["exiger", "ne_pas_exiger", "dispenser"]
+    motif: str | None = Field(default=None, max_length=1000)

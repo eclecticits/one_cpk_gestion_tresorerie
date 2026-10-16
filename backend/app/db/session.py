@@ -33,6 +33,7 @@ from app.models.retour_caisse import RetourCaisse
 from app.models.audit_log import AuditLog
 from app.models.system_event import SystemEvent
 from app.models.notification_log import NotificationLog
+from app.models.beneficiaire_externe import BeneficiaireExterne
 from app.models.export_job import ExportJob
 from app.models.organisation import Organisation
 from app.models.budget import BudgetExercice, BudgetPoste
@@ -561,6 +562,7 @@ def _tenant_loader_options(tenant_id) -> tuple:
         with_loader_criteria(AuditLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(SystemEvent, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(NotificationLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(BeneficiaireExterne, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         # Jobs d'export. Ajouté ici POUR LA MÊME RAISON que l'avertissement en
         # tête de cette fonction : un job porte l'organisation qui l'a demandé,
         # et sa liste est consultable par l'utilisateur. Sans ce critère, un

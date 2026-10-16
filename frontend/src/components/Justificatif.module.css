@@ -1,0 +1,351 @@
+/* Bénéficiaire identifié et justificatif attendu d'une sortie de fonds. */
+
+.identification {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.identification > label {
+  font-weight: 600;
+}
+
+.champRecherche {
+  position: relative;
+}
+
+.champRecherche input {
+  width: 100%;
+}
+
+.champIdentifie {
+  border-color: var(--color-success-text, #10b981) !important;
+  padding-right: 32px;
+}
+
+.coche {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-success-text, #10b981);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+/* Même liste que la recherche d'experts de l'encaissement. */
+.dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--color-surface, #ffffff);
+  border: 2px solid var(--tenant-primary, #3b82f6);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.dropdownItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--color-title, #1e293b);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dropdownItem:hover,
+.dropdownItem:focus-visible {
+  background: var(--color-surface-soft, #f1f5f9);
+}
+
+.ficheChoisie {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-surface-soft, #f8fafc);
+  font-size: 13px;
+}
+
+.typeChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tenant-primary, #2563eb) 12%, transparent);
+  color: var(--tenant-primary, #2563eb);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ficheDetail {
+  color: var(--color-text-muted, #64748b);
+  font-size: 12px;
+}
+
+.contacts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.contactField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.contactField > span {
+  color: var(--color-text-muted, #64748b);
+  font-weight: 600;
+}
+
+.contactField input,
+.contactField textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.aide {
+  color: var(--color-text-muted, #6b7280);
+  font-size: 12px;
+}
+
+.lienBtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tenant-primary, #2563eb);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.lienBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Case du caissier ─────────────────────────────────────────────────── */
+
+.caseJustificatif {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-surface-soft, #f8fafc);
+  cursor: pointer;
+}
+
+.caseJustificatif input {
+  margin-top: 3px;
+  flex: none;
+}
+
+.caseTexte {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+}
+
+.caseTexte strong {
+  color: var(--color-title, #1e293b);
+}
+
+.caseTexte small {
+  color: var(--color-text-muted, #6b7280);
+  font-size: 12px;
+}
+
+/* ── Pastilles ────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.badgeAttendu {
+  background: var(--color-warning-bg, #fef3c7);
+  color: var(--color-warning-text, #92400e);
+}
+
+.badgeRetard {
+  background: var(--color-danger-bg, #fee2e2);
+  color: var(--color-danger-text, #b91c1c);
+}
+
+.badgeRecu {
+  background: var(--color-success-bg, #dcfce7);
+  color: var(--color-success-text, #166534);
+}
+
+.badgeNeutre {
+  background: var(--color-surface-soft, #f1f5f9);
+  color: var(--color-text-muted, #475569);
+}
+
+/* ── Modale ───────────────────────────────────────────────────────────── */
+
+.modalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.recap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface-soft, #f8fafc);
+  font-size: 14px;
+}
+
+.recap > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.recap span {
+  color: var(--color-text-muted, #64748b);
+}
+
+.recap strong {
+  color: var(--color-title, #1e293b);
+  font-weight: 600;
+  text-align: right;
+}
+
+.pieces,
+.decisions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.piecesTitre {
+  color: var(--color-text-muted, #64748b);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.footerActions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.btnSecondary,
+.btnPrimary {
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.btnSecondary {
+  color: var(--color-title, #334155);
+  background: var(--color-surface, #ffffff);
+  border-color: var(--color-border-strong, #cbd5e1);
+}
+
+.btnPrimary {
+  color: #ffffff;
+  background: var(--tenant-primary, #2563eb);
+}
+
+.btnPrimary:disabled,
+.btnSecondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Liste des justificatifs en attente ───────────────────────────────── */
+
+.attenteListe {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attenteItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: var(--radius-sm, 8px);
+}
+
+.attenteInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.attenteInfo small {
+  color: var(--color-text-muted, #64748b);
+  font-size: 12px;
+}
+
+.attenteVide {
+  color: var(--color-text-muted, #64748b);
+  font-size: 14px;
+  text-align: center;
+  padding: 16px 0;
+}
+
+.contactsLecture {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 13px;
+  color: var(--color-title, #1e293b);
+}

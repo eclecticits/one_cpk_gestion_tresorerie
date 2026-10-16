@@ -10,13 +10,14 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.beneficiaire_externe import BeneficiaireIdentifieMixin
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Requisition(Base):
+class Requisition(BeneficiaireIdentifieMixin, Base):
     __tablename__ = "requisitions"
     __table_args__ = (
         UniqueConstraint("organisation_id", "numero_requisition", name="uq_requisitions_org_numero"),

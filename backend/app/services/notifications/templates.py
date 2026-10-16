@@ -42,10 +42,41 @@ TEMPLATE_VARIABLES: dict[str, str] = {
     "tranche": "Tranche N sur M, pour un décaissement progressif",
     "reste_a_payer": "Reste à payer",
     "total": "Montant total de la pièce",
+    "echeance": "Date limite de dépôt du justificatif",
+    "consigne_justificatif": "Phrase demandant le justificatif sous 48 h, vide si aucun n'est attendu",
 }
 
 
 DEFAULT_TEMPLATES: dict[str, str] = {
+    events.FUND_OUTFLOW_BENEFICIARY: (
+        "{{organisation}} — FONDS REMIS\n"
+        "\n"
+        "{{salutation}}\n"
+        "La somme de {{montant}} {{devise}} vous a été remise le {{date}}.\n"
+        "\n"
+        "Référence : {{reference}}\n"
+        "Bénéficiaire : {{beneficiaire}}\n"
+        "Motif : {{motif}}\n"
+        "Canal : {{canal}}\n"
+        "\n"
+        "{{consigne_justificatif}}"
+    ),
+    events.JUSTIFICATIF_RELANCE: (
+        "{{organisation}} — JUSTIFICATIF NON REÇU\n"
+        "\n"
+        "{{salutation}}\n"
+        "La pièce justificative des fonds qui vous ont été remis le {{date}} "
+        "n'a toujours pas été déposée à la caisse.\n"
+        "\n"
+        "Référence : {{reference}}\n"
+        "Bénéficiaire : {{beneficiaire}}\n"
+        "Motif : {{motif}}\n"
+        "Montant : {{montant}} {{devise}}\n"
+        "Délai annoncé : {{echeance}}\n"
+        "\n"
+        "Merci de la déposer sans attendre. Les autorités de l'organisation "
+        "reçoivent ce message en copie."
+    ),
     events.FUND_OUTFLOW: (
         "{{organisation}} — SORTIE DE FONDS\n"
         "\n"

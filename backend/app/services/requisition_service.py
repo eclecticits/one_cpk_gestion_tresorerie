@@ -19,6 +19,7 @@ from app.models.ligne_requisition import LigneRequisition
 from app.models.commission_member import CommissionMember
 from app.models.compte_bancaire import CompteBancaire
 from app.schemas.requisition import RequisitionUpdate, RequisitionCreate, RequisitionExamenPayload
+from app.services import beneficiaires as beneficiaires_service
 from app.services.reglement import (
     MODE_PAIEMENT_MIXTE,
     calculer_volets,
@@ -690,6 +691,13 @@ async def create_requisition_logic(
         updated_at=_utcnow(),
     )
     _stamp_skipped_steps(req, snapshot, user_id=created_by or user.id, amount=amount)
+    # Le bénéficiaire désigné à la réquisition : qui il est, comment le joindre.
+    beneficiaires_service.appliquer(
+        req,
+        await beneficiaires_service.identifier_payload(
+            db, tenant_id, payload, nom=req.beneficiaire, created_by=user.id
+        ),
+    )
     db.add(req)
     if fonds_tiers_lignes:
         await db.flush()
@@ -1012,6 +1020,17 @@ async def update_requisition_logic(
     if payload.beneficiaire is not None:
         beneficiaire_avant = req.beneficiaire
         req.beneficiaire = payload.beneficiaire
+        # Ajouté ou corrigé après validation : l'identification suit le nom. Un
+        # nom changé sans identification ne garde pas celle de l'ancien.
+        if beneficiaires_service.saisie_presente(payload):
+            beneficiaires_service.appliquer(
+                req,
+                await beneficiaires_service.identifier_payload(
+                    db, tenant_id, payload, nom=req.beneficiaire, created_by=user.id
+                ),
+            )
+        elif beneficiaire_avant != req.beneficiaire:
+            beneficiaires_service.appliquer(req, None)
         # Le bénéficiaire est le seul champ de fond qui traverse le verrou : sa
         # correction sur une pièce déjà visée ou validée se trace à part, avec
         # son état d'avant. Sur une pièce encore ouverte, la modification est

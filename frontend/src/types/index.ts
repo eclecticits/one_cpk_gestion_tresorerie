@@ -477,6 +477,20 @@ export interface SortieFonds {
   montant_affecte_budget?: Money | null
   exchange_rate_snapshot?: number | null
   beneficiaire: string
+  /** Qui est le bénéficiaire ; absent pour les sorties antérieures. */
+  beneficiaire_type?: 'EXPERT' | 'PERSONNEL' | 'UTILISATEUR' | 'EXTERNE' | null
+  beneficiaire_email?: string | null
+  beneficiaire_telephone?: string | null
+  /** EN_RETARD se lit de l'échéance : le serveur le calcule. */
+  justificatif_statut?: 'NON_REQUIS' | 'ATTENDU' | 'EN_RETARD' | 'RECU' | 'DISPENSE'
+  justificatif_echeance?: string | null
+  justificatif_relance_le?: string | null
+  justificatif_derniere_relance_le?: string | null
+  justificatif_nb_relances?: number
+  justificatif_relance_prevue_le?: string | null
+  justificatif_recu_le?: string | null
+  justificatif_pieces?: string[] | null
+  justificatif_motif_dispense?: string | null
   piece_justificative?: string
   commentaire?: string
   annexes?: string[] | null

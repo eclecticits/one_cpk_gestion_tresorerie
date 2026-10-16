@@ -33,6 +33,7 @@ from app.schemas.ordre_decaissement import (
     OrdreDecaissementListResponse,
     OrdreDecaissementOut,
 )
+from app.services import beneficiaires as beneficiaires_service
 from app.services.audit_service import get_request_ip, log_action
 from app.services.budget_execution import bornes_periode
 from app.services.document_sequences import generate_document_number
@@ -523,6 +524,7 @@ def _ordre_out(
         "requisition_id": str(ordre.requisition_id) if ordre.requisition_id else None,
         "numero_ordre": ordre.numero_ordre,
         "beneficiaire": ordre.beneficiaire,
+        **beneficiaires_service.champs_publics(ordre),
         "montant": ordre.montant or 0,
         "devise": ordre.devise,
         "motif": ordre.motif,
@@ -716,6 +718,13 @@ async def create_ordre_decaissement(
             autorise_le=_utcnow(),
             created_at=_utcnow(),
             updated_at=_utcnow(),
+        )
+        # Sortie directe : c'est ici que le bénéficiaire est désigné.
+        beneficiaires_service.appliquer(
+            ordre,
+            await beneficiaires_service.identifier_payload(
+                db, tenant_id, payload, nom=ordre.beneficiaire, created_by=user.id
+            ),
         )
         db.add(ordre)
         await db.flush()
@@ -952,6 +961,17 @@ async def create_ordre_decaissement(
         created_at=_utcnow(),
         updated_at=_utcnow(),
     )
+    # Le bénéficiaire désigné à la réquisition vaut pour ses ordres ; un ordre
+    # qui en nomme un autre l'identifie lui-même.
+    if beneficiaires_service.saisie_presente(payload) and (payload.beneficiaire_type or payload.beneficiaire_email or payload.beneficiaire_telephone):
+        beneficiaires_service.appliquer(
+            ordre,
+            await beneficiaires_service.identifier_payload(
+                db, tenant_id, payload, nom=ordre.beneficiaire, created_by=user.id
+            ),
+        )
+    elif beneficiaires_service.a_identification(req) and (ordre.beneficiaire or "").strip() == (req.beneficiaire or "").strip():
+        beneficiaires_service.copier(req, ordre)
     db.add(ordre)
     await db.flush()  # garantit ordre.id pour le journal d'audit
 
@@ -1190,6 +1210,12 @@ async def update_ordre_decaissement(
     ordre.mode_paiement = mode_direct
     ordre.canal = canal_direct
     ordre.compte_bancaire_id = compte_direct
+    beneficiaires_service.appliquer(
+        ordre,
+        await beneficiaires_service.identifier_payload(
+            db, tenant_id, payload, nom=ordre.beneficiaire, created_by=user.id
+        ),
+    )
     ordre.updated_at = _utcnow()
     # `autorise_par` ne bouge pas : l'autorisation reste celle qui a été donnée.
     # Qui a corrigé, et quoi, se lit au journal.

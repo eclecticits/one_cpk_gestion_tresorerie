@@ -438,7 +438,7 @@ async def test_bon_en_brouillon_se_corrige_et_recoit_son_beneficiaire(db_session
         "app.api.v1.endpoints.sorties_fonds.get_accounting_integration_mode", accounting_disabled
     )
     monkeypatch.setattr(
-        "app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", noop_notify
+        "app.api.v1.endpoints.sorties_fonds._notifier_beneficiaire_sortie", noop_notify
     )
 
     from app.api.v1.endpoints.sorties_fonds import (
@@ -1709,7 +1709,7 @@ async def test_sortie_idempotence_rejeu_payload_et_effets_uniques(db_session, mo
 
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.get_accounting_integration_mode", accounting_disabled)
-    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", fake_notify)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notifier_beneficiaire_sortie", fake_notify)
 
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
     from app.models.sortie_fonds import SortieFonds
@@ -1765,7 +1765,7 @@ async def test_sortie_idempotence_requetes_simultanees_meme_cle(db_session, asyn
     async def noop_notify(*args, **kwargs):
         return None
 
-    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", noop_notify)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notifier_beneficiaire_sortie", noop_notify)
 
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
     payload = SortieFondsCreate(
@@ -1801,7 +1801,7 @@ async def test_transferts_concurrents_conservent_le_solde_et_refusent_le_deuxiem
     async def noop_notify(*args, **kwargs):
         return None
 
-    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", noop_notify)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notifier_beneficiaire_sortie", noop_notify)
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
 
     async def run_pair(*, transfer_type, source_cash, source_bank):
@@ -1869,7 +1869,7 @@ async def test_annulation_versement_refusee_si_banque_destination_insuffisante(d
 
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.get_accounting_integration_mode", accounting_disabled)
-    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", noop_notify)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notifier_beneficiaire_sortie", noop_notify)
     # Ce test porte sur le chemin classique, celui qui écrit une ligne dans
     # `sorties_fonds`. La bascule vers le moteur dédié se décide par
     # `TRANSFERTS_ENGINE_TENANTS`, une liste d'identifiants d'organisations :

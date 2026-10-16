@@ -35,6 +35,17 @@ class SystemSettings(Base):
     emails_bureau_sortie_cc: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Copie visible (CC) des accusés de réception et relances envoyés au payeur.
     emails_paiement_cc: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Sorties de fonds : le bénéficiaire est prévenu, ces listes en copie.
+    # « Copie au paiement » reçoit le message du décaissement ; « Autorités en
+    # relance » ne reçoit que la relance d'un justificatif non rapporté.
+    sortie_copie_emails: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    sortie_copie_whatsapp: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    justificatif_autorites_emails: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    justificatif_autorites_whatsapp: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: Codes des postes budgétaires dont les sorties exigent un justificatif.
+    #: Des codes et non des identifiants : ils survivent au passage d'exercice,
+    #: qui recrée chaque poste avec un nouvel id. Un code couvre ses sous-postes.
+    justificatif_postes_codes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     email_validation_1: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     email_validation_final: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     max_caisse_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

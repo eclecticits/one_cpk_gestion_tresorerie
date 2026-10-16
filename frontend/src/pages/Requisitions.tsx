@@ -58,6 +58,7 @@ import PageHeader from '../components/PageHeader'
 import PlanDecaissement from '../components/PlanDecaissement'
 import ExportAnnulationsToggle from '../components/ExportAnnulationsToggle'
 import OrganisationAutocomplete from '../components/OrganisationAutocomplete'
+import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
 import { fondsTiersDisponible, listFondsTiers, type FondsTiersOperation } from '../api/mouvementsHorsBudget'
 
 // Résumé calculé par le backend quand les lignes ne s'accordent pas sur leur
@@ -465,6 +466,8 @@ export default function Requisitions() {
     notes_a_valoir: ''
   })
   const [instanceBeneficiaireSelection, setInstanceBeneficiaireSelection] = useState<number | null>(null)
+  // Qui est le bénéficiaire et comment le joindre : il sera prévenu au paiement.
+  const [beneficiaireSaisie, setBeneficiaireSaisie] = useState<BeneficiaireSaisie>(BENEFICIAIRE_VIDE)
   // Reversement groupé : fonds encore dus, et part de chacun retenue par cette
   // réquisition (identifiant -> montant saisi). Un seul versement peut en
   // solder plusieurs ; leur somme fait le montant autorisé.
@@ -1416,6 +1419,7 @@ export default function Requisitions() {
         service_id: Number(formData.service_id),
         created_by: user?.id,
         beneficiaire: formData.beneficiaire || null,
+        ...(formData.beneficiaire.trim() ? payloadBeneficiaire(beneficiaireSaisie) : {}),
         tiers_organisation_id: formData.nature_requisition === 'FONDS_DE_TIERS' ? formData.tiers_organisation_id : null,
         tiers_nom_libre: formData.nature_requisition === 'FONDS_DE_TIERS' && !formData.tiers_organisation_id
           ? formData.tiers_nom_libre
@@ -1535,6 +1539,7 @@ export default function Requisitions() {
       notes_a_valoir: ''
     })
     setInstanceBeneficiaireSelection(null)
+    setBeneficiaireSaisie(BENEFICIAIRE_VIDE)
     setFondsTiersChoisis({})
     const groupId = makeDraftId('poste')
     setGroupesDepense([{
@@ -3047,16 +3052,14 @@ export default function Requisitions() {
                       )}
 
                       <div className={styles.field}>
-                        <label htmlFor="req-beneficiaire">
-                          Bénéficiaire{formData.nature_requisition === 'HORS_BUDGET' ? ' *' : ''}
-                        </label>
-                        <input
+                        <BeneficiaireIdentification
                           id="req-beneficiaire"
-                          type="text"
-                          value={formData.beneficiaire}
-                          onChange={(e) => setFormData({ ...formData, beneficiaire: e.target.value })}
-                          placeholder="Bénéficiaire autorisé"
+                          label="Bénéficiaire"
                           required={formData.nature_requisition === 'HORS_BUDGET'}
+                          nom={formData.beneficiaire}
+                          onNomChange={(nom) => setFormData((prev) => ({ ...prev, beneficiaire: nom }))}
+                          value={beneficiaireSaisie}
+                          onChange={setBeneficiaireSaisie}
                         />
                       </div>
 

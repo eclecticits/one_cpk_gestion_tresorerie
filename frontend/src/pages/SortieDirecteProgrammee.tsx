@@ -51,6 +51,7 @@ import { useConfirm } from '../contexts/ConfirmContext'
 import PageHeader from '../components/PageHeader'
 import BackButton from '../components/BackButton'
 import ResponsiveModal from '../components/ResponsiveModal'
+import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, saisieDepuis, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
 import styles from './SortieDirecteProgrammee.module.css'
 
 const LIMITE_USD = 100
@@ -125,6 +126,8 @@ export default function SortieDirecteProgrammee() {
   const [formOuvert, setFormOuvert] = useState(false)
   const [serviceId, setServiceId] = useState<string>('')
   const [beneficiaire, setBeneficiaire] = useState('')
+  // Qui il est et comment le joindre : il sera prévenu au paiement.
+  const [beneficiaireSaisie, setBeneficiaireSaisie] = useState<BeneficiaireSaisie>(BENEFICIAIRE_VIDE)
   // Une collation ne se mesure pas au montant mais au prix par tête : le mode
   // ne dispense d'aucun contrôle, il change l'unité de ce qui est mesuré.
   const [typeSortie, setTypeSortie] = useState<'SIMPLE' | 'COLLATION'>('SIMPLE')
@@ -313,6 +316,7 @@ export default function SortieDirecteProgrammee() {
     setOrdreEnCorrection(null)
     setServiceId('')
     setBeneficiaire('')
+    setBeneficiaireSaisie(BENEFICIAIRE_VIDE)
     setMotif('')
     setDevise('USD')
     setLignes([emptyLigne()])
@@ -338,6 +342,7 @@ export default function SortieDirecteProgrammee() {
     setOrdreEnCorrection(String(ordre.id))
     setServiceId(brut.service_id ? String(brut.service_id) : '')
     setBeneficiaire(brut.beneficiaire || '')
+    setBeneficiaireSaisie(saisieDepuis(brut, brut.beneficiaire))
     setMotif(brut.motif || '')
     setDevise((brut.devise === 'CDF' ? 'CDF' : 'USD') as 'USD' | 'CDF')
     // La correction rejoue tous les contrôles : reprendre une collation sans
@@ -540,6 +545,7 @@ export default function SortieDirecteProgrammee() {
     try {
       const corps = {
         beneficiaire: beneficiaire.trim(),
+        ...payloadBeneficiaire(beneficiaireSaisie),
         montant: submittedTotal,
         devise,
         // En collation, le motif est le libellé saisi plus haut : l'ordre
@@ -764,8 +770,14 @@ export default function SortieDirecteProgrammee() {
               </select>
             </div>
             <div className={styles.field}>
-              <label htmlFor="direct-beneficiary">Bénéficiaire <span aria-hidden="true">*</span></label>
-              <input id="direct-beneficiary" value={beneficiaire} onChange={(e) => setBeneficiaire(e.target.value)} placeholder="Nom complet ou raison sociale" required aria-required="true" />
+              <BeneficiaireIdentification
+                id="direct-beneficiary"
+                required
+                nom={beneficiaire}
+                onNomChange={setBeneficiaire}
+                value={beneficiaireSaisie}
+                onChange={setBeneficiaireSaisie}
+              />
             </div>
             <div className={`${styles.field} ${styles.currencyField}`}>
               <label htmlFor="direct-currency">Devise</label>

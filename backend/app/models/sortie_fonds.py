@@ -140,6 +140,59 @@ class SortieFonds(Base):
     commentaire: Mapped[str | None] = mapped_column(Text, nullable=True)
     annexes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
+    # ── Bénéficiaire identifié ───────────────────────────────────────────────
+    # `beneficiaire` reste le nom figé, imprimé sur le bon. Ces colonnes disent
+    # QUI il est — expert-comptable, personnel ou personne externe — et comment
+    # le joindre. Le contact est recopié au paiement : si la fiche change plus
+    # tard, la sortie garde l'adresse à laquelle le message est réellement parti.
+    #: EXPERT | PERSONNEL | UTILISATEUR | EXTERNE ; NULL pour les sorties antérieures.
+    beneficiaire_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    beneficiaire_expert_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experts_comptables.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    beneficiaire_employe_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("hr_employees.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    beneficiaire_externe_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("beneficiaires_externes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    beneficiaire_utilisateur_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    beneficiaire_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    beneficiaire_telephone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # ── Justificatif attendu après le décaissement ──────────────────────────
+    #: NON_REQUIS | ATTENDU | RECU | DISPENSE. « En retard » n'est pas stocké :
+    #: il se lit de l'échéance, et ne peut donc pas rester faux.
+    justificatif_statut: Mapped[str] = mapped_column(String(20), nullable=False, default="NON_REQUIS")
+    #: Délai annoncé au bénéficiaire (48 h après le décaissement).
+    justificatif_echeance: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Relance unique, avec les autorités en copie. Posée avant l'envoi : c'est
+    #: elle qui garantit qu'un second passage du planificateur ne relance pas.
+    justificatif_relance_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Toutes relances confondues — l'automatique et celles du caissier, qui
+    #: peut relancer à tout moment tant que la pièce est attendue.
+    justificatif_derniere_relance_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    justificatif_nb_relances: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    justificatif_recu_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    justificatif_recu_par_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Fichiers scannés par le caissier, distincts des annexes jointes au paiement.
+    justificatif_pieces: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    justificatif_motif_dispense: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     # Personne qui a PROGRAMMÉ la sortie directe (le « demandeur »), distincte du
     # caissier (created_by) qui exécute le paiement. Repris de l'ordre de

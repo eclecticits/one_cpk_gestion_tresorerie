@@ -36,6 +36,7 @@ from app.models.organisation import Organisation
 from app.models.user import User
 from app.schemas.requisition import RequisitionExamenPayload
 from app.models.service import Service
+from app.services import beneficiaires as beneficiaires_service
 from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
 from app.services.budget_engagement import resynchroniser_engagement_requisition
@@ -565,6 +566,7 @@ def _requisition_out(
         "a_valoir": req.a_valoir,
         "decaissement_progressif": bool(getattr(req, "decaissement_progressif", False)),
         "beneficiaire": getattr(req, "beneficiaire", None),
+        **beneficiaires_service.champs_publics(req),
         "instance_beneficiaire": req.instance_beneficiaire,
         "tiers_organisation_id": getattr(req, "tiers_organisation_id", None),
         "tiers_nom_libre": getattr(req, "tiers_nom_libre", None),
