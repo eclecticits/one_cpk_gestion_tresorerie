@@ -27,6 +27,7 @@ from app.services.historical_snapshots import (
     mark_legacy_snapshot_incomplete,
     register_generated_document,
 )
+from app.utils.hierarchie_fonctions import trier_participants
 
 
 DEFAULT_UPLOAD_ROOT = os.path.abspath(
@@ -483,9 +484,8 @@ async def generate_remboursement_official_pdf(
     participants_res = await db.execute(
         select(ParticipantTransport)
         .where(ParticipantTransport.remboursement_id == remboursement.id)
-        .order_by(ParticipantTransport.id.asc())
     )
-    participants = participants_res.scalars().all()
+    participants = trier_participants(participants_res.scalars().all())
     created_by_name = await _load_user_name(db, remboursement.created_by)
     # L'etat de frais n'a pas de visa d'examen en propre : il le tient de la
     # requisition a laquelle il est rattache.

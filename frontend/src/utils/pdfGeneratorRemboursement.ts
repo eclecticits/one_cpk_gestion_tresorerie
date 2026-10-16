@@ -6,6 +6,7 @@ import { formatAmount, toNumber } from './amount'
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { buildUploadUrl } from './uploads'
 import { makeTenantScopedCacheGuard } from './pdfTenantIdentity'
+import { rangFonction, trierParHierarchie } from './serviceMemberFunctions'
 
 let cachedLogoDataUrl: string | null = null
 let cachedLogoUrl: string | null = null
@@ -249,6 +250,7 @@ export const generateRemboursementTransportPDF = async (
   paperFormat: 'a4' | 'a5' = 'a4',
   onBlob?: (blob: Blob, filename: string) => Promise<void>
 ) => {
+  participants = trierParHierarchie(participants)
   const settings = await getPrintSettingsData()
   const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
   const stampDataUrl = await getStampDataUrl()
@@ -951,8 +953,13 @@ export const generateRecapitulatifTransportPDF = async (
       ligne.montants[index] = (ligne.montants[index] ?? 0) + toNumber(p.montant)
     })
   })
-  // Les membres d'abord, les assistants ensuite, comme sur les états sources.
-  const personnes = [...lignes.values()].sort((a, b) => Number(a.assistant) - Number(b.assistant))
+  // Les membres d'abord, dans l'ordre du bureau, les assistants ensuite.
+  const personnes = [...lignes.values()].sort(
+    (a, b) =>
+      Number(a.assistant) - Number(b.assistant) ||
+      rangFonction(a.fonction) - rangFonction(b.fonction) ||
+      a.nom.localeCompare(b.nom, 'fr', { sensitivity: 'base' }),
+  )
 
   const totauxReunions = reunions.map((_, i) =>
     personnes.reduce((s, p) => s + (p.montants[i] ?? 0), 0),

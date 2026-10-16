@@ -37,6 +37,40 @@ export function isLeadershipMember(member: Pick<CommissionMember, 'function_labe
   return leadershipSet.has(label) || member.role_type === 'PRESIDENT' || member.role_type === 'DELEGUE'
 }
 
+// Ordre protocolaire : Président, bureau (VP, Rapporteur, Rapporteur adjoint,
+// Trésorier, Trésorier adjoint), autres membres, assistants. Classé sur le
+// libellé et non sur le rang réglé dans l'unité : au Conseil, « Membre du
+// conseil » portait le rang du Président et l'alphabet faisait passer les
+// membres devant. Même règle côté API : app/utils/hierarchie_fonctions.py.
+const cleLibelle = (libelle?: string | null) =>
+  String(libelle || '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+
+export function rangFonction(libelle?: string | null): number {
+  const cle = cleLibelle(libelle)
+  if (cle.includes('assistant')) return 9
+  const adjoint = cle.includes('adjoint')
+  if (cle.includes('vicepresident')) return 2
+  if (cle.includes('president')) return 1
+  if (cle.includes('rapporteu')) return adjoint ? 4 : 3
+  if (cle.includes('tresori')) return adjoint ? 6 : 5
+  return 7
+}
+
+export function trierParHierarchie<T extends { nom?: string | null; titre_fonction?: string | null; type_participant?: string | null }>(
+  participants: T[],
+): T[] {
+  return [...participants].sort(
+    (a, b) =>
+      Number(a.type_participant === 'assistant') - Number(b.type_participant === 'assistant') ||
+      rangFonction(a.titre_fonction) - rangFonction(b.titre_fonction) ||
+      cleLibelle(a.nom).localeCompare(cleLibelle(b.nom)),
+  )
+}
+
 export function sortMemberFunctions(functions: ServiceMemberFunction[]): ServiceMemberFunction[] {
   return [...functions].sort((a, b) => {
     if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order

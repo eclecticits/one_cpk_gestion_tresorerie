@@ -40,7 +40,7 @@ import { numberToWords } from '../utils/numberToWords'
 import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
-import { isAssistantMember, resolveMemberFunctionLabel } from '../utils/serviceMemberFunctions'
+import { isAssistantMember, resolveMemberFunctionLabel, trierParHierarchie } from '../utils/serviceMemberFunctions'
 import { Paperclip, Printer, Search, SearchX, Users } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import BudgetPosteSelect from '../components/BudgetPosteSelect'
@@ -334,10 +334,12 @@ export default function RemboursementTransport() {
       try {
         setIsAutoFilling(true)
         const members = await getServiceMembers(serviceId)
-        const principals = members
-          .filter((m) => !isAssistantMember(m))
-          .map((m) => buildParticipantFromMember(m, 'principal'))
-          .filter((p) => p.nom.trim())
+        const principals = trierParHierarchie(
+          members
+            .filter((m) => !isAssistantMember(m))
+            .map((m) => buildParticipantFromMember(m, 'principal'))
+            .filter((p) => p.nom.trim())
+        )
         const assistantsList = members
           .filter((m) => isAssistantMember(m))
           .map((m) => buildParticipantFromMember(m, 'assistant'))
@@ -927,8 +929,10 @@ export default function RemboursementTransport() {
     return participantsTotal + assistantsTotal
   }
 
-  const previewParticipants = [...participants, ...assistants].filter(
-    (p) => isPresent(p) && (p.nom.trim() !== '' || p.titre_fonction.trim() !== '')
+  const previewParticipants = trierParHierarchie(
+    [...participants, ...assistants].filter(
+      (p) => isPresent(p) && (p.nom.trim() !== '' || p.titre_fonction.trim() !== '')
+    )
   )
   const previewTotal = calculateTotal()
   const previewMontantLettres = numberToWords(previewTotal)

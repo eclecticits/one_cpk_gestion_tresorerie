@@ -36,6 +36,7 @@ from app.services.document_sequences import generate_document_number
 from app.services.official_pdf import ensure_remboursement_official_pdf
 from app.services.service_access import get_user_service_ids, can_view_all_services
 from app.core.config import settings
+from app.utils.hierarchie_fonctions import trier_participants
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -210,7 +211,7 @@ async def list_remboursements_transport(
         ids = [r.id for r in remboursements]
         if ids:
             p_res = await db.execute(select(ParticipantTransport).where(ParticipantTransport.remboursement_id.in_(ids)))
-            participants = p_res.scalars().all()
+            participants = trier_participants(p_res.scalars().all())
             for p in participants:
                 participants_map.setdefault(str(p.remboursement_id), []).append(
                     ParticipantTransportResponse(
@@ -550,7 +551,7 @@ async def list_participants_transport(
         query = query.where(ParticipantTransport.remboursement_id == rid)
 
     res = await db.execute(query)
-    participants = res.scalars().all()
+    participants = trier_participants(res.scalars().all())
     return [
         ParticipantTransportResponse(
             id=str(p.id),

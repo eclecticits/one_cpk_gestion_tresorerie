@@ -14,6 +14,7 @@ from app.models.remboursement_transport import RemboursementTransport
 from app.models.remboursement_transport import ParticipantTransport
 from app.models.user import User
 from app.schemas.remboursement_transport import ParticipantTransportCreate, ParticipantTransportResponse
+from app.utils.hierarchie_fonctions import trier_participants
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ async def list_participants_transport(
         query = query.where(ParticipantTransport.remboursement_id == rid)
 
     res = await db.execute(query)
-    participants = res.scalars().all()
+    participants = trier_participants(res.scalars().all())
     return [
         ParticipantTransportResponse(
             id=str(p.id),
