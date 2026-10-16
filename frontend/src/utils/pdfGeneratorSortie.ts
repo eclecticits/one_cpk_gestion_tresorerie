@@ -126,7 +126,7 @@ export const generateSortieFondsPDF = async (
   const settings = await getPrintSettingsData()
   const logoDataUrl = await getLogoDataUrl()
   const stampDataUrl = settings?.show_footer_signature === false ? null : await getStampDataUrl()
-  const doc = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' })
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
 
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -315,6 +315,16 @@ export const generateSortieFondsPDF = async (
   const setFill = (c: [number, number, number]) => doc.setFillColor(c[0], c[1], c[2])
   const setDraw = (c: [number, number, number]) => doc.setDrawColor(c[0], c[1], c[2])
   const setText = (c: [number, number, number]) => doc.setTextColor(c[0], c[1], c[2])
+  const fitText = (value: unknown, maxWidth: number) => {
+    const text = String(value ?? '')
+    if (doc.getTextWidth(text) <= maxWidth) return text
+    const ellipsis = '...'
+    let shortened = text
+    while (shortened && doc.getTextWidth(`${shortened}${ellipsis}`) > maxWidth) {
+      shortened = shortened.slice(0, -1)
+    }
+    return `${shortened}${ellipsis}`
+  }
 
   // Jeton déterministe dérivé de la référence (purement cosmétique — style
   // « micro-empreinte », sans aucune valeur ni prétention cryptographique).
@@ -412,11 +422,12 @@ export const generateSortieFondsPDF = async (
   setText(GREEN_SOFT)
   doc.text('• PIÈCE DE TRÉSORERIE SÉCURISÉE • CASH DISBURSEMENT VOUCHER •', headTextX, 24.5)
 
-  // Panneau série (N° BON) — style « serial » monospace
-  const metaW = 84
-  const metaH = 21
-  const metaX = pageWidth - margin - metaW
-  const metaY = 9
+  // Panneau série (N° BON) — conservé sur toute la largeur en portrait
+  // pour ne pas comprimer l'identité de l'organisation dans l'en-tête.
+  const metaW = pageWidth - margin * 2
+  const metaH = 19
+  const metaX = margin
+  const metaY = 31
   setFill(GREEN)
   doc.roundedRect(metaX, metaY, metaW, metaH, 2.5, 2.5, 'F')
   setFill(GREEN_SOFT)
@@ -424,23 +435,23 @@ export const generateSortieFondsPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(6.8)
   doc.setTextColor(200, 224, 214)
-  doc.text('N° BON / RÉFÉRENCE', metaX + 7, metaY + 6)
+  doc.text('N° BON / RÉFÉRENCE', metaX + 7, metaY + 5.5)
   doc.setFont('courier', 'bold')
   doc.setFontSize(12)
   doc.setTextColor(255, 255, 255)
-  doc.text(String(ref).slice(0, 20), metaX + 7, metaY + 13)
+  doc.text(fitText(ref, metaW - 14), metaX + 7, metaY + 12.5)
   doc.setFont('courier', 'normal')
   doc.setFontSize(6.6)
   doc.setTextColor(200, 224, 214)
-  doc.text(`${format(datePaiement, 'dd/MM/yyyy')}  ·  CLE ${securityToken}`, metaX + 7, metaY + 18)
+  doc.text(`${format(datePaiement, 'dd/MM/yyyy')}  ·  CLE ${securityToken}`, metaX + 7, metaY + 17.5)
 
   // --- FILET SÉPARATEUR (double) ---
   setDraw(GREEN)
   doc.setLineWidth(0.5)
-  doc.line(margin, 32, pageWidth - margin, 32)
+  doc.line(margin, 53, pageWidth - margin, 53)
   setDraw(GREEN_SOFT)
   doc.setLineWidth(0.2)
-  doc.line(margin, 33, pageWidth - margin, 33)
+  doc.line(margin, 54, pageWidth - margin, 54)
 
   // --- TITRE + STATUT ---
   const ORANGE: [number, number, number] = [194, 65, 12]
@@ -449,14 +460,14 @@ export const generateSortieFondsPDF = async (
   doc.setFontSize(15)
   setText(isSortieDirecteDoc ? ORANGE : INK)
   const titre = isSortieDirecteDoc ? 'BON DE SORTIE DIRECTE' : 'BON DE SORTIE'
-  doc.text(titre, margin, 41)
+  doc.text(titre, margin, 62)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
   setText(MUTED)
   doc.text(
     `Document source : ${String(sourceNumero).slice(0, 26) || 'N/A'}${systemId ? `   ·   ID système : ${systemId.slice(0, 22)}` : ''}`,
     margin,
-    46
+    67
   )
 
   const statusRaw = String(sortie?.statut || sortie?.status || '').toUpperCase()
@@ -471,7 +482,7 @@ export const generateSortieFondsPDF = async (
   const badgeW = 42
   const badgeH = 8
   const badgeX = pageWidth - margin - badgeW
-  const badgeY = 37
+  const badgeY = 58
   setFill(statusColor)
   doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 2, 2, 'F')
   doc.setFont('helvetica', 'bold')
@@ -480,14 +491,14 @@ export const generateSortieFondsPDF = async (
   doc.text(statusLabel, badgeX + badgeW / 2, badgeY + 5.4, { align: 'center' })
 
   // --- CARTE D'INFORMATIONS ---
-  const infoY = 49
-  const infoH = 41
+  const infoY = 71
+  const infoH = 44
   setFill(CARD_BG)
   doc.roundedRect(margin, infoY, pageWidth - margin * 2, infoH, 2.5, 2.5, 'F')
   setDraw(HAIR)
   doc.setLineWidth(0.3)
   doc.roundedRect(margin, infoY, pageWidth - margin * 2, infoH, 2.5, 2.5, 'S')
-  const splitX = margin + 150
+  const splitX = margin + 105
   doc.setLineWidth(0.2)
   setDraw(HAIR)
   doc.line(splitX, infoY + 5, splitX, infoY + infoH - 5)
@@ -506,7 +517,11 @@ export const generateSortieFondsPDF = async (
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
   setText(INK)
-  doc.text(String(sortie?.beneficiaire || '-').toUpperCase().slice(0, 42), leftX, infoY + 14)
+  doc.text(
+    fitText(String(sortie?.beneficiaire || '-').toUpperCase(), splitX - leftX - 6),
+    leftX,
+    infoY + 14,
+  )
   // Sur un paiement fractionné, `motif` descend de l'ordre de décaissement :
   // c'est l'objet de la tranche, pas celui du dossier. Le bon dirait alors deux
   // fois la même chose et l'objet de la réquisition n'y figurerait nulle part.
@@ -545,14 +560,15 @@ export const generateSortieFondsPDF = async (
     )
   }
 
-  // Colonne droite : date, mode, source, poste
+  // Colonne droite : date, mode, source, poste. Les deux premières valeurs
+  // partagent la ligne afin de garder la carte d'origine compacte en portrait.
   drawLabel('Date', rightX, infoY + 7)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   setText(INK)
   doc.text(format(datePaiement, 'dd/MM/yyyy'), rightX, infoY + 12)
 
-  const modeX = rightX + 60
+  const modeX = rightX + 32
   drawLabel('Mode de paiement', modeX, infoY + 7)
   const modeLabel =
     sortie?.mode_paiement === 'mobile_money'
@@ -565,13 +581,13 @@ export const generateSortieFondsPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   setText(INK)
-  doc.text(modeLabel, modeX, infoY + 12)
+  doc.text(fitText(modeLabel, pageWidth - margin - modeX - 4), modeX, infoY + 12)
 
   drawLabel('Document source', rightX, infoY + 20)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   setText(INK)
-  doc.text(String(sourceNumero).slice(0, 30), rightX, infoY + 25)
+  doc.text(fitText(sourceNumero, pageWidth - margin - rightX - 4), rightX, infoY + 25)
 
   drawLabel('Poste budgétaire', rightX, infoY + 33)
   doc.setFont('helvetica', 'normal')
@@ -604,8 +620,8 @@ export const generateSortieFondsPDF = async (
     const cancelledAt = sortie?.annulee_le ? format(new Date(sortie.annulee_le), 'dd/MM/yyyy HH:mm') : '—'
     const cancellationMotif = String(sortie?.motif_annulation || '-').trim() || '-'
     doc.text(`Date d'annulation : ${cancelledAt}`, margin + 6, contentY + 13)
-    doc.text(`Annulée par : ${cancellationAuthor}`, margin + 74, contentY + 13)
-    doc.text(`Motif : ${cancellationMotif}`, margin + 6, contentY + 18)
+    doc.text(fitText(`Annulée par : ${cancellationAuthor}`, pageWidth - margin - (margin + 74)), margin + 74, contentY + 13)
+    doc.text(fitText(`Motif : ${cancellationMotif}`, pageWidth - margin * 2 - 12), margin + 6, contentY + 18)
     contentY += cancellationHeight + 6
   }
 
@@ -622,7 +638,7 @@ export const generateSortieFondsPDF = async (
     tauxSnapshot && Number(tauxSnapshot) > 0 ? `Taux appliqué : 1 USD = ${formatAmount(tauxSnapshot)} CDF` : ''
 
   const amountY = contentY
-  const amountH = 20
+  const amountH = 22
   setFill([241, 245, 249])
   doc.roundedRect(margin, amountY, pageWidth - margin * 2, amountH, 2.5, 2.5, 'F')
   setFill(GREEN)
@@ -632,11 +648,15 @@ export const generateSortieFondsPDF = async (
   setText(MUTED)
   doc.text('MONTANT TOTAL', margin + 9, amountY + 7)
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(20)
+  doc.setFontSize(18)
   setText(INK)
-  doc.text(`${formatAmount(montant)} ${String(sortie?.devise || 'USD').toUpperCase()}`, margin + 9, amountY + 16)
+  const amountText = `${formatAmount(montant)} ${String(sortie?.devise || 'USD').toUpperCase()}`
+  while (doc.getFontSize() > 12 && doc.getTextWidth(amountText) > 67) {
+    doc.setFontSize(doc.getFontSize() - 0.5)
+  }
+  doc.text(amountText, margin + 9, amountY + 16)
 
-  const wordsX = margin + 122
+  const wordsX = margin + 85
   setDraw(HAIR)
   doc.setLineWidth(0.2)
   doc.line(wordsX - 8, amountY + 3, wordsX - 8, amountY + amountH - 3)
@@ -674,8 +694,8 @@ export const generateSortieFondsPDF = async (
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(12)
     setText(INK)
-    doc.text(`- ${formatAmount(totalRetourne)} ${devise}`, margin + 9, rbY + 11)
-    const rjX = margin + 120
+    doc.text(fitText(`- ${formatAmount(totalRetourne)} ${devise}`, 69), margin + 9, rbY + 11)
+    const rjX = margin + 96
     setDraw(HAIR)
     doc.setLineWidth(0.2)
     doc.line(rjX - 8, rbY + 3, rjX - 8, rbY + rbH - 3)
@@ -686,7 +706,7 @@ export const generateSortieFondsPDF = async (
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(12)
     setText(INK)
-    doc.text(`${formatAmount(resteAJustifier)} ${devise}`, rjX, rbY + 11)
+    doc.text(fitText(`${formatAmount(resteAJustifier)} ${devise}`, pageWidth - margin - rjX - 4), rjX, rbY + 11)
   }
 
   // --- CIRCUIT DE VALIDATION & EXÉCUTION ---
@@ -729,12 +749,13 @@ export const generateSortieFondsPDF = async (
     const lblW = doc.getTextWidth(`${s.label} : `)
     doc.setFont('helvetica', 'normal')
     setText(INK)
-    doc.text(String(s.name).slice(0, 26), x + 3 + lblW, y)
+    doc.text(fitText(s.name, colW - lblW - 7), x + 3 + lblW, y)
   })
 
   // --- BANDEAU VÉRIFICATION & CACHET ---
-  const verifY = 152
-  const verifH = 22
+  const validationBottom = boxTop + boxH
+  const verifY = Math.max(validationBottom + 5, 214)
+  const verifH = 26
   setFill([250, 251, 252])
   doc.roundedRect(margin, verifY, pageWidth - margin * 2, verifH, 2.5, 2.5, 'F')
   setDraw(HAIR)
@@ -745,9 +766,9 @@ export const generateSortieFondsPDF = async (
   if (settings?.show_sortie_qr !== false) {
     try {
       const qrCodeDataUrl = await QRCode.toDataURL(buildQrValue(), { margin: 0, width: 120 })
-      const qrSize = 16
+      const qrSize = 17
       const qrX = margin + 5
-      const qrY = verifY + 3
+      const qrY = verifY + 4.5
       setFill([255, 255, 255])
       setDraw(HAIR)
       doc.setLineWidth(0.3)
@@ -757,16 +778,16 @@ export const generateSortieFondsPDF = async (
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(8.5)
       setText(GREEN)
-      doc.text('VÉRIFICATION', capX, verifY + 7)
+      doc.text('VÉRIFICATION', capX, verifY + 8)
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(6.8)
       setText(MUTED)
-      doc.text('Scannez le code pour authentifier ce bon.', capX, verifY + 11.5)
+      doc.text('Scannez pour authentifier.', capX, verifY + 13)
       doc.setFont('courier', 'normal')
       doc.setFontSize(6.5)
       setText(INK)
-      doc.text(`REF ${String(ref).slice(0, 22)}`, capX, verifY + 16)
-      doc.text(`CLE ${securityToken}`, capX, verifY + 19.5)
+      doc.text(fitText(`REF ${String(ref)}`, 39), capX, verifY + 18)
+      doc.text(`CLE ${securityToken}`, capX, verifY + 22)
     } catch {
       // QR code optionnel : on continue sans échouer.
     }
@@ -779,25 +800,25 @@ export const generateSortieFondsPDF = async (
     const shouldRenderFooterName =
       String(sortieNom || '').trim() &&
       String(sortieNom || '').trim().toLowerCase() !== String(signataireFinalName || '').trim().toLowerCase()
-    const signX = pageWidth - margin - 66
+    const signX = pageWidth - margin - 45
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(8)
+    doc.setFontSize(6.5)
     setText(GREEN)
-    doc.text(sortieLabel, signX, verifY + 7)
+    doc.text(fitText(sortieLabel, 20), signX, verifY + 7)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
     setText(MUTED)
-    if (shouldRenderFooterName) doc.text(String(sortieNom).slice(0, 30), signX, verifY + 12)
+    if (shouldRenderFooterName) doc.text(fitText(sortieNom, 20), signX, verifY + 12)
     doc.setFontSize(6.3)
     setText(MUTED)
-    doc.text('Apposer le cachet humide dans le cadre.', signX, verifY + 17)
+    doc.text('Cachet humide', signX, verifY + 18)
     setDraw(HAIR)
     doc.setLineWidth(0.3)
-    doc.roundedRect(pageWidth - margin - 24, verifY + 2, 20, verifH - 4, 2, 2, 'S')
+    doc.roundedRect(pageWidth - margin - 22, verifY + 2, 18, verifH - 4, 2, 2, 'S')
     // Sortie directe : le cachet numérique ne remplace pas celui de l'autorité,
     // le cadre reste vide pour le cachet humide.
     if (stampDataUrl && !isSortieDirecteDoc) {
-      doc.addImage(stampDataUrl, 'PNG', pageWidth - margin - 23, verifY + 2.5, 17, 17)
+      doc.addImage(stampDataUrl, 'PNG', pageWidth - margin - 21, verifY + 4, 16, 16)
     }
   }
 
@@ -805,8 +826,8 @@ export const generateSortieFondsPDF = async (
   // Sortie sur réquisition : « Autorisé par le Bureau » et la pièce d'origine.
   // Sortie directe : l'avertissement (il couvrait autrefois la ligne « Document
   // source » sous le titre).
-  const midX0 = margin + 82
-  const midX1 = pageWidth - margin - 72
+  const midX0 = margin + 68
+  const midX1 = pageWidth - margin - 49
   const midW = midX1 - midX0
   const midY = verifY + 2.5
   const midH = verifH - 5
@@ -850,14 +871,13 @@ export const generateSortieFondsPDF = async (
       doc.setFontSize(doc.getFontSize() - 0.25)
     }
     setText(INK)
-    doc.text(origine, midX0 + midW / 2, midY + 14.8, { align: 'center' })
+    doc.text(fitText(origine, midW - 6), midX0 + midW / 2, midY + 14.8, { align: 'center' })
   }
 
   // --- BLOCS DE SIGNATURE ---
-  const sigGap = 6
-  const sigW = (pageWidth - margin * 2 - sigGap * 2) / 3
-  const sigH = 17
-  const sigY = 177
+  const sigGap = 4
+  const sigH = 20
+  const sigY = verifY + verifH + 5
   // Sortie sur réquisition, mention seule : deux signatures, Bénéficiaire à
   // gauche et Caissier à droite ; l'autorisation est dans le bandeau. Quand
   // l'autorité signe (choix des réglages, ou aucun circuit connu), un 3e cadre
@@ -898,12 +918,9 @@ export const generateSortieFondsPDF = async (
           hint: avecMention ? 'Visa, cachet & date' : sigHint,
         },
       ]
+  const sigW = (pageWidth - margin * 2 - sigGap * (sigBlocks.length - 1)) / sigBlocks.length
   sigBlocks.forEach((b, i) => {
-    // Deux cadres : l'un à gauche, l'autre à droite.
-    const x =
-      sigBlocks.length === 2 && i === 1
-        ? pageWidth - margin - sigW
-        : margin + i * (sigW + sigGap)
+    const x = margin + i * (sigW + sigGap)
     const head = b.accent ? ORANGE : GREEN
     setFill([255, 255, 255])
     doc.rect(x, sigY, sigW, sigH, 'F')
@@ -915,18 +932,18 @@ export const generateSortieFondsPDF = async (
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(7.5)
     doc.setTextColor(255, 255, 255)
-    doc.text(String(b.label).slice(0, 40), x + sigW / 2, sigY + 4.2, { align: 'center' })
+    doc.text(fitText(b.label, sigW - 4), x + sigW / 2, sigY + 4.2, { align: 'center' })
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
     setText(INK)
-    doc.text(String(b.name).slice(0, 36), x + sigW / 2, sigY + 11, { align: 'center' })
+    doc.text(fitText(b.name, sigW - 4), x + sigW / 2, sigY + 11, { align: 'center' })
     setDraw(HAIR)
     doc.setLineWidth(0.2)
     doc.line(x + 8, sigY + 13.5, x + sigW - 8, sigY + 13.5)
     doc.setFont('helvetica', b.accent ? 'bold' : 'normal')
     doc.setFontSize(6)
     setText(b.accent ? ORANGE : MUTED)
-    doc.text(b.hint, x + sigW / 2, sigY + 16, { align: 'center' })
+    doc.text(fitText(b.hint, sigW - 4), x + sigW / 2, sigY + 17.5, { align: 'center' })
   })
 
   // --- MICROTEXTE DE SÉCURITÉ (ligne fine répétée : réf + clé) ---
@@ -939,7 +956,7 @@ export const generateSortieFondsPDF = async (
   while (micro.length < 1400 && doc.getTextWidth(micro + microUnit) < microMax) {
     micro += microUnit
   }
-  if (micro) doc.text(micro, margin, 199)
+  if (micro) doc.text(micro, margin, sigY + sigH + 5)
 
   // --- PIED DE PAGE ---
   doc.setFont('times', 'normal')

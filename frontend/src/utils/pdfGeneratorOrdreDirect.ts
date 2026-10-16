@@ -77,11 +77,21 @@ export const generateOrdreDirectPDF = async (
 ) => {
   const settings = await getPrintSettingsData()
   const logoDataUrl = await getLogoDataUrl()
-  const doc = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' })
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
 
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const margin = 10
+  const fitText = (value: unknown, maxWidth: number) => {
+    const text = String(value ?? '')
+    if (doc.getTextWidth(text) <= maxWidth) return text
+    const ellipsis = '...'
+    let shortened = text
+    while (shortened && doc.getTextWidth(`${shortened}${ellipsis}`) > maxWidth) {
+      shortened = shortened.slice(0, -1)
+    }
+    return `${shortened}${ellipsis}`
+  }
 
   const orgName = settings?.organization_name || 'ONEC'
   const subtitle = settings?.organization_subtitle || "Plateforme intelligente de gestion intégrée de l'ONEC-RDC"
@@ -127,11 +137,13 @@ export const generateOrdreDirectPDF = async (
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
   doc.setTextColor(15, 23, 42)
-  doc.text(orgName.toUpperCase(), logoDataUrl ? margin + 22 : margin, 14)
+  const identityX = logoDataUrl ? margin + 22 : margin
+  const identityWidth = pageWidth - margin - 70 - identityX - 5
+  doc.text(fitText(orgName.toUpperCase(), identityWidth), identityX, 14)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8.5)
   doc.setTextColor(71, 85, 105)
-  if (subtitle) doc.text(subtitle, logoDataUrl ? margin + 22 : margin, 19)
+  if (subtitle) doc.text(fitText(subtitle, identityWidth), identityX, 19)
 
   const metaW = 70
   const metaH = 22
@@ -152,12 +164,12 @@ export const generateOrdreDirectPDF = async (
 
   doc.setDrawColor(226, 232, 240)
   doc.setLineWidth(0.6)
-  doc.line(margin, 28, pageWidth - margin, 28)
+  doc.line(margin, 32, pageWidth - margin, 32)
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(15)
   doc.setTextColor(15, 23, 42)
-  doc.text('BON DE SORTIE DIRECTE', pageWidth / 2, 33, { align: 'center' })
+  doc.text('BON DE SORTIE DIRECTE', pageWidth / 2, 40, { align: 'center' })
 
   // La nature du bon se lit au même endroit que son statut : l'exécutant doit
   // savoir d'un coup d'œil s'il paie une dépense ponctuelle ou une collation,
@@ -167,11 +179,11 @@ export const generateOrdreDirectPDF = async (
   const natureColor = estCollation ? [31, 107, 92] : [71, 85, 105]
   const natureW = 52
   doc.setFillColor(natureColor[0], natureColor[1], natureColor[2])
-  doc.roundedRect(margin, 31, natureW, 7, 2, 2, 'F')
+  doc.roundedRect(margin, 43, natureW, 7, 2, 2, 'F')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(7)
   doc.setTextColor(255, 255, 255)
-  doc.text(natureLabel, margin + natureW / 2, 36, { align: 'center' })
+  doc.text(natureLabel, margin + natureW / 2, 48, { align: 'center' })
 
   const statusLabel =
     statutRaw === 'PAYE'
@@ -184,7 +196,7 @@ export const generateOrdreDirectPDF = async (
   const badgeW = 48
   const badgeH = 7
   const badgeX = pageWidth - margin - badgeW
-  const badgeY = 31
+  const badgeY = 43
   doc.setFillColor(statusColor[0], statusColor[1], statusColor[2])
   doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 2, 2, 'F')
   doc.setFont('helvetica', 'bold')
@@ -197,19 +209,16 @@ export const generateOrdreDirectPDF = async (
   doc.setTextColor(71, 85, 105)
   // La mention des 100 USD serait fausse sur une collation : elle répond au
   // prix par tête, au plafond de sa réunion et au cumul de la journée.
-  doc.text(
-    estCollation
-      ? `Collation de réunion : ${toNumber((ordre as any)?.participants || 0)} participants `
-        + `x ${formatAmount(toNumber((ordre as any)?.montant_par_personne || 0))} ${devise} — `
-        + `plafonds par personne, par réunion et sur 24 h contrôlés à la programmation.`
-      : `Dépense plafonnée (équivalent 100 USD) définie en amont — ${executantLabel} exécute sans modification.`,
-    margin,
-    42
-  )
+  const legalNotice = estCollation
+    ? `Collation de réunion : ${toNumber((ordre as any)?.participants || 0)} participants `
+      + `x ${formatAmount(toNumber((ordre as any)?.montant_par_personne || 0))} ${devise} — `
+      + `plafonds par personne, par réunion et sur 24 h contrôlés à la programmation.`
+    : `Dépense plafonnée (équivalent 100 USD) définie en amont — ${executantLabel} exécute sans modification.`
+  doc.text(doc.splitTextToSize(legalNotice, pageWidth - margin * 2).slice(0, 2), margin, 55)
 
   // --- BLOC INFOS ---
-  const infoY = 46
-  const infoH = 34
+  const infoY = 64
+  const infoH = 42
   doc.setFillColor(248, 250, 252)
   doc.roundedRect(margin, infoY, pageWidth - margin * 2, infoH, 3, 3, 'F')
 
@@ -225,7 +234,7 @@ export const generateOrdreDirectPDF = async (
   doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(10)
-  doc.text(String(ordre?.beneficiaire || '-').toUpperCase(), leftX, infoY + 13)
+  doc.text(fitText(String(ordre?.beneficiaire || '-').toUpperCase(), pageWidth / 2 - margin - 12), leftX, infoY + 13)
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
@@ -252,7 +261,7 @@ export const generateOrdreDirectPDF = async (
   doc.text('Service / Commission', rightX, infoY + 7)
   doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
   doc.setFontSize(9)
-  doc.text(String(options?.serviceLabel || '-').slice(0, 60), rightX, infoY + 12)
+  doc.text(fitText(options?.serviceLabel || '-', pageWidth - margin - rightX - 4), rightX, infoY + 12)
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
@@ -260,7 +269,7 @@ export const generateOrdreDirectPDF = async (
   doc.text('Programmé par', rightX, infoY + 19)
   doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
   doc.setFontSize(9)
-  doc.text(programmeur, rightX, infoY + 24)
+  doc.text(fitText(programmeur, pageWidth - margin - rightX - 4), rightX, infoY + 24)
 
   if (statutRaw === 'PAYE') {
     doc.setFont('helvetica', 'normal')
@@ -269,7 +278,11 @@ export const generateOrdreDirectPDF = async (
     doc.text('Réf. sortie de fonds', rightX, infoY + 30)
     doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
     doc.setFontSize(8.5)
-    doc.text(String(ordre?.sortie_reference_numero || '-'), rightX + 30, infoY + 30)
+    doc.text(
+      fitText(ordre?.sortie_reference_numero || '-', pageWidth - margin - rightX - 34),
+      rightX + 30,
+      infoY + 30,
+    )
   }
 
   // --- LIGNES BUDGÉTAIRES ---
@@ -301,9 +314,9 @@ export const generateOrdreDirectPDF = async (
       doc.rect(margin, contentY, pageWidth - margin * 2, rowH)
       doc.setTextColor(15, 23, 42)
       doc.setFontSize(7.5)
-      doc.text(String(posteLabel).slice(0, 38), col1 + 2, contentY + 4)
-      doc.text(String(l?.description || '-').slice(0, 80), col2 + 2, contentY + 4)
-      doc.text(formatAmount(toNumber(l?.montant_total || 0)), col3 + 2, contentY + 4)
+      doc.text(fitText(posteLabel, col2 - col1 - 4), col1 + 2, contentY + 4)
+      doc.text(fitText(l?.description || '-', col3 - col2 - 4), col2 + 2, contentY + 4)
+      doc.text(fitText(formatAmount(toNumber(l?.montant_total || 0)), pageWidth - margin - col3 - 4), col3 + 2, contentY + 4)
       contentY += rowH
     })
     contentY += 3
@@ -326,7 +339,11 @@ export const generateOrdreDirectPDF = async (
   doc.setFont('helvetica', 'italic')
   doc.setFontSize(8.5)
   doc.setTextColor(71, 85, 105)
-  doc.text(`Soit en lettres : ${numberToWords(montant)}`, margin, contentY + amountH + 6)
+  doc.text(
+    doc.splitTextToSize(`Soit en lettres : ${numberToWords(montant)}`, pageWidth - margin * 2).slice(0, 2),
+    margin,
+    contentY + amountH + 6,
+  )
 
   // --- SIGNATURES ---
   const sigGap = 5
@@ -346,11 +363,11 @@ export const generateOrdreDirectPDF = async (
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
     doc.setTextColor(15, 23, 42)
-    doc.text(sigLabels[i], x + sigW / 2, sigY + 6, { align: 'center' })
+    doc.text(fitText(sigLabels[i], sigW - 4), x + sigW / 2, sigY + 6, { align: 'center' })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
     doc.setTextColor(100, 116, 139)
-    doc.text(String(sigNames[i] || '—').slice(0, 34), x + sigW / 2, sigY + 11, { align: 'center' })
+    doc.text(fitText(sigNames[i] || '—', sigW - 4), x + sigW / 2, sigY + 11, { align: 'center' })
     doc.setFontSize(6.5)
     doc.text('Signature & date', x + sigW / 2, sigY + 15.5, { align: 'center' })
   }
