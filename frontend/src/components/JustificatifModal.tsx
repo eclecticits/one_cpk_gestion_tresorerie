@@ -41,6 +41,12 @@ export function JustificatifBadge({ sortie }: { sortie: SortieFonds }) {
   )
 }
 
+/** Y a-t-il un justificatif à joindre, à voir ou dont la dispense se lit ? */
+export function justificatifConsultable(sortie: SortieFonds): boolean {
+  const statut = sortie.justificatif_statut || 'NON_REQUIS'
+  return statut !== 'NON_REQUIS' || (sortie.justificatif_pieces || []).length > 0
+}
+
 /** La ligne attend-elle une action du caissier sur son justificatif ? */
 export function justificatifAttendu(sortie: SortieFonds): boolean {
   return sortie.justificatif_statut === 'ATTENDU' || sortie.justificatif_statut === 'EN_RETARD'
@@ -147,7 +153,16 @@ export default function JustificatifModal({ sortie, onClose, onUpdated }: Props)
           <div className={styles.pieces}>
             <span className={styles.piecesTitre}>Pièces jointes</span>
             {pieces.map((p, i) => (
-              <button key={p} type="button" className={styles.lienBtn} onClick={() => openUploadUrl(buildUploadUrl(p))}>
+              <button
+                key={p}
+                type="button"
+                className={styles.lienBtn}
+                onClick={() =>
+                  openUploadUrl(buildUploadUrl(p)).catch(() =>
+                    notifyError('Justificatif', "Le fichier n'a pas pu être ouvert."),
+                  )
+                }
+              >
                 Justificatif {i + 1}
               </button>
             ))}

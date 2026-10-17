@@ -93,6 +93,12 @@ class Settings(BaseSettings):
     # l'endpoint authentifié secure_uploads). Mettre SERVE_UPLOADS_PUBLICLY=true
     # explicitement en dev si besoin.
     serve_uploads_publicly: bool = Field(default=False, alias="SERVE_UPLOADS_PUBLICLY")
+    # Fichiers protégés : par défaut le backend délègue l'envoi à nginx
+    # (X-Accel-Redirect, corps vide). Sans nginx devant lui — serveur de dev
+    # Vite qui relaie /api directement au backend — la réponse arrivait vide au
+    # navigateur. À false, le backend envoie le fichier lui-même, après les
+    # mêmes contrôles d'accès.
+    secure_uploads_x_accel: bool = Field(default=True, alias="SECURE_UPLOADS_X_ACCEL")
 
     # JWT
     jwt_secret: str

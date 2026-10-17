@@ -57,6 +57,9 @@ services:
     env_file: .env
     environment:
       UPLOAD_DIR: /data/onec_smart/uploads
+      # En dev, l'écran passe aussi par Vite (5173), qui relaie /api au backend
+      # sans nginx : le backend envoie lui-même les fichiers protégés.
+      SECURE_UPLOADS_X_ACCEL: "false"
       REDIS_URL: redis://redis:6379/0
       RUN_MIGRATIONS_ON_STARTUP: ${RUN_MIGRATIONS_ON_STARTUP:-true}
       BACKEND_WORKERS: ${BACKEND_WORKERS:-4}

@@ -378,6 +378,7 @@ async def _save_sortie_annexes(
     safe_ref: str,
     *,
     tenant_uuid: str,
+    sous_dossier: str = "",
 ) -> list[str]:
     filenames: list[str] = []
     for attachment in attachments:
@@ -392,14 +393,19 @@ async def _save_sortie_annexes(
         if len(contents) > MAX_ANNEXE_SIZE:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier trop volumineux (max 3 Mo)")
         upload_dt = datetime.now(timezone.utc)
-        target_dir = _tenant_sortie_dir(tenant_uuid, upload_dt.year, upload_dt.month)
+        # Même rangement que les réquisitions (tenants/<org>/requisitions/AAAA/MM) ;
+        # un sous-dossier sépare les justificatifs rapportés des annexes du paiement.
+        segment = f"sorties-fonds/{sous_dossier}" if sous_dossier else "sorties-fonds"
+        target_dir = os.path.join(
+            UPLOAD_ROOT, "tenants", tenant_uuid, *segment.split("/"), f"{upload_dt.year:04d}", f"{upload_dt.month:02d}"
+        )
         os.makedirs(target_dir, exist_ok=True)
         filename = f"{safe_ref}-annex-{uuid_lib.uuid4().hex}{ext or '.pdf'}"
         dest_path = os.path.join(target_dir, filename)
         with open(dest_path, "wb") as f:
             f.write(contents)
         filenames.append(
-            f"/uploads/tenants/{tenant_uuid}/sorties-fonds/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
+            f"/uploads/tenants/{tenant_uuid}/{segment}/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
         )
     return filenames
 
@@ -3591,7 +3597,7 @@ async def deposer_justificatif(
     if not fichiers:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucun fichier joint")
     safe_ref = _safe_ref(f"{sortie.reference_numero or sortie.reference or sortie.id}-justificatif")
-    chemins = await _save_sortie_annexes(fichiers, safe_ref, tenant_uuid=tenant_uuid)
+    chemins = await _save_sortie_annexes(fichiers, safe_ref, tenant_uuid=tenant_uuid, sous_dossier="justificatifs")
     ancien_statut = sortie.justificatif_statut
     pieces = list(sortie.justificatif_pieces or [])
     pieces.extend(c for c in chemins if c not in pieces)

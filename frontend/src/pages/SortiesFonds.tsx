@@ -65,7 +65,7 @@ import PageHeader from '../components/PageHeader'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import RetourCaisseModal, { RetourSortieSource } from '../components/RetourCaisseModal'
 import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, saisieDepuis, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
-import JustificatifModal, { JustificatifBadge, justificatifAttendu } from '../components/JustificatifModal'
+import JustificatifModal, { JustificatifBadge, justificatifAttendu, justificatifConsultable } from '../components/JustificatifModal'
 import JustificatifsEnAttente from '../components/JustificatifsEnAttente'
 import { listerJustificatifsEnAttente, regleJustificatif } from '../api/justificatifs'
 import justifStyles from '../components/Justificatif.module.css'
@@ -234,13 +234,16 @@ export default function SortiesFonds() {
 
   const getAnnexesList = (sortie: any): string[] => {
     const annexes = sortie?.annexes
+    // Les justificatifs rapportés après le paiement se consultent avec les
+    // annexes : c'est là qu'on cherche les pièces d'une sortie.
+    const justificatifs: string[] = Array.isArray(sortie?.justificatif_pieces) ? sortie.justificatif_pieces : []
     if (Array.isArray(annexes)) {
-      return annexes
+      return [...annexes, ...justificatifs]
     }
     if (typeof annexes === 'string' && annexes.trim()) {
-      return [annexes]
+      return [annexes, ...justificatifs]
     }
-    return []
+    return justificatifs
   }
 
   const openAnnexesForSortie = async (sortie: any) => {
@@ -3839,13 +3842,13 @@ export default function SortiesFonds() {
                     </td>
                     <td>
                       <div className={styles.actions}>
-                        {canExecutePayment && String((sortie as any)?.statut || '').toUpperCase() !== 'ANNULEE' && (sortie as any).origine !== 'transfert_interne' && justificatifAttendu(sortie as SortieFonds) && (
+                        {canExecutePayment && String((sortie as any)?.statut || '').toUpperCase() !== 'ANNULEE' && (sortie as any).origine !== 'transfert_interne' && justificatifConsultable(sortie as SortieFonds) && (
                           <button
                             type="button"
                             className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                             onClick={() => setJustificatifSortie(sortie as SortieFonds)}
-                            title="Joindre la pièce justificative scannée"
-                            aria-label="Joindre le justificatif"
+                            title={justificatifAttendu(sortie as SortieFonds) ? 'Joindre la pièce justificative scannée' : 'Voir la pièce justificative'}
+                            aria-label="Justificatif"
                           >
                             <FileCheck size={16} /><span className={styles.printLabel}>Justificatif</span>
                           </button>
@@ -4036,7 +4039,7 @@ export default function SortiesFonds() {
                 </div>
 
                 <div className={styles.cardActions}>
-                  {canExecutePayment && String((sortie as any)?.statut || '').toUpperCase() !== 'ANNULEE' && (sortie as any).origine !== 'transfert_interne' && justificatifAttendu(sortie as SortieFonds) && (
+                  {canExecutePayment && String((sortie as any)?.statut || '').toUpperCase() !== 'ANNULEE' && (sortie as any).origine !== 'transfert_interne' && justificatifConsultable(sortie as SortieFonds) && (
                     <button
                       type="button"
                       className={styles.cardActionBtn}

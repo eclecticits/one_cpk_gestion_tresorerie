@@ -5,6 +5,7 @@ import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +53,13 @@ def _is_legacy_auth_allowed(safe_rel: str) -> bool:
 
 def _build_internal_response(fs_path: str, safe_rel: str, download: bool = False) -> Response:
     content_type, _ = mimetypes.guess_type(fs_path)
+    if not settings.secure_uploads_x_accel:
+        # Pas de nginx pour exécuter l'X-Accel-Redirect : le fichier part d'ici.
+        return FileResponse(
+            fs_path,
+            media_type=content_type or "application/octet-stream",
+            filename=os.path.basename(fs_path) if download else None,
+        )
     headers = {"X-Accel-Redirect": f"/_protected_uploads/{safe_rel}"}
     if download:
         headers["Content-Disposition"] = f'attachment; filename="{os.path.basename(fs_path)}"'
