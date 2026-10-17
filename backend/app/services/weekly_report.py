@@ -28,6 +28,7 @@ from app.services.mailer import (
     send_weekly_report_email,
 )
 from app.services.email_config import normalize_smtp_password
+from app.services.journaux_annexes import construire_annexes
 from app.services.system_settings_service import get_system_settings
 
 logger = logging.getLogger("onec_cpk_api.weekly_report")
@@ -298,6 +299,35 @@ async def send_treasury_report(db: AsyncSession, *, tenant_id: int, kind: Report
     html_body = _build_weekly_html(stats, now, tenant_name, tenant_url, kind)
     text_body = _build_weekly_text(stats, now, tenant_name, tenant_url, kind)
 
+    # Les journaux de caisse et de banque de la période partent en annexe. Leur
+    # échec ne retient pas le rapport : il part sans eux, et le dit.
+    try:
+        annexes = await construire_annexes(
+            db,
+            tenant_id=tenant_id,
+            organisation=tenant_name,
+            start=start,
+            end=end,
+            tz=tz,
+            # Le mensuel se retravaille (rapprochements, cumuls) : en Excel.
+            format="xlsx" if kind is MONTHLY else "pdf",
+        )
+    except Exception:
+        logger.exception("%s report: journaux annexes non générés (organisation %s)", kind.key, tenant_id)
+        annexes = []
+    if annexes:
+        noms = "\n".join(f"- {nom}" for nom, _ in annexes)
+        text_body = f"{text_body}\n\nEn annexe, les journaux de la période :\n{noms}"
+        liste = "".join(f"<li>{html.escape(nom)}</li>" for nom, _ in annexes)
+        bloc = (
+            '<div style="max-width:680px;margin:16px auto 0;font-family:Arial,sans-serif;font-size:13px;color:#334155;">'
+            f"<strong>En annexe, les journaux de la période :</strong><ul>{liste}</ul></div>"
+        )
+        index = html_body.lower().rfind("</body>")
+        html_body = html_body + bloc if index < 0 else html_body[:index] + bloc + html_body[index:]
+    else:
+        text_body = f"{text_body}\n\nAucun journal de caisse ou de banque n'est joint : aucun mouvement sur la période."
+
     try:
         await send_in_thread(
             send_weekly_report_email,
@@ -311,6 +341,7 @@ async def send_treasury_report(db: AsyncSession, *, tenant_id: int, kind: Report
             subject=subject,
             html_body=html_body,
             text_body=text_body,
+            attachments=annexes,
         )
     except Exception as exc:
         await _fail(db, ns, tenant_id, now, kind, f"Erreur SMTP : {_describe_smtp_error(exc)}")

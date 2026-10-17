@@ -9,6 +9,8 @@ type ReportStatusCardProps = {
   onRefresh: () => void
   onRun: () => void
   hint: ReactNode
+  /** Variable d'environnement qui active ce rapport, nommée quand il est désactivé. */
+  variableActivation: string
 }
 
 function formatDate(value: string | null) {
@@ -16,7 +18,53 @@ function formatDate(value: string | null) {
 }
 
 // Carte de statut d'un rapport planifié (hebdomadaire ou mensuel).
-export default function ReportStatusCard({ status, loading, running, onRefresh, onRun, hint }: ReportStatusCardProps) {
+// « Inactif » recouvrait deux pannes sans rapport : un rapport qu'aucune
+// configuration n'a activé, et un planificateur activé qui ne tourne pas. La
+// première se règle dans le .env, la seconde en redémarrant le service.
+function etatPlanificateur(status: WeeklyReportStatus | MonthlyReportStatus, variableActivation: string) {
+  if (!status.enabled) {
+    return {
+      classe: styles.badgeInactive,
+      libelle: 'Désactivé dans la configuration',
+      explication: (
+        <>
+          Aucun envoi automatique : mettez{' '}
+          <code className={styles.inlineCode}>{variableActivation}=true</code> dans le fichier{' '}
+          <code className={styles.inlineCode}>.env</code> du serveur, puis redémarrez le backend.
+        </>
+      ),
+    }
+  }
+  if (status.host === 'exports-worker') {
+    // L'API ne voit pas l'ordonnanceur du worker : ni « Actif » ni « Arrêté ».
+    return {
+      classe: styles.badgeActive,
+      libelle: 'Porté par le worker',
+      explication: (
+        <>
+          Les envois partent du conteneur <code className={styles.inlineCode}>exports-worker</code> : il doit
+          être en marche pour que le rapport parte.
+        </>
+      ),
+    }
+  }
+  if (status.running) {
+    return { classe: styles.badgeActive, libelle: 'Actif', explication: null }
+  }
+  return {
+    classe: styles.badgeWarning,
+    libelle: 'Arrêté',
+    explication: (
+      <>
+        Le rapport est activé, mais le planificateur ne tourne pas dans le serveur : redémarrez le backend, puis
+        consultez son journal au démarrage s'il reste arrêté.
+      </>
+    ),
+  }
+}
+
+export default function ReportStatusCard({ status, loading, running, onRefresh, onRun, hint, variableActivation }: ReportStatusCardProps) {
+  const etat = status ? etatPlanificateur(status, variableActivation) : null
   return (
     <div className={styles.weeklyCard}>
       <div className={styles.weeklyStatusRow}>
@@ -26,14 +74,7 @@ export default function ReportStatusCard({ status, loading, running, onRefresh, 
             {loading && 'Chargement...'}
             {!loading && status && (
               <>
-                {status.enabled && status.host === 'exports-worker' ? (
-                  // L'API ne voit pas l'ordonnanceur du worker : ni « Actif » ni « Inactif ».
-                  <span className={styles.badgeActive}>Porté par le worker</span>
-                ) : (
-                  <span className={status.enabled && status.running ? styles.badgeActive : styles.badgeInactive}>
-                    {status.enabled && status.running ? 'Actif' : 'Inactif'}
-                  </span>
-                )}
+                <span className={etat?.classe}>{etat?.libelle}</span>
                 <span>Fuseau : {status.timezone}</span>
                 <span>Prochaine exécution :{formatDate(status.next_run)}</span>
                 <span>Dernier envoi :{formatDate(status.last_sent_at)}</span>
@@ -53,6 +94,7 @@ export default function ReportStatusCard({ status, loading, running, onRefresh, 
           </button>
         </div>
       </div>
+      {etat?.explication && <div className={styles.weeklyWarning}>{etat.explication}</div>}
       {status && status.last_status === 'failed' && (
         <div className={styles.weeklyWarning}>
           Dernier envoi en échec. {status.last_error || 'Vérifiez la configuration SMTP.'}

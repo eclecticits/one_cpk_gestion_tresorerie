@@ -1111,6 +1111,7 @@ def send_weekly_report_email(
     subject: str,
     html_body: str,
     text_body: str | None = None,
+    attachments: list[tuple[str, bytes]] | None = None,
 ) -> None:
     cc_list = _split_emails(cc_emails)
 
@@ -1123,6 +1124,14 @@ def send_weekly_report_email(
 
     msg.set_content(text_body or "Rapport hebdomadaire trésorerie.")
     msg.add_alternative(html_body, subtype="html")
+    # Journaux de caisse et de banque de la période (PDF ou Excel).
+    for filename, content in attachments or []:
+        subtype = (
+            "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            if filename.lower().endswith(".xlsx")
+            else "pdf"
+        )
+        msg.add_attachment(content, maintype="application", subtype=subtype, filename=filename)
 
     # L'erreur est relancée, pas avalée : l'appelant l'inscrit dans le statut
     # du rapport et le bouton « Envoyer maintenant » l'affiche telle quelle.

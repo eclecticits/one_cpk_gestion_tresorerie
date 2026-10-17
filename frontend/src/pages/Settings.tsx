@@ -2750,6 +2750,7 @@ export default function Settings() {
                           <h4>Rapport hebdomadaire (lundi matin)</h4>
                           <ReportStatusCard
                             status={weeklyStatus}
+                            variableActivation="WEEKLY_REPORT_ENABLED"
                             loading={weeklyStatusLoading}
                             running={weeklyReportRunning}
                             onRefresh={loadWeeklyStatus}
@@ -2766,6 +2767,7 @@ export default function Settings() {
                           <h4>Rapport mensuel (1er du mois)</h4>
                           <ReportStatusCard
                             status={monthlyStatus}
+                            variableActivation="MONTHLY_TREASURY_REPORT_ENABLED"
                             loading={monthlyStatusLoading}
                             running={monthlyReportRunning}
                             onRefresh={loadMonthlyStatus}
