@@ -140,6 +140,8 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
   })
 
   const rows = data.map((m) => ({
+    __entree: toNumber(m.entree) > 0,
+    __sortie: toNumber(m.sortie) > 0,
     date: format(new Date(m.date), 'dd/MM/yyyy'),
     libelle: libelleJournalComplet(m),
     entree: toNumber(m.entree) > 0 ? formatAmount(toNumber(m.entree)) : '—',
@@ -188,7 +190,9 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
       fontSize: 8.5,
       cellPadding: 2.5,
     },
-    bodyStyles: { fontSize: 8.5, cellPadding: 2, textColor: [15, 23, 42] },
+    // Même mise en forme que l'annexe des rapports planifiés
+    // (backend/app/services/journaux_annexes.py) : les deux doivent rester identiques.
+    bodyStyles: { fontSize: 8.5, cellPadding: 1.4, textColor: [15, 23, 42] },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: {
       0: { cellWidth: 21 },
@@ -201,6 +205,14 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
     didParseCell: (hookData) => {
       if (hookData.section !== 'body') return
       const row = bodyRows[hookData.row.index]
+      // Flux lisibles d'un coup d'œil : entrées en vert, sorties en rouge,
+      // tirets estompés.
+      if (!row?.__rowType && hookData.column.index === 2) {
+        hookData.cell.styles.textColor = row?.__entree ? [21, 128, 61] : [148, 163, 184]
+      }
+      if (!row?.__rowType && hookData.column.index === 3) {
+        hookData.cell.styles.textColor = row?.__sortie ? [185, 28, 28] : [148, 163, 184]
+      }
       if (!row?.__rowType) return
       hookData.cell.styles.fontStyle = 'bold'
       if (row.__rowType === 'initial') {
@@ -210,6 +222,20 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
         hookData.cell.styles.fillColor = [6, 95, 70]
         hookData.cell.styles.textColor = [255, 255, 255]
       }
+    },
+    // Filet un peu plus marqué au premier mouvement de chaque nouvelle journée.
+    didDrawCell: (hookData) => {
+      if (hookData.section !== 'body') return
+      const index = hookData.row.index
+      const row = bodyRows[index]
+      const previous = bodyRows[index - 1]
+      if (row?.__rowType || previous?.__rowType || !previous || row.date === previous.date) return
+      // Chaque cellule trace son segment : un trait unique tiré de la première
+      // serait recouvert par le fond des suivantes.
+      const { x, y, width } = hookData.cell
+      doc.setDrawColor(203, 213, 225)
+      doc.setLineWidth(0.45)
+      doc.line(x, y, x + width, y)
     },
   })
 

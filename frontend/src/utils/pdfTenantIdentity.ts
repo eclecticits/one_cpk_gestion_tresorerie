@@ -130,15 +130,22 @@ export const drawTenantHeader = (
   doc.setFillColor(ONEC_LIGHT_BG)
   doc.roundedRect(margin, 8, pageWidth - margin * 2, bandHeight, 2.5, 2.5, 'F')
 
+  // Proportions gardées : le logo tient dans 34 × 21 mm, centré dans la hauteur
+  // du bandeau. Le forcer dans un carré écrasait un logo trois fois plus large
+  // que haut.
+  let textLeft = margin + 5
   if (identity.logoDataUrl) {
     try {
-      doc.addImage(identity.logoDataUrl, 'PNG', margin + 3, 10.5, 21, 21)
+      const { width, height } = doc.getImageProperties(identity.logoDataUrl)
+      const scale = Math.min(34 / width, 21 / height)
+      const w = width * scale
+      const h = height * scale
+      doc.addImage(identity.logoDataUrl, 'PNG', margin + 3, 8 + (bandHeight - h) / 2, w, h)
+      textLeft = margin + 3 + w + 4
     } catch {
       // Un logo illisible ne doit jamais empêcher l'émission du document.
     }
   }
-
-  const textLeft = margin + (identity.logoDataUrl ? 28 : 5)
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(11)

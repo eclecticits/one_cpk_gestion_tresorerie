@@ -74,6 +74,11 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
+    // L'écran s'ouvre sur cpk.localhost:5173, mais le WebSocket du
+    // rechargement à chaud n'y passe pas sous WSL2 : Vite échouait d'abord
+    // (« failed to connect to websocket »), puis se rabattait sur
+    // localhost:5173. On vise directement ce qui fonctionne.
+    hmr: { host: 'localhost' },
     watch: {
       // WSL2 + Windows-mounted drive (/mnt/d/...): inotify events from DrvFs
       // are unreliable, so file edits don't trigger HMR without polling.
