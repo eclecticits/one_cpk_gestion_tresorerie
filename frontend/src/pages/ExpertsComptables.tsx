@@ -283,6 +283,7 @@ export default function ExpertsComptables() {
     telephone: '',
     province_attache: '',
     categorie_personne: '' as CategoriePersonne | '',
+    sexe: '',
     statut_professionnel: '' as StatutProfessionnel | '',
     cabinet_attache: '',
   })
@@ -294,6 +295,7 @@ export default function ExpertsComptables() {
     telephone: '',
     province_attache: '',
     categorie_personne: '' as CategoriePersonne | '',
+    sexe: '',
     statut_professionnel: '' as StatutProfessionnel | '',
     cabinet_attache: '',
   })
@@ -360,6 +362,7 @@ export default function ExpertsComptables() {
         telephone: formData.telephone || null,
         province_attache: formData.province_attache || null,
         categorie_personne: formData.categorie_personne || null,
+        sexe: formData.categorie_personne === 'Personne Physique' ? (formData.sexe || null) : null,
         statut_professionnel: formData.statut_professionnel || null,
         cabinet_attache: formData.cabinet_attache || null,
         active: true,
@@ -375,6 +378,7 @@ export default function ExpertsComptables() {
         telephone: '',
         province_attache: '',
         categorie_personne: '',
+        sexe: '',
         statut_professionnel: '',
         cabinet_attache: '',
       })
@@ -403,6 +407,7 @@ export default function ExpertsComptables() {
       telephone: expert.telephone || '',
       province_attache: expert.province_attache || '',
       categorie_personne: (expert.categorie_personne || '') as CategoriePersonne | '',
+      sexe: expert.sexe || '',
       statut_professionnel: (expert.statut_professionnel || '') as StatutProfessionnel | '',
       cabinet_attache: expert.cabinet_attache || '',
     })
@@ -435,6 +440,7 @@ export default function ExpertsComptables() {
         telephone: editFormData.telephone || null,
         province_attache: editFormData.province_attache || null,
         categorie_personne: editFormData.categorie_personne || null,
+        sexe: editFormData.categorie_personne === 'Personne Physique' ? (editFormData.sexe || null) : null,
         statut_professionnel: editFormData.statut_professionnel || null,
         cabinet_attache: editFormData.cabinet_attache || null,
       })
@@ -843,6 +849,20 @@ export default function ExpertsComptables() {
                 </div>
               </div>
 
+              {formData.categorie_personne === 'Personne Physique' && (
+                <div className={styles.field}>
+                  <label>Sexe</label>
+                  <select
+                    value={formData.sexe}
+                    onChange={(e) => setFormData({ ...formData, sexe: e.target.value })}
+                  >
+                    <option value="">-- Sélectionner --</option>
+                    <option value="M">Masculin</option>
+                    <option value="F">Féminin</option>
+                  </select>
+                </div>
+              )}
+
               {formData.statut_professionnel === 'En Cabinet' && (
                 <div className={styles.field}>
                   <label>Cabinet d'Attache</label>
@@ -949,6 +969,20 @@ export default function ExpertsComptables() {
                   </select>
                 </div>
               </div>
+
+              {editFormData.categorie_personne === 'Personne Physique' && (
+                <div className={styles.field}>
+                  <label>Sexe</label>
+                  <select
+                    value={editFormData.sexe}
+                    onChange={(e) => setEditFormData({ ...editFormData, sexe: e.target.value })}
+                  >
+                    <option value="">-- Sélectionner --</option>
+                    <option value="M">Masculin</option>
+                    <option value="F">Féminin</option>
+                  </select>
+                </div>
+              )}
 
               {editFormData.statut_professionnel === 'En Cabinet' && (
                 <div className={styles.field}>
@@ -1252,6 +1286,9 @@ export default function ExpertsComptables() {
               <h3>Identité</h3>
               <dl className={styles.detailList}>
                 <div><dt>Catégorie</dt><dd>{getCategoryLabel(detailExpert)}</dd></div>
+                {detailExpert.categorie_personne === 'Personne Physique' && (
+                  <div><dt>Sexe</dt><dd>{detailExpert.sexe === 'M' ? 'Masculin' : detailExpert.sexe === 'F' ? 'Féminin' : '-'}</dd></div>
+                )}
                 <div><dt>Province</dt><dd>{detailExpert.province_attache || '-'}</dd></div>
                 <div><dt>Type</dt><dd>{detailExpert.type_ec || '-'}</dd></div>
                 <div><dt>Statut</dt><dd>{detailExpert.active === false ? 'Inactif' : 'Actif'}</dd></div>
