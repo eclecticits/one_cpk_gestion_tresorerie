@@ -7,7 +7,7 @@ import { usePermissions } from '../hooks/usePermissions'
 import { apiRequest, ApiError } from '../lib/apiClient'
 import { scoreRequisitions } from '../api/ai'
 import { useNotification } from '../contexts/NotificationContext'
-import { format } from 'date-fns'
+import { differenceInHours, format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
 import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
@@ -39,6 +39,20 @@ const generateSingleRequisitionPDF: PdfGeneratorModule['generateSingleRequisitio
   return mod.generateSingleRequisitionPDF(...args)
 }
 import styles from './Validation.module.css'
+
+// Au-delà, une réquisition qui attend une décision passe en « urgente » et
+// clignote. Faire clignoter toutes les lignes en attente n'aiderait pas : la
+// page s'ouvre sur le filtre « En attente », tout le tableau clignoterait.
+const DELAI_URGENT_HEURES = 72
+
+type Attente = 'attente' | 'urgente' | null
+
+const libelleAttente = (createdAt: string): string => {
+  const heures = Math.max(0, differenceInHours(new Date(), new Date(createdAt)))
+  if (heures < 1) return "depuis moins d'1 h"
+  if (heures < 24) return `depuis ${heures} h`
+  return `depuis ${Math.floor(heures / 24)} j`
+}
 
 interface Requisition {
   id: string
@@ -551,7 +565,28 @@ export default function Validation() {
     )
   })
 
-  const getStatutBadge = (statut: string) => {
+  // Une réquisition attend la décision de l'utilisateur tant qu'elle est en
+  // attente et qu'il ne l'a pas lui-même autorisée : celle qu'il a déjà
+  // signée attend quelqu'un d'autre, elle n'a pas à attirer son regard.
+  const getAttente = (req: any): Attente => {
+    const statusValue = String(req.status ?? req.statut ?? '').toUpperCase()
+    if (!authorizeStatuses.has(statusValue)) return null
+    if (req.validee_par && user?.id && String(req.validee_par) === String(user.id)) return null
+    const heures = differenceInHours(new Date(), new Date(req.created_at))
+    return heures >= DELAI_URGENT_HEURES ? 'urgente' : 'attente'
+  }
+
+  const resumeAttente = filteredRequisitions.reduce(
+    (acc, req) => {
+      const attente = getAttente(req)
+      if (attente) acc.total += 1
+      if (attente === 'urgente') acc.urgentes += 1
+      return acc
+    },
+    { total: 0, urgentes: 0 }
+  )
+
+  const getStatutBadge = (statut: string, attente: Attente = null) => {
     const badges = {
       EN_ATTENTE_COMMISSION: { label: 'Attente signature commission', class: styles.statutBrouillon },
       EN_ATTENTE: { label: 'En attente', class: styles.statutBrouillon },
@@ -562,7 +597,12 @@ export default function Validation() {
       PENDING_VALIDATION_IMPORT: { label: 'Import à valider', class: styles.statutBrouillon }
     }
     const badge = badges[statut as keyof typeof badges] || { label: statut, class: '' }
-    return <span className={`${styles.badge} ${badge.class}`}>{badge.label}</span>
+    return (
+      <span className={`${styles.badge} ${badge.class} ${attente ? styles.badgeAttente : ''}`}>
+        {attente && <span className={styles.attenteDot} aria-hidden="true" />}
+        {badge.label}
+      </span>
+    )
   }
 
   const getTypeBadge = (type: string) => {
@@ -736,6 +776,16 @@ export default function Validation() {
           <h1>Validation des réquisitions</h1>
           <p>Approuver ou rejeter les réquisitions en attente</p>
         </div>
+        {resumeAttente.total > 0 && (
+          <div className={styles.attenteResume} role="status">
+            <strong>{resumeAttente.total}</strong> en attente de votre décision
+            {resumeAttente.urgentes > 0 && (
+              <span className={styles.attenteResumeUrgent}>
+                dont {resumeAttente.urgentes} depuis plus de {DELAI_URGENT_HEURES / 24} jours
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Recherche collante du téléphone (masquée en desktop), suivie du
@@ -955,6 +1005,7 @@ export default function Validation() {
                 const canAct = !['PAYEE', 'REJETEE'].includes(statusValue || '')
                 const isBusy = actionLoadingId === req.id
                 const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
+                const attente = getAttente(req)
                 const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
                 const remboursementOccupe = remboursementActionLoadingId === req.id
                 const detailLibelle = isRemboursementTransport
@@ -1051,7 +1102,10 @@ export default function Validation() {
                   })
                 }
               return (
-                <tr key={req.id}>
+                <tr
+                  key={req.id}
+                  className={attente === 'urgente' ? styles.rowUrgente : attente === 'attente' ? styles.rowAttente : undefined}
+                >
                     <td className={styles.colNumero}>
                       <div className={styles.numeroCell}>
                         <strong>{getDocumentReference(req)}</strong>
@@ -1088,8 +1142,15 @@ export default function Validation() {
                         {req.mode_paiement === 'virement' && <><Landmark size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Op. banc.</>}
                       </span>
                     </td>
-                    <td className={styles.colStatut}>{getStatutBadge(statusValue || 'EN_ATTENTE_COMMISSION')}</td>
-                    <td className={styles.colDate}>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</td>
+                    <td className={styles.colStatut}>{getStatutBadge(statusValue || 'EN_ATTENTE_COMMISSION', attente)}</td>
+                    <td className={styles.colDate}>
+                      {format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}
+                      {attente && (
+                        <div className={attente === 'urgente' ? styles.attenteDepuisUrgent : styles.attenteDepuis}>
+                          {libelleAttente(req.created_at)}
+                        </div>
+                      )}
+                    </td>
                     <td className={styles.colActions}>
                       <div className={styles.actions}>
                         <RowActionsMenu
@@ -1138,6 +1199,7 @@ export default function Validation() {
             const canAct = pendingStatuses.includes(statusValue || 'EN_ATTENTE_COMMISSION')
             const isBusy = actionLoadingId === req.id
             const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
+            const attente = getAttente(req)
             const onOpenDetails = () =>
               isRemboursementTransport
                 ? handleViewRemboursementDetails(req)
@@ -1146,7 +1208,7 @@ export default function Validation() {
             return (
               <div
                 key={`card-${req.id}`}
-                className={styles.card}
+                className={`${styles.card} ${attente === 'urgente' ? styles.cardUrgente : attente === 'attente' ? styles.cardAttente : ''}`}
                 data-statut={String(statusValue || 'EN_ATTENTE_COMMISSION').toLowerCase()}
                 role="button"
                 tabIndex={0}
@@ -1161,10 +1223,17 @@ export default function Validation() {
                 <div className={styles.cardHeader}>
                   <div>
                     <div className={styles.cardTitle}>{getDocumentReference(req)}</div>
-                    <div className={styles.cardSub}>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</div>
+                    <div className={styles.cardSub}>
+                      {format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}
+                      {attente && (
+                        <span className={attente === 'urgente' ? styles.attenteDepuisUrgent : styles.attenteDepuis}>
+                          {' · '}{libelleAttente(req.created_at)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className={styles.cardHeaderRight}>
-                    {getStatutBadge(statusValue || 'EN_ATTENTE_COMMISSION')}
+                    {getStatutBadge(statusValue || 'EN_ATTENTE_COMMISSION', attente)}
                   </div>
                 </div>
 

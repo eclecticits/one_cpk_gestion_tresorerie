@@ -1640,3 +1640,130 @@
     transition: none;
   }
 }
+
+/* Réquisitions qui attendent la décision de l'utilisateur.
+   Toutes portent un repère fixe (liseré ambre, fond chaud, point qui
+   pulse dans le badge) ; seules celles qui attendent depuis plus de
+   DELAI_URGENT_HEURES clignotent, pour que le clignotement garde un sens. */
+.attenteResume {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--color-warning-bg, #fff4dd);
+  color: var(--color-warning-text, #9a3412);
+  font-size: 13px;
+}
+
+.attenteResumeUrgent {
+  font-weight: 600;
+  color: var(--color-danger-text, #b42318);
+}
+
+.rowAttente td {
+  background: #fffbeb;
+}
+
+.rowAttente td:first-child {
+  box-shadow: inset 4px 0 0 #f59e0b;
+}
+
+.rowUrgente td {
+  background: #fff1f0;
+  animation: attenteRowPulse 2.4s ease-in-out infinite;
+}
+
+.rowUrgente td:first-child {
+  box-shadow: inset 4px 0 0 #ef4444;
+}
+
+/* Le clignotement s'arrête dès qu'on travaille sur la ligne. */
+.rowUrgente:hover td,
+.rowUrgente:focus-within td {
+  animation: none;
+}
+
+.badgeAttente {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.attenteDot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+  flex-shrink: 0;
+}
+
+.attenteDot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: attenteDotHalo 1.8s ease-out infinite;
+}
+
+.rowUrgente .attenteDot,
+.cardUrgente .attenteDot {
+  background: #ef4444;
+}
+
+.attenteDepuis {
+  font-size: 10px;
+  color: var(--color-warning-text, #9a3412);
+}
+
+.attenteDepuisUrgent {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-danger-text, #b42318);
+}
+
+.card.cardAttente {
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.card.cardUrgente {
+  border-left-color: #ef4444;
+  background: #fff1f0;
+  animation: attenteCardPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes attenteRowPulse {
+  0%, 100% { background-color: #fff1f0; }
+  50% { background-color: #fecaca; }
+}
+
+@keyframes attenteCardPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.28); }
+}
+
+@keyframes attenteDotHalo {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* Sans animation, le repère reste : liseré, fond et halo figé. */
+@media (prefers-reduced-motion: reduce) {
+  .rowUrgente td,
+  .card.cardUrgente,
+  .attenteDot::after {
+    animation: none;
+  }
+
+  .rowUrgente td {
+    background: #fee2e2;
+  }
+
+  .card.cardUrgente {
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.28);
+  }
+}
