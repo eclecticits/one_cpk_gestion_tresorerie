@@ -4045,3 +4045,63 @@
     min-height: var(--touch-target-min, 44px);
   }
 }
+
+/* Icônes des boutons d'en-tête : sans flex-shrink: 0, un libellé long
+   rétrécissait le crayon à 0 px. */
+.editReqBtn svg {
+  flex-shrink: 0;
+}
+
+/* En-tête de fiche sur téléphone : le titre a toute la largeur, la croix
+   reste en haut à droite, et les actions passent dessous, à la ligne si
+   besoin. Sur une seule ligne, elles écrasaient le titre sur sept lignes et
+   repoussaient la croix et le rapport de décaissement hors de l'écran. */
+@media (max-width: 640px) {
+  .detailModalContent .modalHeader {
+    position: relative;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding-right: 64px;
+  }
+
+  .detailModalContent .modalHeader h2 {
+    overflow-wrap: anywhere;
+  }
+
+  .detailModalContent .modalHeaderActions {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-right: -48px;
+  }
+
+  .detailModalContent .modalHeaderActions > * {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .detailModalContent .modalHeaderActions button {
+    min-height: 40px;
+    white-space: normal;
+    text-align: left;
+  }
+
+  .detailModalContent .modalHeaderActions .closeBtn {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+  }
+}
+
+/* Deux colonnes de champs sur téléphone : une seule doublait la longueur de
+   la fiche pour des valeurs courtes (noms, dates). */
+@media (max-width: 640px) {
+  .detailModalContent .detailGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 14px;
+  }
+
+  .detailModalContent .detailItem p {
+    font-size: 14px;
+  }
+}
