@@ -968,6 +968,62 @@
   color: #0f172a;
 }
 
+.modalHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.rapportBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--control-h-sm, 32px);
+  padding: 0 12px;
+  border: 1px solid var(--tenant-primary, #0d9488);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--tenant-primary, #0d9488);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.rapportBtn:hover {
+  background: #f0fdfa;
+}
+
+.rapportBtn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.spin {
+  animation: rapportSpin 0.8s linear infinite;
+}
+
+@keyframes rapportSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Téléphone : l'icône seule, le libellé reste dans l'infobulle. */
+@media (max-width: 640px) {
+  .rapportBtn span {
+    display: none;
+  }
+
+  .rapportBtn {
+    min-width: var(--touch-target-min, 44px);
+    min-height: var(--touch-target-min, 44px);
+    justify-content: center;
+    padding: 0;
+  }
+}
+
 .modalError {
   margin: 12px 20px;
   padding: 10px 12px;

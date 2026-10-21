@@ -3914,6 +3914,21 @@
   background: #f0fdfa;
 }
 
+.editReqBtn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.spin {
+  animation: editReqSpin 0.8s linear infinite;
+}
+
+@keyframes editReqSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Croix de fermeture : un vrai bouton rouge, pas un simple glyphe teinté.
    C'est la sortie de la fiche, elle doit se voir au premier coup d'oeil.
    Placée en fin de fichier pour passer après la définition d'origine, à

@@ -9,6 +9,7 @@ import {
   Eye,
   FileSearch,
   FileText,
+  Loader2,
   Paperclip,
   PlusCircle,
   Printer,
@@ -33,6 +34,7 @@ import type { CommissionMember } from '../types'
 import { getStatusMeta } from '../utils/statusMapper'
 import { usePermissions } from '../hooks/usePermissions'
 import PlanDecaissement from '../components/PlanDecaissement'
+import { genererRapportDecaissement } from '../utils/pdfRapportDecaissement'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
 // Les trois bibliotheques ci-dessous etaient importees statiquement en tete de
 // fichier, ce qui tirait jspdf (135 ko gz) et xlsx (142 ko gz) dans le chunk de
@@ -834,6 +836,27 @@ export default function ServicePortal() {
       setDetailError(error?.message || 'Impossible de charger les détails.')
     } finally {
       setDetailLoading(false)
+    }
+  }
+
+  const [rapportDecaissementEnCours, setRapportDecaissementEnCours] = useState(false)
+  const imprimerRapportDecaissement = async (req: RequisitionItem) => {
+    setRapportDecaissementEnCours(true)
+    setDetailError(null)
+    try {
+      const r = req as any
+      await genererRapportDecaissement({
+        requisition: r,
+        lignes: selectedLignes,
+        demandeur: r.demandeur,
+        validateur: r.validateur,
+        approbateur: r.approbateur,
+        emisPar: [user?.prenom, user?.nom].filter(Boolean).join(' ') || null,
+      })
+    } catch (error: any) {
+      setDetailError(error?.message || 'Impossible de générer le rapport de décaissement.')
+    } finally {
+      setRapportDecaissementEnCours(false)
     }
   }
 
@@ -1911,7 +1934,27 @@ export default function ServicePortal() {
           <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
             <div className={styles.modalHeader}>
               <h2>Détails de la réquisition {selectedRequisition.numero_requisition}</h2>
-              <button className={styles.closeBtn} onClick={() => setShowDetailModal(false)} aria-label="Fermer"><X size={20} /></button>
+              <div className={styles.modalHeaderActions}>
+                {/* Même rapport que dans Réquisitions : dès que la pièce peut être payée. */}
+                {['APPROUVEE', 'EN_DECAISSEMENT', 'PAYEE'].includes(
+                  String((selectedRequisition as any).status ?? (selectedRequisition as any).statut ?? '').toUpperCase()
+                ) && (
+                  <button
+                    type="button"
+                    className={styles.rapportBtn}
+                    aria-label="Rapport de décaissement"
+                    onClick={() => void imprimerRapportDecaissement(selectedRequisition)}
+                    disabled={rapportDecaissementEnCours || detailLoading}
+                    title="Imprimer le rapport de décaissement"
+                  >
+                    {rapportDecaissementEnCours
+                      ? <Loader2 size={14} className={styles.spin} aria-hidden="true" />
+                      : <Printer size={14} aria-hidden="true" />}
+                    <span>Rapport de décaissement</span>
+                  </button>
+                )}
+                <button className={styles.closeBtn} onClick={() => setShowDetailModal(false)} aria-label="Fermer"><X size={20} /></button>
+              </div>
             </div>
             <div className={styles.detailContent}>
               {detailError && <div className={styles.modalError}>{detailError}</div>}

@@ -27,7 +27,7 @@ import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
 import FiltresMobileToggle from '../components/FiltresMobileToggle'
 import { format, subDays } from 'date-fns'
-import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, FileText, X, MoreHorizontal, Plus } from 'lucide-react'
+import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, FileText, X, MoreHorizontal, Plus, Loader2 } from 'lucide-react'
 // jsPDF/jspdf-autotable sont lourds : on charge ../utils/pdfGenerator dynamiquement,
 // au moment de l'action (impression/téléchargement), plutôt qu'au chargement de la page.
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
@@ -56,6 +56,7 @@ import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
 import PageHeader from '../components/PageHeader'
 import PlanDecaissement from '../components/PlanDecaissement'
+import { genererRapportDecaissement } from '../utils/pdfRapportDecaissement'
 import ExportAnnulationsToggle from '../components/ExportAnnulationsToggle'
 import OrganisationAutocomplete from '../components/OrganisationAutocomplete'
 import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
@@ -1591,6 +1592,28 @@ export default function Requisitions() {
     }
   }
 
+  const [rapportDecaissementEnCours, setRapportDecaissementEnCours] = useState(false)
+  const imprimerRapportDecaissement = async (requisition: Requisition) => {
+    setRapportDecaissementEnCours(true)
+    try {
+      await genererRapportDecaissement({
+        requisition,
+        lignes: selectedLignes,
+        ...selectedRequisitionUsers,
+        emisPar: [user?.prenom, user?.nom].filter(Boolean).join(' ') || null,
+      })
+    } catch (error: any) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Rapport indisponible',
+        message: error?.message || 'Impossible de générer le rapport de décaissement.',
+      })
+    } finally {
+      setRapportDecaissementEnCours(false)
+    }
+  }
+
   const printRequisition = async (requisition: Requisition) => {
     try {
       const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: requisition.id } })
@@ -3017,6 +3040,10 @@ export default function Requisitions() {
                         </small>
                       </div>
 
+                        className={styles.field}
+                        hintClassName={styles.fieldHint}
+                      />
+
                       <div className={styles.field}>
                         {isServiceLockedByContext ? (
                           <>
@@ -4339,6 +4366,24 @@ export default function Requisitions() {
                     void refetchRequisitions()
                   }}
                 />
+                {/* Rapport de décaissement : dès qu'une réquisition peut être payée,
+                    ce qui est sorti, ce qui reste, et les justificatifs attendus. */}
+                {['APPROUVEE', 'EN_DECAISSEMENT', 'PAYEE'].includes(
+                  String((selectedRequisition as any).status ?? selectedRequisition.statut ?? '').toUpperCase()
+                ) && (
+                  <button
+                    type="button"
+                    className={styles.editReqBtn}
+                    onClick={() => void imprimerRapportDecaissement(selectedRequisition)}
+                    disabled={rapportDecaissementEnCours}
+                    title="Imprimer le rapport de décaissement"
+                  >
+                    {rapportDecaissementEnCours
+                      ? <Loader2 size={14} className={styles.spin} aria-hidden="true" />
+                      : <Printer size={14} aria-hidden="true" />}
+                    Rapport de décaissement
+                  </button>
+                )}
                 <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn} aria-label="Fermer la fiche"><X size={18} aria-hidden="true" /></button>
               </div>
             </div>
