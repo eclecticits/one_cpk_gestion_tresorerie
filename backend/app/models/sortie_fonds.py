@@ -200,6 +200,11 @@ class SortieFonds(Base):
     programme_par_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     is_reconciled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    #: Projet d'une sortie SANS réquisition (facultatif). Une sortie liée à
+    #: une réquisition prend celui de la réquisition.
+    project_activity_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("projets_activites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reconciled_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

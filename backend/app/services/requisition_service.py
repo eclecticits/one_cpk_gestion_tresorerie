@@ -64,6 +64,7 @@ from app.services.fonds_tiers import (
     validate_fonds_tiers_identity,
 )
 from app.services.official_pdf import ensure_requisition_official_pdf
+from app.services.projets_activites import resoudre_projet_activite
 
 async def _should_snapshot(status_value: str | None) -> bool:
     if not status_value:
@@ -680,6 +681,7 @@ async def create_requisition_logic(
         created_by=created_by,
         a_valoir=bool(payload.a_valoir),
         decaissement_progressif=bool(payload.decaissement_progressif),
+        project_activity_id=await resoudre_projet_activite(db, payload.project_activity_id, tenant_id),
         beneficiaire=payload.beneficiaire,
         instance_beneficiaire=payload.instance_beneficiaire,
         tiers_organisation_id=tiers_organisation_id,
@@ -1134,6 +1136,9 @@ async def update_requisition_logic(
         req.decaissement_progressif = bool(payload.decaissement_progressif)
     if payload.instance_beneficiaire is not None:
         req.instance_beneficiaire = payload.instance_beneficiaire
+    # Facultatif et retirable : seul un champ explicitement envoyé compte.
+    if "project_activity_id" in payload.model_fields_set:
+        req.project_activity_id = await resoudre_projet_activite(db, payload.project_activity_id, tenant_id)
     if payload.notes_a_valoir is not None:
         req.notes_a_valoir = payload.notes_a_valoir
 

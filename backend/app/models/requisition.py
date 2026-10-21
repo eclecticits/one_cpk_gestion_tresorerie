@@ -128,6 +128,11 @@ class Requisition(BeneficiaireIdentifieMixin, Base):
         index=True,
     )
     tiers_nom_libre: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Projet ou activité financé par cette dépense (facultatif). Les sorties
+    #: de la réquisition en héritent à la lecture.
+    project_activity_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("projets_activites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     #: Nature RECETTE_A_IDENTIFIER : la recette reçue sans payeur connu que
     #: cette réquisition autorise à rembourser.
     recette_a_identifier_id: Mapped[uuid.UUID | None] = mapped_column(

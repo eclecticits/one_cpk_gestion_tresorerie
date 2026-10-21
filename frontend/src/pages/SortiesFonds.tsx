@@ -69,6 +69,7 @@ import JustificatifModal, { JustificatifBadge, justificatifAttendu, justificatif
 import JustificatifsEnAttente from '../components/JustificatifsEnAttente'
 import { listerJustificatifsEnAttente, regleJustificatif } from '../api/justificatifs'
 import justifStyles from '../components/Justificatif.module.css'
+import ProjetActiviteSelect from '../components/ProjetActiviteSelect'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
@@ -155,6 +156,9 @@ export default function SortiesFonds() {
   const [loadingOrdres, setLoadingOrdres] = useState(false)
   const [ordresDirects, setOrdresDirects] = useState<OrdreDecaissement[]>([])
   const [loadingOrdresDirects, setLoadingOrdresDirects] = useState(false)
+  // Projet facultatif d'une sortie sans réquisition ('' = aucun). Une sortie
+  // qui paie une réquisition suit le projet de la réquisition.
+  const [projetActiviteId, setProjetActiviteId] = useState('')
   const [formData, setFormData] = useState({
     type_sortie: 'requisition' as TypeSortieFonds,
     requisition_id: '',
@@ -683,6 +687,7 @@ export default function SortiesFonds() {
     setServiceLocked(false)
     setServiceLockMessage('')
     setBudgetSearch('')
+    setProjetActiviteId('')
     setFormData({
       type_sortie: 'requisition',
       requisition_id: '',
@@ -1784,6 +1789,10 @@ export default function SortiesFonds() {
         piece_justificative: formData.piece_justificative || null,
         commentaire: formData.commentaire || null,
         created_by: user?.id,
+      }
+
+      if (!requiresApprovedRequisition && !isTransfertInterne && projetActiviteId) {
+        sortieInsert.project_activity_id = Number(projetActiviteId)
       }
 
       if (requiresApprovedRequisition) {
@@ -2999,6 +3008,15 @@ export default function SortiesFonds() {
                   </small>
                 )}
               </div>
+              )}
+
+              {!requiresApprovedRequisition && !isTransfertInterne && (
+                <ProjetActiviteSelect
+                  id="sortie-projet"
+                  value={projetActiviteId}
+                  onChange={setProjetActiviteId}
+                  className={styles.field}
+                />
               )}
 
               <div className={styles.field}>

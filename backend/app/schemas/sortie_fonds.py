@@ -44,6 +44,9 @@ class SortieFondsCreate(DecimalBaseModel):
     piece_justificative: str | None = None
     commentaire: str | None = None
     created_by: UUID | None = None
+    #: Projet d'une sortie directe (facultatif). Ignoré quand la sortie paie
+    #: une réquisition : c'est le projet de la réquisition qui compte.
+    project_activity_id: int | None = None
 
 
 class SortieFondsDraftCreate(DecimalBaseModel):
@@ -148,6 +151,8 @@ class SortieFondsOut(DecimalBaseModel):
     #: Renseignée seulement pour une réquisition payée en plusieurs fois.
     tranche: TrancheDecaissementOut | None = None
     is_reconciled: bool = False
+    #: Projet effectif : celui de la sortie, sinon celui de sa réquisition.
+    project_activity_id: int | None = None
     reconciled_at: datetime | None = None
     reconciled_by_id: UUID | None = None
     bank_statement_ref: str | None = None

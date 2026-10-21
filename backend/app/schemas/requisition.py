@@ -77,6 +77,8 @@ class RequisitionCreate(DecimalBaseModel):
     created_by: UUID | None = None
     a_valoir: bool | None = False
     decaissement_progressif: bool | None = False
+    #: Projet ou activité financé (facultatif).
+    project_activity_id: int | None = None
     beneficiaire: str | None = Field(default=None, max_length=200)
     instance_beneficiaire: str | None = None
     #: Qui est le bénéficiaire (EXPERT, PERSONNEL, UTILISATEUR, EXTERNE) et comment le joindre :
@@ -190,6 +192,8 @@ class RequisitionUpdate(DecimalBaseModel):
     motif_rejet: str | None = None
     a_valoir: bool | None = None
     decaissement_progressif: bool | None = None
+    #: Envoyé à null, retire le projet ; absent, ne change rien.
+    project_activity_id: int | None = None
     beneficiaire: str | None = Field(default=None, max_length=200)
     instance_beneficiaire: str | None = None
     #: Qui est le bénéficiaire (EXPERT, PERSONNEL, UTILISATEUR, EXTERNE) et comment le joindre :
@@ -278,6 +282,7 @@ class RequisitionOut(DecimalBaseModel):
     motif_rejet: str | None = None
     a_valoir: bool | None = False
     decaissement_progressif: bool | None = False
+    project_activity_id: int | None = None
     beneficiaire: str | None = None
     instance_beneficiaire: str | None = None
     beneficiaire_type: str | None = None

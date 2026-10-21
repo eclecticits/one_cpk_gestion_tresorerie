@@ -565,6 +565,7 @@ def _requisition_out(
         "motif_rejet": req.motif_rejet,
         "a_valoir": req.a_valoir,
         "decaissement_progressif": bool(getattr(req, "decaissement_progressif", False)),
+        "project_activity_id": getattr(req, "project_activity_id", None),
         "beneficiaire": getattr(req, "beneficiaire", None),
         **beneficiaires_service.champs_publics(req),
         "instance_beneficiaire": req.instance_beneficiaire,

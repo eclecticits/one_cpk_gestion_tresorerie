@@ -56,6 +56,7 @@ import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
 import PageHeader from '../components/PageHeader'
 import PlanDecaissement from '../components/PlanDecaissement'
+import ProjetActiviteSelect from '../components/ProjetActiviteSelect'
 import { genererRapportDecaissement } from '../utils/pdfRapportDecaissement'
 import ExportAnnulationsToggle from '../components/ExportAnnulationsToggle'
 import OrganisationAutocomplete from '../components/OrganisationAutocomplete'
@@ -1432,6 +1433,7 @@ export default function Requisitions() {
           : null,
         a_valoir: formData.a_valoir,
         decaissement_progressif: formData.decaissement_progressif,
+        project_activity_id: projetActiviteId ? Number(projetActiviteId) : null,
         instance_beneficiaire: formData.a_valoir ? formData.instance_beneficiaire : null,
         notes_a_valoir: formData.a_valoir ? formData.notes_a_valoir : null,
         lignes: lignesPayload
@@ -1521,6 +1523,7 @@ export default function Requisitions() {
   }
 
   const resetForm = () => {
+      setProjetActiviteId('')
       setFormData({
         objet: '',
         date_requisition: new Date().toISOString().slice(0, 10),
@@ -1593,6 +1596,8 @@ export default function Requisitions() {
   }
 
   const [rapportDecaissementEnCours, setRapportDecaissementEnCours] = useState(false)
+  // Projet facultatif de la réquisition en cours de saisie ('' = aucun).
+  const [projetActiviteId, setProjetActiviteId] = useState('')
   const imprimerRapportDecaissement = async (requisition: Requisition) => {
     setRapportDecaissementEnCours(true)
     try {
@@ -3040,6 +3045,10 @@ export default function Requisitions() {
                         </small>
                       </div>
 
+                      <ProjetActiviteSelect
+                        id="req-projet"
+                        value={projetActiviteId}
+                        onChange={setProjetActiviteId}
                         className={styles.field}
                         hintClassName={styles.fieldHint}
                       />

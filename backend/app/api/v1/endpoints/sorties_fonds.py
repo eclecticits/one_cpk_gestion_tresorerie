@@ -32,6 +32,7 @@ from app.models.print_settings import PrintSettings
 from app.models.ordre_decaissement import OrdreDecaissement
 from app.models.requisition import Requisition
 from app.models.retour_caisse import RetourCaisse
+from app.services.projets_activites import resoudre_projet_activite
 from app.models.sortie_fonds import SortieFonds
 from app.models.banque import Banque
 from app.models.compte_bancaire import CompteBancaire
@@ -559,6 +560,10 @@ def _sortie_out(
         annulee_par_user=_user_info(canceller),
         created_at=sortie.created_at,
         is_reconciled=sortie.is_reconciled,
+        project_activity_id=(
+            sortie.project_activity_id
+            or (getattr(requisition, "project_activity_id", None) if requisition is not None else None)
+        ),
         reconciled_at=sortie.reconciled_at,
         reconciled_by_id=str(sortie.reconciled_by_id) if sortie.reconciled_by_id else None,
         bank_statement_ref=sortie.bank_statement_ref,
@@ -2439,6 +2444,13 @@ async def create_sortie_fonds(
         created_by=user.id,
         # Programmeur (demandeur) : repris de l'ordre pour les sorties directes.
         programme_par_id=(ordre.autorise_par if ordre is not None else None),
+        # Projet facultatif, propre aux sorties directes : une sortie qui paie
+        # une réquisition suit le projet de la réquisition.
+        project_activity_id=(
+            await resoudre_projet_activite(db, payload.project_activity_id, tenant_id)
+            if requisition_uid is None
+            else None
+        ),
     )
     if source_identifiee is not None:
         beneficiaires_service.copier(source_identifiee, sortie)

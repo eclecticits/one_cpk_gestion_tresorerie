@@ -40,6 +40,7 @@ from app.models.user import User
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.projet_activite import ProjetActivite
+from app.services.projets_activites import resoudre_projet_activite
 from app.models.rbac import Permission, role_permissions
 from app.modules.comptabilite.models import ComptaEcriture
 from app.modules.comptabilite.services.generation_service import annuler_ecriture_operation
@@ -825,23 +826,8 @@ async def _encaissement_response(
     )
 
 
-async def _resolve_project_activity(
-    db: AsyncSession,
-    project_activity_id: int | None,
-    tenant_id: int,
-) -> int | None:
-    if project_activity_id is None:
-        return None
-    item = await db.scalar(
-        select(ProjetActivite).where(
-            ProjetActivite.id == project_activity_id,
-            ProjetActivite.organisation_id == tenant_id,
-            ProjetActivite.is_active.is_(True),
-        )
-    )
-    if item is None:
-        raise HTTPException(status_code=400, detail="Projet ou activité invalide ou inactive.")
-    return item.id
+# Partagé avec les réquisitions et les sorties directes.
+_resolve_project_activity = resoudre_projet_activite
 
 
 def _normalize_article_payloads(payload: EncaissementCreate, montant_total: Decimal) -> list[dict[str, Any]]:
