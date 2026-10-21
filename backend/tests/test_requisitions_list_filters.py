@@ -155,3 +155,36 @@ async def test_list_requisitions_filters_by_budget_poste_and_service(
         headers=headers,
     )
     assert "X-Total-Count" not in resp.headers
+
+
+@pytest.mark.asyncio
+async def test_list_requisitions_sans_snapshots_allege_la_liste(
+    app_client: AsyncClient, admin_access_token: str, test_organisation, db_session
+):
+    org_id = test_organisation.id
+    service = Service(code=f"SRVS-{uuid.uuid4().hex[:6]}", libelle="Service S", organisation_id=org_id)
+    db_session.add(service)
+    await db_session.flush()
+    # 2026 est déjà pris par le test voisin (même organisation de session).
+    exercice = BudgetExercice(organisation_id=org_id, annee=2031, statut=StatutBudget.BROUILLON)
+    db_session.add(exercice)
+    await db_session.flush()
+    poste = BudgetPoste(
+        organisation_id=org_id, exercice_id=exercice.id, code=f"SNP-{uuid.uuid4().hex[:6]}", libelle="Poste",
+        type="DEPENSE", active=True, montant_prevu=Decimal("1000"), montant_engage=Decimal("0"),
+        montant_paye=Decimal("0"), is_deleted=False,
+    )
+    db_session.add(poste)
+    await db_session.flush()
+    req = await _seed_requisition(db_session, organisation_id=org_id, service_id=service.id, budget_poste_id=poste.id)
+    req.print_settings_snapshot = {"exchange_rate_cdf": 2800}
+    await db_session.commit()
+
+    headers = {"Authorization": f"Bearer {admin_access_token}"}
+    params = {"service_id": service.id}
+    complete = (await app_client.get("/api/v1/requisitions", params=params, headers=headers)).json()
+    assert complete[0]["print_settings_snapshot"] == {"exchange_rate_cdf": 2800}
+
+    allegee = (await app_client.get("/api/v1/requisitions", params={**params, "sans_snapshots": "true"}, headers=headers)).json()
+    assert allegee[0]["id"] == str(req.id)
+    assert allegee[0]["print_settings_snapshot"] is None

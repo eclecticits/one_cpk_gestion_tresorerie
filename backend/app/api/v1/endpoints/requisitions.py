@@ -1007,6 +1007,9 @@ async def list_requisitions(
     limit: int | None = Query(default=200),
     offset: int | None = Query(default=0),
     with_total: bool = Query(default=False),
+    #: Liste allégée : sans les instantanés d'impression (près de la moitié du
+    #: poids d'une réquisition). La page qui imprime recharge alors la pièce.
+    sans_snapshots: bool = Query(default=False),
     response: Response = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_any_permission(["requisitions", "can_create_requisition", "menu_services"])),
@@ -1192,7 +1195,7 @@ async def list_requisitions(
                 }
 
     fonds_tiers_map = await _fonds_tiers_lignes_map(db, tenant_id, list(requisitions))
-    return [
+    resultats = [
         _requisition_out(
             r,
             demandeur=users_map.get(r.created_by) if "demandeur" in include_parts else None,
@@ -1208,6 +1211,14 @@ async def list_requisitions(
         )
         for r in requisitions
     ]
+    if sans_snapshots:
+        for item in resultats:
+            for cle in _SNAPSHOTS_IMPRESSION:
+                item[cle] = None
+    return resultats
+
+
+_SNAPSHOTS_IMPRESSION = ("print_settings_snapshot", "signatories_snapshot", "organisation_snapshot", "bank_account_snapshot")
 
 
 @router.get("/mine", response_model=list[RequisitionOut])

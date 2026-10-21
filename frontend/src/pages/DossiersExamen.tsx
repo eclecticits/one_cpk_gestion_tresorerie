@@ -257,43 +257,60 @@ export default function DossiersExamen() {
   const loadDossiers = async () => {
     setLoading(true)
     try {
-      const res: any = await apiRequest('GET', '/dossiers', {
-        params: {
-          include_requisitions: true,
-          include_users: 'demandeur,validateur,approbateur,examinateur',
-          order: 'created_at.desc',
-          limit: 200,
-        },
-      })
-      const items = Array.isArray(res) ? res : (res?.items ?? [])
-      setDossiers(items)
-      const enExam: any = await apiRequest('GET', '/requisitions', {
-        params: {
-          dossier_is_null: true,
-          include: 'demandeur,validateur,approbateur,examinateur',
-          order: 'created_at.desc',
-          limit: 500,
-        },
-      })
-      const listB = Array.isArray(enExam) ? enExam : (enExam?.items ?? [])
-      setRequisitions(listB)
-      try {
-        const transportsRes: any = await apiRequest('GET', '/remboursements-transport', {
+      // Les quatre appels partent ensemble : en série, la page attendait la
+      // somme de leurs durées.
+      const paramsReq = {
+        dossier_is_null: true,
+        include: 'demandeur,validateur,approbateur,examinateur',
+        order: 'created_at.desc',
+        // Les instantanés d'impression pesaient près de la moitié de la liste ;
+        // l'impression recharge la pièce complète (chargerRequisitionComplete).
+        sans_snapshots: true,
+      }
+      const aListe = (res: any) => (Array.isArray(res) ? res : (res?.items ?? []))
+      const [res, periodeRes, enAttenteRes, transportsRes] = await Promise.all([
+        apiRequest('GET', '/dossiers', {
+          params: {
+            include_requisitions: true,
+            include_users: 'demandeur,validateur,approbateur,examinateur',
+            order: 'created_at.desc',
+            limit: 200,
+          },
+        }),
+        // La période seulement, au lieu des 500 dernières pièces…
+        apiRequest('GET', '/requisitions', {
+          params: { ...paramsReq, date_debut: dateStart || undefined, date_fin: dateEnd || undefined, limit: 500 },
+        }),
+        // …plus ce qui attend l'examen, quelle que soit sa date.
+        apiRequest('GET', '/requisitions', {
+          params: { ...paramsReq, examen_status: ACTIONABLE_EXAM_STATUS, limit: 500 },
+        }),
+        apiRequest('GET', '/remboursements-transport', {
           params: { include: 'participants', limit: 200 },
+        }).catch((transportError) => {
+          console.error(
+            'Error loading transport references:',
+            transportError instanceof Error ? transportError.message : transportError
+          )
+          return null
+        }),
+      ])
+      setDossiers(aListe(res))
+      const vues = new Set<string>()
+      setRequisitions(
+        [...aListe(enAttenteRes), ...aListe(periodeRes)].filter((req: any) => {
+          if (vues.has(req.id)) return false
+          vues.add(req.id)
+          return true
         })
-        const transports = Array.isArray(transportsRes) ? transportsRes : (transportsRes?.items ?? [])
+      )
+      {
         const transportRefs: Record<string, TransportDocument> = {}
-        transports.forEach((transport: any) => {
+        aListe(transportsRes).forEach((transport: any) => {
           if (!transport?.requisition_id) return
           transportRefs[String(transport.requisition_id)] = transport
         })
         setTransportsByReqId(transportRefs)
-      } catch (transportError) {
-        console.error(
-          'Error loading transport references:',
-          transportError instanceof Error ? transportError.message : transportError
-        )
-        setTransportsByReqId({})
       }
       setSelectedDossiers(new Set())
       setSelectedRequisitions(new Set())
@@ -377,9 +394,13 @@ export default function DossiersExamen() {
   }
 
   useEffect(() => {
-    loadDossiers()
     loadServices()
   }, [])
+
+  // La liste dépend de la période : elle se recharge quand celle-ci change.
+  useEffect(() => {
+    loadDossiers()
+  }, [dateStart, dateEnd])
 
   const openCommentModal = (mode: 'validate' | 'reject', req: RequisitionItem) => {
     setCommentMode(mode)
@@ -496,8 +517,19 @@ export default function DossiersExamen() {
     }
   }
 
-  const printRequisition = async (req: RequisitionItem) => {
+  // La liste arrive sans ses instantanés d'impression : on recharge la pièce
+  // complète avant d'en produire le PDF, pour qu'il reste fidèle à l'historique.
+  const chargerRequisitionComplete = async (req: RequisitionItem): Promise<RequisitionItem> => {
+    const res: any = await apiRequest('GET', '/requisitions', {
+      params: { id: req.id, include: 'demandeur,validateur,approbateur,examinateur,annexe' },
+    })
+    const complete = (Array.isArray(res) ? res : (res?.items ?? []))[0]
+    return complete ? { ...req, ...complete } : req
+  }
+
+  const printRequisition = async (reqListe: RequisitionItem) => {
     try {
+      const req = await chargerRequisitionComplete(reqListe)
       const lignes = await loadDocumentLines(req)
       if (isTransportDocument(req)) {
         const transport = await getTransportForRequisition(req)
@@ -518,8 +550,9 @@ export default function DossiersExamen() {
     }
   }
 
-  const downloadRequisition = async (req: RequisitionItem) => {
+  const downloadRequisition = async (reqListe: RequisitionItem) => {
     try {
+      const req = await chargerRequisitionComplete(reqListe)
       const lignes = await loadDocumentLines(req)
       if (isTransportDocument(req)) {
         const transport = await getTransportForRequisition(req)
@@ -540,10 +573,11 @@ export default function DossiersExamen() {
     }
   }
 
-  const openPreview = async (req: RequisitionItem) => {
-    setPreviewReq(req)
+  const openPreview = async (reqListe: RequisitionItem) => {
+    setPreviewReq(reqListe)
     setPreviewLoading(true)
     try {
+      const req = await chargerRequisitionComplete(reqListe)
       const lignes = await loadDocumentLines(req)
       let blob: any
       if (isTransportDocument(req)) {
