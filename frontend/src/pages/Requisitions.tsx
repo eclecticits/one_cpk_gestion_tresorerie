@@ -2222,6 +2222,15 @@ export default function Requisitions() {
     if (libelle) return libelle
     return ligne.rubrique
   }
+  // Statut à AFFICHER (badges, compteurs, filtre). Un rejet à l'examen ne
+  // touche pas le statut de workflow : pièce seule → BROUILLON, dossier →
+  // statut de soumission conservé pendant les 48 h de décision. Seul
+  // examen_status le porte ; sans le lire, la pièce paraissait « En attente »
+  // ou « Brouillon ». Même règle que le portail service. Les actions, elles,
+  // continuent de lire le vrai statut (getRequisitionStatus).
+  const statutAffiche = (req: any) =>
+    String(req?.examen_status || '').toUpperCase() === 'REJETE' ? 'REJETEE' : (req?.status ?? req?.statut)
+
   const getRequisitionStatus = (req: Requisition) => {
     return normalizeStatusValue((req as any).status ?? (req as any).statut)
   }
@@ -2300,7 +2309,7 @@ export default function Requisitions() {
   const statusCounts = (() => {
     const counts: Record<string, number> = {}
     baseFilteredRequisitions.forEach((req) => {
-      const normalized = normalizeStatusValue((req as any).status ?? (req as any).statut)
+      const normalized = normalizeStatusValue(statutAffiche(req))
       if (!normalized) return
       counts[normalized] = (counts[normalized] || 0) + 1
     })
@@ -2310,7 +2319,7 @@ export default function Requisitions() {
   const filteredRequisitions = baseFilteredRequisitions
     .filter(req => {
       if (!filterStatut) return true
-      return normalizeStatusValue((req as any).status ?? (req as any).statut) === filterStatut
+      return normalizeStatusValue(statutAffiche(req)) === filterStatut
     })
     .sort((a, b) => {
       if (!sortField) return 0
@@ -4122,7 +4131,7 @@ export default function Requisitions() {
                   </td>
                   <td className={styles.colStatut}>
                     <div className={styles.badgeStack}>
-                      {getStatutBadge((req as any).status ?? req.statut)}
+                      {getStatutBadge(statutAffiche(req))}
                       {getPaymentStatusBadge(req)}
                       {getVisaBadge(req)}
                     </div>
@@ -4272,7 +4281,7 @@ export default function Requisitions() {
                   </div>
                   <div>
                     <div className={styles.cardLabel}>Statut</div>
-                    <div className={styles.cardValue}>{getStatutBadge((req as any).status ?? req.statut)}</div>
+                    <div className={styles.cardValue}>{getStatutBadge(statutAffiche(req))}</div>
                   </div>
                 </div>
                 <div className={styles.cardBadges}>
@@ -4448,7 +4457,7 @@ export default function Requisitions() {
                   <div className={styles.detailItem}>
                     <label>Statut actuel</label>
                     <div className={styles.badgeStack}>
-                      {getStatutBadge((selectedRequisition as any).status ?? selectedRequisition.statut)}
+                      {getStatutBadge(statutAffiche(selectedRequisition))}
                       {getPaymentStatusBadge(selectedRequisition)}
                     </div>
                   </div>
@@ -4569,6 +4578,13 @@ export default function Requisitions() {
                   </table>
                 </div>
               </div>
+
+              {String((selectedRequisition as any).examen_status || '').toUpperCase() === 'REJETE' && (
+                <div className={`${styles.detailSection} ${styles.detailSectionDanger}`}>
+                  <h3>Rejetée à l'examen</h3>
+                  <p>{(selectedRequisition as any).examen_commentaire || 'Aucun motif saisi.'}</p>
+                </div>
+              )}
 
               {selectedRequisition.motif_rejet && (
                 <div className={`${styles.detailSection} ${styles.detailSectionDanger}`}>

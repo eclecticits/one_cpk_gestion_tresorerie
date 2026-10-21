@@ -3493,7 +3493,15 @@ async def construire_classeur_requisitions(
     if statut:
         statut_value = statut.strip().upper()
         if statut_value != "ALL":
-            query = query.where(Requisition.status.in_(_requisition_status_values_for_filter(statut_value)))
+            # Même règle que l'écran : une pièce rejetée à l'examen compte comme
+            # « Rejetée », quel que soit son statut de workflow (BROUILLON après
+            # un rejet seul, statut de soumission pendant les 48 h d'un dossier).
+            rejet_examen = func.upper(func.coalesce(Requisition.examen_status, "")) == "REJETE"
+            par_statut = Requisition.status.in_(_requisition_status_values_for_filter(statut_value))
+            if statut_value in {"REJETEE", "REJETTE"}:
+                query = query.where(or_(par_statut, rejet_examen))
+            else:
+                query = query.where(par_statut, ~rejet_examen)
     if service_id is not None:
         query = query.where(Requisition.service_id == service_id)
     if type_requisition:
