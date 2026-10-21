@@ -561,10 +561,14 @@
 }
 
 .pageTransition {
-  /* forwards (et non both) + pas de translate résiduel dans l'image-clé finale :
-     un translate appliqué à l'arrêt créerait un « containing block » qui casse le
-     position: fixed des modales (elles s'ouvraient décalées/en dessous). */
-  animation: pageFadeIn 320ms var(--ease-out, ease) forwards;
+  /* Aucun remplissage (ni forwards ni both) : avec forwards, le navigateur garde
+     à l'arrêt la valeur interpolée `translate: 0px` — et non `none`. Ce translate
+     nul suffit à créer un « containing block » : les modales en position: fixed
+     se calaient alors sur la hauteur de la page au lieu de l'écran, et une
+     fiche ouverte sur une liste courte sortait coupée en haut et en bas.
+     Sans remplissage, l'animation finie ne laisse rien : opacity et translate
+     reprennent leurs valeurs normales (1 et none). */
+  animation: pageFadeIn 320ms var(--ease-out, ease);
 }
 
 @keyframes pageFadeIn {

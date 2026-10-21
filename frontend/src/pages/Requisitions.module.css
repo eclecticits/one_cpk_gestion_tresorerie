@@ -3924,6 +3924,8 @@
   justify-content: center;
   min-width: 32px;
   min-height: 32px;
+  /* Le padding global des boutons (0 14px) ne laissait que 6 px à la croix. */
+  padding: 0;
   border: 1px solid #fca5a5;
   border-radius: 8px;
   background: #fee2e2;
