@@ -42,6 +42,13 @@ export const STATUS_MAP: Record<string, StatusMeta> = {
     bg: '#dcfce7',
     color: '#166534',
   },
+  // Décaissement progressif : une partie des fonds est sortie, le solde reste à payer.
+  EN_DECAISSEMENT: {
+    label: 'En décaissement',
+    description: 'Validée (2/2), payée en partie : le solde reste à décaisser.',
+    bg: '#fef9c3',
+    color: '#854d0e',
+  },
   PAYEE: {
     label: 'Payée',
     description: 'Transaction finalisée.',

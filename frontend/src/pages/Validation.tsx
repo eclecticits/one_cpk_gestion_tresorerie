@@ -196,6 +196,7 @@ export default function Validation() {
       'EN_ATTENTE',
       'AUTORISEE',
       'APPROUVEE',
+      'EN_DECAISSEMENT',
       'PAYEE',
       'REJETEE',
       'PENDING_VALIDATION_IMPORT'
@@ -204,6 +205,8 @@ export default function Validation() {
     EN_ATTENTE: ['EN_ATTENTE'],
     AUTORISEE: ['AUTORISEE'],
     APPROUVEE: ['APPROUVEE'],
+    // Décaissement progressif : approuvée, payée en partie, en attente du solde.
+    EN_DECAISSEMENT: ['EN_DECAISSEMENT'],
     PAYEE: ['PAYEE'],
     REJETEE: ['REJETEE'],
     PENDING_VALIDATION_IMPORT: ['PENDING_VALIDATION_IMPORT']
@@ -592,6 +595,7 @@ export default function Validation() {
       EN_ATTENTE: { label: 'En attente', class: styles.statutBrouillon },
       AUTORISEE: { label: 'Validée 1/2', class: styles.statutValidee },
       APPROUVEE: { label: 'Validation 2/2', class: styles.statutApprouvee },
+      EN_DECAISSEMENT: { label: 'En décaissement', class: styles.statutApprouvee },
       PAYEE: { label: 'Payée', class: styles.statutPayee },
       REJETEE: { label: 'Rejetée', class: styles.statutRejetee },
       PENDING_VALIDATION_IMPORT: { label: 'Import à valider', class: styles.statutBrouillon }
@@ -858,6 +862,7 @@ export default function Validation() {
             <option value="EN_ATTENTE">En attente</option>
             <option value="AUTORISEE">Validée 1/2</option>
             <option value="APPROUVEE">Validation 2/2</option>
+            <option value="EN_DECAISSEMENT">En décaissement</option>
             <option value="PAYEE">Payée</option>
             <option value="REJETEE">Rejetée</option>
             <option value="PENDING_VALIDATION_IMPORT">Import à valider</option>
@@ -1002,7 +1007,8 @@ export default function Validation() {
             <tbody>
               {filteredRequisitions.map((req) => {
                 const statusValue = String((req as any).status ?? req.statut ?? '').toUpperCase()
-                const canAct = !['PAYEE', 'REJETEE'].includes(statusValue || '')
+                // EN_DECAISSEMENT : des fonds sont déjà sortis, plus rien à décider ici.
+                const canAct = !['PAYEE', 'EN_DECAISSEMENT', 'REJETEE'].includes(statusValue || '')
                 const isBusy = actionLoadingId === req.id
                 const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
                 const attente = getAttente(req)

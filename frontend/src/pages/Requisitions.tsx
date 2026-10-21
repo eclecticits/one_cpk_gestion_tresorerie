@@ -333,7 +333,7 @@ function MenuActionsLigne({ items, libelle }: { items: ActionLigne[]; libelle: s
 }
 
 /** Statut sur lequel la liste s'ouvre, et où « Effacer les filtres » la ramène. */
-const STATUT_PAR_DEFAUT = 'BROUILLON'
+const STATUT_PAR_DEFAUT = ''
 
 export default function Requisitions() {
   const queryClient = useQueryClient()
@@ -416,8 +416,7 @@ export default function Requisitions() {
   // Panneau de filtres sur téléphone : replié par défaut pour que la liste
   // apparaisse sans défiler. Sans effet au-delà de 768 px (CSS seul).
   const [filtresMobileOuverts, setFiltresMobileOuverts] = useState(false)
-  // La liste s'ouvre sur les brouillons : ce qui reste à soumettre. « Toutes »
-  // reste à un clic, et effacer les filtres ramène ici.
+  // La liste s'ouvre sur tous les statuts, et effacer les filtres ramène ici.
   const [filterStatut, setFilterStatut] = useState<string>(STATUT_PAR_DEFAUT)
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
   const [filterBudgetPosteId, setFilterBudgetPosteId] = useState<string>('')
@@ -2227,6 +2226,7 @@ export default function Requisitions() {
     if (upper === 'EN_ATTENTE') return 'EN_ATTENTE'
     if (upper === 'AUTORISEE' || upper === 'VALIDEE' || upper === 'VALIDEE_TRESORERIE' || upper === 'VALIDE_TECHNIQUE') return 'AUTORISEE'
     if (upper === 'APPROUVEE') return 'APPROUVEE'
+    if (upper === 'EN_DECAISSEMENT') return 'EN_DECAISSEMENT'
     if (upper === 'PAYEE' || upper === 'DECAISSE') return 'PAYEE'
     if (upper === 'REJETEE' || upper === 'REJETTE') return 'REJETEE'
     return upper
@@ -2234,7 +2234,7 @@ export default function Requisitions() {
 
   const statusKpis = [
     { status: '', label: 'Toutes', hint: 'Tous statuts' },
-    ...['BROUILLON', 'SIGNEE_SERVICE', 'EN_ATTENTE', 'AUTORISEE', 'APPROUVEE', 'PAYEE', 'REJETEE'].map((status) => {
+    ...['BROUILLON', 'SIGNEE_SERVICE', 'EN_ATTENTE', 'AUTORISEE', 'APPROUVEE', 'EN_DECAISSEMENT', 'PAYEE', 'REJETEE'].map((status) => {
       const meta = getStatusMeta(status)
       return { status, label: meta.label, hint: meta.description || '' }
     }),
