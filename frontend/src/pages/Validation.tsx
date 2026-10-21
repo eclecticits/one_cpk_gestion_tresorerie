@@ -4,16 +4,17 @@ import { Sparkles, Search, Printer, Download, Eye, Check, ShieldCheck, Ban, Lock
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { apiRequest, ApiError } from '../lib/apiClient'
+import { apiRequest, apiRequestWithTotal, ApiError } from '../lib/apiClient'
 import { scoreRequisitions } from '../api/ai'
 import { useNotification } from '../contexts/NotificationContext'
-import { differenceInHours, format } from 'date-fns'
+import { differenceInHours, format, subDays } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
 import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import type { Money } from '../types'
 import RowActionsMenu, { type ActionLigne } from '../components/RowActionsMenu'
 import FiltresMobileToggle from '../components/FiltresMobileToggle'
+import DateSaisie from '../components/DateSaisie'
 import RequisitionActionModal from '../components/RequisitionActionModal'
 import RemboursementActionModal from '../components/RemboursementActionModal'
 type PdfGeneratorRemboursementModule = typeof import('../utils/pdfGeneratorRemboursement')
@@ -138,15 +139,17 @@ export default function Validation() {
   const aiCacheRef = useRef<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState<string>('all')
-  // La page s'ouvre sur ce qui attend une decision, pas sur l'historique
-  // complet. EN_ATTENTE est bien le statut d'arrivee des requisitions
-  // listees ici : submit_requisition_examen_logic le pose, et les dossiers
-  // (qui passent en EN_ATTENTE_COMMISSION) sont ecartes de ce tableau par
-  // le filtre `if (req.dossier_id) return false`.
-  const [filterStatus, setFilterStatus] = useState<string>('EN_ATTENTE')
+  // La page s'ouvre sur tous les statuts, bornée aux 7 derniers jours
+  // (date de création) pour ne pas charger tout l'historique.
+  const [filterStatus, setFilterStatus] = useState<string>('all')
+  const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
+  const defaultDateDebut = useMemo(() => format(subDays(new Date(), 7), 'yyyy-MM-dd'), [])
+  const [dateDebut, setDateDebut] = useState(defaultDateDebut)
+  const [dateFin, setDateFin] = useState(today)
   const [pageSize, setPageSize] = useState<number>(20)
   const [pageIndex, setPageIndex] = useState<number>(0)
   const [hasMore, setHasMore] = useState<boolean>(false)
+  const [totalRequisitions, setTotalRequisitions] = useState<number | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   // Téléphone : filtres et dossiers repliés par défaut pour que la liste à
   // valider apparaisse sans défiler. Sans effet au-delà de 768 px (CSS seul).
@@ -212,6 +215,8 @@ export default function Validation() {
     PENDING_VALIDATION_IMPORT: ['PENDING_VALIDATION_IMPORT']
   }
   const authorizeStatuses = new Set(['EN_ATTENTE', 'EN_ATTENTE_COMMISSION'])
+  // En attente d'autorisation (1/2) ou de visa (2/2) : la décision revient au bureau.
+  const STATUTS_DECISION_BUREAU = ['EN_ATTENTE_COMMISSION', 'EN_ATTENTE', 'AUTORISEE']
   const viseStatuses = new Set(['AUTORISEE'])
 
   const getErrorMessage = (error: unknown, fallback: string) => {
@@ -231,11 +236,11 @@ export default function Validation() {
     } else {
       setLoading(false)
     }
-  }, [canValidate, filterType, filterStatus, pageSize, pageIndex])
+  }, [canValidate, filterType, filterStatus, dateDebut, dateFin, pageSize, pageIndex])
 
   useEffect(() => {
     setPageIndex(0)
-  }, [filterType, filterStatus, pageSize])
+  }, [filterType, filterStatus, dateDebut, dateFin, pageSize])
 
   useEffect(() => {
     setAiPopoverId(null)
@@ -249,6 +254,9 @@ export default function Validation() {
         limit: pageSize,
         offset: pageIndex * pageSize,
         examen_status: 'EXAMINE',
+        // Les réquisitions d'un dossier ne s'affichent pas ici : les exclure
+        // côté serveur garde des pages pleines et un total juste.
+        dossier_is_null: true,
       }
       const allowedStatuses = statusFilterMap[filterStatus] || []
       if (filterStatus === 'all') {
@@ -261,13 +269,41 @@ export default function Validation() {
         params.status_in = pendingStatuses.join(',')
       }
       if (filterType !== 'all') params.type_requisition = filterType
+      if (dateDebut) params.date_debut = dateDebut
+      if (dateFin) params.date_fin = dateFin
 
-      const res: any = await apiRequest('GET', '/requisitions', {
+      const { data: res, total } = await apiRequestWithTotal<any>('/requisitions', {
         params: { ...params, include: 'demandeur,validateur,approbateur,examinateur,caissier,annexe' }
       })
       const items = Array.isArray(res) ? res : (res as any)?.items ?? (res as any)?.data ?? []
-      setRequisitions(items as any)
-      setHasMore(Array.isArray(items) && items.length === pageSize)
+      // Ce qui attend une décision du bureau (autorisation ou visa) reste
+      // visible quelle que soit la période : une réquisition créée avant la
+      // date de début et toujours en attente remonte en tête de la première page.
+      let enRetard: any[] = []
+      const statutsAttente = STATUTS_DECISION_BUREAU.filter((s) => (statusFilterMap[filterStatus] || []).includes(s))
+      if (pageIndex === 0 && dateDebut && statutsAttente.length > 0) {
+        const veille = format(subDays(new Date(`${dateDebut}T00:00:00`), 1), 'yyyy-MM-dd')
+        const anciens: any = await apiRequest('GET', '/requisitions', {
+          params: {
+            order: 'created_at.asc',
+            limit: 200,
+            examen_status: 'EXAMINE',
+            dossier_is_null: true,
+            status_in: statutsAttente.join(','),
+            date_fin: veille,
+            ...(filterType !== 'all' ? { type_requisition: filterType } : {}),
+            include: 'demandeur,validateur,approbateur,examinateur,caissier,annexe',
+          }
+        })
+        enRetard = Array.isArray(anciens) ? anciens : anciens?.items ?? anciens?.data ?? []
+      }
+      setRequisitions([...enRetard, ...items] as any)
+      setTotalRequisitions(total)
+      setHasMore(
+        total !== null
+          ? (pageIndex + 1) * pageSize < total
+          : Array.isArray(items) && items.length === pageSize
+      )
     } catch (error) {
       console.error('Error loading requisitions:', error)
     } finally {
@@ -823,7 +859,7 @@ export default function Validation() {
             ouvert={filtresMobileOuverts}
             onToggle={() => setFiltresMobileOuverts((prev) => !prev)}
             controle="validation-filtres"
-            actifs={(filterType !== 'all' ? 1 : 0) + (filterStatus !== 'EN_ATTENTE' ? 1 : 0)}
+            actifs={(filterType !== 'all' ? 1 : 0) + (filterStatus !== 'all' ? 1 : 0) + (dateDebut !== defaultDateDebut || dateFin !== today ? 1 : 0)}
           />
         </div>
       </div>
@@ -867,6 +903,28 @@ export default function Validation() {
             <option value="REJETEE">Rejetée</option>
             <option value="PENDING_VALIDATION_IMPORT">Import à valider</option>
           </select>
+        </div>
+
+        {/* Début et fin dans un même champ : une période se lit d'un bloc. */}
+        <div className={`${styles.filterGroup} ${styles.filterGroupPeriode}`}>
+          <label htmlFor="validation-date-debut">Période</label>
+          <div className={styles.periodeRange}>
+            <DateSaisie
+              id="validation-date-debut"
+              aria-label="Date de début"
+              value={dateDebut}
+              max={dateFin || undefined}
+              onChange={setDateDebut}
+            />
+            <span className={styles.periodeSep} aria-hidden="true">→</span>
+            <DateSaisie
+              id="validation-date-fin"
+              aria-label="Date de fin"
+              value={dateFin}
+              min={dateDebut || undefined}
+              onChange={setDateFin}
+            />
+          </div>
         </div>
 
         <div className={styles.filterGroup}>
@@ -1184,7 +1242,10 @@ export default function Validation() {
         >
           Précédent
         </button>
-        <span className={styles.pageInfo}>Page {pageIndex + 1}</span>
+        <span className={styles.pageInfo}>
+          Page {pageIndex + 1}
+          {totalRequisitions !== null ? ` / ${Math.max(1, Math.ceil(totalRequisitions / pageSize))}` : ''}
+        </span>
         <button
           type="button"
           className={styles.secondaryAction}
