@@ -136,3 +136,22 @@ async def test_list_requisitions_filters_by_budget_poste_and_service(
     ids = {item["id"] for item in resp.json()}
     assert str(req_1.id) not in ids
     assert str(req_2.id) not in ids
+
+    # with_total : l'en-tête X-Total-Count porte le nombre de lignes filtrées,
+    # indépendamment de la page demandée.
+    resp = await app_client.get(
+        "/api/v1/requisitions",
+        params={"service_id": service_a.id, "with_total": "true", "limit": 1, "offset": 5},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+    assert resp.headers["X-Total-Count"] == "1"
+
+    # Sans with_total, pas de comptage.
+    resp = await app_client.get(
+        "/api/v1/requisitions",
+        params={"service_id": service_a.id},
+        headers=headers,
+    )
+    assert "X-Total-Count" not in resp.headers

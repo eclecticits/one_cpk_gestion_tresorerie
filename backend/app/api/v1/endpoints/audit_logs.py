@@ -6,9 +6,9 @@ import io
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, distinct, or_
+from sqlalchemy import select, distinct, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from openpyxl import Workbook
 
@@ -86,6 +86,8 @@ async def list_audit_logs(
     date_fin: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    with_total: bool = Query(default=False),
+    response: Response = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[AuditLogOut]:
@@ -100,6 +102,11 @@ async def list_audit_logs(
         date_debut=date_debut,
         date_fin=date_fin,
     )
+
+    # Total avant pagination, pour « Page x / y » ; seulement sur demande.
+    if with_total and response is not None:
+        total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+        response.headers["X-Total-Count"] = str(total)
 
     stmt = stmt.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
     res = await db.execute(stmt)

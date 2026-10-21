@@ -397,6 +397,8 @@ async function apiRequestInternal<T = any>(
   }
 
   if (resp.ok) {
+    const onHeaders = options && typeof options === 'object' ? (options as any).onHeaders : undefined
+    if (typeof onHeaders === 'function') onHeaders(resp.headers)
     const data = await parseJsonSafely(resp)
     return data as T
   }
@@ -489,4 +491,31 @@ export async function apiRequest<T = any>(
   options?: ApiOptions,
 ): Promise<T> {
   return apiRequestInternal<T>(method, path, options, false)
+}
+
+/**
+ * GET paginé qui renvoie aussi le nombre total de lignes (en-tête
+ * `X-Total-Count`, demandé par `with_total=true`), pour « Page x / y ».
+ * `total` vaut null si le serveur ne l'a pas fourni.
+ */
+export async function apiRequestWithTotal<T = any>(
+  path: string,
+  options: { params?: Record<string, any>; headers?: Record<string, string> } = {},
+): Promise<{ data: T; total: number | null }> {
+  let total: number | null = null
+  const data = await apiRequestInternal<T>(
+    'GET',
+    path,
+    {
+      ...options,
+      params: { ...(options.params || {}), with_total: true },
+      onHeaders: (headers: Headers) => {
+        const brut = headers.get('X-Total-Count')
+        const valeur = brut === null || brut === '' ? NaN : Number(brut)
+        total = Number.isFinite(valeur) ? valeur : null
+      },
+    },
+    false,
+  )
+  return { data, total }
 }

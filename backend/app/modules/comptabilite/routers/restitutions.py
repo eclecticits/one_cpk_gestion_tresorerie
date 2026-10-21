@@ -162,6 +162,7 @@ async def get_grand_livre(
         total_credit_page=livre.total_credit_page,
         solde_final_page=livre.solde_final_page,
         curseur_suivant=livre.curseur_suivant,
+        total_mouvements=livre.total_mouvements,
     )
 
 

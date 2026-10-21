@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getAuditLogs, getAuditActions, getAuditUsers, AuditLog, AuditLogFilters, AuditUser } from '../api/auditLogs'
+import { getAuditLogsPage, getAuditActions, getAuditUsers, AuditLog, AuditLogFilters, AuditUser } from '../api/auditLogs'
 import { ApiError, API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { useToast } from '../hooks/useToast'
 // jsPDF est lourd : chargement dynamique au moment de l'export.
@@ -162,6 +162,7 @@ export default function AuditLogs() {
   const [exporting, setExporting] = useState(false)
   const [page, setPage] = useState(1)
   const [hasNextPage, setHasNextPage] = useState(false)
+  const [total, setTotal] = useState<number | null>(null)
   const [filters, setFilters] = useState<AuditLogFilters>({
     action: '',
     user_id: '',
@@ -197,9 +198,15 @@ export default function AuditLogs() {
     const fetchLogs = async () => {
       setLoading(true)
       try {
-        const data = await getAuditLogs(appliedFilters)
+        const { data, total: totalLignes } = await getAuditLogsPage(appliedFilters)
+        const limite = appliedFilters.limit || DEFAULT_LIMIT
         setLogs(data || [])
-        setHasNextPage((data || []).length >= (appliedFilters.limit || DEFAULT_LIMIT))
+        setTotal(totalLignes)
+        setHasNextPage(
+          totalLignes !== null
+            ? (appliedFilters.offset || 0) + limite < totalLignes
+            : (data || []).length >= limite
+        )
       } catch (error) {
         const detail =
           error instanceof ApiError
@@ -207,6 +214,7 @@ export default function AuditLogs() {
             : 'Erreur inconnue'
         notifyError('Chargement impossible', detail)
         setLogs([])
+        setTotal(null)
       } finally {
         setLoading(false)
       }
@@ -522,7 +530,7 @@ export default function AuditLogs() {
         <button type="button" onClick={handlePrevPage} disabled={loading || page <= 1}>
           Précédent
         </button>
-        <span>Page {page}</span>
+        <span>Page {page}{total !== null ? ` / ${Math.max(1, Math.ceil(total / DEFAULT_LIMIT))}` : ''}</span>
         <button type="button" onClick={handleNextPage} disabled={loading || !hasNextPage}>
           Suivant
         </button>

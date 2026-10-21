@@ -1005,6 +1005,8 @@ async def list_requisitions(
     order: str | None = Query(default=None),
     limit: int | None = Query(default=200),
     offset: int | None = Query(default=0),
+    with_total: bool = Query(default=False),
+    response: Response = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_any_permission(["requisitions", "can_create_requisition", "menu_services"])),
     tenant_id: int = Depends(get_current_tenant_id),
@@ -1088,6 +1090,12 @@ async def list_requisitions(
         query = query.where(Requisition.created_at >= start_dt)
     if end_dt:
         query = query.where(Requisition.created_at <= end_dt)
+
+    # Nombre total de lignes correspondant aux filtres, avant pagination : il
+    # permet d'afficher « Page x / y ». Calculé seulement sur demande.
+    if with_total and response is not None:
+        total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
+        response.headers["X-Total-Count"] = str(total)
 
     query = query.order_by(_parse_order(order)).offset(offset)
     if limit is not None:

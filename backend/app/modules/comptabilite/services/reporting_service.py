@@ -129,6 +129,8 @@ class GrandLivre:
     total_credit_page: Decimal
     solde_final_page: Decimal
     curseur_suivant: str | None
+    # Nombre de mouvements de la période, toutes pages confondues.
+    total_mouvements: int = 0
 
 
 @dataclass
@@ -398,6 +400,24 @@ async def grand_livre(
             )
         )
 
+    # Même filtre, sans curseur ni limite : le nombre total de mouvements,
+    # pour afficher « Page x / y ».
+    stmt_total = _filtre_ecritures(
+        select(func.count(ComptaLigneEcriture.id))
+        .select_from(ComptaLigneEcriture)
+        .join(ComptaEcriture, ComptaEcriture.id == ComptaLigneEcriture.ecriture_id)
+        .where(
+            ComptaLigneEcriture.organisation_id == organisation_id,
+            ComptaLigneEcriture.compte_id == compte_id,
+        ),
+        organisation_id=organisation_id,
+        exercice_id=exercice_id,
+        statuts=statuts,
+        date_debut=date_debut,
+        date_fin=date_fin,
+    )
+    total_mouvements = (await db.execute(stmt_total)).scalar_one()
+
     res = await db.execute(stmt)
     rows = res.all()
     page_suivante = len(rows) > limite
@@ -443,6 +463,7 @@ async def grand_livre(
         total_credit_page=total_credit,
         solde_final_page=solde,
         curseur_suivant=curseur_suivant,
+        total_mouvements=total_mouvements,
     )
 
 

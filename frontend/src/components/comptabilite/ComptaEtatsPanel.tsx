@@ -26,6 +26,9 @@ import styles from './ComptaEtatsPanel.module.css'
 
 type Etat = 'balance' | 'grand-livre' | 'journal'
 
+/** Mouvements par page du Grand Livre. */
+const LIMITE_GRAND_LIVRE = 100
+
 interface Props {
   comptes: ComptaCompte[]
   journaux: ComptaJournal[]
@@ -90,7 +93,7 @@ export default function ComptaEtatsPanel({ comptes, journaux, exercices, canVali
       getComptaGrandLivre(Number(compteId), {
         ...filtres,
         curseur: curseurs[pageIndex] ?? undefined,
-        limite: 100,
+        limite: LIMITE_GRAND_LIVRE,
       }),
     enabled: etat === 'grand-livre' && compteId !== '' && exerciceId !== '',
   })
@@ -439,7 +442,10 @@ export default function ComptaEtatsPanel({ comptes, journaux, exercices, canVali
               >
                 ← Précédent
               </button>
-              <span className={styles.pageInfo}>Page {pageIndex + 1}</span>
+              <span className={styles.pageInfo}>
+                Page {pageIndex + 1}
+                {livre?.total_mouvements ? ` / ${Math.max(1, Math.ceil(livre.total_mouvements / LIMITE_GRAND_LIVRE))}` : ''}
+              </span>
               <button
                 type="button"
                 className={styles.pageBtn}

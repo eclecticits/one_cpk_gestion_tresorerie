@@ -1,4 +1,4 @@
-import { apiRequest } from '../lib/apiClient'
+import { apiRequest, apiRequestWithTotal } from '../lib/apiClient'
 
 export type AuditLog = {
   id: string
@@ -25,6 +25,11 @@ export type AuditLogFilters = {
 
 export async function getAuditLogs(filters: AuditLogFilters): Promise<AuditLog[]> {
   return apiRequest('GET', '/audit-logs', { params: filters })
+}
+
+/** Une page du journal et le nombre total d'entrées pour ces filtres. */
+export async function getAuditLogsPage(filters: AuditLogFilters): Promise<{ data: AuditLog[]; total: number | null }> {
+  return apiRequestWithTotal<AuditLog[]>('/audit-logs', { params: filters })
 }
 
 export async function getAuditActions(): Promise<string[]> {

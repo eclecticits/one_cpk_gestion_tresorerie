@@ -67,6 +67,7 @@ class GrandLivreOut(DecimalBaseModel):
     total_credit_page: Decimal
     solde_final_page: Decimal
     curseur_suivant: str | None
+    total_mouvements: int = 0
 
 
 class EcritureJournalOut(DecimalBaseModel):

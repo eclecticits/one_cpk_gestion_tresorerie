@@ -311,6 +311,8 @@ export interface ComptaGrandLivre {
   total_credit_page: string
   solde_final_page: string
   curseur_suivant: string | null
+  /** Mouvements de la période, toutes pages confondues. */
+  total_mouvements?: number
 }
 
 export interface ComptaEcritureJournal {

@@ -328,6 +328,8 @@ async def test_grand_livre_pagination_par_curseur_ne_perd_aucune_ligne(db_sessio
         )
         vus.extend(str(m.ligne_id) for m in page.mouvements)
         soldes.extend(m.solde_cumule for m in page.mouvements)
+        # Le total, lui, ne dépend pas de la page : il sert à « Page x / y ».
+        assert page.total_mouvements == 7
         pages += 1
         curseur = page.curseur_suivant
         if curseur is None:

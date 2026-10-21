@@ -53,6 +53,8 @@ if origins or cors_origin_regex:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Lu par le frontend pour afficher « Page x / y » (listes paginées).
+        expose_headers=["X-Total-Count"],
     )
 
 app.include_router(router)
