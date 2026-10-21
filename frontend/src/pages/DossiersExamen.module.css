@@ -201,16 +201,27 @@
   box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
 }
 
+/* Les deux dates partagent une seule bordure, comme un champ unique. */
 .filterDateRange {
   display: flex;
   align-items: center;
-  gap: 6px;
   min-width: 0;
+  height: 36px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  border-radius: 6px;
+  background: #ffffff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.filterDateRange:focus-within {
+  border-color: var(--tenant-primary, #0d9488);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
 }
 
 .filterDateSep {
-  color: var(--color-text-muted, #64748b);
-  font-weight: 600;
+  flex: none;
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 .filterReset {
@@ -839,8 +850,7 @@
   }
 
   .filterDateRange {
-    flex-direction: column;
-    align-items: stretch;
+    height: var(--touch-target-min, 44px);
   }
 
   /* Sous 768px la cible tactile reprend le minimum du projet. */
@@ -1137,6 +1147,8 @@
   justify-content: center;
   min-width: 32px;
   min-height: 32px;
+  /* Le padding global des boutons (0 14px) ne laissait que 6 px à la croix. */
+  padding: 0;
   border: 1px solid #fca5a5;
   border-radius: 8px;
   background: #fee2e2;
@@ -1149,4 +1161,186 @@
   background: #dc2626;
   border-color: #dc2626;
   color: #ffffff;
+}
+
+/* ==================================================================
+   Téléphone (≤ 768 px, même seuil que FiltresMobileToggle)
+   - le panneau de contrôle ne colle plus en haut : collé, il couvrait
+     tout l'écran et la liste défilait dessous ;
+   - filtres repliés derrière « Filtres » ;
+   - chaque ligne de tableau devient une fiche, sans défilement latéral.
+   ================================================================== */
+@media (max-width: 768px) {
+  .headerRefresh {
+    display: none;
+  }
+
+  .kpiGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .kpiCard {
+    padding: 8px 10px;
+  }
+
+  .kpiLabel {
+    font-size: 10px;
+  }
+
+  .kpiValue {
+    font-size: 17px;
+  }
+
+  .kpiHint {
+    font-size: 11px;
+  }
+
+  /* Le montant cumulé, seul sur sa ligne, prend toute la largeur. */
+  .kpiCard:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .controlPanel {
+    position: static;
+    padding: 10px;
+  }
+
+  .panelRow {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .searchWrap {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .filterReset {
+    flex: 0 0 auto;
+    padding: 0 14px;
+  }
+
+  /* Bandeau d'étapes décoratif : il ne dit rien qu'on ne sache sur cette page. */
+  .statusbar {
+    display: none;
+  }
+
+  .filterRow:not(.filterRowOpen) {
+    display: none;
+  }
+
+  .actionBar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .actionPrimary {
+    grid-column: 1 / -1;
+  }
+
+  /* Tableaux → fiches empilées. */
+  .tableWrap {
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .table {
+    display: block;
+    min-width: 0;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table tbody {
+    display: grid;
+    gap: 8px;
+  }
+
+  .table tr {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 8px;
+    padding: 10px 12px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+  }
+
+  .table td {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  /* Ligne de tête de la fiche : case, référence, menu. */
+  .table td.checkboxCell {
+    width: auto;
+    grid-row: 1;
+    grid-column: 1;
+    text-align: left;
+  }
+
+  .table td.refCell {
+    grid-row: 1;
+    grid-column: 2;
+    overflow-wrap: anywhere;
+  }
+
+  .table td.actionsCell {
+    grid-row: 1;
+    grid-column: 3;
+  }
+
+  /* L'objet juste sous la référence : c'est ce qu'on lit en premier. */
+  .table td.objetCell {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    max-width: none;
+    margin-top: 6px;
+    color: #334155;
+  }
+
+  /* Les autres cellules : libellé à gauche, valeur à droite. */
+  .table td[data-label] {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px 8px;
+    padding-top: 6px;
+    margin-top: 6px;
+    border-top: 1px dashed #e2e8f0;
+    text-align: right;
+  }
+
+  .table td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    margin-right: auto;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--color-text-muted, #64748b);
+    text-align: left;
+  }
+
+  /* Ligne « Chargement… » / « Aucun … » : une seule cellule pleine largeur. */
+  .table td.empty {
+    grid-column: 1 / -1;
+    text-align: center;
+  }
+
+  .table td[data-label] .requisitionStatusHint {
+    margin-top: 0;
+  }
 }

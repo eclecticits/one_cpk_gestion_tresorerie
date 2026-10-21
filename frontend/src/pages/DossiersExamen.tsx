@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Check, Download, Eye, FileText, Paperclip, Pencil, RefreshCw, Search, X } from 'lucide-react'
+import { format, subDays } from 'date-fns'
 import { apiRequest } from '../lib/apiClient'
 import { getServices } from '../api/services'
 // jsPDF/jspdf-autotable/xlsx sont lourds : chargement dynamique au moment de l'action.
@@ -39,6 +40,8 @@ import { useConfirm } from '../contexts/ConfirmContext'
 import { useToast } from '../hooks/useToast'
 import RowActionsMenu, { type ActionLigne } from '../components/RowActionsMenu'
 import PageHeader from '../components/PageHeader'
+import DateSaisie from '../components/DateSaisie'
+import FiltresMobileToggle from '../components/FiltresMobileToggle'
 import BackButton from '../components/BackButton'
 import styles from './DossiersExamen.module.css'
 
@@ -165,11 +168,17 @@ export default function DossiersExamen() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [dossierStatusFilter, setDossierStatusFilter] = useState('all')
-  const [requisitionStatusFilter, setRequisitionStatusFilter] = useState('EN_EXAMEN')
+  // Tous les statuts, sur les 7 derniers jours ; ce qui attend l'examen
+  // reste visible quelle que soit la période (voir matchesDateRange).
+  const [requisitionStatusFilter, setRequisitionStatusFilter] = useState('all')
   const [serviceFilter, setServiceFilter] = useState('all')
   const [demandeurFilter, setDemandeurFilter] = useState('')
-  const [dateStart, setDateStart] = useState('')
-  const [dateEnd, setDateEnd] = useState('')
+  const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
+  const defaultDateStart = useMemo(() => format(subDays(new Date(), 7), 'yyyy-MM-dd'), [])
+  const [dateStart, setDateStart] = useState(defaultDateStart)
+  const [dateEnd, setDateEnd] = useState(today)
+  // Téléphone : filtres repliés par défaut pour que les listes viennent tout de suite.
+  const [filtresMobileOuverts, setFiltresMobileOuverts] = useState(false)
   const [services, setServices] = useState<Service[]>([])
   const [dossierPage, setDossierPage] = useState(0)
   const [requisitionPage, setRequisitionPage] = useState(0)
@@ -603,7 +612,10 @@ export default function DossiersExamen() {
   const startTs = useMemo(() => (dateStart ? new Date(`${dateStart}T00:00:00`).getTime() : null), [dateStart])
   const endTs = useMemo(() => (dateEnd ? new Date(`${dateEnd}T23:59:59`).getTime() : null), [dateEnd])
 
-  const matchesDateRange = (value?: string) => {
+  // enAttente : ce qui attend une décision d'examen échappe à la période,
+  // pour qu'une réquisition ancienne mais non examinée ne disparaisse pas.
+  const matchesDateRange = (value?: string, enAttente = false) => {
+    if (enAttente) return true
     if (!startTs && !endTs) return true
     const ts = parseDateValue(value)
     if (!ts) return false
@@ -615,7 +627,7 @@ export default function DossiersExamen() {
   const matchesRequisitionFilters = useCallback((req: RequisitionLite) => {
     const exam = getExamStatus(req)
     if (requisitionStatusFilter !== 'all' && exam !== requisitionStatusFilter) return false
-    if (!matchesDateRange(req.created_at)) return false
+    if (!matchesDateRange(req.created_at, isRequisitionActionable(req))) return false
     if (serviceFilter !== 'all' && String(req.service_id ?? '') !== serviceFilter) return false
     const demandeurNeedle = demandeurFilter.trim().toLowerCase()
     if (demandeurNeedle && !getDemandeurName(req.demandeur).includes(demandeurNeedle)) return false
@@ -632,7 +644,7 @@ export default function DossiersExamen() {
       const status = String(dossier.status || '').toUpperCase()
       const dossierRequisitions = dossier.requisitions || []
       if (dossierStatusFilter !== 'all' && status !== dossierStatusFilter) return false
-      if (!matchesDateRange(dossier.created_at)) return false
+      if (!matchesDateRange(dossier.created_at, status === 'EN_EXAMEN')) return false
       if (requisitionExamFilter) {
         const matchExam = dossierRequisitions.some(
           (req) => getExamStatus(req) === requisitionStatusFilter
@@ -728,17 +740,17 @@ export default function DossiersExamen() {
     requisitionStatusFilter !== 'all' ||
     serviceFilter !== 'all' ||
     demandeurFilter.trim() !== '' ||
-    dateStart !== '' ||
-    dateEnd !== ''
+    dateStart !== defaultDateStart ||
+    dateEnd !== today
 
   const resetFilters = () => {
     setSearchQuery('')
     setDossierStatusFilter('all')
-    setRequisitionStatusFilter(ACTIONABLE_EXAM_STATUS)
+    setRequisitionStatusFilter('all')
     setServiceFilter('all')
     setDemandeurFilter('')
-    setDateStart('')
-    setDateEnd('')
+    setDateStart(defaultDateStart)
+    setDateEnd(today)
   }
 
   const totalDossierAmount = useMemo(
@@ -1034,7 +1046,8 @@ export default function DossiersExamen() {
           actions={
             <div className={styles.headerActions}>
               <BackButton fallback="/validation" />
-              <button type="button" className={styles.secondaryBtn} onClick={loadDossiers} disabled={loading}>
+              {/* Doublon de la barre d'actions : masqué sur téléphone. */}
+              <button type="button" className={`${styles.secondaryBtn} ${styles.headerRefresh}`} onClick={loadDossiers} disabled={loading}>
                 <RefreshCw size={14} />
                 Rafraîchir
               </button>
@@ -1084,6 +1097,21 @@ export default function DossiersExamen() {
             />
           </div>
 
+          <FiltresMobileToggle
+            ouvert={filtresMobileOuverts}
+            onToggle={() => setFiltresMobileOuverts((prev) => !prev)}
+            controle="examens-filtres"
+            actifs={
+              [
+                dossierStatusFilter !== 'all',
+                requisitionStatusFilter !== 'all',
+                serviceFilter !== 'all',
+                demandeurFilter.trim() !== '',
+                dateStart !== defaultDateStart || dateEnd !== today,
+              ].filter(Boolean).length
+            }
+          />
+
           <button
             type="button"
             className={styles.filterReset}
@@ -1099,7 +1127,10 @@ export default function DossiersExamen() {
             <span className={`${styles.statusStep} ${styles.statusStepMuted}`}>Bureau</span>
           </div>
         </div>
-        <div className={styles.filterRow}>
+        <div
+          id="examens-filtres"
+          className={`${styles.filterRow} ${filtresMobileOuverts ? styles.filterRowOpen : ''}`}
+        >
           <div className={styles.filterGroup}>
             <label className={styles.filterLabel}>Statut du dossier</label>
             <select
@@ -1154,22 +1185,23 @@ export default function DossiersExamen() {
             />
           </div>
           <div className={`${styles.filterGroup} ${styles.filterGroupDates}`}>
-            <label className={styles.filterLabel}>Plage de dates</label>
+            <label className={styles.filterLabel} htmlFor="examens-date-debut">Période</label>
+            {/* Début et fin dans un même champ, à taper ou à choisir au calendrier. */}
             <div className={styles.filterDateRange}>
-              <input
-                type="date"
-                value={dateStart}
-                onChange={(event) => setDateStart(event.target.value)}
-                className={styles.filterInput}
+              <DateSaisie
+                id="examens-date-debut"
                 aria-label="Date de début"
+                value={dateStart}
+                max={dateEnd || undefined}
+                onChange={setDateStart}
               />
-              <span className={styles.filterDateSep}>→</span>
-              <input
-                type="date"
-                value={dateEnd}
-                onChange={(event) => setDateEnd(event.target.value)}
-                className={styles.filterInput}
+              <span className={styles.filterDateSep} aria-hidden="true">→</span>
+              <DateSaisie
+                id="examens-date-fin"
                 aria-label="Date de fin"
+                value={dateEnd}
+                min={dateStart || undefined}
+                onChange={setDateEnd}
               />
             </div>
           </div>
@@ -1276,7 +1308,7 @@ export default function DossiersExamen() {
                         />
                       </td>
                       <td className={styles.refCell}>{dossier.reference}</td>
-                      <td>
+                      <td data-label="Statut">
                         <span
                           className={`${styles.badgePill} ${
                             status === 'EXAMINE'
@@ -1291,7 +1323,7 @@ export default function DossiersExamen() {
                           {statusLabels[status] || status}
                         </span>
                       </td>
-                      <td>
+                      <td data-label="Réquisitions">
                         <div className={styles.requisitionCount}>{examSummary.total}</div>
                         <div className={styles.requisitionStatusHint}>
                           {examSummary.waiting} en examen
@@ -1299,10 +1331,10 @@ export default function DossiersExamen() {
                           {examSummary.rejected > 0 ? ` • ${examSummary.rejected} rejetée${examSummary.rejected > 1 ? 's' : ''}` : ''}
                         </div>
                       </td>
-                      <td className={styles.amount}>
+                      <td className={styles.amount} data-label="Montant total">
                         {total.toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
                       </td>
-                      <td>{new Date(dossier.created_at).toLocaleDateString('fr-FR')}</td>
+                      <td data-label="Créé le">{new Date(dossier.created_at).toLocaleDateString('fr-FR')}</td>
                       <td className={styles.actionsCell}>
                         <div className={styles.actionGroup}>
                           <RowActionsMenu
@@ -1460,9 +1492,9 @@ export default function DossiersExamen() {
                         />
                       </td>
                       <td className={styles.refCell}>{getDocumentReference(req)}</td>
-                      <td>{getDocumentTypeLabel(req)}</td>
+                      <td data-label="Type">{getDocumentTypeLabel(req)}</td>
                       <td className={styles.objetCell}>{req.objet}</td>
-                      <td>
+                      <td data-label="Statut examen">
                         <span
                           className={`${styles.badgePill} ${
                             exam === 'EXAMINE'
@@ -1477,10 +1509,10 @@ export default function DossiersExamen() {
                           {statusLabels[exam] || exam || 'Non examiné'}
                         </span>
                       </td>
-                      <td className={styles.amount}>
+                      <td className={styles.amount} data-label="Montant">
                         {Number(req.montant_total || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
                       </td>
-                      <td>{req.created_at ? new Date(req.created_at).toLocaleDateString('fr-FR') : '-'}</td>
+                      <td data-label="Créé le">{req.created_at ? new Date(req.created_at).toLocaleDateString('fr-FR') : '-'}</td>
                       <td className={styles.actionsCell}>
                         <div className={styles.actionGroup}>
                           <RowActionsMenu
