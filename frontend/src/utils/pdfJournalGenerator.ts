@@ -9,6 +9,11 @@ import {
   type TenantIdentity,
 } from './pdfTenantIdentity'
 import { libelleJournalComplet } from './journalLibelle'
+import { alerteAValoir, bilanAValoir, etatAValoir, libelleAvecAValoir } from './journalAValoir'
+
+// Avances à valoir : même bordeaux que l'Excel (`A_VALOIR_BORDEAUX`, `A_VALOIR_FOND`).
+const BORDEAUX: [number, number, number] = [128, 0, 32]
+const BORDEAUX_FOND: [number, number, number] = [248, 225, 230]
 
 type JournalLine = {
   date: string | Date
@@ -19,6 +24,9 @@ type JournalLine = {
   entree?: number | string | null
   sortie?: number | string | null
   solde?: number | string | null
+  a_valoir?: boolean | null
+  a_valoir_statut?: string | null
+  a_valoir_reste?: number | string | null
 }
 
 type JournalFilter = {
@@ -73,6 +81,24 @@ const drawSummary = (
   })
 
   return y + cardH + 6
+}
+
+/** Bandeau d'alerte sous les cartouches, s'il y a des avances à valoir. */
+const drawAlerteAValoir = (doc: jsPDF, y: number, texte: string): number => {
+  if (!texte) return y
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const margin = 12
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8.5)
+  const lignes = doc.splitTextToSize(texte, pageWidth - margin * 2 - 8) as string[]
+  const hauteur = 4 + lignes.length * 4
+  doc.setFillColor(...BORDEAUX_FOND)
+  doc.setDrawColor(...BORDEAUX)
+  doc.setLineWidth(0.4)
+  doc.roundedRect(margin, y, pageWidth - margin * 2, hauteur, 1.5, 1.5, 'FD')
+  doc.setTextColor(...BORDEAUX)
+  doc.text(lignes, margin + 4, y + 5.2)
+  return y + hauteur + 4
 }
 
 /** Cadre de signatures, gardé sur une seule page pour ne pas être coupé. */
@@ -132,18 +158,23 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
   const totalSorties = toNumber(filtre.total_sorties)
   const soldeFinal = toNumber(filtre.solde_final)
 
-  const tableTop = drawSummary(doc, headerBottom, filtre.devise, {
+  const summaryBottom = drawSummary(doc, headerBottom, filtre.devise, {
     initial: soldeInitial,
     entrees: totalEntrees,
     sorties: totalSorties,
     final: soldeFinal,
   })
+  const tableTop = drawAlerteAValoir(doc, summaryBottom, alerteAValoir(bilanAValoir(data), filtre.devise))
 
   const rows = data.map((m) => ({
     __entree: toNumber(m.entree) > 0,
     __sortie: toNumber(m.sortie) > 0,
+    __aValoir: Boolean(m.a_valoir),
     date: format(new Date(m.date), 'dd/MM/yyyy'),
-    libelle: libelleJournalComplet(m),
+    // Préfixe et état en clair : l'alerte reste lisible imprimée en noir et blanc.
+    libelle: m.a_valoir
+      ? `${libelleAvecAValoir(m, libelleJournalComplet(m))}\n${etatAValoir(m, filtre.devise)}`
+      : libelleJournalComplet(m),
     entree: toNumber(m.entree) > 0 ? formatAmount(toNumber(m.entree)) : '—',
     sortie: toNumber(m.sortie) > 0 ? formatAmount(toNumber(m.sortie)) : '—',
     solde: formatAmount(toNumber(m.solde)),
@@ -212,6 +243,11 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
       }
       if (!row?.__rowType && hookData.column.index === 3) {
         hookData.cell.styles.textColor = row?.__sortie ? [185, 28, 28] : [148, 163, 184]
+      }
+      if (row?.__aValoir) {
+        hookData.cell.styles.fillColor = BORDEAUX_FOND
+        if (hookData.column.index !== 2) hookData.cell.styles.textColor = BORDEAUX
+        if (hookData.column.index === 1 || hookData.column.index === 3) hookData.cell.styles.fontStyle = 'bold'
       }
       if (!row?.__rowType) return
       hookData.cell.styles.fontStyle = 'bold'

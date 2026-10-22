@@ -4,6 +4,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
+from pydantic import Field
+
 from app.schemas.base import DecimalBaseModel
 from app.schemas.sortie_fonds import SortieFondsOut
 
@@ -165,6 +167,13 @@ class ReportJournalLine(DecimalBaseModel):
     is_reconciled: bool | None = None
     reconciled_at: datetime | None = None
     bank_statement_ref: str | None = None
+    # Avance « à valoir » : une créance sur le bénéficiaire, signalée en bordeaux
+    # dans les exports. `a_valoir_alerte` est le texte de la note Excel et de
+    # l'infobulle ; `a_valoir_reste`, ce qui n'est ni justifié ni rendu.
+    a_valoir: bool = False
+    a_valoir_statut: str | None = Field(default=None, description="ATTENDU | EN_RETARD | RECU | DISPENSE | NON_REQUIS")
+    a_valoir_reste: Decimal | None = None
+    a_valoir_alerte: str | None = None
 
 
 class ReportVersementLine(DecimalBaseModel):

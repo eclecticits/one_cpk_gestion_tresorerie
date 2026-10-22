@@ -129,6 +129,14 @@ export interface ReportJournalLine {
   is_reconciled?: boolean | null
   reconciled_at?: string | null
   bank_statement_ref?: string | null
+  /** Avance « à valoir » : créance sur le bénéficiaire, signalée en bordeaux. */
+  a_valoir?: boolean
+  /** ATTENDU | EN_RETARD | RECU | DISPENSE | NON_REQUIS */
+  a_valoir_statut?: string | null
+  /** Ni justifié ni rendu, à ce jour. */
+  a_valoir_reste?: Money | null
+  /** Texte de la note Excel et de l'infobulle : qui, pour quand, combien. */
+  a_valoir_alerte?: string | null
 }
 
 export interface ReportJournalResponse {

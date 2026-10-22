@@ -1604,6 +1604,66 @@ async def retours(
     return lignes
 
 
+_STATUTS_JUSTIFICATIF = {
+    "ATTENDU": "attendu",
+    "EN_RETARD": "EN RETARD",
+    "RECU": "reçu",
+    "DISPENSE": "dispensé",
+    "NON_REQUIS": "non demandé",
+}
+
+
+def _alerte_a_valoir(
+    *,
+    montant: Decimal,
+    rendu: Decimal,
+    devise: str,
+    statut: str | None,
+    echeance: datetime | None,
+    instance: str | None,
+    note: str | None,
+    now: datetime,
+) -> dict:
+    """Ce que les exports disent d'une avance à valoir : où elle en est.
+
+    Une couleur alerte, elle n'explique pas : la note dit qui doit justifier,
+    pour quand, et combien reste dehors. Le reste tombe à zéro une fois le
+    justificatif reçu ou dispensé ; sinon c'est le montant remis moins le
+    reliquat déjà rendu en caisse.
+    """
+    from app.services.justificatifs import _date_locale
+
+    def _montant(valeur: Decimal) -> str:
+        # « 1 234,56 », comme l'écran et les exports.
+        return f"{float(valeur):,.2f}".replace(",", " ").replace(".", ",")
+
+    statut = statut or "NON_REQUIS"
+    if statut == "ATTENDU" and echeance is not None:
+        if echeance.tzinfo is None:
+            echeance = echeance.replace(tzinfo=timezone.utc)
+        if now > echeance:
+            statut = "EN_RETARD"
+    reste = Decimal("0") if statut in {"RECU", "DISPENSE"} else max(montant - rendu, Decimal("0"))
+
+    justificatif = _STATUTS_JUSTIFICATIF.get(statut, statut.lower())
+    if statut in {"ATTENDU", "EN_RETARD"} and echeance is not None:
+        justificatif += f" (échéance le {_date_locale(echeance, heure=True)})"
+    lignes = [
+        "AVANCE À VALOIR" + (f" — {instance.strip()}" if instance and instance.strip() else ""),
+        f"Justificatif : {justificatif}",
+        f"Remis : {_montant(montant)} {devise} · Rendu : {_montant(rendu)} {devise}",
+        f"Reste à justifier : {_montant(reste)} {devise}",
+    ]
+    if note and note.strip():
+        lignes.append(f"Note : {note.strip()}")
+    return {
+        "a_valoir": True,
+        "a_valoir_statut": statut,
+        "a_valoir_reste": reste,
+        "a_valoir_alerte": "\n".join(lignes),
+    }
+
+
 def _preciser(mouvement: dict, *precisions: str | None, tiers: str | None = None) -> dict:
     """Ajoute au libellé du journal ses précisions entre parenthèses.
 
@@ -1929,6 +1989,14 @@ async def journal_tresorerie(
         ))
 
     paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
+    # Reliquats déjà rendus sur chaque sortie, à ce jour : c'est ce qui dit, pour
+    # une avance à valoir, combien reste dehors.
+    rendus = (
+        select(RetourCaisse.sortie_fonds_id, func.sum(RetourCaisse.montant).label("total"))
+        .where(RetourCaisse.organisation_id == tenant_id, RetourCaisse.statut == "VALIDE")
+        .group_by(RetourCaisse.sortie_fonds_id)
+        .subquery()
+    )
     sortie_query = select(
         SortieFonds.id,
         paiement_ts,
@@ -1941,7 +2009,15 @@ async def journal_tresorerie(
         SortieFonds.bank_statement_ref,
         SortieFonds.beneficiaire,
         Requisition.numero_requisition,
-    ).outerjoin(Requisition, Requisition.id == SortieFonds.requisition_id).where(
+        Requisition.a_valoir,
+        Requisition.instance_beneficiaire,
+        Requisition.notes_a_valoir,
+        SortieFonds.justificatif_statut,
+        SortieFonds.justificatif_echeance,
+        func.coalesce(rendus.c.total, 0),
+    ).outerjoin(Requisition, Requisition.id == SortieFonds.requisition_id).outerjoin(
+        rendus, rendus.c.sortie_fonds_id == SortieFonds.id
+    ).where(
         (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
         SortieFonds.canal == canal,
         SortieFonds.devise == devise,
@@ -1954,10 +2030,26 @@ async def journal_tresorerie(
     if end_dt:
         sortie_query = sortie_query.where(paiement_ts <= end_dt)
     sortie_rows = (await db.execute(sortie_query)).all()
+    maintenant = datetime.now(timezone.utc)
     for (
         sortie_id, dt, motif, ref_num, ref, montant, is_reconciled, reconciled_at, bank_statement_ref,
-        beneficiaire, numero_requisition,
+        beneficiaire, numero_requisition, a_valoir, instance_beneficiaire, notes_a_valoir,
+        justificatif_statut, justificatif_echeance, rendu,
     ) in sortie_rows:
+        alerte = (
+            _alerte_a_valoir(
+                montant=Decimal(montant or 0),
+                rendu=Decimal(rendu or 0),
+                devise=devise,
+                statut=justificatif_statut,
+                echeance=justificatif_echeance,
+                instance=instance_beneficiaire,
+                note=notes_a_valoir,
+                now=maintenant,
+            )
+            if a_valoir
+            else {}
+        )
         mouvements.append(_preciser(
             {
                 "date": dt,
@@ -1972,6 +2064,7 @@ async def journal_tresorerie(
                 "is_reconciled": bool(is_reconciled),
                 "reconciled_at": reconciled_at,
                 "bank_statement_ref": bank_statement_ref,
+                **alerte,
             },
             f"payé à {beneficiaire}" if beneficiaire else None,
             f"réq. {numero_requisition}" if numero_requisition else None,

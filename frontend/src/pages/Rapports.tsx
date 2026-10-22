@@ -14,6 +14,7 @@ import type { ReportSummaryResponse } from '../types/reports'
 import type { ReportJournalResponse } from '../types/reports'
 import { toNumber } from '../utils/amount'
 import { libelleJournalComplet } from '../utils/journalLibelle'
+import { alerteAValoir, bilanAValoir, libelleAvecAValoir } from '../utils/journalAValoir'
 import { getStatusMeta } from '../utils/statusMapper'
 import type { Money } from '../types'
 import { getTypeSortieLabel } from '../utils/sortieFondsHelpers'
@@ -454,9 +455,10 @@ export default function Rapports() {
     const soldeInitialJournal = toNumber(journalData.solde_initial)
     const soldeFinalJournal = toNumber(journalData.solde_final)
     const journalGeneratedAt = format(new Date(), "dd/MM/yyyy 'à' HH:mm")
+    const bilanJournal = bilanAValoir(journalData.lignes)
     const rows = journalData.lignes.map((line) => [
       jourExcel(line.date),
-      libelleJournalComplet(line),
+      libelleAvecAValoir(line, libelleJournalComplet(line)),
       toNumber(line.entree),
       toNumber(line.sortie),
       toNumber(line.solde),
@@ -479,8 +481,18 @@ export default function Rapports() {
           tone: soldeFinalJournal < 0 ? 'negative' : 'positive',
           format: 'money',
         },
-        { label: 'Mouvements', value: rows.length, format: 'integer' },
+        // Cinq cartouches au plus : s'il y a des avances à valoir, ce qui en
+        // reste dehors importe plus aux autorités que le nombre de lignes, que
+        // la colonne N° donne déjà.
+        bilanJournal.nombre
+          ? { label: `À valoir à justifier (${bilanJournal.nombre})`, value: bilanJournal.reste, tone: 'bordeaux', format: 'money' }
+          : { label: 'Mouvements', value: rows.length, format: 'integer' },
       ],
+      notice: { text: alerteAValoir(bilanJournal, journalDeviseEffective), tone: 'bordeaux' },
+      rowTone: (_row, rowIndex) => (journalData.lignes[rowIndex]?.a_valoir ? 'bordeaux' : undefined),
+      // Note sur le libellé : qui doit justifier, pour quand, combien reste dehors.
+      cellComment: (rowIndex, columnIndex) =>
+        columnIndex === 1 ? journalData.lignes[rowIndex]?.a_valoir_alerte : undefined,
       footerRow: ['TOTAL MOUVEMENTS', '', totalEntreesJournal, totalSortiesJournal, soldeFinalJournal],
       wrapColumns: [1],
       dateColumns: [0],
@@ -2162,9 +2174,18 @@ export default function Rapports() {
                   const canReconcile = line.transaction_id && (line.transaction_type === 'ENCAISSEMENT' || line.transaction_type === 'SORTIE')
                   const currentReconcile = getLineReconcileValue(line)
                   return (
-                  <tr key={`${line.date}-${index}`}>
+                  <tr
+                    key={`${line.date}-${index}`}
+                    className={line.a_valoir ? styles.journalAValoirRow : undefined}
+                    title={line.a_valoir_alerte || undefined}
+                  >
                     <td>{formatReportDate(line.date)}</td>
                     <td>
+                      {line.a_valoir && (
+                        <span className={styles.aValoirBadge}>
+                          À valoir{line.a_valoir_statut === 'EN_RETARD' ? ' · en retard' : ''}
+                        </span>
+                      )}
                       {line.precision ? (
                         <>
                           <div className={styles.journalLibelle}>{(line.libelle_base || '').trim() || '—'}</div>

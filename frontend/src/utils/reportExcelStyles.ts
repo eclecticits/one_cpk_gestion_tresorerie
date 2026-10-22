@@ -4,7 +4,7 @@ import type { CellObject, CellStyle, WorkBook, WorkSheet } from 'xlsx'
 type XlsxModule = typeof import('xlsx')
 type SheetValue = string | number | boolean | Date | null | undefined
 
-export type SummaryTone = 'default' | 'positive' | 'negative' | 'accent' | 'warning'
+export type SummaryTone = 'default' | 'positive' | 'negative' | 'accent' | 'warning' | 'bordeaux'
 
 export type ReportSummaryItem = {
   label: string
@@ -25,6 +25,9 @@ const RED = 'DC2626'
 const AMBER = 'B45309'
 const TEAL = '0F766E'
 const BORDER = 'D1D5DB'
+// Avances « à valoir » (`journalAValoir.ts`) : rouge bordeaux sur fond rosé.
+const BORDEAUX = '800020'
+const BORDEAUX_SOFT = 'F8E1E6'
 const WHITE = 'FFFFFF'
 const MONEY_FORMAT = '#,##0.00;[Red]-#,##0.00'
 const DATE_FORMAT = 'dd/mm/yyyy'
@@ -35,6 +38,7 @@ const toneFills: Record<SummaryTone, string> = {
   negative: RED_SOFT,
   accent: TEAL_SOFT,
   warning: AMBER_SOFT,
+  bordeaux: BORDEAUX_SOFT,
 }
 
 const toneValueColors: Record<SummaryTone, string> = {
@@ -43,6 +47,7 @@ const toneValueColors: Record<SummaryTone, string> = {
   negative: RED,
   accent: TEAL,
   warning: AMBER,
+  bordeaux: BORDEAUX,
 }
 
 const thinBorder: NonNullable<CellStyle['border']> = {
@@ -121,11 +126,17 @@ const highlightedBodyVariants = Object.fromEntries(
     negative: RED_SOFT,
     accent: TEAL_SOFT,
     warning: AMBER_SOFT,
+    bordeaux: BORDEAUX_SOFT,
   }).map(([tone, fill]) => [
     tone,
     rowStyleVariants({
       ...bodyStyle,
-      font: { color: { rgb: toneValueColors[tone as Exclude<SummaryTone, 'default'>] }, sz: 10 },
+      font: {
+        color: { rgb: toneValueColors[tone as Exclude<SummaryTone, 'default'>] },
+        sz: 10,
+        // Le bordeaux est une alerte : en gras, il se repère aussi imprimé.
+        bold: tone === 'bordeaux',
+      },
       fill: { patternType: 'solid', fgColor: { rgb: fill } },
     }),
   ]),
@@ -207,6 +218,10 @@ export type ReportListSheetOptions = {
   ordinal?: boolean
   rowTone?: (row: SheetValue[], rowIndex: number) => SummaryTone | undefined
   cellTone?: (value: SheetValue, rowIndex: number, columnIndex: number) => SummaryTone | undefined
+  /** Note Excel (survol de la cellule), par ligne et colonne de l'appelant. */
+  cellComment?: (rowIndex: number, columnIndex: number) => string | null | undefined
+  /** Bandeau d'alerte sous le sous-titre, coloré du ton donné. */
+  notice?: { text: string; tone: SummaryTone }
 }
 
 const summaryLabelStyles = Object.fromEntries(
@@ -335,13 +350,18 @@ export function createReportListSheet(
   const lastCol = Math.max(headers.length, 1)
   const cards = (options.summaryCards || []).slice(0, Math.min(5, lastCol))
   const hasCards = cards.length > 0
-  const headerRow = hasCards ? 7 : 4
+  const notice = options.notice?.text ? options.notice : undefined
+  // Le bandeau d'alerte prend la ligne vide sous les cartouches ; sans
+  // cartouches, il s'insère avant l'en-tête.
+  const noticeRow = notice ? (hasCards ? 6 : 4) : null
+  const headerRow = hasCards ? 7 : notice ? 5 : 4
   const content: SheetValue[][] = [
     [title],
     [organisation],
     [subtitle],
   ]
-  if (hasCards) content.push(...cardRows(cards, lastCol), [])
+  if (hasCards) content.push(...cardRows(cards, lastCol), notice ? [notice.text] : [])
+  else if (notice) content.push([notice.text])
   content.push(headers, ...rows)
   if (footerValues) content.push(footerValues)
 
@@ -357,6 +377,17 @@ export function createReportListSheet(
 
   applyBanner(sheet, xlsx, lastCol)
   if (hasCards) styleCards(sheet, xlsx, cards, 4, lastCol)
+  if (notice && noticeRow) {
+    const tone = notice.tone === 'default' ? 'warning' : notice.tone
+    applyRowStyle(sheet, xlsx, noticeRow, 1, lastCol, {
+      font: { bold: true, color: { rgb: toneValueColors[tone] }, sz: 10 },
+      fill: { patternType: 'solid', fgColor: { rgb: toneFills[tone] } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+      border: thinBorder,
+    })
+    addMerge(sheet, noticeRow, 1, noticeRow, lastCol)
+    sheet['!rows']![noticeRow - 1] = { hpt: 30 }
+  }
   applyRowStyle(sheet, xlsx, headerRow, 1, lastCol, headerStyle)
   sheet['!rows']![headerRow - 1] = { hpt: 25 }
 
@@ -381,6 +412,13 @@ export function createReportListSheet(
       const variants = cellTone && cellTone !== 'default'
         ? highlightedBodyVariants[cellTone]
         : rowVariants
+      const comment = callerColumn >= 0 ? options.cellComment?.(rowIndex, callerColumn) : undefined
+      if (comment) {
+        // Masquée : elle s'affiche au survol, signalée par le coin rouge d'Excel.
+        const notes = [{ a: 'ONEC Smart', t: comment }] as NonNullable<CellObject['c']>
+        notes.hidden = true
+        cell.c = notes
+      }
       cell.s = ordinal && columnIndex === 0
         ? variants.centered
         : moneyColumns.has(columnIndex)
