@@ -1053,8 +1053,16 @@ export default function RemboursementTransport() {
         `/remboursements-transport/${selectedRemboursementDetails.id}/participants/ordre`,
         { participant_ids: selectedParticipants.map((p) => p.id) },
       )
-      setSelectedParticipants(Array.isArray(res) ? res : selectedParticipants)
+      const ordonnes = Array.isArray(res) ? res : selectedParticipants
+      setSelectedParticipants(ordonnes)
       setOrdreFicheModifie(false)
+      // Le serveur vient de régénérer sa version sommaire du PDF : on la
+      // remplace aussitôt par l'état de frais mis en page, comme à la création.
+      const blob = await generateRemboursementTransportPDF(selectedRemboursementDetails, ordonnes, 'blob', undefined, 'a4')
+      if (blob) {
+        const ref = (selectedRemboursementDetails as any).reference_numero || selectedRemboursementDetails.numero_remboursement || 'remboursement_transport'
+        await uploadRemboursementTransportPdf(selectedRemboursementDetails.id, blob, `${String(ref).trim().replace(/[\\/:*?"<>|]+/g, '-')}.pdf`)
+      }
       setNotification({ show: true, type: 'success', message: 'Ordre enregistré : le PDF a été régénéré.' })
     } catch (error: any) {
       console.error('Error saving participants order:', error)

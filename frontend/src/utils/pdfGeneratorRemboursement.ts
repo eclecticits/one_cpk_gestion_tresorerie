@@ -494,11 +494,18 @@ export const generateRemboursementTransportPDF = async (
   // Pas large : trop serré, le libellé statutaire venait toucher le trait du
   // demandeur et les deux rangées n'en formaient plus qu'une.
   const pasRangeeSignature = isA5 ? 25 : 30
-  const hauteurSignatures = (isA5 ? 20 : 22) + pasRangeeSignature + hauteurCachet
+  // Mesurée sur ce qui est dessiné : le libellé de la seconde rangée, son
+  // trait d'apposition, puis le cachet posé 2 mm sous ce trait. Le forfait de
+  // 22 mm comptait 7 mm de trop et suffisait parfois à rejeter la fin sur une
+  // autre page.
+  const decalageTraitSignature = isA5 ? 12 : 15
+  const hauteurSignatures = pasRangeeSignature + decalageTraitSignature + (hauteurCachet ? 2 + hauteurCachet : 1)
   // Respiration avant les signatures : à 7 mm le bloc « Vu par… » touchait la
-  // somme en lettres et se lisait comme la suite du tableau. Un blanc franc
-  // sépare ce qui est déclaré de ce qui est signé.
-  const espaceAvantSignatures = isA5 ? 12 : 15
+  // somme en lettres et se lisait comme la suite du tableau. 10 mm suffisent à
+  // séparer ce qui est déclaré de ce qui est signé ; au-delà, ce blanc
+  // grossissait le bloc indivisible de fin et, quand il ne tenait plus sous la
+  // liste, le vide laissé au bas de la page précédente.
+  const espaceAvantSignatures = isA5 ? 8 : 10
   const hauteurPied = isA5 ? 12 : 14
   const hauteurQueue = hauteurLettres + espaceAvantSignatures + hauteurSignatures
 
@@ -517,7 +524,7 @@ export const generateRemboursementTransportPDF = async (
       // signature, la ligne de pointillés le mangeait.
       '',
     ])
-    const optionsTableau = (body: any[][], startY: number, avecTotal: boolean): UserOptions => ({
+    const optionsTableau = (body: any[][], startY: number, avecTotal: boolean, hauteurLigne: number): UserOptions => ({
       startY,
       theme: 'grid' as const,
       head: [['N°', 'Nom & Postnom', 'Fonction', 'Montant', 'Émargement']],
@@ -548,7 +555,7 @@ export const generateRemboursementTransportPDF = async (
       // gardent leur hauteur : ils ne se signent pas.
       bodyStyles: {
         cellPadding: { top: isA5 ? 2.4 : 3, bottom: isA5 ? 2.4 : 3, left: 2.2, right: 2.2 },
-        minCellHeight: isA5 ? 10 : 13,
+        minCellHeight: hauteurLigne,
       },
       // Pas de halign dans headStyles : sans cela l'en-tête forçait tout à
       // gauche et « Montant » se retrouvait décalé de la colonne de chiffres
@@ -575,15 +582,22 @@ export const generateRemboursementTransportPDF = async (
         4: { cellWidth: 'auto' as const, halign: 'center' as const },
       },
     })
-    const ecartApresTableau = isA5 ? 7 : 9
+    const ecartApresTableau = isA5 ? 5 : 6
     const queueTient = (finalY: number) => finalY + ecartApresTableau + hauteurQueue <= pageHeight - hauteurPied
 
     // Mesure à blanc sur un document jetable : la queue (somme en lettres,
-    // signatures) tient-elle sous la dernière ligne ?
-    const essai = new jsPDF({ orientation: 'p', unit: 'mm', format: paperFormat })
-    autoTable(essai, optionsTableau(participantsData, yPos, true))
-    if (queueTient((essai as any).lastAutoTable.finalY)) {
-      autoTable(doc, optionsTableau(participantsData, yPos, true))
+    // signatures) tient-elle sous la dernière ligne ? On essaie la hauteur
+    // d'émargement pleine, puis des lignes un peu plus basses où le paraphe
+    // tient encore : resserrer la liste de quelques millimètres vaut mieux que
+    // reporter la fin en laissant un grand blanc au bas de la page.
+    const hauteursLigne = isA5 ? [10, 9, 8] : [13, 11.5, 10.5]
+    const hauteurLigne = hauteursLigne.find((hauteur) => {
+      const essai = new jsPDF({ orientation: 'p', unit: 'mm', format: paperFormat })
+      autoTable(essai, optionsTableau(participantsData, yPos, true, hauteur))
+      return queueTient((essai as any).lastAutoTable.finalY)
+    })
+    if (hauteurLigne !== undefined) {
+      autoTable(doc, optionsTableau(participantsData, yPos, true, hauteurLigne))
     } else {
       // Sinon la dernière ligne passe avec le total et les signatures sur la
       // page suivante : des signatures seules sur une page ne se
@@ -592,10 +606,10 @@ export const generateRemboursementTransportPDF = async (
       const lignesReportees = 1
       const coupure = participantsData.length - lignesReportees
       if (coupure > 0) {
-        autoTable(doc, optionsTableau(participantsData.slice(0, coupure), yPos, false))
+        autoTable(doc, optionsTableau(participantsData.slice(0, coupure), yPos, false, hauteursLigne[0]))
         doc.addPage()
       }
-      autoTable(doc, optionsTableau(participantsData.slice(coupure), coupure > 0 ? margin : yPos, true))
+      autoTable(doc, optionsTableau(participantsData.slice(coupure), coupure > 0 ? margin : yPos, true, hauteursLigne[0]))
     }
     yPos = (doc as any).lastAutoTable.finalY + ecartApresTableau
   }
@@ -667,7 +681,7 @@ export const generateRemboursementTransportPDF = async (
     // et vient se poser sur le nom imprimé.
     doc.setDrawColor(150)
     doc.setLineWidth(0.2)
-    const yTraitRangee = y + (isA5 ? 12 : 15)
+    const yTraitRangee = y + decalageTraitSignature
     doc.line(x, yTraitRangee, x + largeurTrait, yTraitRangee)
   }
 
@@ -678,11 +692,10 @@ export const generateRemboursementTransportPDF = async (
   dessinerSignature(colonneDroiteX, yRangeeStatutaire, labelDroite, nomDroite)
 
   // Le cachet accompagne la signature statutaire, pas celle du demandeur.
-  const yTrait = yRangeeStatutaire + (isA5 ? 12 : 15)
+  const yTrait = yRangeeStatutaire + decalageTraitSignature
 
   if (stampDataUrl) {
-    const stampSize = isA5 ? 22 : 28
-    doc.addImage(stampDataUrl, 'PNG', colonneDroiteX + largeurTrait - stampSize, yTrait + 2, stampSize, stampSize)
+    doc.addImage(stampDataUrl, 'PNG', colonneDroiteX + largeurTrait - hauteurCachet, yTrait + 2, hauteurCachet, hauteurCachet)
   }
 
   if (afficheQr) {

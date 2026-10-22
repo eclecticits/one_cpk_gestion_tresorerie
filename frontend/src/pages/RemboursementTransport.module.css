@@ -800,10 +800,13 @@
   font-size: 12px;
 }
 
-/* Tableaux de saisie du formulaire : N°, nom, fonction, montant, action. */
+/* Tableaux de saisie du formulaire : N°, nom, fonction, présent, montant,
+   action. La colonne action porte deux flèches de position et la suppression
+   (3 × 32px) : sans largeur propre, la mise en page fixe la rognait. */
 .formSection .table th:nth-child(1) { width: 40px; }
-.formSection .table th:nth-child(4) { width: 130px; }
-.formSection .table th:nth-child(5) { width: 52px; }
+.formSection .table th:nth-child(4) { width: 70px; }
+.formSection .table th:nth-child(5) { width: 110px; }
+.formSection .table th:nth-child(6) { width: 128px; }
 
 .table thead {
   background: #f9fafb;
@@ -1274,22 +1277,28 @@
   width: 32px;
   height: 32px;
   min-width: 32px;
-  border: 1px solid #d1d5db;
-  background: #fff;
-  color: var(--color-text-muted, #374151);
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid var(--tenant-primary, #0d9488);
+  background: #f0fdfa;
+  color: var(--tenant-primary, #0d9488);
   border-radius: 6px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .moveBtn:hover:not(:disabled) {
-  background: #f3f4f6;
+  background: var(--tenant-primary, #0d9488);
+  color: #fff;
 }
 
 .moveBtn:disabled {
-  opacity: 0.35;
+  border-color: #e5e7eb;
+  background: #f9fafb;
+  color: #cbd5e1;
   cursor: default;
 }
 
