@@ -21,6 +21,7 @@ import logging
 
 import httpx
 
+from ..templates import AUTOMATIC_MESSAGE_NOTICE
 from .base import ProviderConfig, ProviderResult, WhatsAppProvider
 
 logger = logging.getLogger("onec_cpk_api.notifications.meta")
@@ -38,10 +39,14 @@ def _template_param(text: str) -> str:
     Meta rejette (erreur 132018) un paramètre qui contient un saut de ligne, une
     tabulation ou plus de quatre espaces d'affilée — or nos messages sont écrits
     sur plusieurs lignes. Les lignes sont donc mises bout à bout, sans les
-    filets décoratifs (━━━), qui n'ont de sens que sur plusieurs lignes.
+    filets décoratifs (━━━), qui n'ont de sens que sur plusieurs lignes, et sans
+    la mention « message automatique » : le template approuvé la porte déjà.
     """
     lines = [" ".join(line.split()) for line in (text or "").splitlines()]
-    flat = " · ".join(line for line in lines if any(c.isalnum() for c in line))
+    flat = " · ".join(
+        line for line in lines
+        if any(c.isalnum() for c in line) and AUTOMATIC_MESSAGE_NOTICE not in line
+    )
     if len(flat) > _TEMPLATE_PARAM_MAX:
         flat = flat[: _TEMPLATE_PARAM_MAX - 1].rstrip() + "…"
     return flat

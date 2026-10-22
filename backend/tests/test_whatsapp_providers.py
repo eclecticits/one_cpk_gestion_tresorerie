@@ -156,12 +156,16 @@ async def test_meta_met_le_message_sur_une_ligne_dans_le_gabarit(monkeypatch):
         ProviderConfig(api_key="EAAG...", phone_number_id="123456", extra={"template_name": "notif"})
     )
 
-    await provider.send_message(to="243810123456", text="Paiement reçu\nMontant :     50 USD\n\n_Message automatique_")
+    await provider.send_message(
+        to="243810123456",
+        text=templates.with_automatic_notice("Paiement reçu\nMontant :     50 USD\n\n_Réf. 12_"),
+    )
 
     import json
 
     param = json.loads(capture.request.content)["template"]["components"][0]["parameters"][0]["text"]
-    assert param == "Paiement reçu · Montant : 50 USD · _Message automatique_"
+    # La mention « message automatique » est dans le template : pas en double.
+    assert param == "Paiement reçu · Montant : 50 USD · _Réf. 12_"
 
 
 def test_les_gabarits_par_defaut_retirent_les_champs_vides_malgre_la_mise_en_forme():
