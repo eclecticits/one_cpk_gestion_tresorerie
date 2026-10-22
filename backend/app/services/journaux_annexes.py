@@ -70,7 +70,7 @@ TIRET = _rgb(148, 163, 184)
 FILET_JOUR = _rgb(203, 213, 225)
 # Avances « à valoir » : même bordeaux que l'écran (frontend/src/utils/journalAValoir.ts).
 BORDEAUX = _rgb(128, 0, 32)
-BORDEAUX_FOND = _rgb(248, 225, 230)
+BORDEAUX_FOND = _rgb(243, 196, 206)
 A_VALOIR_PREFIXE = "À VALOIR — "
 _ETATS_A_VALOIR = {
     "EN_RETARD": "justificatif EN RETARD",
@@ -433,7 +433,11 @@ def _pdf(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclus
             # Préfixe et état en clair : l'alerte reste lisible en noir et blanc.
             styles_lignes += [
                 ("BACKGROUND", (0, rang), (-1, rang), BORDEAUX_FOND),
-                ("TEXTCOLOR", (0, rang), (1, rang), BORDEAUX),
+                # Date en pastille pleine, comme le PDF de l'écran.
+                ("BACKGROUND", (0, rang), (0, rang), BORDEAUX),
+                ("TEXTCOLOR", (0, rang), (0, rang), colors.white),
+                ("FONTNAME", (0, rang), (0, rang), "Helvetica-Bold"),
+                ("TEXTCOLOR", (1, rang), (1, rang), BORDEAUX),
                 ("TEXTCOLOR", (3, rang), (-1, rang), BORDEAUX),
                 ("FONTNAME", (3, rang), (3, rang), "Helvetica-Bold"),
             ]
@@ -558,7 +562,7 @@ XL_ROUGE = "DC2626"
 XL_AMBRE = "B45309"
 XL_BORDURE = "D1D5DB"
 XL_BORDEAUX = "800020"
-XL_BORDEAUX_CLAIR = "F8E1E6"
+XL_BORDEAUX_CLAIR = "F3C4CE"
 XL_FORMAT_MONTANT = "#,##0.00;[Red]-#,##0.00"
 XL_FORMAT_DATE = "dd/mm/yyyy"
 
@@ -703,6 +707,10 @@ def _xlsx(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclu
             c.border = bordure
             if a_valoir:
                 c.fill = fond_a_valoir
+                if col == 1:
+                    # Colonne N° en pastille pleine, comme l'export de l'écran.
+                    c.fill = remplir(XL_BORDEAUX)
+                    c.font = Font(color="FFFFFF", size=10, bold=True)
             elif index % 2 == 1:
                 c.fill = zebre
             if col == 1:

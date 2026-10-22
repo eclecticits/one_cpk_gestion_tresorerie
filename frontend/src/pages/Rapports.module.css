@@ -607,8 +607,14 @@
 
 /* Avance « à valoir » : même bordeaux que les exports (journalAValoir.ts). */
 .journalAValoirRow td {
-  background: #f8e1e6;
+  background: #f3c4ce;
   color: #800020;
+  font-weight: 600;
+}
+
+/* Liseré plein à gauche : la ligne se repère en faisant défiler. */
+.journalAValoirRow td:first-child {
+  box-shadow: inset 5px 0 0 #800020;
 }
 
 .journalAValoirRow .journalLibelle,

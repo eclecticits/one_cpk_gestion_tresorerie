@@ -7,7 +7,7 @@ import { formatAmount, toNumber } from './amount'
  * envoyées par le serveur (`backend/app/services/journaux_annexes.py`).
  */
 export const A_VALOIR_BORDEAUX = '800020'
-export const A_VALOIR_FOND = 'F8E1E6'
+export const A_VALOIR_FOND = 'F3C4CE'
 export const A_VALOIR_PREFIXE = 'À VALOIR — '
 
 type LigneAValoir = {

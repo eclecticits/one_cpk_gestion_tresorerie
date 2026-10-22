@@ -13,7 +13,7 @@ import { alerteAValoir, bilanAValoir, etatAValoir, libelleAvecAValoir } from './
 
 // Avances à valoir : même bordeaux que l'Excel (`A_VALOIR_BORDEAUX`, `A_VALOIR_FOND`).
 const BORDEAUX: [number, number, number] = [128, 0, 32]
-const BORDEAUX_FOND: [number, number, number] = [248, 225, 230]
+const BORDEAUX_FOND: [number, number, number] = [243, 196, 206]
 
 type JournalLine = {
   date: string | Date
@@ -245,6 +245,13 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
         hookData.cell.styles.textColor = row?.__sortie ? [185, 28, 28] : [148, 163, 184]
       }
       if (row?.__aValoir) {
+        // Date en pastille pleine : la ligne se repère d'un coup d'œil.
+        if (hookData.column.index === 0) {
+          hookData.cell.styles.fillColor = BORDEAUX
+          hookData.cell.styles.textColor = [255, 255, 255]
+          hookData.cell.styles.fontStyle = 'bold'
+          return
+        }
         hookData.cell.styles.fillColor = BORDEAUX_FOND
         if (hookData.column.index !== 2) hookData.cell.styles.textColor = BORDEAUX
         if (hookData.column.index === 1 || hookData.column.index === 3) hookData.cell.styles.fontStyle = 'bold'

@@ -27,7 +27,7 @@ const TEAL = '0F766E'
 const BORDER = 'D1D5DB'
 // Avances « à valoir » (`journalAValoir.ts`) : rouge bordeaux sur fond rosé.
 const BORDEAUX = '800020'
-const BORDEAUX_SOFT = 'F8E1E6'
+const BORDEAUX_SOFT = 'F3C4CE'
 const WHITE = 'FFFFFF'
 const MONEY_FORMAT = '#,##0.00;[Red]-#,##0.00'
 const DATE_FORMAT = 'dd/mm/yyyy'
@@ -120,6 +120,14 @@ const bodyVariants = rowStyleVariants(bodyStyle)
 const alternateBodyVariants = rowStyleVariants(alternateBodyStyle)
 const totalVariants = rowStyleVariants(totalStyle)
 const footerTotalVariants = rowStyleVariants(footerTotalStyle)
+/** Pastille de la colonne N° d'une ligne bordeaux : pleine, elle se voit de loin. */
+const bordeauxMarkerStyle: CellStyle = {
+  font: { bold: true, color: { rgb: WHITE }, sz: 10 },
+  fill: { patternType: 'solid', fgColor: { rgb: BORDEAUX } },
+  alignment: { horizontal: 'center', vertical: 'center' },
+  border: thinBorder,
+}
+
 const highlightedBodyVariants = Object.fromEntries(
   Object.entries({
     positive: GREEN_LIGHT,
@@ -420,7 +428,7 @@ export function createReportListSheet(
         cell.c = notes
       }
       cell.s = ordinal && columnIndex === 0
-        ? variants.centered
+        ? rowTone === 'bordeaux' ? bordeauxMarkerStyle : variants.centered
         : moneyColumns.has(columnIndex)
         ? variants.money
         : dateColumns.has(columnIndex) && cell.t === 'n'
