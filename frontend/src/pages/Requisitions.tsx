@@ -27,7 +27,7 @@ import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
 import FiltresMobileToggle from '../components/FiltresMobileToggle'
 import { format, subDays } from 'date-fns'
-import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, FileText, X, MoreHorizontal, Plus, Loader2 } from 'lucide-react'
+import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, FileText, X, MoreHorizontal, Plus, Loader2, Copy, RotateCcw, AlertTriangle } from 'lucide-react'
 // jsPDF/jspdf-autotable sont lourds : on charge ../utils/pdfGenerator dynamiquement,
 // au moment de l'action (impression/téléchargement), plutôt qu'au chargement de la page.
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
@@ -60,7 +60,7 @@ import ProjetActiviteSelect from '../components/ProjetActiviteSelect'
 import { genererRapportDecaissement } from '../utils/pdfRapportDecaissement'
 import ExportAnnulationsToggle from '../components/ExportAnnulationsToggle'
 import OrganisationAutocomplete from '../components/OrganisationAutocomplete'
-import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
+import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, saisieDepuis, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
 import { fondsTiersDisponible, listFondsTiers, type FondsTiersOperation } from '../api/mouvementsHorsBudget'
 
 // Résumé calculé par le backend quand les lignes ne s'accordent pas sur leur
@@ -870,8 +870,16 @@ export default function Requisitions() {
     }
   }, [defaultServiceId, formData.service_id])
 
+  // Service posé par la copie d'une réquisition : ses postes viennent d'être
+  // repris, ils ne doivent pas être effacés comme lors d'un changement manuel.
+  const conserverPostesServiceRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (!formData.service_id) return
+    if (conserverPostesServiceRef.current === formData.service_id) {
+      conserverPostesServiceRef.current = null
+      return
+    }
     setGroupesDepense((prev) =>
       prev.map((groupe) => ({
         ...groupe,
@@ -1598,6 +1606,138 @@ export default function Requisitions() {
   const [rapportDecaissementEnCours, setRapportDecaissementEnCours] = useState(false)
   // Projet facultatif de la réquisition en cours de saisie ('' = aucun).
   const [projetActiviteId, setProjetActiviteId] = useState('')
+
+  // Copie d'une réquisition existante (?copie=<id>) : le formulaire de création
+  // repart de ses données pour éviter de ressaisir des dizaines de lignes. Ne
+  // sont repris que les éléments de saisie ; la date, la pièce jointe, le
+  // workflow et les fonds de tiers retenus (dont le solde a pu bouger) restent
+  // à établir pour la nouvelle pièce.
+  const [copieSource, setCopieSource] = useState<{ id: string; numero: string } | null>(null)
+  const [copieEnCours, setCopieEnCours] = useState(false)
+  const copieId = isCreatePage ? searchParams.get('copie') : null
+
+  useEffect(() => {
+    if (!copieId) return
+    let annule = false
+    const reprendre = async () => {
+      setCopieEnCours(true)
+      try {
+        const [reqRes, lignesRes]: any[] = await Promise.all([
+          apiRequest('GET', '/requisitions', { params: { id: copieId, limit: 1 } }),
+          apiRequest('GET', '/lignes-requisition', { params: { requisition_id: copieId } }),
+        ])
+        if (annule) return
+        const source = (Array.isArray(reqRes) ? reqRes : reqRes?.items ?? reqRes?.data ?? [])[0]
+        if (!source) throw new Error('Réquisition introuvable.')
+        const lignesSource: any[] = Array.isArray(lignesRes) ? lignesRes : lignesRes?.items ?? lignesRes?.data ?? []
+
+        const nature = String(source.nature_requisition || 'BUDGETAIRE').toUpperCase() as
+          'BUDGETAIRE' | 'HORS_BUDGET' | 'FONDS_DE_TIERS'
+        const modeSource: ModePaiement = (
+          source.mode_paiement && source.mode_paiement !== MODE_PAIEMENT_MIXTE ? source.mode_paiement : 'cash'
+        ) as ModePaiement
+        const compteSource = source.compte_bancaire_id ?? null
+        // Un service hors de ceux de l'utilisateur serait refusé à l'envoi : on
+        // garde alors celui que le formulaire a déjà retenu.
+        const serviceSource = source.service_id != null
+          && (!isServiceUser || serviceIds.includes(Number(source.service_id)))
+          ? String(source.service_id)
+          : ''
+
+        // Les lignes stockées portent déjà le règlement hérité : on ne garde en
+        // dérogation que ce qui diffère réellement de la pièce.
+        let derogation = false
+        const lignesCopiees: LigneFormulaire[] = lignesSource.map((l) => {
+          const mode = l.mode_paiement ?? null
+          const compte = l.compte_bancaire_id ?? null
+          const herite = !mode || (mode === modeSource && (mode !== 'virement' || compte === compteSource))
+          if (!herite) derogation = true
+          return {
+            budget_poste_id: l.budget_poste_id ?? null,
+            rubrique: l.rubrique || '',
+            description: l.description || '',
+            quantite: Number(l.quantite) || 1,
+            montant_unitaire: toNumber(l.montant_unitaire),
+            montant_total: toNumber(l.montant_total),
+            // Les montants des lignes sont enregistrés en USD.
+            devise: 'USD',
+            mode_paiement: herite ? null : mode,
+            compte_bancaire_id: herite ? null : compte,
+          }
+        })
+
+        resetForm()
+        setFormData((prev) => {
+          if (serviceSource && serviceSource !== prev.service_id) {
+            conserverPostesServiceRef.current = serviceSource
+          }
+          return {
+          ...prev,
+          objet: source.objet || '',
+          mode_paiement: modeSource,
+          compte_bancaire_id: modeSource === 'virement' && compteSource != null ? String(compteSource) : '',
+          type_requisition: 'classique',
+          nature_requisition: nature,
+          montant_autorise: nature !== 'BUDGETAIRE' && !(source.fonds_tiers_lignes?.length)
+            ? String(toNumber(source.montant_total) || '')
+            : '',
+          service_id: serviceSource || prev.service_id,
+          beneficiaire: source.beneficiaire || '',
+          tiers_organisation_id: source.tiers_organisation_id ?? null,
+          tiers_nom_libre: source.tiers_nom_libre || '',
+          a_valoir: Boolean(source.a_valoir),
+          decaissement_progressif: Boolean(source.decaissement_progressif),
+          instance_beneficiaire: source.instance_beneficiaire || '',
+          notes_a_valoir: source.notes_a_valoir || '',
+          }
+        })
+        choixProgressifRef.current = Boolean(source.decaissement_progressif)
+        setBeneficiaireSaisie(saisieDepuis(source))
+        setProjetActiviteId(source.project_activity_id != null ? String(source.project_activity_id) : '')
+        if (lignesCopiees.length > 0) {
+          const groupes = groupLignesByBudgetPoste(lignesCopiees, makeDraftId)
+          setGroupesDepense(groupes)
+          setActiveGroupId(groupes[0]?.id ?? null)
+        }
+        setReglementParLigne(derogation)
+        setCopieSource({ id: String(source.id), numero: source.numero_requisition || '' })
+      } catch (error: any) {
+        if (annule) return
+        setNotification({
+          show: true,
+          type: 'error',
+          title: 'Copie impossible',
+          message: error?.message || 'Impossible de reprendre les données de cette réquisition.'
+        })
+      } finally {
+        if (!annule) setCopieEnCours(false)
+      }
+    }
+    reprendre()
+    return () => { annule = true }
+    // Seul l'identifiant à copier déclenche la reprise : les autres valeurs lues
+    // sont celles du moment, une relecture ultérieure écraserait la saisie.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [copieId])
+
+  useEffect(() => {
+    if (!copieId) setCopieSource(null)
+  }, [copieId])
+
+  // Quitter la copie pour une saisie vierge, sans quitter la page.
+  const abandonnerCopie = () => {
+    resetForm()
+    setCopieSource(null)
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('copie')
+    setSearchParams(nextParams, { replace: true })
+  }
+
+  const dupliquerRequisition = (req: Requisition) => {
+    setShowDetailModal(false)
+    navigate(`/requisitions/nouvelle?copie=${encodeURIComponent(String(req.id))}`)
+  }
+
   const imprimerRapportDecaissement = async (requisition: Requisition) => {
     setRapportDecaissementEnCours(true)
     try {
@@ -1953,6 +2093,14 @@ export default function Requisitions() {
   const budgetLinesById = useMemo(() => {
     return new Map(budgetLines.map(line => [line.id, line]))
   }, [budgetLines])
+  // Postes repris qui ne sont plus ouverts au service (budget clos, poste
+  // désactivé) : la copie les signale plutôt que de les laisser échouer à l'envoi.
+  const postesCopiesIndisponibles = useMemo(() => {
+    if (!copieSource || budgetLines.length === 0) return []
+    return groupesDepense.filter(
+      (groupe) => groupe.budget_poste_id != null && !budgetLinesById.has(Number(groupe.budget_poste_id))
+    )
+  }, [copieSource, budgetLines, budgetLinesById, groupesDepense])
   const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
   const budgetTree = useMemo(() => {
     const nodes = new Map<number, any>()
@@ -2494,6 +2642,8 @@ export default function Requisitions() {
   }
 
   const canCreate = hasPermission('requisitions')
+  // Même accès que la route de création, qui s'ouvre aussi aux services.
+  const canDupliquer = canCreate || hasPermission('services')
 
   const totalRequisitions = filteredRequisitions.reduce((sum, r) => sum + toNumber(r.montant_total), 0)
 
@@ -2617,7 +2767,11 @@ export default function Requisitions() {
     <div className={styles.container}>
       <PageHeader
         title={isCreatePage ? 'Nouvelle réquisition' : 'Réquisitions de fonds'}
-        subtitle={isCreatePage ? 'Demande de fonds et engagement budgétaire' : "Demandes et workflow d'approbation"}
+        subtitle={isCreatePage
+          ? copieSource?.numero
+            ? `Copie de ${copieSource.numero}`
+            : 'Demande de fonds et engagement budgétaire'
+          : "Demandes et workflow d'approbation"}
         actions={
           isCreatePage ? (
             <div className={styles.headerActions}>
@@ -2993,6 +3147,50 @@ export default function Requisitions() {
         <div className={styles.createPageShell}>
           <div className={styles.createPageContent}>
             <form id="requisition-form" onSubmit={handleSubmit} className={`${styles.form} ${styles.createForm}`}>
+              {copieEnCours && (
+                <div className={styles.copieBanner} role="status">
+                  <span className={styles.copieBannerIcon} aria-hidden="true">
+                    <Loader2 size={18} className={styles.spin} />
+                  </span>
+                  <div className={styles.copieBannerText}>
+                    <strong>Reprise des données en cours…</strong>
+                    <span>Les lignes de la réquisition d'origine arrivent dans le formulaire.</span>
+                  </div>
+                </div>
+              )}
+              {!copieEnCours && copieSource && (
+                <div className={styles.copieBanner} role="status">
+                  <span className={styles.copieBannerIcon} aria-hidden="true">
+                    <Copy size={18} />
+                  </span>
+                  <div className={styles.copieBannerText}>
+                    <strong>
+                      Copie de la réquisition{' '}
+                      <span className={styles.copieBannerRef}>{copieSource.numero || 'd’origine'}</span>
+                    </strong>
+                    <span>
+                      Une nouvelle réquisition sera créée en brouillon ; l'originale ne change pas.
+                      Ajustez ce qui doit l'être avant d'enregistrer.
+                    </span>
+                    <ul className={styles.copieChecklist}>
+                      <li><strong>À vérifier :</strong> objet, bénéficiaire, quantités et montants.</li>
+                      <li><strong>Remis à neuf :</strong> date (aujourd'hui), pièce jointe, validations{formData.nature_requisition === 'FONDS_DE_TIERS' ? ', fonds de tiers retenus' : ''}.</li>
+                    </ul>
+                    {postesCopiesIndisponibles.length > 0 && (
+                      <p className={styles.copieWarning}>
+                        <AlertTriangle size={14} aria-hidden="true" />
+                        {postesCopiesIndisponibles.length === 1
+                          ? `Le poste « ${postesCopiesIndisponibles[0].rubrique} » n'est plus ouvert à ce service : choisissez-en un autre.`
+                          : `${postesCopiesIndisponibles.length} postes ne sont plus ouverts à ce service : choisissez-en d'autres (signalés ci-dessous).`}
+                      </p>
+                    )}
+                  </div>
+                  <button type="button" className={styles.copieResetBtn} onClick={abandonnerCopie}>
+                    <RotateCcw size={14} aria-hidden="true" />
+                    Repartir de zéro
+                  </button>
+                </div>
+              )}
               <div className={styles.createFormIntro}>
                 <div>
                   <span className={styles.sectionEyebrow}>Dépense</span>
@@ -3459,7 +3657,15 @@ export default function Requisitions() {
                             <div className={styles.budgetGroupTop}>
                               <div className={styles.budgetGroupIdentity}>
                                 <strong id={`req-poste-title-${groupe.id}`}>Poste {groupIndex + 1}</strong>
-                                <span>{budgetLine ? budgetLine.code : 'Imputation à choisir'}</span>
+                                {budgetLine ? (
+                                  <span>{budgetLine.code}</span>
+                                ) : copieSource && groupe.budget_poste_id != null && budgetLines.length > 0 ? (
+                                  <span className={styles.posteIndisponible}>
+                                    <AlertTriangle size={12} aria-hidden="true" /> Poste fermé — à remplacer
+                                  </span>
+                                ) : (
+                                  <span>Imputation à choisir</span>
+                                )}
                               </div>
                               {groupesDepense.length > 1 && (
                                 <button
@@ -4176,6 +4382,14 @@ export default function Requisitions() {
                                 onSelect: () => { void openRequisitionAnnexe((req as any).annexe) },
                               }]
                             : []),
+                          ...(canDupliquer
+                            ? [{
+                                cle: 'dupliquer',
+                                libelle: 'Dupliquer et modifier',
+                                icone: <Copy size={15} />,
+                                onSelect: () => dupliquerRequisition(req),
+                              }]
+                            : []),
                           {
                             cle: 'imprimer',
                             libelle: 'Imprimer la réquisition',
@@ -4400,6 +4614,17 @@ export default function Requisitions() {
                       ? <Loader2 size={14} className={styles.spin} aria-hidden="true" />
                       : <Printer size={14} aria-hidden="true" />}
                     Rapport de décaissement
+                  </button>
+                )}
+                {canDupliquer && (
+                  <button
+                    type="button"
+                    className={styles.editReqBtn}
+                    onClick={() => dupliquerRequisition(selectedRequisition)}
+                    title="Créer une nouvelle réquisition pré-remplie avec celle-ci"
+                  >
+                    <Copy size={14} aria-hidden="true" />
+                    Dupliquer et modifier
                   </button>
                 )}
                 <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn} aria-label="Fermer la fiche"><X size={18} aria-hidden="true" /></button>
