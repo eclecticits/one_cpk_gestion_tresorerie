@@ -85,6 +85,9 @@ class ParticipantTransport(Base):
         ForeignKey("experts_comptables.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Rang d'impression choisi à la saisie ; absent sur les remboursements
+    # antérieurs, classés alors par fonction.
+    ordre: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 

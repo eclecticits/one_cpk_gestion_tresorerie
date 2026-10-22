@@ -17,6 +17,7 @@ class ParticipantTransportBase(DecimalBaseModel):
     montant: Decimal = Field(default=0)
     type_participant: Literal["principal", "assistant"]
     expert_comptable_id: UUID | None = None
+    ordre: int | None = None
 
 
 class ParticipantTransportCreate(ParticipantTransportBase):
@@ -29,6 +30,11 @@ class ParticipantTransportResponse(ParticipantTransportBase):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
+
+
+class ParticipantsTransportOrdre(DecimalBaseModel):
+    # Identifiants des participants, dans l'ordre voulu à l'impression.
+    participant_ids: list[UUID]
 
 
 class RemboursementTransportBase(DecimalBaseModel):

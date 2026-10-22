@@ -41,7 +41,7 @@ import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { isAssistantMember, resolveMemberFunctionLabel, trierParHierarchie } from '../utils/serviceMemberFunctions'
-import { Paperclip, Printer, Search, SearchX, Users } from 'lucide-react'
+import { ArrowDown, ArrowUp, Paperclip, Printer, Search, SearchX, Users } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import BudgetPosteSelect from '../components/BudgetPosteSelect'
 import styles from './RemboursementTransport.module.css'
@@ -87,9 +87,20 @@ interface Participant {
   expert_comptable_id?: string
   // Coché d'après la liste de présence signée : un absent n'est pas remboursé.
   present?: boolean
+  // Rang à l'impression : l'ordre des lignes du formulaire.
+  ordre?: number | null
 }
 
 const isPresent = (p: Participant) => p.present !== false
+
+// Déplace la ligne `index` d'un cran (delta = -1 vers le haut, +1 vers le bas).
+function deplacer<T>(liste: T[], index: number, delta: number): T[] {
+  const cible = index + delta
+  if (cible < 0 || cible >= liste.length) return liste
+  const copie = [...liste]
+  ;[copie[index], copie[cible]] = [copie[cible], copie[index]]
+  return copie
+}
 
 interface ExpertComptable {
   id: string
@@ -121,6 +132,9 @@ export default function RemboursementTransport() {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRemboursementDetails, setSelectedRemboursementDetails] = useState<RemboursementTransport | null>(null)
   const [selectedParticipants, setSelectedParticipants] = useState<Participant[]>([])
+  // Ordre des participants modifié dans la fiche, pas encore enregistré.
+  const [ordreFicheModifie, setOrdreFicheModifie] = useState(false)
+  const [ordreFicheEnCours, setOrdreFicheEnCours] = useState(false)
   const [selectedBudgetLines, setSelectedBudgetLines] = useState<BudgetDecisionLine[]>([])
   const [selectedRemboursementUsers, setSelectedRemboursementUsers] = useState<{
     demandeur?: { prenom: string; nom: string }
@@ -503,10 +517,11 @@ export default function RemboursementTransport() {
 
       const remboursementData: any = await apiRequest('POST', '/remboursements-transport', remboursementInsert)
 
+      // L'ordre des lignes du formulaire est celui du PDF.
       const allParticipants = [
         ...participants.filter(p => p.nom.trim() !== '' && isPresent(p)),
         ...assistants.filter(p => p.nom.trim() !== '' && isPresent(p))
-      ]
+      ].map((p, index) => ({ ...p, ordre: index + 1 }))
 
       if (allParticipants.length > 0) {
         await apiRequest('POST', '/participants-transport', allParticipants.map(p => ({
@@ -515,7 +530,8 @@ export default function RemboursementTransport() {
           titre_fonction: p.titre_fonction,
           montant: p.montant,
           type_participant: p.type_participant,
-          expert_comptable_id: p.expert_comptable_id || null
+          expert_comptable_id: p.expert_comptable_id || null,
+          ordre: p.ordre,
         })))
       }
 
@@ -764,6 +780,39 @@ export default function RemboursementTransport() {
     setParticipants(newParticipants)
   }
 
+  const moveParticipant = (index: number, delta: number) => {
+    setParticipants((prev) => deplacer(prev, index, delta))
+  }
+
+  const moveAssistant = (index: number, delta: number) => {
+    setAssistants((prev) => deplacer(prev, index, delta))
+  }
+
+  const renderMoveButtons = (index: number, total: number, onMove: (index: number, delta: number) => void, nom: string) => (
+    <>
+      <button
+        type="button"
+        onClick={() => onMove(index, -1)}
+        className={styles.moveBtn}
+        disabled={index === 0}
+        title="Monter"
+        aria-label={`Monter ${nom || 'la ligne'}`}
+      >
+        <ArrowUp size={15} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        onClick={() => onMove(index, 1)}
+        className={styles.moveBtn}
+        disabled={index === total - 1}
+        title="Descendre"
+        aria-label={`Descendre ${nom || 'la ligne'}`}
+      >
+        <ArrowDown size={15} aria-hidden="true" />
+      </button>
+    </>
+  )
+
   const addAssistant = () => {
     setAssistants([...assistants, { nom: '', titre_fonction: '', montant: 0, type_participant: 'assistant' }])
   }
@@ -929,10 +978,9 @@ export default function RemboursementTransport() {
     return participantsTotal + assistantsTotal
   }
 
-  const previewParticipants = trierParHierarchie(
-    [...participants, ...assistants].filter(
-      (p) => isPresent(p) && (p.nom.trim() !== '' || p.titre_fonction.trim() !== '')
-    )
+  // L'aperçu suit l'ordre des lignes du formulaire, comme le PDF.
+  const previewParticipants = [...participants, ...assistants].filter(
+    (p) => isPresent(p) && (p.nom.trim() !== '' || p.titre_fonction.trim() !== '')
   )
   const previewTotal = calculateTotal()
   const previewMontantLettres = numberToWords(previewTotal)
@@ -983,12 +1031,46 @@ export default function RemboursementTransport() {
     }
   }
 
+  // Dans la fiche, un participant ne change de place qu'avec un voisin du même
+  // type : les assistants restent imprimés après les participants principaux.
+  const peutDeplacerFiche = (index: number, delta: number) => {
+    const voisin = selectedParticipants[index + delta]
+    return Boolean(voisin) && voisin.type_participant === selectedParticipants[index].type_participant
+  }
+
+  const deplacerFiche = (index: number, delta: number) => {
+    if (!peutDeplacerFiche(index, delta)) return
+    setSelectedParticipants((prev) => deplacer(prev, index, delta))
+    setOrdreFicheModifie(true)
+  }
+
+  const enregistrerOrdreFiche = async () => {
+    if (!selectedRemboursementDetails) return
+    setOrdreFicheEnCours(true)
+    try {
+      const res: any = await apiRequest(
+        'PUT',
+        `/remboursements-transport/${selectedRemboursementDetails.id}/participants/ordre`,
+        { participant_ids: selectedParticipants.map((p) => p.id) },
+      )
+      setSelectedParticipants(Array.isArray(res) ? res : selectedParticipants)
+      setOrdreFicheModifie(false)
+      setNotification({ show: true, type: 'success', message: 'Ordre enregistré : le PDF a été régénéré.' })
+    } catch (error: any) {
+      console.error('Error saving participants order:', error)
+      setNotification({ show: true, type: 'error', message: error?.message || "Impossible d'enregistrer l'ordre." })
+    } finally {
+      setOrdreFicheEnCours(false)
+    }
+  }
+
   const viewDetails = async (remboursement: RemboursementTransport) => {
     setSelectedRemboursementDetails(remboursement)
     try {
       const participantsRes: any = await apiRequest('GET', '/participants-transport', { params: { remboursement_id: remboursement.id, limit: 500 } })
       const participantsData = Array.isArray(participantsRes) ? participantsRes : (participantsRes as any)?.items ?? (participantsRes as any)?.data ?? []
       setSelectedParticipants(participantsData || [])
+      setOrdreFicheModifie(false)
 
       const requisitionId = remboursement.requisition?.id || remboursement.requisition_id
       if (requisitionId) {
@@ -1605,6 +1687,7 @@ export default function RemboursementTransport() {
 
                 <div className={styles.formSection}>
                   <h3>Participants (Experts comptables)</h3>
+                  <p className={styles.orderHint}>L'ordre des lignes est celui du PDF : utilisez les flèches pour le régler.</p>
                   <div className={styles.tableContainer}>
                     <table className={styles.table}>
                       <thead>
@@ -1671,15 +1754,18 @@ export default function RemboursementTransport() {
                             />
                           </td>
                           <td>
-                            {participants.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => removeParticipant(index)}
-                                className={styles.removeBtn}
-                              >
-                                ×
-                              </button>
-                            )}
+                            <div className={styles.rowActions}>
+                              {renderMoveButtons(index, participants.length, moveParticipant, p.nom)}
+                              {participants.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeParticipant(index)}
+                                  className={styles.removeBtn}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1774,13 +1860,16 @@ export default function RemboursementTransport() {
                                   />
                                 </td>
                                 <td>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeAssistant(index)}
-                                    className={styles.removeBtn}
-                                  >
-                                    ×
-                                  </button>
+                                  <div className={styles.rowActions}>
+                                    {renderMoveButtons(index, assistants.length, moveAssistant, a.nom)}
+                                    <button
+                                      type="button"
+                                      onClick={() => removeAssistant(index)}
+                                      className={styles.removeBtn}
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))
@@ -2557,7 +2646,19 @@ export default function RemboursementTransport() {
               </div>
 
               <div className={styles.detailSection}>
-                <h3>Participants</h3>
+                <div className={styles.detailSectionHeader}>
+                  <h3>Participants</h3>
+                  {ordreFicheModifie && (
+                    <button
+                      type="button"
+                      className={styles.actionBtn}
+                      onClick={() => { void enregistrerOrdreFiche() }}
+                      disabled={ordreFicheEnCours}
+                    >
+                      {ordreFicheEnCours ? 'Enregistrement…' : "Enregistrer l'ordre"}
+                    </button>
+                  )}
+                </div>
                 <div className={styles.detailTableWrap}>
                   <table className={styles.detailTable}>
                     <thead>
@@ -2567,6 +2668,7 @@ export default function RemboursementTransport() {
                         <th>Titre/Fonction</th>
                         <th>Type</th>
                         <th className={styles.numCell}>Montant</th>
+                        <th style={{ width: '80px' }} title="Ordre d'impression">Position</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2587,6 +2689,30 @@ export default function RemboursementTransport() {
                             </span>
                           </td>
                           <td className={styles.numCell}><strong>{formatCurrency(participant.montant)}</strong></td>
+                          <td>
+                            <div className={styles.rowActions}>
+                              <button
+                                type="button"
+                                onClick={() => deplacerFiche(index, -1)}
+                                className={styles.moveBtn}
+                                disabled={!peutDeplacerFiche(index, -1) || ordreFicheEnCours}
+                                title="Monter"
+                                aria-label={`Monter ${participant.nom}`}
+                              >
+                                <ArrowUp size={15} aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deplacerFiche(index, 1)}
+                                className={styles.moveBtn}
+                                disabled={!peutDeplacerFiche(index, 1) || ordreFicheEnCours}
+                                title="Descendre"
+                                aria-label={`Descendre ${participant.nom}`}
+                              >
+                                <ArrowDown size={15} aria-hidden="true" />
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2596,6 +2722,7 @@ export default function RemboursementTransport() {
                         <td className={styles.numCell}>
                           <strong className={styles.detailAmount}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong>
                         </td>
+                        <td />
                       </tr>
                     </tfoot>
                   </table>

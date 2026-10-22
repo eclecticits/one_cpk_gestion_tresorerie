@@ -60,12 +60,17 @@ export function rangFonction(libelle?: string | null): number {
   return 7
 }
 
-export function trierParHierarchie<T extends { nom?: string | null; titre_fonction?: string | null; type_participant?: string | null }>(
+// Un ordre fixé à la saisie (`ordre`) prime : le classement par libellé ne
+// reconnaît pas toutes les fonctions (« Membre du bureau »…).
+export function trierParHierarchie<T extends { nom?: string | null; titre_fonction?: string | null; type_participant?: string | null; ordre?: number | null }>(
   participants: T[],
 ): T[] {
+  const sansOrdre = (p: T) => Number(p.ordre == null)
   return [...participants].sort(
     (a, b) =>
       Number(a.type_participant === 'assistant') - Number(b.type_participant === 'assistant') ||
+      sansOrdre(a) - sansOrdre(b) ||
+      (a.ordre ?? 0) - (b.ordre ?? 0) ||
       rangFonction(a.titre_fonction) - rangFonction(b.titre_fonction) ||
       cleLibelle(a.nom).localeCompare(cleLibelle(b.nom)),
   )

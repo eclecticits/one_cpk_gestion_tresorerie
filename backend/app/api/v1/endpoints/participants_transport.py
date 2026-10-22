@@ -62,6 +62,7 @@ async def list_participants_transport(
             montant=p.montant,
             type_participant=p.type_participant,
             expert_comptable_id=str(p.expert_comptable_id) if p.expert_comptable_id else None,
+            ordre=p.ordre,
             created_at=p.created_at,
         )
         for p in participants
@@ -106,6 +107,7 @@ async def create_participants_transport(
             montant=item.montant or Decimal(0),
             type_participant=item.type_participant,
             expert_comptable_id=expert_id,
+            ordre=item.ordre,
         )
         db.add(p)
         created.append(p)
@@ -123,6 +125,7 @@ async def create_participants_transport(
             montant=p.montant,
             type_participant=p.type_participant,
             expert_comptable_id=str(p.expert_comptable_id) if p.expert_comptable_id else None,
+            ordre=p.ordre,
             created_at=p.created_at,
         )
         for p in created

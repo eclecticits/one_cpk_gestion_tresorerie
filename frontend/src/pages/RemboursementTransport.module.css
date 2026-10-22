@@ -1263,6 +1263,49 @@
   background: #fecaca;
 }
 
+/* Flèches de position d'un participant : l'ordre des lignes est celui du PDF. */
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.moveBtn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: var(--color-text-muted, #374151);
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.moveBtn:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.moveBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.orderHint {
+  margin: -4px 0 10px;
+  font-size: 13px;
+  color: var(--color-text-muted, #64748b);
+}
+
+.detailSectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
 .total {
   display: flex;
   justify-content: space-between;

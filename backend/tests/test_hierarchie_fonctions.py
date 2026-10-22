@@ -3,8 +3,8 @@ from types import SimpleNamespace
 from app.utils.hierarchie_fonctions import trier_participants
 
 
-def _p(nom: str, fonction: str, type_participant: str = "principal") -> SimpleNamespace:
-    return SimpleNamespace(nom=nom, titre_fonction=fonction, type_participant=type_participant)
+def _p(nom: str, fonction: str, type_participant: str = "principal", ordre: int | None = None) -> SimpleNamespace:
+    return SimpleNamespace(nom=nom, titre_fonction=fonction, type_participant=type_participant, ordre=ordre)
 
 
 def test_conseil_president_puis_bureau_puis_membres_puis_assistants():
@@ -32,3 +32,15 @@ def test_conseil_president_puis_bureau_puis_membres_puis_assistants():
         "KULE",
         "ASSISTANTE",
     ]
+
+
+def test_ordre_saisi_prime_sur_la_fonction():
+    # « Membre du bureau » n'est pas reconnu par le classement par fonction :
+    # l'ordre fixé à la saisie le place où l'utilisateur l'a voulu.
+    participants = [
+        _p("KIPAMPE", "Membre du conseil", ordre=3),
+        _p("ASSISTANTE", "Assistant(e)", "assistant", ordre=1),
+        _p("MUKENDI", "Membre du bureau", ordre=2),
+        _p("TUMBA", "Président", ordre=1),
+    ]
+    assert [p.nom for p in trier_participants(participants)] == ["TUMBA", "MUKENDI", "KIPAMPE", "ASSISTANTE"]

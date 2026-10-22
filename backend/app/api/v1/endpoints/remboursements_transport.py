@@ -27,6 +27,7 @@ from app.models.user import User
 from app.schemas.remboursement_transport import (
     ParticipantTransportCreate,
     ParticipantTransportResponse,
+    ParticipantsTransportOrdre,
     RemboursementTransportBrouillonResponse,
     RemboursementTransportBrouillonSave,
     RemboursementTransportCreate,
@@ -222,6 +223,7 @@ async def list_remboursements_transport(
                         montant=p.montant,
                         type_participant=p.type_participant,
                         expert_comptable_id=str(p.expert_comptable_id) if p.expert_comptable_id else None,
+                        ordre=p.ordre,
                         created_at=p.created_at,
                     )
                 )
@@ -561,6 +563,7 @@ async def list_participants_transport(
             montant=p.montant,
             type_participant=p.type_participant,
             expert_comptable_id=str(p.expert_comptable_id) if p.expert_comptable_id else None,
+            ordre=p.ordre,
             created_at=p.created_at,
         )
         for p in participants
@@ -606,6 +609,7 @@ async def create_participants_transport(
             montant=item.montant or Decimal(0),
             type_participant=item.type_participant,
             expert_comptable_id=expert_id,
+            ordre=item.ordre,
         )
         db.add(p)
         created.append(p)
@@ -631,9 +635,59 @@ async def create_participants_transport(
             montant=p.montant,
             type_participant=p.type_participant,
             expert_comptable_id=str(p.expert_comptable_id) if p.expert_comptable_id else None,
+            ordre=p.ordre,
             created_at=p.created_at,
         )
         for p in created
+    ]
+
+
+@router.put("/{remboursement_id}/participants/ordre", response_model=list[ParticipantTransportResponse])
+async def reorder_participants_transport(
+    remboursement_id: str,
+    payload: ParticipantsTransportOrdre,
+    user: User = Depends(has_any_permission(["remboursement_transport", "menu_services"])),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[ParticipantTransportResponse]:
+    """Fixe l'ordre d'impression des participants, puis régénère le PDF."""
+    rid = _coerce_uuid(remboursement_id, "remboursement_id")
+    remb_res = await db.execute(
+        select(RemboursementTransport).where(
+            RemboursementTransport.id == rid,
+            RemboursementTransport.organisation_id == tenant_id,
+        )
+    )
+    remboursement = remb_res.scalar_one_or_none()
+    if remboursement is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remboursement introuvable")
+
+    p_res = await db.execute(select(ParticipantTransport).where(ParticipantTransport.remboursement_id == rid))
+    par_id = {p.id: p for p in p_res.scalars().all()}
+    if len(payload.participant_ids) != len(set(payload.participant_ids)) or set(payload.participant_ids) != set(par_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La liste doit reprendre chaque participant du remboursement, une seule fois.",
+        )
+    for rang, pid in enumerate(payload.participant_ids, start=1):
+        par_id[pid].ordre = rang
+    await db.commit()
+    await ensure_remboursement_official_pdf(db, remboursement, regenerate=True)
+    await db.commit()
+
+    return [
+        ParticipantTransportResponse(
+            id=str(p.id),
+            remboursement_id=str(p.remboursement_id),
+            nom=p.nom,
+            titre_fonction=p.titre_fonction,
+            montant=p.montant,
+            type_participant=p.type_participant,
+            expert_comptable_id=str(p.expert_comptable_id) if p.expert_comptable_id else None,
+            ordre=p.ordre,
+            created_at=p.created_at,
+        )
+        for p in trier_participants(par_id.values())
     ]
 
 
