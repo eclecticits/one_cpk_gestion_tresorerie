@@ -28,6 +28,23 @@ logger = logging.getLogger("onec_cpk_api.notifications.meta")
 _TIMEOUT_SECONDS = 20
 _DEFAULT_GRAPH_VERSION = "v21.0"
 _DEFAULT_LANGUAGE = "fr"
+#: Plafond du corps d'un template Meta, texte fixe compris : on garde de la marge.
+_TEMPLATE_PARAM_MAX = 900
+
+
+def _template_param(text: str) -> str:
+    """Message rendu → paramètre de template acceptable par Meta.
+
+    Meta rejette (erreur 132018) un paramètre qui contient un saut de ligne, une
+    tabulation ou plus de quatre espaces d'affilée — or nos messages sont écrits
+    sur plusieurs lignes. Les lignes sont donc mises bout à bout, sans les
+    filets décoratifs (━━━), qui n'ont de sens que sur plusieurs lignes.
+    """
+    lines = [" ".join(line.split()) for line in (text or "").splitlines()]
+    flat = " · ".join(line for line in lines if any(c.isalnum() for c in line))
+    if len(flat) > _TEMPLATE_PARAM_MAX:
+        flat = flat[: _TEMPLATE_PARAM_MAX - 1].rstrip() + "…"
+    return flat
 
 
 class MetaWhatsAppProvider(WhatsAppProvider):
@@ -97,7 +114,7 @@ class MetaWhatsAppProvider(WhatsAppProvider):
                     "components": [
                         {
                             "type": "body",
-                            "parameters": [{"type": "text", "text": text}],
+                            "parameters": [{"type": "text", "text": _template_param(text)}],
                         }
                     ],
                 },

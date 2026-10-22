@@ -149,6 +149,47 @@ async def test_meta_bascule_en_gabarit_approuve_quand_il_est_configure(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_meta_met_le_message_sur_une_ligne_dans_le_gabarit(monkeypatch):
+    """Meta refuse (132018) un paramètre avec saut de ligne ou 5 espaces de suite."""
+    capture = _Capture(payload={"messages": [{"id": "wamid.ZZ"}]}).install(monkeypatch)
+    provider = MetaWhatsAppProvider(
+        ProviderConfig(api_key="EAAG...", phone_number_id="123456", extra={"template_name": "notif"})
+    )
+
+    await provider.send_message(to="243810123456", text="Paiement reçu\nMontant :     50 USD\n\n_Message automatique_")
+
+    import json
+
+    param = json.loads(capture.request.content)["template"]["components"][0]["parameters"][0]["text"]
+    assert param == "Paiement reçu · Montant : 50 USD · _Message automatique_"
+
+
+def test_les_gabarits_par_defaut_retirent_les_champs_vides_malgre_la_mise_en_forme():
+    message = templates.render_event(
+        "PAYMENT_COMPLEMENT",
+        {"organisation": "CPK", "montant": "10,00", "devise": "USD", "date": "22/10/2026"},
+    )
+    assert "Date :* 22/10/2026" in message
+    # Référence vide (« __ »), total et reste vides (« ▸ *Reste à payer :* USD ») : retirés.
+    assert "__" not in message
+    assert "Reste à payer" not in message
+    assert "Total de la note" not in message
+
+
+@pytest.mark.asyncio
+async def test_meta_ne_transmet_pas_les_filets_decoratifs(monkeypatch):
+    capture = _Capture(payload={"messages": [{"id": "wamid.F"}]}).install(monkeypatch)
+    provider = MetaWhatsAppProvider(
+        ProviderConfig(api_key="EAAG...", phone_number_id="123456", extra={"template_name": "notif"})
+    )
+
+    await provider.send_message(to="243810123456", text="*CPK*\n━━━━━━\n*TEST*")
+
+    param = json.loads(capture.request.content)["template"]["components"][0]["parameters"][0]["text"]
+    assert param == "*CPK* · *TEST*"
+
+
+@pytest.mark.asyncio
 async def test_meta_sans_numero_emetteur_est_explicite():
     provider = MetaWhatsAppProvider(ProviderConfig(api_key="EAAG..."))
     ok, raison = provider.is_configured()
@@ -277,11 +318,13 @@ def test_le_gabarit_de_sortie_rend_le_message_attendu():
         },
     )
     for attendu in [
-        "ONEC CPK — SORTIE DE FONDS",
-        "Référence : SOR-2026-0142",
-        "Montant : 1 500,00 USD",
-        "Canal : Banque",
-        "Poste budgétaire : Charges administratives",
+        "*ONEC CPK*",
+        "SORTIE DE FONDS*",
+        "_SOR-2026-0142_",
+        "Montant : *1 500,00 USD*",
+        "▸ *Canal :* Banque",
+        "▸ *Poste budgétaire :* Charges administratives",
+        "_Enregistrée par : Christian KIDIKALA_",
     ]:
         assert attendu in message
 

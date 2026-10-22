@@ -18,7 +18,7 @@
  *     ou rouge n'est pas lisible pour tout le monde.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   BadgeCheck,
@@ -75,6 +75,7 @@ type ConfigForm = {
   sender: string
   phone_number_id: string
   business_account_id: string
+  template_name: string
 }
 
 /**
@@ -145,7 +146,36 @@ const SAMPLE_VALUES: Record<string, string> = {
 const PLACEHOLDER_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g
 
 /** Miroir de `_strip_empty_fields` : « Étiquette : » sans valeur disparaît. */
-const EMPTY_FIELD_RE = /^[^:]{1,40}:\s*$/
+const EMPTY_FIELD_RE = /^[^:]{1,40}:\s*(USD|CDF|EUR)?\s*$/
+/** Mise en forme WhatsApp et puces, ignorées pour juger d'une ligne vide (cf. `templates.py`). */
+const FORMATTING_RE = /[*_~`▸•]/g
+
+/** Ligne qui n'a plus que son étiquette ou sa mise en forme : le serveur la retire. */
+function isEmptyField(line: string): boolean {
+  const bare = line.replace(FORMATTING_RE, '').trim()
+  return Boolean(line.trim()) && (!bare || EMPTY_FIELD_RE.test(bare))
+}
+
+/** *gras*, _italique_, ~barré~ et `code` rendus comme dans WhatsApp. */
+function renderWhatsAppFormatting(text: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  const re = /(\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~|`[^`\n]+`)/g
+  let last = 0
+  let key = 0
+  for (const match of text.matchAll(re)) {
+    const index = match.index ?? 0
+    if (index > last) nodes.push(text.slice(last, index))
+    const token = match[0]
+    const inner = token.slice(1, -1)
+    if (token[0] === '*') nodes.push(<strong key={key++}>{inner}</strong>)
+    else if (token[0] === '_') nodes.push(<em key={key++}>{inner}</em>)
+    else if (token[0] === '~') nodes.push(<s key={key++}>{inner}</s>)
+    else nodes.push(<code key={key++}>{inner}</code>)
+    last = index + token.length
+  }
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes
+}
 
 const TEMPLATE_MAX_LENGTH = 4000
 
@@ -158,6 +188,7 @@ const EMPTY_FORM: ConfigForm = {
   sender: '',
   phone_number_id: '',
   business_account_id: '',
+  template_name: '',
 }
 
 // ── Utilitaires purs ─────────────────────────────────────────────────────────
@@ -172,6 +203,7 @@ function toForm(settings: WhatsAppSettingsData): ConfigForm {
     sender: settings.sender || '',
     phone_number_id: settings.phone_number_id || '',
     business_account_id: settings.business_account_id || '',
+    template_name: settings.template_name || '',
   }
 }
 
@@ -187,7 +219,7 @@ function renderPreview(template: string, variables: Record<string, string>): str
 
   const kept = substituted
     .split('\n')
-    .filter(line => !EMPTY_FIELD_RE.test(line.trim()))
+    .filter(line => !isEmptyField(line))
     .map(line => line.replace(/\s+$/, ''))
 
   // Une ligne vide de respiration suffit, comme côté serveur.
@@ -417,6 +449,7 @@ export default function WhatsAppSettings() {
     if (form.business_account_id !== baseline.business_account_id) {
       payload.business_account_id = form.business_account_id
     }
+    if (form.template_name !== baseline.template_name) payload.template_name = form.template_name
 
     // La clé quitte l'état de React **avant** le départ de la requête : elle ne
     // vit plus que dans cette variable locale, le temps de l'appel. Un échec la
@@ -892,6 +925,22 @@ export default function WhatsAppSettings() {
                   />
                   <p className={styles.fieldHint}>Identifiant du compte WhatsApp Business rattaché au numéro.</p>
                 </div>
+                <div className={styles.field}>
+                  <label htmlFor="wa-template-name">Nom du template approuvé (Meta)</label>
+                  <input
+                    id="wa-template-name"
+                    type="text"
+                    value={form.template_name}
+                    disabled={!canUpdate}
+                    onChange={event => setField('template_name', event.target.value)}
+                    placeholder="notification_onec"
+                  />
+                  <p className={styles.fieldHint}>
+                    Sans template, Meta ne livre un message qu'à une personne qui a écrit au numéro dans les
+                    24 dernières heures. Template en français, catégorie « Utilitaire », avec une seule
+                    variable {'{{1}}'} qui reçoit le message.
+                  </p>
+                </div>
               </>
             )}
 
@@ -1203,7 +1252,9 @@ export default function WhatsAppSettings() {
                 <Eye size={13} aria-hidden="true" />
                 Aperçu avec des valeurs d'exemple
               </div>
-              <pre className={styles.previewBody}>{renderPreview(activeDraft, templateVariables) || '—'}</pre>
+              <pre className={styles.previewBody}>
+                {renderWhatsAppFormatting(renderPreview(activeDraft, templateVariables) || '—')}
+              </pre>
               <p className={styles.previewFoot}>
                 Les valeurs affichées sont fictives ; le message réel reprendra les données de l'opération.
               </p>

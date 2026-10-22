@@ -20,6 +20,8 @@ import re
 from . import events
 
 _PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+#: Marques de mise en forme WhatsApp et puces, ignorées pour juger d'une ligne vide.
+_FORMATTING = re.compile(r"[*_~`▸•]")
 
 #: Variables acceptées, avec leur description — sert à l'aide en ligne de l'écran.
 TEMPLATE_VARIABLES: dict[str, str] = {
@@ -47,125 +49,150 @@ TEMPLATE_VARIABLES: dict[str, str] = {
 }
 
 
+#: Même ossature que les e-mails (`mailer.py`) : un bandeau (organisation, titre,
+#: référence), une phrase d'annonce, le montant mis en avant, le tableau des
+#: détails, puis la formule de fin. Mise en forme WhatsApp : *gras*, _italique_.
+_RULE = "━━━━━━━━━━━━━━"
+
+
+def _header(titre: str) -> str:
+    return f"*{{{{organisation}}}}* · ONEC Smart\n{_RULE}\n*{titre}*\n_{{{{reference}}}}_\n\n"
+
+
+def _rows(*rows: tuple[str, str]) -> str:
+    """Lignes « ▸ *Étiquette :* {{valeur}} » — le tableau des e-mails."""
+    return "".join(f"▸ *{label} :* {value}\n" for label, value in rows)
+
+
 DEFAULT_TEMPLATES: dict[str, str] = {
     events.FUND_OUTFLOW_BENEFICIARY: (
-        "{{organisation}} — FONDS REMIS\n"
+        _header("💸 FONDS REMIS")
+        + "{{salutation}}\n"
+        "La somme ci-dessous vous a été remise le {{date}}.\n"
         "\n"
-        "{{salutation}}\n"
-        "La somme de {{montant}} {{devise}} vous a été remise le {{date}}.\n"
+        "Montant : *{{montant}} {{devise}}*\n"
         "\n"
-        "Référence : {{reference}}\n"
-        "Bénéficiaire : {{beneficiaire}}\n"
-        "Motif : {{motif}}\n"
-        "Canal : {{canal}}\n"
-        "\n"
+        + _rows(
+            ("Référence", "{{reference}}"),
+            ("Bénéficiaire", "{{beneficiaire}}"),
+            ("Motif", "{{motif}}"),
+            ("Canal", "{{canal}}"),
+        )
+        + "\n"
         "{{consigne_justificatif}}"
     ),
     events.JUSTIFICATIF_RELANCE: (
-        "{{organisation}} — JUSTIFICATIF NON REÇU\n"
-        "\n"
-        "{{salutation}}\n"
+        _header("⚠️ JUSTIFICATIF NON REÇU")
+        + "{{salutation}}\n"
         "La pièce justificative des fonds qui vous ont été remis le {{date}} "
         "n'a toujours pas été déposée à la caisse.\n"
         "\n"
-        "Référence : {{reference}}\n"
-        "Bénéficiaire : {{beneficiaire}}\n"
-        "Motif : {{motif}}\n"
-        "Montant : {{montant}} {{devise}}\n"
-        "Délai annoncé : {{echeance}}\n"
+        "Montant : *{{montant}} {{devise}}*\n"
         "\n"
+        + _rows(
+            ("Référence", "{{reference}}"),
+            ("Bénéficiaire", "{{beneficiaire}}"),
+            ("Motif", "{{motif}}"),
+            ("Délai annoncé", "{{echeance}}"),
+        )
+        + "\n"
         "Merci de la déposer sans attendre. Les autorités de l'organisation "
         "reçoivent ce message en copie."
     ),
     events.FUND_OUTFLOW: (
-        "{{organisation}} — SORTIE DE FONDS\n"
+        _header("💸 SORTIE DE FONDS")
+        + "Une nouvelle sortie de fonds vient d'être enregistrée.\n"
         "\n"
-        "Une nouvelle sortie de fonds vient d'être enregistrée.\n"
+        "Montant : *{{montant}} {{devise}}*\n"
         "\n"
-        "Référence : {{reference}}\n"
-        "Date : {{date}}\n"
-        "Bénéficiaire : {{beneficiaire}}\n"
-        "Motif : {{motif}}\n"
-        "Montant : {{montant}} {{devise}}\n"
-        "Canal : {{canal}}\n"
-        "Poste budgétaire : {{poste_budgetaire}}\n"
-        "{{tranche}}"
-        "Enregistrée par : {{auteur}}\n"
+        + _rows(
+            ("Date", "{{date}}"),
+            ("Bénéficiaire", "{{beneficiaire}}"),
+            ("Motif", "{{motif}}"),
+            ("Canal", "{{canal}}"),
+            ("Poste budgétaire", "{{poste_budgetaire}}"),
+        )
+        + "{{tranche}}\n"
         "\n"
-        "Opération enregistrée dans ONEC Smart."
+        "_Enregistrée par : {{auteur}}_"
     ),
     events.REQUISITION_APPROVED: (
-        "{{organisation}} — RÉQUISITION APPROUVÉE\n"
-        "\n"
-        "Une réquisition vient de recevoir son visa final. "
+        _header("✅ RÉQUISITION APPROUVÉE")
+        + "Une réquisition vient de recevoir son visa final. "
         "Elle est en attente de paiement — aucun fonds n'a encore été décaissé.\n"
         "\n"
-        "Référence : {{reference}}\n"
-        "Date : {{date}}\n"
-        "Bénéficiaire : {{beneficiaire}}\n"
-        "Motif : {{motif}}\n"
-        "Montant : {{montant}} {{devise}}\n"
-        "Validée par : {{validateur}}"
+        "Montant : *{{montant}} {{devise}}*\n"
+        "\n"
+        + _rows(
+            ("Date", "{{date}}"),
+            ("Bénéficiaire", "{{beneficiaire}}"),
+            ("Motif", "{{motif}}"),
+            ("Validée par", "{{validateur}}"),
+        )
     ),
     events.PAYMENT_RECEIVED: (
-        "{{organisation}}\n"
-        "\n"
-        "{{salutation}}\n"
+        _header("🧾 PAIEMENT REÇU")
+        + "{{salutation}}\n"
         "Nous accusons réception de votre paiement.\n"
         "\n"
-        "Référence : {{reference}}\n"
-        "Date : {{date}}\n"
-        "Montant reçu : {{montant}} {{devise}}\n"
-        "Objet : {{motif}}\n"
+        "Montant reçu : *{{montant}} {{devise}}*\n"
         "\n"
+        + _rows(
+            ("Date", "{{date}}"),
+            ("Objet", "{{motif}}"),
+        )
+        + "\n"
         "Merci de votre confiance."
     ),
     events.PAYMENT_PROFORMA_CONVERTED: (
-        "{{organisation}}\n"
-        "\n"
-        "{{salutation}}\n"
+        _header("🧾 PRO FORMA CONVERTIE")
+        + "{{salutation}}\n"
         "Votre pro forma a été convertie en note de débit après paiement.\n"
         "\n"
-        "Référence : {{reference}}\n"
-        "Date : {{date}}\n"
-        "Montant reçu : {{montant}} {{devise}}\n"
-        "Objet : {{motif}}\n"
+        "Montant reçu : *{{montant}} {{devise}}*\n"
         "\n"
+        + _rows(
+            ("Date", "{{date}}"),
+            ("Objet", "{{motif}}"),
+        )
+        + "\n"
         "Merci de votre confiance."
     ),
     events.PAYMENT_COMPLEMENT: (
-        "{{organisation}}\n"
-        "\n"
-        "{{salutation}}\n"
+        _header("🧾 PAIEMENT COMPLÉMENTAIRE")
+        + "{{salutation}}\n"
         "Nous accusons réception de votre paiement complémentaire.\n"
         "\n"
-        "Référence : {{reference}}\n"
-        "Date : {{date}}\n"
-        "Montant reçu : {{montant}} {{devise}}\n"
-        "Montant total de la note : {{total}} {{devise}}\n"
-        "Reste à payer : {{reste_a_payer}} {{devise}}\n"
+        "Montant reçu : *{{montant}} {{devise}}*\n"
         "\n"
+        + _rows(
+            ("Date", "{{date}}"),
+            ("Total de la note", "{{total}} {{devise}}"),
+            ("Reste à payer", "{{reste_a_payer}} {{devise}}"),
+        )
+        + "\n"
         "Merci de votre confiance."
     ),
     events.PAYMENT_REMINDER: (
-        "{{organisation}}\n"
-        "\n"
-        "{{salutation}}\n"
+        _header("🔔 RAPPEL DE RÈGLEMENT")
+        + "{{salutation}}\n"
         "Nous vous rappelons qu'un règlement reste attendu.\n"
         "\n"
-        "Référence : {{reference}}\n"
-        "Objet : {{motif}}\n"
-        "Reste à payer : {{reste_a_payer}} {{devise}}\n"
+        "Reste à payer : *{{reste_a_payer}} {{devise}}*\n"
         "\n"
-        "Si le règlement a déjà été effectué, merci d'ignorer ce message."
+        + _rows(("Objet", "{{motif}}"),)
+        + "\n"
+        "_Si le règlement a déjà été effectué, merci d'ignorer ce message._"
     ),
     events.TEST_MESSAGE: (
-        "{{organisation}} — TEST\n"
+        "*{{organisation}}* · ONEC Smart\n"
+        f"{_RULE}\n"
+        "*🧪 MESSAGE DE TEST*\n"
         "\n"
         "Ceci est un message de vérification envoyé depuis ONEC Smart.\n"
         "Si vous le recevez, la configuration WhatsApp est opérationnelle.\n"
         "\n"
-        "Envoyé le {{date}}."
+        "_Envoyé le {{date}}._"
     ),
 }
 
@@ -218,9 +245,16 @@ def render_event(event_type: str, variables: dict[str, object] | None = None,
 def _strip_empty_fields(text: str) -> str:
     kept: list[str] = []
     for line in (text or "").splitlines():
-        stripped = line.strip()
+        # Lue sans sa mise en forme (*gras*, _italique_, puce) : « ▸ *Motif :* »
+        # est un champ vide au même titre que « Motif : ».
+        bare = _FORMATTING.sub("", line).strip()
+        if line.strip() and not bare:
+            continue  # « __ » : une référence vide, entourée de son italique.
         # « Étiquette : » sans valeur — le trou n'a pas été rempli.
-        if re.fullmatch(r"[^:]{1,40}:\s*", stripped):
+        if re.fullmatch(r"[^:]{1,40}:\s*", bare):
+            continue
+        # Valeur faite des seuls trous vides : « Reste à payer :  USD ».
+        if re.fullmatch(r"[^:]{1,40}:\s*(USD|CDF|EUR)?\s*", bare):
             continue
         kept.append(line.rstrip())
 

@@ -506,6 +506,7 @@ async def update_whatsapp_settings(
         "sender": "whatsapp_sender",
         "phone_number_id": "whatsapp_phone_number_id",
         "business_account_id": "whatsapp_business_account_id",
+        "template_name": "whatsapp_template_name",
     }
     booleans = {"enabled", "notify_payments", "notify_sorties"}
 

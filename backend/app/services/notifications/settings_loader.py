@@ -134,6 +134,7 @@ def describe_whatsapp_settings(row: SystemSettings | None) -> dict:
             "sender": "",
             "phone_number_id": "",
             "business_account_id": "",
+            "template_name": "",
             "has_api_key": False,
             "templates": {},
         }
@@ -151,6 +152,7 @@ def describe_whatsapp_settings(row: SystemSettings | None) -> dict:
         "sender": _get(row, "whatsapp_sender", "") or "",
         "phone_number_id": _get(row, "whatsapp_phone_number_id", "") or "",
         "business_account_id": _get(row, "whatsapp_business_account_id", "") or "",
+        "template_name": _get(row, "whatsapp_template_name", "") or "",
         "has_api_key": bool(resolve_api_key(row)),
         "templates": raw_templates if isinstance(raw_templates, dict) else {},
     }

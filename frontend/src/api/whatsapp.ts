@@ -49,6 +49,8 @@ export type WhatsAppSettings = {
   sender: string
   phone_number_id: string
   business_account_id: string
+  /** Meta : template approuvé, seul message livré hors fenêtre de 24 h. */
+  template_name: string
   /** Une clé est enregistrée — jamais sa valeur, pas même masquée. */
   has_api_key: boolean
   /** Surcharges de gabarits en place, indexées par type d'événement. */
@@ -78,6 +80,7 @@ export type WhatsAppSettingsUpdate = {
   sender?: string
   phone_number_id?: string
   business_account_id?: string
+  template_name?: string
   /** Clé en clair. Absente ou vide : la clé enregistrée n'est pas touchée. */
   api_key?: string
   /** Supprime la clé enregistrée. Prend le pas sur `api_key`. */

@@ -47,6 +47,8 @@ class WhatsAppSettingsOut(BaseModel):
     sender: str = ""
     phone_number_id: str = ""
     business_account_id: str = ""
+    # Meta : template approuvé, seul message livré hors fenêtre de 24 h.
+    template_name: str = ""
     has_api_key: bool = Field(
         default=False,
         description="Indique qu'une clé API est configurée, sans la révéler.",
@@ -96,6 +98,7 @@ class WhatsAppSettingsUpdate(BaseModel):
     sender: str | None = Field(default=None, max_length=40)
     phone_number_id: str | None = Field(default=None, max_length=64)
     business_account_id: str | None = Field(default=None, max_length=64)
+    template_name: str | None = Field(default=None, max_length=120)
 
     api_key: str | None = Field(
         default=None,
