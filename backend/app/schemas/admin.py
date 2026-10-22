@@ -15,6 +15,9 @@ class UserCreateRequest(BaseModel):
     email: EmailStr
     nom: str
     prenom: str
+    telephone: str | None = None
+    # Exigé à la création ; les comptes existants le reçoivent à la modification.
+    sexe: Literal["M", "F"]
     role: str = Field(default="reception")
     service_id: int | None = None
     service_ids: list[int] | None = None
@@ -24,6 +27,9 @@ class UserUpdateRequest(BaseModel):
     email: EmailStr | None = None
     nom: str | None = None
     prenom: str | None = None
+    # Absent : inchangé. Chaîne vide : numéro retiré.
+    telephone: str | None = None
+    sexe: Literal["M", "F"] | None = None
     role: str | None = None
     service_id: int | None = None
     service_ids: list[int] | None = None
@@ -53,6 +59,9 @@ class UserOut(BaseModel):
     email: EmailStr
     nom: str | None = None
     prenom: str | None = None
+    telephone: str | None = Field(default=None, description="Numéro normalisé (E.164 sans « + »).")
+    telephone_display: str | None = Field(default=None, description="Numéro lisible : +243 810 123 456.")
+    sexe: str | None = None
     role: str
     role_id: int | None = None
     service_id: int | None = None

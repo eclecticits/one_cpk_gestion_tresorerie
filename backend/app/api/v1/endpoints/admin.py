@@ -41,6 +41,7 @@ from app.models.user_service import user_services
 from app.models.user_role import UserRole
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import _send_email_message, send_in_thread, send_security_code
+from app.services.notifications.phone import format_phone_display, normalize_phone
 from app.services.email_config import normalize_smtp_password, resolve_smtp_config
 from app.services.system_settings_service import consolidate_system_settings
 from app.services.weekly_report import send_monthly_treasury_report, send_weekly_report, _get_system_settings
@@ -97,6 +98,9 @@ def _user_out(u: User) -> UserOut:
         email=u.email,
         nom=getattr(u, "nom", None),
         prenom=getattr(u, "prenom", None),
+        telephone=getattr(u, "telephone", None),
+        telephone_display=format_phone_display(getattr(u, "telephone", None)) or None,
+        sexe=getattr(u, "sexe", None),
         role=u.role,
         role_id=u.role_id,
         service_id=getattr(u, "service_id", None),
@@ -107,6 +111,20 @@ def _user_out(u: User) -> UserOut:
         is_email_verified=u.is_email_verified,
         created_at=u.created_at.isoformat() if getattr(u, "created_at", None) else None,
     )
+
+
+def _normalize_user_phone(raw: str | None) -> str | None:
+    """Numéro saisi → forme canonique, None s'il est vide ; 400 s'il est inexploitable."""
+    value = (raw or "").strip()
+    if not value:
+        return None
+    normalized = normalize_phone(value)
+    if not normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="Numéro de téléphone inexploitable. Attendu : 0810123456 ou +243810123456.",
+        )
+    return normalized
 
 
 async def _resolve_service_id(db: AsyncSession, service_id: int | None) -> int | None:
@@ -418,13 +436,22 @@ async def list_users(
                     User.nom.ilike(term),
                     User.prenom.ilike(term),
                     User.role.ilike(term),
+                    # Le numéro est stocké normalisé (243…) : on y cherche les
+                    # chiffres saisis, sans le zéro national de tête.
+                    User.telephone.ilike(f"%{re.sub(r'[^0-9]', '', search).lstrip('0') or '-'}%"),
                 )
             )
 
     count_stmt = select(func.count()).select_from(User).where(*filters)
     total = (await db.execute(count_stmt)).scalar_one() or 0
 
-    stmt = select(User).options(selectinload(User.services)).order_by(User.created_at.desc())
+    # Ordre alphabétique sur ce que la liste affiche, « Prénom Nom » : trié sur
+    # la date de création, un compte se cherchait page après page.
+    stmt = select(User).options(selectinload(User.services)).order_by(
+        func.lower(func.coalesce(User.prenom, "")),
+        func.lower(func.coalesce(User.nom, "")),
+        func.lower(User.email),
+    )
     stmt = stmt.where(*filters)
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
 
@@ -442,6 +469,7 @@ async def create_user(
 ) -> UserOut:
     # Default password policy: set from DEFAULT_USER_PASSWORD and force change.
     default_pwd = _get_default_user_password()
+    telephone = _normalize_user_phone(payload.telephone)
     role = await _resolve_role(db, payload.role)
     service_id = await _resolve_service_id(db, payload.service_id)
     service_ids = await _resolve_service_ids(db, payload.service_ids)
@@ -468,6 +496,8 @@ async def create_user(
         email=str(payload.email).lower(),
         nom=payload.nom,
         prenom=payload.prenom,
+        telephone=telephone,
+        sexe=payload.sexe,
         role=role.code,
         role_id=role.id,
         service_id=service_id,
@@ -489,6 +519,8 @@ async def create_user(
             "email": u.email,
             "nom": u.nom,
             "prenom": u.prenom,
+            "telephone": u.telephone,
+            "sexe": u.sexe,
             "role": u.role,
             "service_id": u.service_id,
             "service_ids": service_ids,
@@ -519,6 +551,9 @@ async def create_user(
         email=u.email,
         nom=getattr(u, "nom", None),
         prenom=getattr(u, "prenom", None),
+        telephone=getattr(u, "telephone", None),
+        telephone_display=format_phone_display(getattr(u, "telephone", None)) or None,
+        sexe=getattr(u, "sexe", None),
         role=u.role,
         role_id=u.role_id,
         service_id=getattr(u, "service_id", None),
@@ -559,6 +594,8 @@ async def update_user(
             "email": u.email,
             "nom": u.nom,
             "prenom": u.prenom,
+            "telephone": u.telephone,
+            "sexe": u.sexe,
             "role": u.role,
             "role_id": u.role_id,
             "service_id": getattr(u, "service_id", None),
@@ -571,6 +608,10 @@ async def update_user(
             u.nom = payload.nom
         if payload.prenom is not None:
             u.prenom = payload.prenom
+        if "telephone" in payload.model_fields_set:
+            u.telephone = _normalize_user_phone(payload.telephone)
+        if payload.sexe is not None:
+            u.sexe = payload.sexe
         if payload.role is not None:
             resolved_role = await _resolve_role(db, payload.role)
             u.role = resolved_role.code
@@ -603,6 +644,8 @@ async def update_user(
                 "email": u.email,
                 "nom": u.nom,
                 "prenom": u.prenom,
+                "telephone": u.telephone,
+                "sexe": u.sexe,
                 "role": u.role,
                 "role_id": u.role_id,
                 "service_id": u.service_id,

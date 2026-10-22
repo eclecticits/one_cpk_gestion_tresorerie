@@ -229,6 +229,8 @@ export default function Settings() {
     email: '',
     nom: '',
     prenom: '',
+    telephone: '',
+    sexe: '' as '' | 'M' | 'F',
     role: 'reception',
     service_ids: [] as number[],
   })
@@ -239,6 +241,8 @@ export default function Settings() {
     password: '',
     nom: '',
     prenom: '',
+    telephone: '',
+    sexe: '' as '' | 'M' | 'F',
     role: 'reception',
     service_ids: [] as number[],
   })
@@ -646,6 +650,8 @@ export default function Settings() {
         email: userForm.email,
         nom: userForm.nom,
         prenom: userForm.prenom,
+        telephone: userForm.telephone.trim() || null,
+        sexe: userForm.sexe as 'M' | 'F',
         role: userForm.role,
         service_ids: userForm.service_ids,
       })
@@ -660,6 +666,8 @@ export default function Settings() {
         email: '',
         nom: '',
         prenom: '',
+        telephone: '',
+        sexe: '',
         role: 'reception',
         service_ids: [],
       })
@@ -862,6 +870,19 @@ export default function Settings() {
     editFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [showEditForm, editFormOpenTick])
 
+  // Numéro sous l'e-mail ; à défaut, un raccourci vers la fiche pour l'ajouter
+  // aux comptes créés avant que le champ existe.
+  const renderUserPhone = (user: User) =>
+    user.telephone ? (
+      <a className={styles.userPhone} href={`tel:+${user.telephone}`}>
+        {user.telephone_display || `+${user.telephone}`}
+      </a>
+    ) : (
+      <button type="button" className={styles.userPhoneAdd} onClick={() => void handleEditUser(user)}>
+        + Ajouter un numéro
+      </button>
+    )
+
   const handleEditUser = async (userToEdit: User) => {
     setEditUserForm({
       id: userToEdit.id,
@@ -869,6 +890,9 @@ export default function Settings() {
       password: '',
       nom: userToEdit.nom,
       prenom: userToEdit.prenom,
+      // Forme lisible (+243 810 …) : le serveur la renormalise à l'enregistrement.
+      telephone: userToEdit.telephone_display || userToEdit.telephone || '',
+      sexe: userToEdit.sexe || '',
       role: resolveRoleCode(userToEdit.role, userToEdit.role_id),
       service_ids: userToEdit.service_ids && userToEdit.service_ids.length > 0
         ? userToEdit.service_ids
@@ -948,6 +972,10 @@ export default function Settings() {
         email: editUserForm.email,
         nom: editUserForm.nom,
         prenom: editUserForm.prenom,
+        // Chaîne vide : numéro retiré.
+        telephone: editUserForm.telephone.trim(),
+        // Pas de choix « vide » une fois renseigné : on n'envoie que si choisi.
+        ...(editUserForm.sexe ? { sexe: editUserForm.sexe } : {}),
         role: normalizedEditedRole,
         service_ids: editUserForm.service_ids,
       })
@@ -967,6 +995,8 @@ export default function Settings() {
         password: '',
         nom: '',
         prenom: '',
+        telephone: '',
+        sexe: '',
         role: 'reception',
         service_ids: [],
       })
@@ -1633,7 +1663,7 @@ export default function Settings() {
           <div ref={editFormRef} className={styles.formCard}>
             <h3>Modifier l'utilisateur</h3>
             <form onSubmit={handleUpdateUser} className={styles.form}>
-              <div className={styles.fieldRow}>
+              <div className={`${styles.fieldRow} ${styles.fieldRowIdentity}`}>
                 <div className={styles.field}>
                   <label>Prénom *</label>
                   <input
@@ -1652,16 +1682,40 @@ export default function Settings() {
                     required
                   />
                 </div>
+                <div className={styles.field}>
+                  <label>Sexe</label>
+                  <select
+                    value={editUserForm.sexe}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, sexe: e.target.value as '' | 'M' | 'F' })}
+                  >
+                    <option value="" disabled={editUserForm.sexe !== ''}>— Choisir —</option>
+                    <option value="M">Masculin</option>
+                    <option value="F">Féminin</option>
+                  </select>
+                </div>
               </div>
 
-              <div className={styles.field}>
-                <label>Email *</label>
-                <input
-                  type="email"
-                  value={editUserForm.email}
-                  onChange={(e) => setEditUserForm({ ...editUserForm, email: e.target.value })}
-                  required
-                />
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
+                  <label>Email *</label>
+                  <input
+                    type="email"
+                    value={editUserForm.email}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, email: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label>N° de téléphone</label>
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={editUserForm.telephone}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, telephone: e.target.value })}
+                    placeholder="0810 123 456 ou +243 810 123 456"
+                  />
+                </div>
               </div>
 
               <div className={styles.fieldRow}>
@@ -1771,7 +1825,7 @@ export default function Settings() {
           <div className={styles.formCard}>
             <h3>Créer un utilisateur</h3>
             <form onSubmit={handleCreateUser} className={styles.form}>
-              <div className={styles.fieldRow}>
+              <div className={`${styles.fieldRow} ${styles.fieldRowIdentity}`}>
                 <div className={styles.field}>
                   <label>Prénom *</label>
                   <input
@@ -1790,6 +1844,18 @@ export default function Settings() {
                     required
                   />
                 </div>
+                <div className={styles.field}>
+                  <label>Sexe *</label>
+                  <select
+                    value={userForm.sexe}
+                    onChange={(e) => setUserForm({ ...userForm, sexe: e.target.value as '' | 'M' | 'F' })}
+                    required
+                  >
+                    <option value="" disabled>— Choisir —</option>
+                    <option value="M">Masculin</option>
+                    <option value="F">Féminin</option>
+                  </select>
+                </div>
               </div>
 
               <div className={styles.fieldRow}>
@@ -1803,20 +1869,32 @@ export default function Settings() {
                   />
                 </div>
                 <div className={styles.field}>
-                  <label>Rôle *</label>
-                  <select
-                    value={userForm.role}
-                    onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
-                    required
-                  >
-                    {roles.length === 0 && <option value="reception">reception</option>}
-                    {roles.map((role) => (
-                      <option key={role.code} value={role.code}>
-                        {role.label || role.code}
-                      </option>
-                    ))}
-                  </select>
+                  <label>N° de téléphone</label>
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={userForm.telephone}
+                    onChange={(e) => setUserForm({ ...userForm, telephone: e.target.value })}
+                    placeholder="0810 123 456 ou +243 810 123 456"
+                  />
                 </div>
+              </div>
+
+              <div className={styles.field}>
+                <label>Rôle *</label>
+                <select
+                  value={userForm.role}
+                  onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
+                  required
+                >
+                  {roles.length === 0 && <option value="reception">reception</option>}
+                  {roles.map((role) => (
+                    <option key={role.code} value={role.code}>
+                      {role.label || role.code}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className={styles.field}>
@@ -1981,7 +2059,10 @@ export default function Settings() {
                     <div className={styles.userNameCell}>
                       <div className={styles.userName}>{user.prenom} {user.nom}</div>
                     </div>
-                    <div className={styles.userEmail}>{user.email}</div>
+                    <div className={styles.userEmail}>
+                      {user.email}
+                      {renderUserPhone(user)}
+                    </div>
                     <div>
                       <span className={styles.rolePill}>{roleLabelMap[user.role] || user.role}</span>
                     </div>
@@ -2053,6 +2134,7 @@ export default function Settings() {
                     <div>
                       <div className={styles.userName}>{user.prenom} {user.nom}</div>
                       <div className={styles.userEmail}>{user.email}</div>
+                      {renderUserPhone(user)}
                     </div>
                     <span className={user.active ? styles.activeStatus : styles.inactiveStatus}>
                       <span className={styles.statusDot} />

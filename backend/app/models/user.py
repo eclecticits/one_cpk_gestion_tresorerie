@@ -27,6 +27,10 @@ class User(Base):
     # profile
     nom: Mapped[str | None] = mapped_column(String(120), nullable=True)
     prenom: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Facultatif, normalisé E.164 sans « + » (`notifications.phone`).
+    telephone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # « M » ou « F » ; NULL pour les comptes créés avant que le champ existe.
+    sexe: Mapped[str | None] = mapped_column(String(1), nullable=True)
 
     # auth
     # When migrating from a legacy auth system, existing rows may not have a password yet.

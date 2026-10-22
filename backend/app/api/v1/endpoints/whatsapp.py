@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 
@@ -101,6 +102,7 @@ from app.services.notifications import (
 )
 from app.services.notifications import templates as wa_templates
 from app.services.system_settings_service import consolidate_system_settings, get_system_settings
+from app.utils.hierarchie_fonctions import rang_fonction
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api.whatsapp")
@@ -337,20 +339,59 @@ def _member_status(member: CommissionMember) -> str:
     return "ready"
 
 
-def _recipient_out(member: CommissionMember) -> RecipientOut:
-    normalized = normalize_phone(getattr(member, "telephone", None)) or ""
-    state = _member_status(member)
+def _person_key(member: CommissionMember) -> str:
+    """Identité d'une personne à travers ses fiches de service.
+
+    Le nom, normalisé, et non `user_id` ou l'e-mail : les fiches d'une même
+    personne ont été saisies service par service, et l'une porte souvent un
+    compte ou un e-mail que l'autre n'a pas.
+    """
+    ascii_name = unicodedata.normalize("NFKD", member.full_name or "").encode("ascii", "ignore").decode("ascii")
+    return " ".join(ascii_name.casefold().split()) or f"id:{member.id}"
+
+
+def _group_by_person(members: list[CommissionMember]) -> list[list[CommissionMember]]:
+    """Regroupe les fiches par personne, dans l'ordre de première apparition."""
+    groups: dict[str, list[CommissionMember]] = {}
+    for member in members:
+        groups.setdefault(_person_key(member), []).append(member)
+    return list(groups.values())
+
+
+def _recipient_out(members: CommissionMember | list[CommissionMember]) -> RecipientOut:
+    """Une ligne par personne. Numéro et opt-in sont tenus identiques sur toutes
+    ses fiches par la mise à jour ; pour des fiches antérieures qui divergent,
+    le premier numéro renseigné et un opt-in sur l'une d'elles font foi, comme
+    à l'envoi, qui dédoublonne par numéro."""
+    group = members if isinstance(members, list) else [members]
+    # La fiche montrée est celle de la fonction la plus haute (Président avant
+    # membre) : c'est elle qui dit pourquoi la personne est notifiée.
+    main = min(group, key=lambda m: (rang_fonction(_member_function_label(m)), m.id))
+    normalized = next(
+        (n for n in (normalize_phone(getattr(m, "telephone", None)) for m in group) if n),
+        "",
+    )
+    notify = any(bool(getattr(m, "notify_whatsapp", False)) for m in group)
+    state = "no_phone" if not normalized else ("ready" if notify else "opted_out")
+    services: list[str] = []
+    for member in group:
+        service = getattr(member, "service", None)
+        label = (getattr(service, "libelle", "") or getattr(service, "code", "") or "") if service is not None else ""
+        if label and label not in services:
+            services.append(label)
     return RecipientOut(
-        id=member.id,
-        full_name=member.full_name or "",
-        function=_member_function_label(member),
-        service_id=getattr(member, "service_id", None),
-        email=getattr(member, "email", None),
+        id=main.id,
+        full_name=main.full_name or "",
+        function=_member_function_label(main),
+        service_id=getattr(main, "service_id", None),
+        email=next((m.email for m in group if getattr(m, "email", None)), None),
         phone=normalized,
         phone_display=format_phone_display(normalized),
-        notify_whatsapp=bool(getattr(member, "notify_whatsapp", False)),
+        notify_whatsapp=notify,
         status=state,
         status_label=RECIPIENT_STATUS_LABELS.get(state, state),
+        services=services,
+        member_ids=[m.id for m in group],
     )
 
 
@@ -529,7 +570,7 @@ async def list_whatsapp_recipients(
     rien, sans quoi on ne peut pas les activer.
     """
     members = await load_bureau_members(db, tenant_id, only_opted_in=False)
-    return [_recipient_out(member) for member in members]
+    return [_recipient_out(group) for group in _group_by_person(list(members))]
 
 
 @router.patch(
@@ -552,6 +593,13 @@ async def update_whatsapp_recipient(
     """
     member = await _load_member(db, tenant_id, member_id)
     data = payload.model_dump(exclude_unset=True)
+    # La personne a une fiche par service où elle siège : le numéro et l'opt-in
+    # valent pour toutes, sinon la ligne affichée et l'envoi divergeraient.
+    key = _person_key(member)
+    siblings = [
+        m for m in await load_bureau_members(db, tenant_id, only_opted_in=False)
+        if _person_key(m) == key
+    ] or [member]
 
     before = {
         "telephone": getattr(member, "telephone", None),
@@ -561,7 +609,8 @@ async def update_whatsapp_recipient(
     if "telephone" in data:
         raw = (data.get("telephone") or "").strip()
         if not raw:
-            _assign_member(member, "telephone", None)
+            for sibling in siblings:
+                _assign_member(sibling, "telephone", None)
         else:
             normalized = normalize_phone(raw)
             if not normalized:
@@ -572,10 +621,12 @@ async def update_whatsapp_recipient(
                         "(0810123456) ou international (+243810123456)."
                     ),
                 )
-            _assign_member(member, "telephone", normalized)
+            for sibling in siblings:
+                _assign_member(sibling, "telephone", normalized)
 
     if data.get("notify_whatsapp") is not None:
-        _assign_member(member, "notify_whatsapp", bool(data["notify_whatsapp"]))
+        for sibling in siblings:
+            _assign_member(sibling, "notify_whatsapp", bool(data["notify_whatsapp"]))
 
     await log_action(
         db,
@@ -587,6 +638,7 @@ async def update_whatsapp_recipient(
         new_value={
             "telephone": getattr(member, "telephone", None),
             "notify_whatsapp": bool(getattr(member, "notify_whatsapp", False)),
+            "member_ids": [sibling.id for sibling in siblings],
         },
         ip_address=get_request_ip(request),
     )
@@ -595,7 +647,7 @@ async def update_whatsapp_recipient(
     # l'objet porte déjà ses nouvelles valeurs. Un refresh expirerait au passage
     # la relation `function` chargée en `selectinload`, et sa relecture
     # paresseuse lèverait un `MissingGreenlet` en contexte asynchrone.
-    return _recipient_out(member)
+    return _recipient_out(siblings)
 
 
 def _assign_member(member: CommissionMember, column: str, value) -> None:

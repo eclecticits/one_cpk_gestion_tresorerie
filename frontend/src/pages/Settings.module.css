@@ -1324,6 +1324,11 @@
   gap: 12px;
 }
 
+/* Prénom, nom, sexe : le sexe n'a que deux valeurs, une colonne étroite suffit. */
+.fieldRowIdentity {
+  grid-template-columns: 1fr 1fr minmax(120px, 150px);
+}
+
 .serviceGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1587,6 +1592,36 @@
   font-size: 0.84rem;
   color: #64748b;
   word-break: break-word;
+}
+
+/* Numéro sous l'e-mail : cliquable pour appeler depuis un téléphone. */
+.userPhone {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8rem;
+  color: #334155;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+
+.userPhone:hover {
+  text-decoration: underline;
+}
+
+.userPhoneAdd {
+  display: block;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  min-height: 0;
+  font-size: 0.78rem;
+  color: var(--tenant-primary, #0d9488);
+  cursor: pointer;
+}
+
+.userPhoneAdd:hover {
+  text-decoration: underline;
 }
 
 .rolePill {

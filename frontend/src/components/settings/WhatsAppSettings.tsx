@@ -976,7 +976,12 @@ export default function WhatsAppSettings() {
                 const feedback = testFeedback[member.id]
                 return (
                   <tr key={member.id}>
-                    <td className={styles.cellStrong}>{member.full_name || '—'}</td>
+                    <td className={styles.cellStrong}>
+                      {member.full_name || '—'}
+                      {(member.services?.length ?? 0) > 0 && (
+                        <span className={styles.cellSub}>{member.services!.join(' · ')}</span>
+                      )}
+                    </td>
                     <td>{member.function || '—'}</td>
                     <td>
                       {editing ? (

@@ -113,6 +113,9 @@ export type WhatsAppRecipient = {
   notify_whatsapp: boolean
   status: WhatsAppRecipientStatus | string
   status_label: string
+  /** Services où siège la personne : une seule ligne pour toutes ses fiches. */
+  services?: string[]
+  member_ids?: number[]
 }
 
 /** `telephone: ''` retire le numéro ; champ absent, il n'est pas touché. */

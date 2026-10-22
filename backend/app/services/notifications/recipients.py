@@ -60,7 +60,7 @@ async def load_bureau_members(
         select(CommissionMember)
         .join(Service, Service.id == CommissionMember.service_id)
         .where(Service.organisation_id == organisation_id)
-        .options(selectinload(CommissionMember.function))
+        .options(selectinload(CommissionMember.function), selectinload(CommissionMember.service))
     )
     if only_opted_in:
         # `is True` ne s'écrit pas en SQL : on compare la colonne à True.

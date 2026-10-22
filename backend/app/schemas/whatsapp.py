@@ -143,6 +143,10 @@ class RecipientOut(BaseModel):
     notify_whatsapp: bool = False
     status: str = Field(description="ready | no_phone | opted_out")
     status_label: str = ""
+    # Une personne siège souvent dans plusieurs services (Bureau, Conseil,
+    # commissions) : une fiche par service, mais une seule ligne à l'écran.
+    services: list[str] = Field(default_factory=list, description="Services où siège la personne.")
+    member_ids: list[int] = Field(default_factory=list, description="Fiches regroupées sur cette ligne.")
 
 
 class RecipientUpdate(BaseModel):

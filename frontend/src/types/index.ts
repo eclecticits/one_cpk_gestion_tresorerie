@@ -7,6 +7,12 @@ export interface User {
   email: string
   nom: string
   prenom: string
+  /** Numéro normalisé (E.164 sans « + »), facultatif. */
+  telephone?: string | null
+  /** Numéro lisible : +243 810 123 456. */
+  telephone_display?: string | null
+  /** « M » ou « F » ; absent sur les comptes antérieurs au champ. */
+  sexe?: 'M' | 'F' | null
   role: UserRole
   role_id?: number | null
   service_id?: number | null
