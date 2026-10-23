@@ -1380,29 +1380,6 @@ export default function Validation() {
         )}
       </div>
 
-      {showActionModal && selectedRequisition && (
-        selectedRequisition.type_requisition === 'remboursement_transport' ? (
-          <RemboursementActionModal
-            show={showActionModal}
-            action={currentAction as 'reject'}
-            remboursementNumber={remboursementNumber}
-            requisitionNumber={selectedRequisition.numero_requisition}
-            onConfirm={handleConfirm}
-            onCancel={handleModalClose}
-            userName={selectedRequisition.demandeur ? `${selectedRequisition.demandeur.prenom} ${selectedRequisition.demandeur.nom}` : undefined}
-          />
-        ) : (
-          <RequisitionActionModal
-            show={showActionModal}
-            action={currentAction as 'reject'}
-            requisitionNumber={selectedRequisition.numero_requisition}
-            onConfirm={handleConfirm}
-            onCancel={handleModalClose}
-            userName={selectedRequisition.demandeur ? `${selectedRequisition.demandeur.prenom} ${selectedRequisition.demandeur.nom}` : undefined}
-          />
-        )
-      )}
-
       {showDetailModal && selectedRemboursementDetails && (
         <div className={`${styles.modal} ${styles.detailModalOverlay}`}>
           <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
@@ -1617,13 +1594,17 @@ export default function Validation() {
                                 <ShieldCheck size={16} />
                               </button>
                             )}
-                            <button
-                              type="button"
-                              className={`${styles.rejectBtn} ${styles.actionIconBtn}`}
-                              onClick={() => handleAction('reject', req as any)}
-                            >
-                              <Ban size={16} />
-                            </button>
+                            {!['PAYEE', 'EN_DECAISSEMENT', 'REJETEE'].includes(String((req as any).status ?? (req as any).statut ?? '').toUpperCase()) && (
+                              <button
+                                type="button"
+                                className={`${styles.rejectBtn} ${styles.actionIconBtn}`}
+                                onClick={() => handleAction('reject', req as any)}
+                                title="Rejeter"
+                                aria-label="Rejeter"
+                              >
+                                <Ban size={16} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1648,6 +1629,31 @@ export default function Validation() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Après la fiche du dossier, et pas avant : à z-index égal, c'est l'ordre
+          du DOM qui tranche, et le rejet lancé depuis le dossier s'ouvrait dessous. */}
+      {showActionModal && selectedRequisition && (
+        selectedRequisition.type_requisition === 'remboursement_transport' ? (
+          <RemboursementActionModal
+            show={showActionModal}
+            action={currentAction as 'reject'}
+            remboursementNumber={remboursementNumber}
+            requisitionNumber={selectedRequisition.numero_requisition}
+            onConfirm={handleConfirm}
+            onCancel={handleModalClose}
+            userName={selectedRequisition.demandeur ? `${selectedRequisition.demandeur.prenom} ${selectedRequisition.demandeur.nom}` : undefined}
+          />
+        ) : (
+          <RequisitionActionModal
+            show={showActionModal}
+            action={currentAction as 'reject'}
+            requisitionNumber={selectedRequisition.numero_requisition}
+            onConfirm={handleConfirm}
+            onCancel={handleModalClose}
+            userName={selectedRequisition.demandeur ? `${selectedRequisition.demandeur.prenom} ${selectedRequisition.demandeur.nom}` : undefined}
+          />
+        )
       )}
 
     </div>

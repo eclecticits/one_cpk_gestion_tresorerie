@@ -2174,6 +2174,19 @@ async def reject_requisition(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
     old_status = req.status
+    # Même règle que l'écran Validation : une fois des fonds sortis, ou la pièce
+    # déjà rejetée, il n'y a plus rien à décider. Rejeter une réquisition payée
+    # libérerait en plus son engagement budgétaire alors que l'argent est parti.
+    statut_actuel = (old_status or "").upper()
+    if statut_actuel in {"PAYEE", "EN_DECAISSEMENT", "REJETEE"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "PAYEE": "Rejet impossible : la réquisition est déjà payée",
+                "EN_DECAISSEMENT": "Rejet impossible : la réquisition est en cours de décaissement",
+                "REJETEE": "La réquisition est déjà rejetée",
+            }[statut_actuel],
+        )
     motif_rejet = (payload.get("motif_rejet") or "").strip()
     if not motif_rejet:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Motif de rejet requis")
