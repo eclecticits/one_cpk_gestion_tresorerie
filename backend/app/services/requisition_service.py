@@ -1052,16 +1052,9 @@ async def update_requisition_logic(
                 },
                 ip_address=get_request_ip(request) if request else None,
             )
-    # Même règle qu'à la création, mais opposée à l'état RÉSULTANT : le
-    # bénéficiaire peut déjà être sur la ligne et absent du payload, et la
-    # nature peut basculer vers HORS_BUDGET sans que le payload ne reparle du
-    # bénéficiaire. C'est l'état après mise à jour qui doit tenir, pas le
-    # payload seul.
-    if target_nature == "HORS_BUDGET" and not (req.beneficiaire or "").strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="beneficiaire est requis pour une réquisition HORS_BUDGET",
-        )
+    # Pas d'exigence de bénéficiaire ici, même hors budget : comme à la
+    # création, il peut être désigné plus tard. Le verrou ne se pose qu'au
+    # paiement, où la sortie de fonds refuse de partir sans destinataire nommé.
     if payload.mode_paiement is not None or payload.compte_bancaire_id is not None:
         req.compte_bancaire_id = await resolve_requisition_compte_bancaire(
             payload.compte_bancaire_id if payload.compte_bancaire_id is not None else req.compte_bancaire_id,

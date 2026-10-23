@@ -1,0 +1,618 @@
+.sectionHeaderAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid #dce5e0;
+  border-radius: 999px;
+  background: #f7f9f8;
+  color: #5b6a62;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.groups {
+  display: grid;
+  gap: 12px;
+}
+
+.groupCard {
+  overflow: visible;
+  border: 1px solid #dce5e0;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(22, 75, 53, 0.03);
+}
+
+.groupCard[data-active="true"] {
+  border-color: #84b69a;
+  box-shadow: inset 3px 0 0 #28734e, 0 2px 8px rgba(22, 75, 53, 0.05);
+}
+
+.groupCard[data-overrun="true"] {
+  border-color: #e1aaaa;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 7px 10px 7px 13px;
+  border-bottom: 1px solid #e9eeeb;
+  border-radius: 10px 10px 0 0;
+  background: #f6f9f7;
+}
+
+.groupIdentity {
+  min-width: 0;
+}
+
+.groupEyebrow {
+  display: block;
+  color: #6c7872;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.groupTitle {
+  display: block;
+  margin-top: 1px;
+  overflow: hidden;
+  color: #26382f;
+  font-size: 12.5px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unavailable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #9b5c17;
+}
+
+.removeGroup,
+.removeLine {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #718078;
+  cursor: pointer;
+}
+
+.removeGroup:hover:not(:disabled),
+.removeLine:hover:not(:disabled) {
+  border-color: #efc0c0;
+  background: #fff3f3;
+  color: #b23434;
+}
+
+.removeLine:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.groupConfig {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.35fr) minmax(330px, 1fr);
+  gap: 12px;
+  align-items: end;
+  padding: 11px 12px;
+}
+
+.budgetField {
+  min-width: 0;
+}
+
+.budgetField > label {
+  display: block;
+  margin-bottom: 5px;
+  color: #3f5147;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.budgetInputWrap {
+  position: relative;
+}
+
+.budgetInput {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px 7px 32px;
+  border: 1px solid #cfdbd5;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1f3128;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.budgetInputIcon {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 10px;
+  display: inline-flex;
+  color: #78867e;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.budgetInput:focus {
+  border-color: #28734e;
+  outline: 2px solid color-mix(in srgb, var(--tenant-primary, #28734e) 20%, transparent);
+}
+
+.dropdown {
+  z-index: 1200;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #bdcbc3;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(23, 49, 36, 0.14);
+}
+
+.dropdown[data-placement="top"] {
+  box-shadow: 0 -12px 30px rgba(23, 49, 36, 0.14);
+}
+
+.dropdownEmpty {
+  padding: 12px;
+  color: #6f7d75;
+  font-size: 12px;
+}
+
+.fieldHint {
+  display: block;
+  margin-top: 4px;
+  color: #77847d;
+  font-size: 10.5px;
+}
+
+.budgetMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #dfe7e3;
+  border-radius: 8px;
+  background: #fafcfb;
+}
+
+.budgetMetric {
+  min-width: 0;
+  padding: 7px 9px;
+}
+
+.budgetMetric + .budgetMetric {
+  border-left: 1px solid #e4eae7;
+}
+
+.budgetMetric small,
+.budgetMetric strong {
+  display: block;
+}
+
+.budgetMetric small {
+  overflow: hidden;
+  color: #76827c;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.035em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.budgetMetric strong {
+  margin-top: 2px;
+  color: #283a31;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.budgetMetric[data-negative="true"] strong {
+  color: #b33434;
+}
+
+.budgetMetric[data-positive="true"] strong {
+  color: #17613f;
+}
+
+.budgetNotice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px 10px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: #fff7e8;
+  color: #945e16;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.budgetNotice[data-danger="true"] {
+  background: #fff1f1;
+  color: #aa3333;
+}
+
+.tableWrap {
+  padding: 0 12px 12px;
+}
+
+.expenseTable {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid #dfe6e2;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.expenseTable th {
+  padding: 7px 8px;
+  border-bottom: 1px solid #e1e8e4;
+  background: #f5f8f6;
+  color: #5f6e66;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.expenseTable td {
+  padding: 7px 6px;
+  border-bottom: 1px solid #edf1ef;
+  vertical-align: top;
+}
+
+.expenseTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.descriptionHead {
+  color: #1f5f40 !important;
+}
+
+.descriptionHead span {
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #e2f1e8;
+  font-size: 8px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.descriptionCell {
+  width: 46%;
+}
+
+.quantityCell {
+  width: 8%;
+}
+
+.currencyCell {
+  width: 9%;
+}
+
+.unitPriceCell {
+  width: 15%;
+}
+
+.paymentCell {
+  width: 20%;
+}
+
+.totalCell {
+  width: 15%;
+  color: #273a30;
+  font-weight: 750;
+  text-align: right !important;
+  vertical-align: middle !important;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.actionCell {
+  width: 42px;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.expenseTable[data-split="true"] .descriptionCell {
+  width: 32%;
+}
+
+.expenseTable[data-split="true"] .unitPriceCell {
+  width: 14%;
+}
+
+.expenseTable[data-split="true"] .paymentCell {
+  width: 19%;
+}
+
+.expenseTable[data-split="true"] .totalCell {
+  width: 12%;
+}
+
+.expenseTable input,
+.expenseTable select,
+.expenseTable textarea {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 7px;
+  border: 1px solid #d4ddd8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #24362d;
+  font: inherit;
+  font-size: 12px;
+}
+
+.expenseTable textarea {
+  min-height: 54px;
+  line-height: 1.35;
+  resize: vertical;
+}
+
+.expenseTable textarea::placeholder {
+  color: #8a958f;
+}
+
+.expenseTable input:focus,
+.expenseTable select:focus,
+.expenseTable textarea:focus {
+  border-color: #28734e;
+  outline: 2px solid color-mix(in srgb, var(--tenant-primary, #28734e) 18%, transparent);
+}
+
+.descriptionCell textarea {
+  border-color: #a8c9b6;
+  background: #fbfefc;
+  font-size: 12.5px;
+}
+
+.lineNumber {
+  display: block;
+  margin: 0 0 4px 1px;
+  color: #76837c;
+  font-size: 9.5px;
+  font-weight: 750;
+}
+
+.inlineInput {
+  display: grid;
+  gap: 4px;
+}
+
+.convertButton {
+  padding: 3px 5px;
+  border: 1px solid #d6dfda;
+  border-radius: 5px;
+  background: #f7f9f8;
+  color: #526159;
+  font-size: 9.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.linePayment {
+  display: grid;
+  gap: 4px;
+}
+
+.addLineRow td {
+  padding: 0;
+  border-top: 1px solid #e8eeeb;
+  border-bottom: 0;
+}
+
+.addLineButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: #216945;
+  font-size: 11.5px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.addLineButton:hover {
+  background: #f0f7f3;
+}
+
+.addGroupButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px dashed #9eafa6;
+  border-radius: 8px;
+  background: #fafcfb;
+  color: #216945;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.addGroupButton:hover {
+  border-color: #28734e;
+  background: #f0f7f3;
+}
+
+.grandTotal {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  padding-top: 2px;
+}
+
+.grandTotalLabel {
+  color: #64726b;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.grandTotalLabel small {
+  display: block;
+  margin-top: 2px;
+  color: #7c8982;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.grandTotal > strong {
+  color: #164b35;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.footerContent {
+  margin-top: 12px;
+}
+
+@media (max-width: 1280px) {
+  .groupConfig {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .expenseTable,
+  .expenseTable thead,
+  .expenseTable tbody,
+  .expenseTable tfoot,
+  .expenseTable tr,
+  .expenseTable td {
+    display: block;
+    width: auto;
+  }
+
+  .expenseTable thead {
+    display: none;
+  }
+
+  .expenseTable {
+    border: 0;
+    overflow: visible;
+  }
+
+  .expenseTable tbody tr {
+    margin-bottom: 10px;
+    overflow: hidden;
+    border: 1px solid #dfe6e2;
+    border-radius: 8px;
+  }
+
+  .expenseTable td {
+    display: grid;
+    grid-template-columns: 130px minmax(0, 1fr);
+    gap: 9px;
+    align-items: center;
+    padding: 7px 9px;
+  }
+
+  .expenseTable td::before {
+    content: attr(data-label);
+    color: #69776f;
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: 0.035em;
+    text-transform: uppercase;
+  }
+
+  .descriptionCell,
+  .totalCell,
+  .actionCell {
+    text-align: left !important;
+  }
+
+  .actionCell {
+    display: flex !important;
+    justify-content: flex-end;
+  }
+
+  .actionCell::before,
+  .addLineRow td::before {
+    display: none;
+  }
+
+  .addLineRow td {
+    display: block;
+  }
+}
+
+@media (max-width: 620px) {
+  .groupConfig,
+  .tableWrap {
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+
+  .budgetMetrics {
+    grid-template-columns: 1fr;
+  }
+
+  .budgetMetric + .budgetMetric {
+    border-top: 1px solid #e4eae7;
+    border-left: 0;
+  }
+
+  .expenseTable td {
+    grid-template-columns: 1fr;
+  }
+
+  .grandTotal {
+    justify-content: space-between;
+    gap: 10px;
+  }
+}

@@ -920,7 +920,7 @@
   color: #1f2937;
   font: inherit;
   text-align: left;
-  white-space: nowrap;
+  white-space: normal;
   cursor: pointer;
   transition: background 0.2s;
   display: flex;
@@ -931,9 +931,11 @@
 .dropdownText {
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .dropdownMeta {
+  flex: 0 0 auto;
   font-size: 11px;
   color: #64748b;
   font-weight: 600;
@@ -2023,6 +2025,13 @@
   background: #eef2ff;
   color: #3730a3;
   border-color: #c7d2fe;
+}
+
+.badgeBeneficiaireManquant {
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #fed7aa;
+  border-style: dashed;
 }
 
 /* Menu « … » d'une ligne : rendu dans un portail sur <body>, donc hors de

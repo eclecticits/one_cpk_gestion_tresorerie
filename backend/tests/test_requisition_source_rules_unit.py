@@ -82,9 +82,6 @@ def test_requisition_hors_budget_accepte_une_nature_en_minuscules():
         nature_requisition="hors_budget",
         montant_total=Decimal("120"),
         service_id=1,
-        # Exigé pour cette nature (cf. test dédié) : sans lui la construction
-        # échouerait, et ce test cesserait de porter sur la casse de la nature.
-        beneficiaire="ACME SARL",
     )
     assert req.nature_requisition == "HORS_BUDGET"
     # Une nature non budgétaire n'emporte aucune identité de tiers.
@@ -106,32 +103,31 @@ def test_requisition_fonds_tiers_refuse_les_deux_identites_a_la_fois():
         )
 
 
-def test_requisition_hors_budget_exige_un_beneficiaire():
-    # Hors budget : ni ligne ni poste. Le bénéficiaire est la seule pièce qui
-    # dise à qui l'argent va, et la sortie de fonds en dérive le sien — sans
-    # lui, le décaissement s'enregistrait sous un libellé de remplissage.
-    with pytest.raises(ValidationError):
-        RequisitionCreate(
-            objet="Dépense urgente hors budget",
-            mode_paiement="cash",
-            type_requisition="classique",
-            nature_requisition="HORS_BUDGET",
-            montant_total=Decimal("80"),
-            service_id=1,
-        )
-    # Un bénéficiaire fait de blancs ne compte pas : le validateur le rogne
-    # d'abord, donc il ne désigne personne.
-    with pytest.raises(ValidationError):
-        RequisitionCreate(
-            objet="Dépense urgente hors budget",
-            mode_paiement="cash",
-            type_requisition="classique",
-            nature_requisition="HORS_BUDGET",
-            montant_total=Decimal("80"),
-            service_id=1,
-            beneficiaire="   ",
-        )
-    req = RequisitionCreate(
+def test_requisition_hors_budget_accepte_un_beneficiaire_facultatif():
+    # Une réquisition peut être créée avant que la personne qui recevra les
+    # fonds soit connue. Le bénéficiaire pourra être complété ultérieurement.
+    req_sans_beneficiaire = RequisitionCreate(
+        objet="Dépense urgente hors budget",
+        mode_paiement="cash",
+        type_requisition="classique",
+        nature_requisition="HORS_BUDGET",
+        montant_total=Decimal("80"),
+        service_id=1,
+    )
+    assert req_sans_beneficiaire.beneficiaire is None
+
+    req_avec_blancs = RequisitionCreate(
+        objet="Dépense urgente hors budget",
+        mode_paiement="cash",
+        type_requisition="classique",
+        nature_requisition="HORS_BUDGET",
+        montant_total=Decimal("80"),
+        service_id=1,
+        beneficiaire="   ",
+    )
+    assert req_avec_blancs.beneficiaire is None
+
+    req_avec_beneficiaire = RequisitionCreate(
         objet="Dépense urgente hors budget",
         mode_paiement="cash",
         type_requisition="classique",
@@ -140,7 +136,7 @@ def test_requisition_hors_budget_exige_un_beneficiaire():
         service_id=1,
         beneficiaire="  ACME SARL  ",
     )
-    assert req.beneficiaire == "ACME SARL"
+    assert req_avec_beneficiaire.beneficiaire == "ACME SARL"
 
 
 def test_requisition_budgetaire_et_fonds_tiers_nexigent_pas_de_beneficiaire():

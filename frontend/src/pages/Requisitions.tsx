@@ -27,7 +27,7 @@ import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
 import FiltresMobileToggle from '../components/FiltresMobileToggle'
 import { format, subDays } from 'date-fns'
-import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, FileText, X, MoreHorizontal, Plus, Loader2, Copy, RotateCcw, AlertTriangle } from 'lucide-react'
+import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, X, MoreHorizontal, Loader2, Copy, RotateCcw, AlertTriangle } from 'lucide-react'
 // jsPDF/jspdf-autotable sont lourds : on charge ../utils/pdfGenerator dynamiquement,
 // au moment de l'action (impression/téléchargement), plutôt qu'au chargement de la page.
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
@@ -62,6 +62,15 @@ import ExportAnnulationsToggle from '../components/ExportAnnulationsToggle'
 import OrganisationAutocomplete from '../components/OrganisationAutocomplete'
 import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, saisieDepuis, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
 import { fondsTiersDisponible, listFondsTiers, type FondsTiersOperation } from '../api/mouvementsHorsBudget'
+import {
+  AttachmentSection,
+  BeneficiarySection,
+  PaymentSection,
+  RequisitionSection,
+  RequisitionSectionNav,
+  RequisitionSummaryPanel,
+} from '../components/requisitions/NewRequisitionUi'
+import RequisitionExpenseEditor from '../components/requisitions/RequisitionExpenseEditor'
 
 // Résumé calculé par le backend quand les lignes ne s'accordent pas sur leur
 // règlement. Ce n'est jamais un mode saisissable : il n'apparaît qu'en lecture.
@@ -1353,18 +1362,6 @@ export default function Requisitions() {
       return
     }
 
-    // Hors budget : aucune ligne, aucun poste. Le bénéficiaire est la seule
-    // pièce qui dise à qui l'argent va, et la sortie de fonds en dérive le sien.
-    if (formData.nature_requisition === 'HORS_BUDGET' && !formData.beneficiaire.trim()) {
-      setNotification({
-        show: true,
-        type: 'error',
-        title: 'Bénéficiaire manquant',
-        message: 'Une réquisition hors budget doit désigner son bénéficiaire.'
-      })
-      return
-    }
-
     if (versementGroupe) {
       const partInvalide = fondsTiersSelection.find((op) => {
         const part = toNumber(fondsTiersChoisis[String(op.id)])
@@ -1427,7 +1424,7 @@ export default function Requisitions() {
         status: 'BROUILLON',
         service_id: Number(formData.service_id),
         created_by: user?.id,
-        beneficiaire: formData.beneficiaire || null,
+        beneficiaire: formData.beneficiaire.trim() || null,
         ...(formData.beneficiaire.trim() ? payloadBeneficiaire(beneficiaireSaisie) : {}),
         tiers_organisation_id: formData.nature_requisition === 'FONDS_DE_TIERS' ? formData.tiers_organisation_id : null,
         tiers_nom_libre: formData.nature_requisition === 'FONDS_DE_TIERS' && !formData.tiers_organisation_id
@@ -2077,13 +2074,6 @@ export default function Requisitions() {
     draftDossierPage * draftDossierPageSize,
     (draftDossierPage + 1) * draftDossierPageSize
   )
-  // Ton et libellé du sélecteur de nature, alignés sur les encaissements : la
-  // couleur rappelle le régime en cours, la phrase dit ce qu'il implique.
-  const natureToneClass = formData.nature_requisition === 'FONDS_DE_TIERS'
-    ? styles.natureFunds
-    : formData.nature_requisition === 'HORS_BUDGET'
-      ? styles.natureOutOfBudget
-      : styles.natureBudget
   const natureHelpText = formData.nature_requisition === 'FONDS_DE_TIERS'
     ? "Reversement de fonds appartenant à un tiers. Aucun poste budgétaire n'est consommé : identifiez le tiers et le montant autorisé."
     : formData.nature_requisition === 'HORS_BUDGET'
@@ -2157,9 +2147,6 @@ export default function Requisitions() {
   const activeConsumption = activeMontantPrevu > 0
     ? ((activeMontantEngage + activeTotalUsd) / activeMontantPrevu) * 100
     : 0
-  const activeConsumptionClamped = Math.min(100, Math.max(0, activeConsumption))
-
-
   // Réétiquetage des groupes une fois les postes chargés : un groupe qui porte
   // déjà un id de poste mais pas encore son libellé le reçoit ici.
   useEffect(() => {
@@ -2747,6 +2734,42 @@ export default function Requisitions() {
     })
   }
 
+  const renderBudgetOptions = (groupId: string, query: string) => {
+    const forceExpand = query.trim().length > 0
+    return filterBudgetTree(query).map((node: any) => (
+      <BudgetDropdownNode
+        key={node.id}
+        node={node}
+        depth={0}
+        groupId={groupId}
+        expandedIds={expandedBudgetIds}
+        onToggle={toggleBudgetNode}
+        onSelect={(line) => selectBudgetPoste(line, groupId)}
+        forceExpand={forceExpand}
+      />
+    ))
+  }
+
+  const natureLabel = formData.nature_requisition === 'FONDS_DE_TIERS'
+    ? 'Fonds de tiers'
+    : formData.nature_requisition === 'HORS_BUDGET'
+      ? 'Hors budget'
+      : 'Budgétaire'
+  const totalCreation = formData.nature_requisition === 'BUDGETAIRE'
+    ? calculateTotalUsd()
+    : toNumber(formData.montant_autorise)
+  const lignesCompletes = formData.nature_requisition !== 'BUDGETAIRE' || lignes.every(
+    (ligne) => Boolean(ligne.budget_poste_id && ligne.description.trim() && toNumber(ligne.montant_unitaire) > 0)
+  )
+
+  // Le bénéficiaire peut manquer à la création, mais aucune sortie ne part sans
+  // destinataire nommé : on le rappelle tant que la pièce reste à payer. Le
+  // fonds de tiers est dispensé, son tiers créancier tient lieu de bénéficiaire.
+  const beneficiaireADesigner = (req: any) =>
+    !String(req?.beneficiaire || '').trim()
+    && String(req?.nature_requisition || '').toUpperCase() !== 'FONDS_DE_TIERS'
+    && !['PAYEE', 'REJETEE', 'ANNULEE'].includes(String(statutAffiche(req) || '').toUpperCase())
+
   if (loading || permissionsLoading) {
     return (
       <div className={styles.loading}>
@@ -3173,7 +3196,7 @@ export default function Requisitions() {
                       Ajustez ce qui doit l'être avant d'enregistrer.
                     </span>
                     <ul className={styles.copieChecklist}>
-                      <li><strong>À vérifier :</strong> objet, bénéficiaire, quantités et montants.</li>
+                      <li><strong>À vérifier :</strong> objet, bénéficiaire éventuel, quantités et montants.</li>
                       <li><strong>Remis à neuf :</strong> date (aujourd'hui), pièce jointe, validations{formData.nature_requisition === 'FONDS_DE_TIERS' ? ', fonds de tiers retenus' : ''}.</li>
                     </ul>
                     {postesCopiesIndisponibles.length > 0 && (
@@ -3191,40 +3214,39 @@ export default function Requisitions() {
                   </button>
                 </div>
               )}
-              <div className={styles.createFormIntro}>
-                <div>
-                  <span className={styles.sectionEyebrow}>Dépense</span>
-                  <h2>Informations principales</h2>
-                </div>
-                {activeTab === 'classique' && (
-                  <div className={styles.natureControlStack}>
-                    <div className={`${styles.natureControl} ${natureToneClass}`}>
-                      <label htmlFor="req-nature">Nature</label>
-                      <select
-                        id="req-nature"
-                        value={formData.nature_requisition}
-                        onChange={(e) => setFormData({
-                          ...formData,
-                          nature_requisition: e.target.value as 'BUDGETAIRE' | 'HORS_BUDGET' | 'FONDS_DE_TIERS',
-                          tiers_organisation_id: null,
-                          tiers_nom_libre: '',
-                        })}
-                        required
-                      >
-                        <option value="BUDGETAIRE">Budgétaire</option>
-                        <option value="HORS_BUDGET">Hors budget</option>
-                        <option value="FONDS_DE_TIERS">Fonds de tiers</option>
-                      </select>
-                    </div>
-                    <p className={styles.natureHelp}>{natureHelpText}</p>
-                  </div>
-                )}
-              </div>
+              <RequisitionSectionNav
+                items={[
+                  {
+                    id: 'req-section-general',
+                    label: 'Informations',
+                    complete: Boolean(formData.objet.trim() && formData.date_requisition && formData.service_id),
+                  },
+                  { id: 'req-section-beneficiaire', label: 'Bénéficiaire', complete: Boolean(formData.beneficiaire.trim()), optional: true },
+                  {
+                    id: 'req-section-paiement',
+                    label: 'Paiement',
+                    complete: formData.mode_paiement === 'cash' || Boolean(formData.compte_bancaire_id),
+                  },
+                  { id: 'req-section-justificatif', label: 'Justificatif', complete: Boolean(annexeFile && !annexeError), optional: true },
+                  ...(formData.nature_requisition === 'BUDGETAIRE'
+                    ? [{ id: 'req-section-lignes', label: 'Dépenses', complete: lignesCompletes }]
+                    : []),
+                  {
+                    id: 'req-section-verification',
+                    label: 'Vérification',
+                    complete: Boolean(formData.objet.trim() && formData.service_id && lignesCompletes),
+                  },
+                ]}
+              />
               <div className={styles.createLayout}>
                 <div className={styles.createMain}>
 
-                  <section className={styles.formSection} aria-labelledby="req-section-general">
-                    <h3 className={styles.formSectionTitle} id="req-section-general">Informations générales</h3>
+                  <RequisitionSection
+                    id="req-section-general"
+                    number={1}
+                    title="Informations générales"
+                    description="Les informations essentielles de la demande, regroupées dans une grille compacte."
+                  >
                     <div className={styles.compactGrid}>
                       <div className={`${styles.field} ${styles.span2}`}>
                         <label htmlFor="req-objet">Objet de la réquisition *</label>
@@ -3294,17 +3316,27 @@ export default function Requisitions() {
                         </div>
                       )}
 
-                      <div className={styles.field}>
-                        <BeneficiaireIdentification
-                          id="req-beneficiaire"
-                          label="Bénéficiaire"
-                          required={formData.nature_requisition === 'HORS_BUDGET'}
-                          nom={formData.beneficiaire}
-                          onNomChange={(nom) => setFormData((prev) => ({ ...prev, beneficiaire: nom }))}
-                          value={beneficiaireSaisie}
-                          onChange={setBeneficiaireSaisie}
-                        />
-                      </div>
+                      {activeTab === 'classique' && (
+                        <div className={styles.field}>
+                          <label htmlFor="req-nature">Nature de la dépense *</label>
+                          <select
+                            id="req-nature"
+                            value={formData.nature_requisition}
+                            onChange={(e) => setFormData({
+                              ...formData,
+                              nature_requisition: e.target.value as 'BUDGETAIRE' | 'HORS_BUDGET' | 'FONDS_DE_TIERS',
+                              tiers_organisation_id: null,
+                              tiers_nom_libre: '',
+                            })}
+                            required
+                          >
+                            <option value="BUDGETAIRE">Budgétaire</option>
+                            <option value="HORS_BUDGET">Hors budget</option>
+                            <option value="FONDS_DE_TIERS">Fonds de tiers</option>
+                          </select>
+                          <small className={styles.fieldHint}>{natureHelpText}</small>
+                        </div>
+                      )}
 
                       {formData.nature_requisition !== 'BUDGETAIRE' && (
                         <div className={styles.field}>
@@ -3427,119 +3459,42 @@ export default function Requisitions() {
                         </>
                       )}
                     </div>
-                  </section>
+                  </RequisitionSection>
 
-                  <section className={styles.formSection} aria-labelledby="req-section-reglement">
-                    <h3 className={styles.formSectionTitle} id="req-section-reglement">Règlement</h3>
-                    <div className={styles.compactGrid}>
-                      <div className={styles.field}>
-                        <label htmlFor="req-mode-paiement">Mode de paiement *</label>
-                        <select
-                          id="req-mode-paiement"
-                          value={formData.mode_paiement}
-                          onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePaiement })}
-                          required
-                        >
-                          <option value="cash">Caisse</option>
-                          <option value="virement">Banque</option>
-                        </select>
-                      </div>
-
-                      {formData.mode_paiement === 'virement' && (
-                        <div className={`${styles.field} ${styles.span2}`}>
-                          <label htmlFor="req-compte-bancaire">Compte bancaire *</label>
-                          <select
-                            id="req-compte-bancaire"
-                            value={formData.compte_bancaire_id}
-                            onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
-                            required
-                          >
-                            <option value="">Sélectionner un compte bancaire</option>
-                            {comptesBancaires.map((compte) => (
-                              <option key={compte.id} value={compte.id}>
-                                {(compte.banque?.nom || 'Banque')} - {compte.intitule} ({compte.devise})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
+                  <BeneficiarySection>
+                    <div className={styles.field}>
+                      <BeneficiaireIdentification
+                        id="req-beneficiaire"
+                        label="Rechercher ou saisir un bénéficiaire"
+                        nom={formData.beneficiaire}
+                        onNomChange={(nom) => setFormData((prev) => ({ ...prev, beneficiaire: nom }))}
+                        value={beneficiaireSaisie}
+                        onChange={setBeneficiaireSaisie}
+                        compactEmpty
+                      />
                     </div>
+                  </BeneficiarySection>
 
-                    <div className={styles.optionGrid}>
-                      {/* Options avancées, volontairement compactes : elles ne
-                          doivent pas dominer le mode de paiement principal. */}
-                      <label
-                        className={styles.optionCard}
-                        htmlFor="reglement-par-ligne"
-                        data-checked={reglementParLigne ? 'true' : 'false'}
-                        title="Choisir Caisse ou Banque séparément sur certaines dépenses"
-                      >
-                        <input
-                          type="checkbox"
-                          id="reglement-par-ligne"
-                          checked={reglementParLigne}
-                          onChange={(e) => activerReglementParLigne(e.target.checked)}
-                        />
-                        <span className={styles.optionText}>
-                          <strong>Règlement par ligne</strong>
-                          <small>Caisse ou Banque selon la dépense.</small>
-                        </span>
-                      </label>
-
-                      <label
-                        className={styles.optionCard}
-                        htmlFor="a_valoir"
-                        data-checked={formData.a_valoir ? 'true' : 'false'}
-                        title="Dépense à rembourser par une autre instance"
-                      >
-                        <input
-                          type="checkbox"
-                          id="a_valoir"
-                          checked={formData.a_valoir}
-                          onChange={(e) => setFormData({ ...formData, a_valoir: e.target.checked })}
-                        />
-                        <span className={styles.optionText}>
-                          <strong>À valoir</strong>
-                          <small>Dépense à rembourser par une autre instance.</small>
-                        </span>
-                      </label>
-
-                      <label
-                        className={`${styles.optionCard} ${styles.optionCardAccent}`}
-                        htmlFor="decaissement_progressif"
-                        data-checked={formData.decaissement_progressif ? 'true' : 'false'}
-                        data-locked={reglementMixte ? 'true' : 'false'}
-                        title="Autoriser des sorties par tranches"
-                      >
-                        <input
-                          type="checkbox"
-                          id="decaissement_progressif"
-                          checked={formData.decaissement_progressif}
-                          disabled={reglementMixte}
-                          onChange={(e) => {
-                            choixProgressifRef.current = e.target.checked
-                            setFormData({ ...formData, decaissement_progressif: e.target.checked })
-                          }}
-                        />
-                        <span className={styles.optionText}>
-                          <strong>Décaissement progressif</strong>
-                          <small>
-                            {reglementMixte
-                              ? `Imposé : le règlement se scinde en ${volets.length} volets.`
-                              : 'Sorties par tranches autorisées par le demandeur.'}
-                          </small>
-                        </span>
-                      </label>
-                    </div>
-
-                    {formData.decaissement_progressif && (
-                      <p className={styles.optionNote}>
-                        Après approbation, les paiements pourront être autorisés par tranches,
-                        dans la limite du total approuvé.
-                      </p>
-                    )}
-
-                    {formData.a_valoir && (
+                  <PaymentSection
+                    mode={formData.mode_paiement}
+                    onModeChange={(mode) => setFormData({ ...formData, mode_paiement: mode })}
+                    bankAccountId={formData.compte_bancaire_id}
+                    onBankAccountChange={(id) => setFormData({ ...formData, compte_bancaire_id: id })}
+                    bankAccounts={comptesBancaires}
+                    perLine={reglementParLigne}
+                    onPerLineChange={activerReglementParLigne}
+                    aValoir={formData.a_valoir}
+                    onAValoirChange={(checked) => setFormData({ ...formData, a_valoir: checked })}
+                    progressive={formData.decaissement_progressif}
+                    onProgressiveChange={(checked) => {
+                      choixProgressifRef.current = checked
+                      setFormData({ ...formData, decaissement_progressif: checked })
+                    }}
+                    progressiveLocked={reglementMixte}
+                    progressiveDescription={reglementMixte
+                      ? `Imposé par les ${volets.length} volets de règlement.`
+                      : 'Autoriser des sorties de fonds par tranches.'}
+                    extraFields={formData.a_valoir ? (
                       <div className={styles.compactGrid}>
                         <div className={styles.field}>
                           <label htmlFor="req-instance-beneficiaire">Instance bénéficiaire (qui doit rembourser) *</label>
@@ -3565,563 +3520,100 @@ export default function Requisitions() {
                           />
                         </div>
                       </div>
-                    )}
-                  </section>
+                    ) : undefined}
+                  />
 
-                  <section className={styles.formSection} aria-labelledby="req-section-annexe">
-                    <h3 className={styles.formSectionTitle} id="req-section-annexe">Pièce justificative</h3>
-                    <div className={styles.field}>
-                      <label htmlFor="req-annexe" className={styles.srOnly}>
-                        Justificatif (PDF ou image, 3 Mo maximum)
-                      </label>
-                      <div
-                        className={`${styles.annexeDrop} ${annexeError ? styles.annexeDropError : ''}`}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={(e) => {
-                          e.preventDefault()
-                          const file = e.dataTransfer.files?.[0]
-                          if (file) setAnnexeSelection(file)
-                        }}
-                      >
-                        <input
-                          id="req-annexe"
-                          type="file"
-                          accept=".pdf,image/png,image/jpeg"
-                          onChange={(e) => setAnnexeSelection(e.target.files?.[0] || null)}
-                        />
-                        <div className={styles.annexeDropContent}>
-                          <span className={styles.annexeIcon}><Paperclip size={16} /></span>
-                          <strong>Choisir un justificatif</strong>
-                          <span className={styles.annexeDropHint}>
-                            ou glisser ici · PDF, PNG ou JPEG · 3 Mo max.
-                          </span>
-                        </div>
-                      </div>
-                      {annexeFile && !annexeError && (
-                        <div className={styles.annexePreview}>
-                          <span className={styles.annexeFileIcon}><FileText size={14} aria-hidden="true" /></span>
-                          <span>{annexeFile.name}</span>
-                        </div>
-                      )}
-                      {annexeError && (
-                        <div className={styles.annexeError}>{annexeError}</div>
-                      )}
-                      {!annexeError && (
-                        <div className={styles.annexeHint}>
-                          1 seul fichier. Si plusieurs notes de débit, scannez-les en un seul PDF.
-                        </div>
-                      )}
-                    </div>
-                  </section>
+                  <AttachmentSection
+                    file={annexeFile}
+                    error={annexeError}
+                    onFileChange={setAnnexeSelection}
+                  />
 
                   {formData.nature_requisition === 'BUDGETAIRE' && (
-                  <section className={styles.lignesSection} aria-labelledby="req-section-lignes">
-                    <div className={styles.lignesHeader}>
-                      <div className={styles.lignesHeading}>
-                        <h3 className={styles.formSectionTitle} id="req-section-lignes">Lignes de dépense</h3>
-                        <p className={styles.lignesSubtitle}>
-                          Choisissez un poste budgétaire, puis détaillez les dépenses qui lui seront imputées.
-                        </p>
-                      </div>
-                      <div className={styles.lignesSummary} aria-live="polite">
-                        {groupesDepense.length} poste{groupesDepense.length > 1 ? 's' : ''}
-                        <span aria-hidden="true">·</span>
-                        {lignes.length} dépense{lignes.length > 1 ? 's' : ''}
-                      </div>
-                    </div>
-
-                    <div className={styles.budgetGroups}>
-                      {groupesDepense.map((groupe, groupIndex) => {
-                        const budgetLine = groupe.budget_poste_id ? budgetLinesById.get(Number(groupe.budget_poste_id)) : null
-                        const query = groupe.budgetSearch ?? ''
-                        const filteredBudgetTree = filterBudgetTree(query)
-                        const forceExpand = query.trim().length > 0
-                        const sousTotalUsd = getGroupeSousTotalUsd(groupe)
-                        const disponible = toNumber(budgetLine?.montant_disponible)
-                        const soldeApres = budgetLine ? disponible - sousTotalUsd : 0
-                        const seuil = printSettings?.budget_alert_threshold ?? 80
-                        const pourcentage = budgetLine?.montant_prevu
-                          ? ((toNumber(budgetLine.montant_engage) + sousTotalUsd) / toNumber(budgetLine.montant_prevu)) * 100
-                          : 0
-                        const depasse = Boolean(budgetLine && sousTotalUsd > disponible)
-                        return (
-                          <div
-                            key={groupe.id}
-                            className={styles.budgetGroup}
-                            data-active={groupe.id === activeGroupId ? 'true' : 'false'}
-                            data-overrun={depasse ? 'true' : 'false'}
-                            onFocusCapture={() => setActiveGroupId(groupe.id)}
-                            role="group"
-                            aria-labelledby={`req-poste-title-${groupe.id}`}
-                          >
-                            <div className={styles.budgetGroupTop}>
-                              <div className={styles.budgetGroupIdentity}>
-                                <strong id={`req-poste-title-${groupe.id}`}>Poste {groupIndex + 1}</strong>
-                                {budgetLine ? (
-                                  <span>{budgetLine.code}</span>
-                                ) : copieSource && groupe.budget_poste_id != null && budgetLines.length > 0 ? (
-                                  <span className={styles.posteIndisponible}>
-                                    <AlertTriangle size={12} aria-hidden="true" /> Poste fermé — à remplacer
-                                  </span>
-                                ) : (
-                                  <span>Imputation à choisir</span>
-                                )}
-                              </div>
-                              {groupesDepense.length > 1 && (
-                                <button
-                                  type="button"
-                                  className={styles.removeGroupBtn}
-                                  onClick={() => removeGroupeDepense(groupe.id)}
-                                  aria-label={`Supprimer le poste ${groupIndex + 1}`}
-                                  title="Supprimer ce poste"
-                                >
-                                  <Trash2 size={16} aria-hidden="true" />
-                                </button>
-                              )}
-                            </div>
-
-                            <div className={styles.budgetGroupPoste}>
-                                <label htmlFor={`req-poste-${groupe.id}`}>Poste budgétaire <span aria-hidden="true">*</span></label>
-                                <div className={styles.posteCell}>
-                                  <input
-                                    id={`req-poste-${groupe.id}`}
-                                    type="text"
-                                    value={query}
-                                    aria-label={`Poste budgétaire du groupe ${groupIndex + 1}`}
-                                    aria-required="true"
-                                    role="combobox"
-                                    aria-autocomplete="list"
-                                    aria-haspopup="tree"
-                                    aria-expanded={groupe.showBudgetDropdown}
-                                    aria-controls={`req-poste-options-${groupe.id}`}
-                                    onChange={(e) => updateGroupeSearch(groupe.id, e.target.value)}
-                                    onFocus={() => {
-                                      setActiveGroupId(groupe.id)
-                                      setGroupeDropdown(groupe.id, true)
-                                    }}
-                                    onBlur={(event) => {
-                                      const next = event.relatedTarget as Node | null
-                                      const tree = document.getElementById(`req-poste-options-${groupe.id}`)
-                                      if (next && tree?.contains(next)) return
-                                      setTimeout(() => setGroupeDropdown(groupe.id, false), 120)
-                                    }}
-                                    onKeyDown={(event) => {
-                                      if (event.key === 'Escape') {
-                                        event.preventDefault()
-                                        setGroupeDropdown(groupe.id, false)
-                                      } else if (event.key === 'ArrowDown' && groupe.showBudgetDropdown) {
-                                        event.preventDefault()
-                                        document
-                                          .querySelector<HTMLButtonElement>(`#req-poste-options-${groupe.id} [data-budget-option]`)
-                                          ?.focus()
-                                      }
-                                    }}
-                                    placeholder="Rechercher par code ou libellé"
-                                  />
-                                  {groupe.showBudgetDropdown && filteredBudgetTree.length > 0 && (
-                                    <div
-                                      id={`req-poste-options-${groupe.id}`}
-                                      className={styles.dropdown}
-                                      role="tree"
-                                      aria-label={`Postes budgétaires disponibles pour le poste ${groupIndex + 1}`}
-                                      data-budget-tree={groupe.id}
-                                      data-tree-scroll
-                                      onMouseDown={(event) => event.preventDefault()}
-                                      onBlur={(event) => {
-                                        const next = event.relatedTarget as Node | null
-                                        if (!next || !event.currentTarget.contains(next)) {
-                                          setGroupeDropdown(groupe.id, false)
-                                        }
-                                      }}
-                                    >
-                                      {filteredBudgetTree.map((node: any) => (
-                                        <BudgetDropdownNode
-                                          key={node.id}
-                                          node={node}
-                                          depth={0}
-                                          groupId={groupe.id}
-                                          expandedIds={expandedBudgetIds}
-                                          onToggle={toggleBudgetNode}
-                                          onSelect={(line) => selectBudgetPoste(line, groupe.id)}
-                                          forceExpand={forceExpand}
-                                        />
-                                      ))}
-                                    </div>
-                                  )}
-                                  {groupe.showBudgetDropdown && filteredBudgetTree.length === 0 && (
-                                    <div
-                                      id={`req-poste-options-${groupe.id}`}
-                                      className={styles.dropdown}
-                                      role="status"
-                                      onMouseDown={(event) => event.preventDefault()}
-                                    >
-                                      <div className={styles.dropdownEmpty}>Aucun poste trouvé pour cette recherche.</div>
-                                    </div>
-                                  )}
-                                </div>
-                                <input type="hidden" value={groupe.budget_poste_id ?? ''} />
-                                {budgetLines.length === 0 && (
-                                  <small className={styles.budgetHint}>
-                                    Aucun poste budgétaire trouvé. Vérifie la page Budget (Dépenses).
-                                  </small>
-                                )}
-                            </div>
-
-                            {budgetLine && (
-                              <div className={styles.groupBudgetInfo}>
-                                <span className={depasse ? styles.budgetAlert : undefined}>
-                                  <small>Disponible</small>
-                                  <strong>{formatCurrency(disponible)}</strong>
-                                </span>
-                                <span>
-                                  <small>Sous-total saisi</small>
-                                  <strong>{formatCurrency(sousTotalUsd)}</strong>
-                                </span>
-                                <span className={soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}>
-                                  <small>Solde après demande</small>
-                                  <strong>{formatCurrency(soldeApres)}</strong>
-                                </span>
-                              </div>
-                            )}
-
-                            {budgetLine && pourcentage >= seuil && pourcentage < 100 && (
-                              <div className={styles.budgetThreshold} role="status">
-                                Seuil d’alerte de {seuil}% atteint pour ce poste.
-                              </div>
-                            )}
-
-                            {depasse && (
-                              <div className={styles.budgetWarning} role="alert">
-                                {printSettings?.budget_block_overrun ? 'Blocage' : 'Dépassement'} : le sous-total du poste
-                                {' '}({formatCurrency(sousTotalUsd)}) dépasse le disponible budgétaire
-                                {' '}({formatCurrency(disponible)}).
-                              </div>
-                            )}
-
-                            <div className={styles.lignesTableWrap}>
-                              <table className={`${styles.lignesTable} ${reglementParLigne ? styles.lignesTableSplit : ''}`}>
-                                <thead>
-                                  <tr>
-                                    <th scope="col" className={styles.colDescription}>Description *</th>
-                                    <th scope="col" className={styles.colQte}>Qté *</th>
-                                    <th scope="col" className={styles.colDevise}>Devise</th>
-                                    <th scope="col" className={styles.colPU}>Prix unitaire *</th>
-                                    {reglementParLigne && (
-                                      <th scope="col" className={styles.colReglement}>Règlement</th>
-                                    )}
-                                    <th scope="col" className={styles.colTotal}>Total (USD)</th>
-                                    <th scope="col" className={styles.colAction}>
-                                      <span className={styles.srOnly}>Actions</span>
-                                    </th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {groupe.lignes.map((ligne, lineIndex) => (
-                                    <tr key={ligne.id} className={styles.ligneRow}>
-                                      <td className={styles.colDescription} data-label="Description">
-                                        <input
-                                          id={`req-ligne-description-${ligne.id}`}
-                                          type="text"
-                                          value={ligne.description}
-                                          aria-label={`Description de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
-                                          placeholder="Nature de la dépense"
-                                          onChange={(e) => updateLigne(groupe.id, ligne.id, 'description', e.target.value)}
-                                          required
-                                        />
-                                      </td>
-                                      <td className={styles.colQte} data-label="Qté">
-                                        <input
-                                          type="number"
-                                          value={ligne.quantite}
-                                          inputMode="numeric"
-                                          aria-label={`Quantité de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
-                                          onChange={(e) => updateLigne(groupe.id, ligne.id, 'quantite', parseInt(e.target.value) || 0)}
-                                          min="1"
-                                          required
-                                        />
-                                      </td>
-                                      <td className={styles.colDevise} data-label="Devise">
-                                        <select
-                                          value={ligne.devise || 'USD'}
-                                          aria-label={`Devise de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
-                                          onChange={(e) => updateLigne(groupe.id, ligne.id, 'devise', e.target.value)}
-                                        >
-                                          <option value="USD">USD</option>
-                                          <option value="CDF">CDF</option>
-                                        </select>
-                                      </td>
-                                      <td className={styles.colPU} data-label="Prix unitaire">
-                                        <div className={styles.inlineInputRow}>
-                                          <input
-                                            type="number"
-                                            step="0.01"
-                                            value={ligne.montant_unitaire}
-                                            min="0.01"
-                                            inputMode="decimal"
-                                            aria-label={`Prix unitaire de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
-                                            onChange={(e) => updateLigne(groupe.id, ligne.id, 'montant_unitaire', parseFloat(e.target.value) || 0)}
-                                            onFocus={(event) => {
-                                              if (toNumber(ligne.montant_unitaire) === 0) event.currentTarget.select()
-                                            }}
-                                            required
-                                          />
-                                          {ligne.devise === 'CDF' && exchangeRate > 0 && (
-                                            <button
-                                              type="button"
-                                              className={styles.convertBtn}
-                                              title="Convertir ce prix unitaire en USD"
-                                              onClick={() => {
-                                                const usd = toUsd(ligne.montant_unitaire, 'CDF')
-                                                updateLigne(groupe.id, ligne.id, 'devise', 'USD')
-                                                updateLigne(groupe.id, ligne.id, 'montant_unitaire', parseFloat(usd.toFixed(2)))
-                                              }}
-                                            >
-                                              Convertir en USD
-                                            </button>
-                                          )}
-                                        </div>
-                                        {ligne.devise === 'CDF' && exchangeRate === 0 && (
-                                          <small className={styles.budgetHint}>Taux de change non défini.</small>
-                                        )}
-                                      </td>
-
-                                      {reglementParLigne && (
-                                        <td className={styles.colReglement} data-label="Règlement">
-                                          <div className={styles.reglementCell}>
-                                            <select
-                                              value={ligne.mode_paiement ?? ''}
-                                              aria-label={`Règlement de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
-                                              onChange={(e) => changerModeLigne(groupe.id, ligne.id, e.target.value as '' | 'cash' | 'virement')}
-                                            >
-                                              <option value="">Global · {libelleModePaiement(formData.mode_paiement)}</option>
-                                              <option value="cash">Caisse</option>
-                                              <option value="virement">Banque</option>
-                                            </select>
-                                            {ligne.mode_paiement === 'virement' && (
-                                              <select
-                                                value={ligne.compte_bancaire_id ?? ''}
-                                                aria-label={`Compte bancaire de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
-                                                onChange={(e) =>
-                                                  updateLigne(
-                                                    groupe.id,
-                                                    ligne.id,
-                                                    'compte_bancaire_id',
-                                                    e.target.value ? Number(e.target.value) : null
-                                                  )
-                                                }
-                                                required
-                                              >
-                                                <option value="">Compte bancaire…</option>
-                                                {comptesBancaires.map((compte) => (
-                                                  <option key={compte.id} value={compte.id}>
-                                                    {(compte.banque?.nom || 'Banque')} - {compte.intitule} ({compte.devise})
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            )}
-                                          </div>
-                                        </td>
-                                      )}
-
-                                      <td className={`${styles.colTotal} ${styles.cellAmount}`} data-label="Total (USD)">
-                                        <strong>
-                                          {formatCurrency(ligne.devise === 'CDF' ? toUsd(ligne.montant_total, 'CDF') : ligne.montant_total)}
-                                        </strong>
-                                      </td>
-                                      <td className={styles.colAction} data-label="">
-                                        <button
-                                          type="button"
-                                          onClick={() => removeLigne(groupe.id, ligne.id)}
-                                          className={styles.removeBtn}
-                                          disabled={groupesDepense.length === 1 && groupe.lignes.length === 1}
-                                          aria-label={`Supprimer la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
-                                          title="Supprimer la ligne"
-                                        >
-                                          <Trash2 size={15} aria-hidden="true" />
-                                        </button>
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                                <tfoot>
-                                  <tr className={styles.addExpenseRow}>
-                                    <td colSpan={reglementParLigne ? 7 : 6}>
-                                      <button type="button" onClick={() => addLigne(groupe.id)} className={styles.addLineBtn}>
-                                        <Plus size={15} aria-hidden="true" />
-                                        Ajouter une dépense
-                                      </button>
-                                    </td>
-                                  </tr>
-                                  <tr>
-                                    <td colSpan={reglementParLigne ? 5 : 4}>Sous-total du poste</td>
-                                    <td className={styles.cellAmount}>{formatCurrency(sousTotalUsd)}</td>
-                                    <td />
-                                  </tr>
-                                  {budgetLine && (
-                                    <tr className={styles.lignesFootHint}>
-                                      <td colSpan={reglementParLigne ? 5 : 4}>Solde après demande</td>
-                                      <td className={`${styles.cellAmount} ${soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}`}>
-                                        {formatCurrency(soldeApres)}
-                                      </td>
-                                      <td />
-                                    </tr>
-                                  )}
-                                </tfoot>
-                              </table>
-                            </div>
+                    <RequisitionExpenseEditor
+                      groups={groupesDepense}
+                      activeGroupId={activeGroupId}
+                      onActiveGroupChange={setActiveGroupId}
+                      budgetLinesById={budgetLinesById}
+                      budgetLineCount={budgetLines.length}
+                      copiedRequisition={Boolean(copieSource)}
+                      perLinePayment={reglementParLigne}
+                      accounts={comptesBancaires}
+                      globalPaymentMode={formData.mode_paiement}
+                      exchangeRate={exchangeRate}
+                      alertThreshold={printSettings?.budget_alert_threshold ?? 80}
+                      blockOverrun={Boolean(printSettings?.budget_block_overrun)}
+                      formatCurrency={formatCurrency}
+                      toUsd={toUsd}
+                      subtotalUsd={(group) => getGroupeSousTotalUsd(group)}
+                      totalUsd={calculateTotalUsd()}
+                      renderBudgetOptions={renderBudgetOptions}
+                      onSearchBudget={updateGroupeSearch}
+                      onDropdownChange={setGroupeDropdown}
+                      onRemoveGroup={removeGroupeDepense}
+                      onAddGroup={addGroupeDepense}
+                      onUpdateLine={updateLigne}
+                      onChangeLinePayment={changerModeLigne}
+                      onRemoveLine={removeLigne}
+                      onAddLine={addLigne}
+                      paymentLabel={libelleModePaiement}
+                      footer={reglementMixte ? (
+                        <div className={styles.voletsPanel} aria-live="polite">
+                          <div className={styles.voletsPanelHeader}>
+                            <strong>Règlement en {volets.length} volets</strong>
+                            <span>
+                              {modeResumeReglement === MODE_PAIEMENT_MIXTE
+                                ? 'La réquisition sera enregistrée avec le mode « Mixte ».'
+                                : `Même mode (${libelleModePaiement(modeResumeReglement)}), mais plusieurs comptes : un volet par compte.`}
+                            </span>
                           </div>
-                        )
-                      })}
-                      <button type="button" onClick={addGroupeDepense} className={styles.addBudgetGroupBtn}>
-                        <Plus size={17} aria-hidden="true" />
-                        Ajouter un poste budgétaire
-                      </button>
-                      <div className={styles.totalBudgetGroups}>
-                        <div className={styles.totalBudgetLabel}>
-                          <span>Total général</span>
-                          {exchangeRate > 0 && (
-                          <small>
-                            Équivalent CDF {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(calculateTotalUsd() * exchangeRate)}
-                          </small>
-                          )}
+                          <ul className={styles.voletsList}>
+                            {volets.map((volet) => (
+                              <li key={`${volet.mode}-${volet.compteId ?? 'caisse'}`}>
+                                <span className={styles.voletLabel}>
+                                  <strong>
+                                    {libelleModePaiement(volet.mode)}
+                                    {volet.mode === 'virement' && ` · ${libelleCompteBancaire(volet.compteId)}`}
+                                  </strong>
+                                  <small>
+                                    Ligne{volet.numerosLignes.length > 1 ? 's' : ''} {volet.numerosLignes.join(', ')}
+                                  </small>
+                                </span>
+                                <strong className={styles.voletMontant}>{formatCurrency(volet.montantUsd)}</strong>
+                              </li>
+                            ))}
+                          </ul>
+                          <p className={styles.voletsNote}>
+                            Décaissement progressif activé automatiquement : chaque volet sera autorisé puis payé séparément.
+                          </p>
                         </div>
-                        <strong>{formatCurrency(calculateTotalUsd())}</strong>
-                      </div>
-                    </div>
-
-                    {/* Le règlement mixte a des conséquences (mode de la pièce,
-                        décaissement progressif, paiements séparés) : on les
-                        annonce avant l'enregistrement, pas après. */}
-                    {reglementMixte && (
-                      <div className={styles.voletsPanel} aria-live="polite">
-                        <div className={styles.voletsPanelHeader}>
-                          <strong>Règlement en {volets.length} volets</strong>
-                          <span>
-                            {modeResumeReglement === MODE_PAIEMENT_MIXTE
-                              ? 'La réquisition sera enregistrée avec le mode « Mixte ».'
-                              : `Même mode (${libelleModePaiement(modeResumeReglement)}), mais plusieurs comptes : un volet par compte.`}
-                          </span>
-                        </div>
-                        <ul className={styles.voletsList}>
-                          {volets.map((volet) => (
-                            <li key={`${volet.mode}-${volet.compteId ?? 'caisse'}`}>
-                              <span className={styles.voletLabel}>
-                                <strong>
-                                  {libelleModePaiement(volet.mode)}
-                                  {volet.mode === 'virement' && ` · ${libelleCompteBancaire(volet.compteId)}`}
-                                </strong>
-                                <small>
-                                  Ligne{volet.numerosLignes.length > 1 ? 's' : ''} {volet.numerosLignes.join(', ')}
-                                </small>
-                              </span>
-                              <strong className={styles.voletMontant}>{formatCurrency(volet.montantUsd)}</strong>
-                            </li>
-                          ))}
-                        </ul>
-                        <p className={styles.voletsNote}>
-                          Décaissement progressif activé automatiquement : l'argent ne sortant pas du même
-                          endroit, chaque volet sera autorisé puis payé séparément.
-                        </p>
-                      </div>
-                    )}
-                  </section>
+                      ) : undefined}
+                    />
                   )}
-
                 </div>
 
-                <aside className={styles.analysisColumn} aria-label="Récapitulatif et analyse budgétaire">
-                  <div className={styles.summaryPanelHeader}>
-                    <span>Total de la réquisition</span>
-                    <strong>{formatCurrency(formData.nature_requisition === 'BUDGETAIRE' ? calculateTotalUsd() : toNumber(formData.montant_autorise))}</strong>
-                  </div>
-
-                  <div className={styles.summaryRows}>
-                    <div>
-                      <span>Service / Commission</span>
-                      <strong>{serviceLabel || 'Non sélectionné'}</strong>
-                    </div>
-                    <div>
-                      <span>Date de la réquisition</span>
-                      {/* Affichage jj/mm/aaaa sans passer par Date() : évite tout décalage de fuseau. */}
-                      <strong>
-                        {formData.date_requisition
-                          ? formData.date_requisition.split('-').reverse().join('/')
-                          : '—'}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>Mode de paiement</span>
-                      <strong>
-                        {reglementMixte
-                          ? `${libelleModePaiement(modeResumeReglement)} · ${volets.length} volets`
-                          : libelleModePaiement(modeResumeReglement)}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>Lignes de dépense</span>
-                      <strong>{formData.nature_requisition === 'BUDGETAIRE' ? lignes.length : 'Sans impact budget initial'}</strong>
-                    </div>
-                  </div>
-
-                  {formData.nature_requisition !== 'BUDGETAIRE' ? (
-                    <div className={styles.analysisEmpty}>
-                      Cette réquisition autorise une sortie sans consommation budgétaire initiale.
-                    </div>
-                  ) : (
-                  <>
-                  <div className={styles.analysisHeader}>
-                    <div className={styles.analysisTitle}>Analyse budgétaire</div>
-                    <div className={styles.analysisSubtitle}>
-                      {activeGroupe ? 'Poste actif' : 'Sélectionnez un poste'}
-                    </div>
-                  </div>
-
-                  {activeBudgetLine ? (
-                    <>
-                      <div className={styles.analysisCard}>
-                        <div className={styles.analysisCardTitle}>
-                          {activeBudgetLine.code} - {activeBudgetLine.libelle}
-                        </div>
-                        <div className={styles.analysisRow}>
-                          <span>Solde actuel</span>
-                          <strong>{formatCurrency(activeDisponible)}</strong>
-                        </div>
-                        <div className={styles.progressBar}>
-                          <div
-                            className={styles.progressFill}
-                            style={{ width: `${activeConsumptionClamped}%` }}
-                          />
-                        </div>
-                        <div className={styles.analysisHint}>
-                          Consommation après opération : {activeConsumption.toFixed(1)}%
-                        </div>
-                      </div>
-
-                      <div className={styles.analysisCardPrimary}>
-                        <div className={styles.analysisRow}>
-                          <span>Reste à vivre</span>
-                          <strong className={activeSoldeApres < 0 ? styles.negative : styles.positive}>
-                            {formatCurrency(activeSoldeApres)}
-                          </strong>
-                        </div>
-                        <div className={styles.analysisSub}>
-                          Dépense saisie : {formatCurrency(activeTotalUsd)}
-                        </div>
-                        {activeSoldeApres < 0 && (
-                          <div className={styles.analysisAlert}>
-                            Dépassement estimé de {formatCurrency(Math.abs(activeSoldeApres))}
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <div className={styles.analysisEmpty}>
-                      Choisissez un poste budgétaire pour afficher le solde et l’impact.
-                    </div>
-                  )}
-                  </>
-                  )}
-                </aside>
+                <RequisitionSummaryPanel
+                  total={formatCurrency(totalCreation)}
+                  service={serviceLabel || 'Non sélectionné'}
+                  date={formData.date_requisition ? formData.date_requisition.split('-').reverse().join('/') : '—'}
+                  payment={reglementMixte
+                    ? `${libelleModePaiement(modeResumeReglement)} · ${volets.length} volets`
+                    : libelleModePaiement(modeResumeReglement)}
+                  nature={natureLabel}
+                  beneficiary={formData.beneficiaire.trim() || 'Non renseigné (facultatif)'}
+                  lineCount={formData.nature_requisition === 'BUDGETAIRE' ? lignes.length : null}
+                  groupCount={formData.nature_requisition === 'BUDGETAIRE' ? groupesDepense.length : null}
+                  budgetary={formData.nature_requisition === 'BUDGETAIRE'}
+                  activeBudget={activeBudgetLine ? {
+                    code: activeBudgetLine.code,
+                    label: activeBudgetLine.libelle,
+                    current: formatCurrency(activeDisponible),
+                    after: formatCurrency(activeSoldeApres),
+                    expense: formatCurrency(activeTotalUsd),
+                    consumption: activeConsumption,
+                    overrun: activeSoldeApres < 0,
+                  } : null}
+                />
               </div>
 
               <div className={styles.formActions}>
@@ -4332,6 +3824,14 @@ export default function Requisitions() {
                       )}
                       {(req as any).decaissement_progressif && (
                         <span className={`${styles.badge} ${styles.badgeProgressif}`}>Progressif</span>
+                      )}
+                      {beneficiaireADesigner(req) && (
+                        <span
+                          className={`${styles.badge} ${styles.badgeBeneficiaireManquant}`}
+                          title="À désigner via « Modifier », même après validation ; à défaut, la caisse le nommera au paiement."
+                        >
+                          Bénéficiaire non désigné
+                        </span>
                       )}
                     </div>
                   </td>

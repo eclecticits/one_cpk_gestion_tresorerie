@@ -1413,6 +1413,66 @@ async def test_maj_fonds_tiers_ne_revalide_le_tiers_que_s_il_change(db_session):
     assert "inactive" in str(exc.value.detail).lower()
 
 
+@pytest.mark.asyncio
+async def test_hors_budget_sans_beneficiaire_se_corrige_et_ne_se_paie_pas_anonyme(db_session, monkeypatch):
+    """Le bénéficiaire se désigne plus tard, mais jamais après le paiement.
+
+    Rendu facultatif à la création, il ne doit pas redevenir obligatoire à la
+    première correction : un brouillon hors budget sans bénéficiaire restait
+    sinon impossible à modifier. Le garde-fou se déplace à la caisse, qui
+    refuse une sortie sans destinataire nommé.
+    """
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+    from app.schemas.requisition import RequisitionUpdate
+    from app.services.requisition_service import update_requisition_logic
+
+    db = db_session
+    org = await _org(db, "hb-sans-benef")
+    user = await _admin(db, org)
+    await _caisse(db, org, usd=Decimal("500"))
+    brouillon = await _requisition_approuvee(
+        db, org, nature="HORS_BUDGET", montant=Decimal("80"), status="BROUILLON"
+    )
+    await db.commit()
+
+    updated = await update_requisition_logic(
+        db=db,
+        requisition_id=brouillon.id,
+        payload=RequisitionUpdate(objet="Objet corrigé, bénéficiaire encore inconnu"),
+        user=user,
+        tenant_id=org.id,
+    )
+    assert updated.objet == "Objet corrigé, bénéficiaire encore inconnu"
+    assert not updated.beneficiaire
+
+    async def fake_num(*_args, **_kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+    approuvee = await _requisition_approuvee(db, org, nature="HORS_BUDGET", montant=Decimal("80"))
+    await db.commit()
+    with pytest.raises(HTTPException) as exc:
+        await create_sortie_fonds(
+            payload=SortieFondsCreate(
+                type_sortie="autre",
+                requisition_id=approuvee.id,
+                nature_mouvement="HORS_BUDGET_A_REGULARISER",
+                montant_paye=Decimal("80"),
+                mode_paiement="cash",
+                devise="USD",
+                canal="CAISSE",
+                motif="Paiement sans destinataire",
+            ),
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+    assert exc.value.status_code == 400
+    assert "Bénéficiaire requis" in str(exc.value.detail)
+
+
 async def _encaisser_fonds_tiers(db, org, user, banque, montant, fonds_tiers):
     from app.api.v1.endpoints.encaissements import create_encaissement
 

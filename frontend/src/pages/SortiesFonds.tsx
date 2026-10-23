@@ -70,6 +70,11 @@ import JustificatifsEnAttente from '../components/JustificatifsEnAttente'
 import { listerJustificatifsEnAttente, regleJustificatif } from '../api/justificatifs'
 import justifStyles from '../components/Justificatif.module.css'
 import ProjetActiviteSelect from '../components/ProjetActiviteSelect'
+import {
+  SortieSection,
+  SortieSectionNav,
+  SortieSummaryPanel,
+} from '../components/sorties/SortieFondsUi'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
@@ -2052,6 +2057,18 @@ export default function SortiesFonds() {
     }).format(toNumber(amount))
   }
 
+  // La sortie se libelle dans sa propre devise ; la pièce autorisée, dans la
+  // sienne. Formater l'approuvé dans la devise du paiement afficherait un
+  // montant USD sous le symbole CDF.
+  const formatAmountIn = (amount: string | number | null | undefined, devise?: string | null) => {
+    const currency = String(devise || 'USD').toUpperCase()
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: currency === 'CDF' ? 0 : 2,
+    }).format(toNumber(amount))
+  }
+
   const canCreate = hasPermission('sorties_fonds')
   const canExecutePayment = hasPermission('can_execute_payment')
 
@@ -2315,6 +2332,42 @@ export default function SortiesFonds() {
       notifyError('Erreur', error?.message || "Impossible de générer le rapport PDF.")
     }
   }
+
+  const sourceComplete = isSortieDirecte
+    ? Boolean(formData.ordre_decaissement_id)
+    : requiresApprovedRequisition
+      ? Boolean(formData.requisition_id && (!isProgressif || formData.ordre_decaissement_id))
+      : true
+  const beneficiaryComplete = isTransfertInterne || Boolean(formData.beneficiaire.trim())
+  const imputationComplete = isTransfertInterne || sansImpactBudgetaire || posteDefiniParSource || Boolean(formData.budget_poste_id)
+  const paymentComplete = Boolean(
+    currentPaymentAmount > 0 &&
+    formData.date_paiement &&
+    (!showCompteSourceSelector || compteImposeParOrdre || formData.compte_bancaire_id) &&
+    (!['mobile_money', 'virement'].includes(formData.mode_paiement) || formData.reference.trim())
+  )
+  const verificationComplete = Boolean(
+    sourceComplete &&
+    beneficiaryComplete &&
+    imputationComplete &&
+    paymentComplete &&
+    formData.motif.trim() &&
+    !amountExceedsRemaining
+  )
+  const devisePieceAutorisee = (selectedRequisition as any)?.devise || 'USD'
+  const summarySource = selectedRequisition?.numero_requisition
+    || selectedOrdre?.numero_ordre
+    || getTypeSortieLabel(formData.type_sortie)
+  const summaryPayment = isTransfertInterne
+    ? isVersementBanque
+      ? 'Transfert · Caisse vers banque'
+      : 'Transfert · Banque vers caisse'
+    : `${getModePaiementLabel(formData.mode_paiement)} · ${formData.canal === 'CAISSE' ? 'Caisse' : 'Banque'}`
+  const summaryStatus = brouillonEnEdition
+    ? 'Brouillon en correction'
+    : verificationComplete
+      ? 'Prête à valider'
+      : 'En préparation'
 
   if (loading || permissionsLoading) {
     return (
@@ -2638,16 +2691,35 @@ export default function SortiesFonds() {
 
             <form id="sortie-fonds-form" onSubmit={handleSubmit} className={`${styles.form} ${isCreatePage ? styles.createForm : ''}`}>
               {isCreatePage && (
-                <div className={styles.createFormIntro}>
-                  <div>
-                    <span className={styles.sectionEyebrow}>Paiement</span>
-                    <h2>Informations principales</h2>
-                  </div>
-                  <p>Les champs liés à la réquisition, au bénéficiaire et au canal de paiement sont regroupés pour limiter le défilement.</p>
-                </div>
+                <SortieSectionNav
+                  items={[
+                    { id: 'sortie-section-source', label: 'Source', complete: sourceComplete && Boolean(formData.motif.trim()) },
+                    ...(!isTransfertInterne
+                      ? [
+                          { id: 'sortie-section-beneficiaire', label: 'Bénéficiaire', complete: beneficiaryComplete },
+                          { id: 'sortie-section-imputation', label: 'Imputation', complete: imputationComplete },
+                        ]
+                      : []),
+                    { id: 'sortie-section-paiement', label: 'Paiement', complete: paymentComplete },
+                    {
+                      id: 'sortie-section-justificatifs',
+                      label: 'Justificatifs',
+                      complete: Boolean(formData.piece_justificative.trim() || justificatifFiles.length > 0),
+                      optional: true,
+                    },
+                    { id: 'sortie-section-verification', label: 'Vérification', complete: verificationComplete },
+                  ]}
+                />
               )}
               <div className={isCreatePage ? styles.createLayout : undefined}>
-                <div className={isCreatePage ? styles.createMain : undefined}>
+                <div className={styles.createMain}>
+              <SortieSection
+                id="sortie-section-source"
+                number={1}
+                title="Source et autorisation"
+                description="Identifiez la pièce autorisée, le service et le motif avant d’exécuter le paiement."
+              >
+              <div className={styles.sectionGrid}>
               <div className={styles.field}>
                 <label>Type de sortie *</label>
                 <select
@@ -2700,7 +2772,7 @@ export default function SortiesFonds() {
                 const isRemboursementSortie = formData.type_sortie === 'remboursement'
                 const requisitionsSource = approvedRequisitionsForType
                 return (
-                <div className={styles.field}>
+                <div className={`${styles.field} ${styles.wideField}`}>
                   <label>
                     {isRemboursementSortie
                       ? 'Remboursement transport approuvé *'
@@ -2837,7 +2909,7 @@ export default function SortiesFonds() {
               })()}
 
               {isSortieDirecte && (
-                <div className={styles.field}>
+                <div className={`${styles.field} ${styles.wideField}`}>
                   <label>Ordre de sortie directe à payer *</label>
                   <select
                     value={formData.ordre_decaissement_id}
@@ -2910,7 +2982,7 @@ export default function SortiesFonds() {
               )}
 
               {requiresApprovedRequisition && isProgressif && (
-                <div className={styles.field}>
+                <div className={`${styles.field} ${styles.wideField}`}>
                   <label>Ordre de décaissement autorisé *</label>
                   <select
                     value={formData.ordre_decaissement_id}
@@ -3019,7 +3091,7 @@ export default function SortiesFonds() {
                 />
               )}
 
-              <div className={styles.field}>
+              <div className={`${styles.field} ${styles.wideField}`}>
                 <label>Motif de la sortie *</label>
                 <textarea
                   value={formData.motif}
@@ -3037,7 +3109,17 @@ export default function SortiesFonds() {
                     : 'Soyez descriptif et précis dans votre motif pour faciliter le suivi'}
                 </small>
               </div>
+              </div>
+              </SortieSection>
 
+              {!isTransfertInterne && (
+              <SortieSection
+                id="sortie-section-beneficiaire"
+                number={2}
+                title="Bénéficiaire"
+                description="Confirmez la personne qui reçoit les fonds et la règle de remise du justificatif."
+              >
+              <div className={styles.beneficiaryGrid}>
               {!isTransfertInterne && (
               <div className={styles.field}>
                 <BeneficiaireIdentification
@@ -3095,7 +3177,18 @@ export default function SortiesFonds() {
                 </label>
               </div>
               )}
+              </div>
+              </SortieSection>
+              )}
 
+              {!isTransfertInterne && (
+              <SortieSection
+                id="sortie-section-imputation"
+                number={3}
+                title="Imputation"
+                description="Vérifiez le poste ou la nature hors budget héritée de la pièce autorisée."
+              >
+              <div className={styles.sectionStack}>
               {/* Poste(s) défini(s) en amont par la source : lecture seule, la caissière exécute. */}
               {!isTransfertInterne && posteSourceMulti && (
               <div className={styles.field}>
@@ -3277,16 +3370,25 @@ export default function SortiesFonds() {
                 })()}
               </div>
               )}
+              </div>
+              </SortieSection>
+              )}
 
+              <SortieSection
+                id="sortie-section-paiement"
+                number={isTransfertInterne ? 2 : 4}
+                title="Paiement"
+                description="Confirmez le montant, la trésorerie source et la référence de l’opération."
+              >
               {isTransfertInterne && (
-                <small style={{ color: '#0369a1', fontSize: '12px', display: 'block', marginBottom: '8px' }}>
+                <div className={styles.transferNotice}>
                   {isVersementBanque
                     ? "Versement des espèces de la caisse vers la banque : la caisse est débitée et le compte bancaire choisi est crédité. Aucun service, bénéficiaire ni poste budgétaire n'est requis — ce n'est pas une dépense."
                     : "Approvisionnement de la caisse : retrait d'espèces du compte bancaire choisi (débité) pour alimenter la caisse (créditée). Aucun service, bénéficiaire ni poste budgétaire n'est requis — ce n'est pas une dépense."}
-                </small>
+                </div>
               )}
 
-              <div className={styles.fieldRow}>
+              <div className={styles.paymentGrid}>
                 <div className={styles.field}>
                   <label>Devise *</label>
                   <select
@@ -3440,7 +3542,7 @@ export default function SortiesFonds() {
                 )}
               </div>
 
-              <div className={styles.fieldRow}>
+              <div className={styles.paymentGrid}>
                 <div className={styles.field}>
                   <label>
                     Montant ({formData.devise}) *
@@ -3490,7 +3592,7 @@ export default function SortiesFonds() {
                 </div>
               </div>
 
-              <div className={styles.fieldRow}>
+              <div className={styles.paymentGrid}>
                 {!isTransfertInterne && (
                 <div className={styles.field}>
                   <label>Mode de paiement *</label>
@@ -3562,7 +3664,16 @@ export default function SortiesFonds() {
                   </div>
                 )}
               </div>
+              </SortieSection>
 
+              <SortieSection
+                id="sortie-section-justificatifs"
+                number={isTransfertInterne ? 3 : 5}
+                title="Justificatifs et observation"
+                description="Référencez ou joignez les pièces disponibles au moment du paiement."
+                optional
+              >
+              <div className={styles.documentsGrid}>
               <div className={styles.field}>
                 <label>Pièce justificative (optionnel)</label>
                 <input
@@ -3615,66 +3726,30 @@ export default function SortiesFonds() {
                   style={{ resize: 'vertical' }}
                 />
               </div>
+              </div>
+              </SortieSection>
 
                 </div>
               {isCreatePage && (
-                  <aside className={styles.requisitionSummaryPanel} aria-label="Résumé de la réquisition">
-                    <div className={styles.summaryPanelHeader}>
-                      <span>Résumé</span>
-                      <strong>{selectedRequisition?.numero_requisition || 'Aucune réquisition'}</strong>
-                    </div>
-                    <div className={styles.summaryRows}>
-                      <div>
-                        <span>Type</span>
-                        <strong>{getTypeSortieLabel(formData.type_sortie)}</strong>
-                      </div>
-                      <div>
-                        <span>Service / Commission</span>
-                        <strong>{serviceLabel || 'Non défini'}</strong>
-                      </div>
-                      <div>
-                        <span>Bénéficiaire</span>
-                        <strong>{formData.beneficiaire || (selectedRequisition as any)?.demandeur?.nom || 'Non renseigné'}</strong>
-                      </div>
-                      <div>
-                        <span>Statut</span>
-                        <strong>{String((selectedRequisition as any)?.status || (selectedRequisition as any)?.statut || 'En préparation')}</strong>
-                      </div>
-                    </div>
-                    <div className={styles.amountReview}>
-                      <div>
-                        <span>Montant approuvé</span>
-                        <strong>{formatCurrency(approvedAmount)}</strong>
-                      </div>
-                      <div>
-                        <span>Déjà payé</span>
-                        <strong>{formatCurrency(alreadyPaidAmount)}</strong>
-                      </div>
-                      <div className={amountExceedsRemaining ? styles.amountWarning : styles.amountCurrent}>
-                        <span>Cette sortie</span>
-                        <strong>{formatCurrency(currentPaymentAmount)}</strong>
-                      </div>
-                      <div>
-                        <span>Reste après validation</span>
-                        <strong>{formatCurrency(remainingAfterPayment)}</strong>
-                      </div>
-                    </div>
-                    {amountExceedsRemaining && (
-                      <div className={styles.validationNotice}>
-                        Le montant saisi dépasse le reste à payer ({formatCurrency(remainingBeforePayment)}).
-                      </div>
-                    )}
-                    <div className={styles.summaryRows}>
-                      <div>
-                        <span>Date d'approbation</span>
-                        <strong>{(selectedRequisition as any)?.approved_at ? format(new Date((selectedRequisition as any).approved_at), 'dd/MM/yyyy') : 'Non disponible'}</strong>
-                      </div>
-                      <div>
-                        <span>Approuvé par</span>
-                        <strong>{(selectedRequisition as any)?.approved_by_user?.nom || (selectedRequisition as any)?.approbateur?.nom || 'Non disponible'}</strong>
-                      </div>
-                    </div>
-                  </aside>
+                  <SortieSummaryPanel
+                    amount={formatAmountIn(currentPaymentAmount, formData.devise)}
+                    source={summarySource}
+                    type={getTypeSortieLabel(formData.type_sortie)}
+                    service={isTransfertInterne ? 'Non requis' : serviceLabel || 'Non défini'}
+                    beneficiary={isTransfertInterne
+                      ? 'Non requis'
+                      : formData.beneficiaire.trim() || 'À désigner avant paiement'}
+                    date={formData.date_paiement ? formData.date_paiement.split('-').reverse().join('/') : '—'}
+                    payment={summaryPayment}
+                    status={summaryStatus}
+                    approvedSource={Boolean(selectedRequisition)}
+                    approvedAmount={formatAmountIn(approvedAmount, devisePieceAutorisee)}
+                    paidAmount={formatAmountIn(alreadyPaidAmount, devisePieceAutorisee)}
+                    remainingAmount={formatAmountIn(remainingAfterPayment, devisePieceAutorisee)}
+                    warning={amountExceedsRemaining
+                      ? `Le montant saisi dépasse le reste à payer (${formatAmountIn(remainingBeforePayment, devisePieceAutorisee)}).`
+                      : undefined}
+                  />
               )}
               </div>
 

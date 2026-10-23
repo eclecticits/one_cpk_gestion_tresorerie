@@ -70,6 +70,8 @@ interface Props {
   lectureSeule?: boolean
   inputClassName?: string
   aide?: ReactNode
+  /** En saisie facultative, masque les contacts tant qu'aucun nom n'est saisi. */
+  compactEmpty?: boolean
 }
 
 /**
@@ -91,6 +93,7 @@ export default function BeneficiaireIdentification({
   lectureSeule,
   inputClassName,
   aide,
+  compactEmpty,
 }: Props) {
   const [suggestions, setSuggestions] = useState<BeneficiaireSuggestion[]>([])
   const [chargement, setChargement] = useState(false)
@@ -246,7 +249,7 @@ export default function BeneficiaireIdentification({
         </div>
       )}
 
-      {boutonContacts}
+      {(!compactEmpty || nom.trim() || contactsVisibles) && boutonContacts}
       {contactsVisibles && (
       <div className={styles.contacts}>
         <label className={styles.contactField}>
@@ -272,7 +275,9 @@ export default function BeneficiaireIdentification({
       </div>
       )}
       <small className={styles.aide}>
-        {sansContact
+        {compactEmpty && !nom.trim()
+          ? 'Facultatif : il pourra être ajouté après validation, et devra l’être avant le paiement.'
+          : sansContact
           ? 'Sans téléphone ni e-mail, le bénéficiaire ne sera pas prévenu de la remise des fonds.'
           : !value.refId && nom.trim()
             ? 'Aucune fiche choisie : une fiche « personne externe » sera créée à ce nom.'

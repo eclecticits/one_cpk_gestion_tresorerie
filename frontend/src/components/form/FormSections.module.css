@@ -1,0 +1,233 @@
+/* Sommaire et cartes de section partagés par les formulaires de création
+   (réquisition, sortie de fonds). Le sommaire reste collé en haut du
+   conteneur de défilement : les sections (scroll-margin-top) et le panneau
+   de vérification (top: 72px) se calent sous ses ~56 px. */
+
+.sectionNav {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  overflow: hidden;
+  border: 1px solid #dbe5df;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 6px 16px -14px rgba(15, 23, 42, 0.45);
+}
+
+.navItems {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.navItems::-webkit-scrollbar {
+  display: none;
+}
+
+.navItems a {
+  position: relative;
+  display: flex;
+  flex: 1 0 128px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 7px 10px;
+  border-right: 1px solid #e7ece9;
+  color: #56645e;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.navItems a:last-child {
+  border-right: 0;
+}
+
+.navItems a:hover,
+.navItems a:focus-visible {
+  background: #f3f8f5;
+  color: #164b35;
+  outline: none;
+}
+
+.navItems a:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tenant-primary, #28734e) 45%, transparent);
+}
+
+/* Section en cours de lecture : liseré bas et fond teinté. */
+.navItems a[aria-current='step'] {
+  background: #f0f7f3;
+  color: #164b35;
+}
+
+.navItems a[aria-current='step']::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: #17613f;
+}
+
+.navNumber,
+.sectionNumber {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #e8f3ed;
+  color: #17613f;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.navItems a[data-state='complete'] .navNumber {
+  background: #17613f;
+  color: #ffffff;
+}
+
+.navItems a[data-state='optional'] .navNumber {
+  border: 1px dashed #b9c9c0;
+  background: #ffffff;
+  color: #68766f;
+}
+
+.navText {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.navLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.navState {
+  overflow: hidden;
+  color: #8a968f;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.navItems a[data-state='complete'] .navState {
+  color: #2f7a55;
+}
+
+.navItems a[data-state='pending'] .navState {
+  color: #9a6b12;
+}
+
+.navProgress {
+  height: 3px;
+  background: #edf2ef;
+}
+
+.navProgress span {
+  display: block;
+  height: 100%;
+  background: #17613f;
+  transition: width 0.25s ease;
+}
+
+.sectionCard {
+  scroll-margin-top: 72px;
+  border: 1px solid #e2e9e5;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 16px 11px;
+  border-bottom: 1px solid #edf1ef;
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sectionNumber {
+  margin-top: 1px;
+}
+
+.sectionTitleGroup {
+  min-width: 0;
+}
+
+.sectionTitleLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sectionTitleLine h3 {
+  margin: 0;
+  color: #17251f;
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.optionalBadge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid #dce5e0;
+  border-radius: 999px;
+  background: #f6f8f7;
+  color: #68766f;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.sectionDescription {
+  margin: 3px 0 0;
+  color: #6b7771;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.sectionBody {
+  padding: 14px 16px 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navItems a,
+  .navProgress span {
+    transition: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .navItems a {
+    flex: 0 0 auto;
+    min-width: 132px;
+  }
+
+  .sectionHeader,
+  .sectionBody {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+}

@@ -79,6 +79,7 @@ class RequisitionCreate(DecimalBaseModel):
     decaissement_progressif: bool | None = False
     #: Projet ou activité financé (facultatif).
     project_activity_id: int | None = None
+    # Facultatif à la création : il peut être désigné ou complété plus tard.
     beneficiaire: str | None = Field(default=None, max_length=200)
     instance_beneficiaire: str | None = None
     #: Qui est le bénéficiaire (EXPERT, PERSONNEL, UTILISATEUR, EXTERNE) et comment le joindre :
@@ -151,13 +152,6 @@ class RequisitionCreate(DecimalBaseModel):
             self.fonds_tiers_lignes = None
         if self.beneficiaire is not None:
             self.beneficiaire = self.beneficiaire.strip() or None
-        # Un mouvement hors budget n'a ni ligne ni poste : le bénéficiaire est
-        # la seule pièce qui désigne à qui l'argent va. Sans lui, la sortie
-        # descendait d'une source anonyme et s'enregistrait sous un libellé de
-        # remplissage. FONDS_DE_TIERS est dispensé : son bénéficiaire est le
-        # tiers créancier, déjà identifié et imposé au paiement.
-        if self.nature_requisition == "HORS_BUDGET" and not self.beneficiaire:
-            raise ValueError("beneficiaire est requis pour une réquisition HORS_BUDGET")
         # Rembourser une recette à identifier, c'est rendre l'argent à quelqu'un
         # de précis : la recette et le bénéficiaire sont la pièce elle-même.
         if self.nature_requisition == "RECETTE_A_IDENTIFIER":
