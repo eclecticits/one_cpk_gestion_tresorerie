@@ -32,7 +32,7 @@ export function etatAValoir(ligne: LigneAValoir, devise: string): string {
         : ligne.a_valoir_statut === 'ATTENDU'
           ? 'justificatif attendu'
           : 'justificatif non demandé'
-  return `${statut} · reste à justifier : ${formatAmount(toNumber(ligne.a_valoir_reste))} ${devise}`
+  return `${statut} · reste : ${formatAmount(toNumber(ligne.a_valoir_reste))} ${devise}`
 }
 
 export type BilanAValoir = { nombre: number; enRetard: number; reste: number }
@@ -53,7 +53,7 @@ export function alerteAValoir(bilan: BilanAValoir, devise: string): string {
     ? `, dont ${bilan.enRetard} au justificatif en retard`
     : ''
   return (
-    `Avances à valoir : ${bilan.nombre} sur la période${retard} — reste à justifier : ` +
+    `Avances à valoir : ${bilan.nombre} sur la période${retard} — reste : ` +
     `${formatAmount(bilan.reste)} ${devise}. Lignes signalées en bordeaux.`
   )
 }

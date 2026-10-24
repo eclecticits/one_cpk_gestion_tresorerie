@@ -130,7 +130,7 @@ def _libelle_complet(ligne) -> str:
 def _etat_a_valoir(ligne, devise: str) -> str:
     """`etatAValoir` du frontend : seconde ligne du libellé dans le PDF."""
     statut = _ETATS_A_VALOIR.get(getattr(ligne, "a_valoir_statut", None) or "", "justificatif non demandé")
-    return f"{statut} · reste à justifier : {_montant(getattr(ligne, 'a_valoir_reste', None))} {devise}"
+    return f"{statut} · reste : {_montant(getattr(ligne, 'a_valoir_reste', None))} {devise}"
 
 
 def _alerte_a_valoir(lignes: list, devise: str) -> str:
@@ -142,7 +142,7 @@ def _alerte_a_valoir(lignes: list, devise: str) -> str:
     reste = sum((Decimal(getattr(l, "a_valoir_reste", None) or 0) for l in avances), Decimal("0"))
     retard = f", dont {en_retard} au justificatif en retard" if en_retard else ""
     return (
-        f"Avances à valoir : {len(avances)} sur la période{retard} — reste à justifier : "
+        f"Avances à valoir : {len(avances)} sur la période{retard} — reste : "
         f"{_montant(reste)} {devise}. Lignes signalées en bordeaux."
     )
 
@@ -633,7 +633,7 @@ def _xlsx(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclu
         # Comme l'écran : s'il y a des avances à valoir, ce qui en reste dehors
         # prend la place du nombre de lignes, que la colonne N° donne déjà.
         (
-            (f"À valoir à justifier ({len(avances)})", float(reste_a_valoir), "bordeaux", "money")
+            (f"À valoir ({len(avances)})", float(reste_a_valoir), "bordeaux", "money")
             if avances
             else ("Mouvements", len(journal.lignes), "default", "integer")
         ),

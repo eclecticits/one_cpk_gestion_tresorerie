@@ -485,7 +485,7 @@ export default function Rapports() {
         // reste dehors importe plus aux autorités que le nombre de lignes, que
         // la colonne N° donne déjà.
         bilanJournal.nombre
-          ? { label: `À valoir à justifier (${bilanJournal.nombre})`, value: bilanJournal.reste, tone: 'bordeaux', format: 'money' }
+          ? { label: `À valoir (${bilanJournal.nombre})`, value: bilanJournal.reste, tone: 'bordeaux', format: 'money' }
           : { label: 'Mouvements', value: rows.length, format: 'integer' },
       ],
       notice: { text: alerteAValoir(bilanJournal, journalDeviseEffective), tone: 'bordeaux' },

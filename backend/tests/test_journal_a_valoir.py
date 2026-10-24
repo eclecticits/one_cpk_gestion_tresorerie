@@ -85,11 +85,11 @@ async def test_le_journal_signale_l_avance_a_valoir_et_dit_ou_elle_en_est(db_ses
     assert avance.a_valoir is True
     # Échéance dépassée depuis longtemps : le justificatif est en retard.
     assert avance.a_valoir_statut == "EN_RETARD"
-    # 500 remis, 120 rendus : 380 restent à justifier.
+    # 500 remis, 120 rendus : il en reste 380.
     assert avance.a_valoir_reste == Decimal("380")
     assert "Commission Formation" in avance.a_valoir_alerte
     assert "EN RETARD" in avance.a_valoir_alerte
-    assert "Reste à justifier : 380,00 USD" in avance.a_valoir_alerte
+    assert "Reste : 380,00 USD" in avance.a_valoir_alerte
     assert "Carburant et per diem" in avance.a_valoir_alerte
 
     assert ordinaire.a_valoir is False
@@ -134,7 +134,7 @@ def test_l_excel_envoye_colore_l_avance_en_bordeaux_et_porte_une_note():
     contenu = _xlsx(journal, Identite(nom="Org", contact="", logo=None), AVANCE_LE, AVANCE_LE, tz)
     ws = load_workbook(io.BytesIO(contenu)).active
 
-    assert ws.cell(row=4, column=5).value == "À valoir à justifier (1)"
+    assert ws.cell(row=4, column=5).value == "À valoir (1)"
     assert ws.cell(row=5, column=5).value == 380
     assert "dont 1 au justificatif en retard" in ws["A6"].value
 

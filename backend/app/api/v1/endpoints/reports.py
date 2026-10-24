@@ -1652,7 +1652,7 @@ def _alerte_a_valoir(
         "AVANCE À VALOIR" + (f" — {instance.strip()}" if instance and instance.strip() else ""),
         f"Justificatif : {justificatif}",
         f"Remis : {_montant(montant)} {devise} · Rendu : {_montant(rendu)} {devise}",
-        f"Reste à justifier : {_montant(reste)} {devise}",
+        f"Reste : {_montant(reste)} {devise}",
     ]
     if note and note.strip():
         lignes.append(f"Note : {note.strip()}")
