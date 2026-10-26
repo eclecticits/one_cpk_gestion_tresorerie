@@ -1080,7 +1080,51 @@
   font-size: 13px;
 }
 
+/* Import du Tableau : même habillage que l'import experts, mais posé dans la
+   page et non dans une modale — pas de hauteur bornée ni de défilement propre. */
+.tableauImportShell {
+  max-height: none;
+  overflow: visible;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.tableauImportActions {
+  flex-wrap: wrap;
+  padding: 12px 0 0;
+  background: transparent;
+}
+
+.tableauFieldsRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 200px));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tableauField {
+  display: grid;
+  gap: 4px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tableauField input {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 14px;
+}
+
 @media (max-width: 768px) {
+  .tableauFieldsRow {
+    grid-template-columns: 1fr;
+  }
+
   .columnsInfo {
     grid-template-columns: 1fr;
   }
@@ -1129,6 +1173,10 @@
 
   .budgetImportActions {
     flex-wrap: wrap;
+  }
+
+  .tableauImportActions {
+    padding: 12px 0 0;
   }
 
   .actionSpacer {

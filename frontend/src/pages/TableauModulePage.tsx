@@ -931,24 +931,17 @@ export default function TableauModulePage() {
             <div className={styles.mailToolbar}>
               <div>
                 <h2 className={styles.sectionTitle}>Import Excel</h2>
-                <p className={styles.sectionSubtitle}>Importez le fichier Excel du tableau des experts-comptables (.xlsx ou .xls).</p>
+                <p className={styles.sectionSubtitle}>Importez le Tableau ou une source détaillée (.xlsx ou .xls), puis vérifiez l'aperçu avant de lancer l'import.</p>
               </div>
             </div>
 
-            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>
-                  Exercice (année)
-                </label>
-                <input
-                  value={exercice}
-                  onChange={e => setExercice(e.target.value)}
-                  placeholder="ex : 2026"
-                  style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '14px', width: '120px' }}
-                />
-              </div>
+            <div style={{ marginBottom: '20px' }}>
               <Suspense fallback={null}>
-                <ImportTableauDossiers exercice={exercice} onImported={(id) => void handleImported(id)} />
+                <ImportTableauDossiers
+                  exercice={exercice}
+                  onExerciceChange={setExercice}
+                  onImported={(id) => void handleImported(id)}
+                />
               </Suspense>
             </div>
 
