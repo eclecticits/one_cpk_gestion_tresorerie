@@ -1703,3 +1703,30 @@
 .amountRetour {
   color: #047857;
 }
+
+/* Filtre posé par un lien du tableau de bord : visible, et retirable. */
+.filtreNature {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+}
+
+.filtreNature button {
+  padding: 4px 10px;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #92400e;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}

@@ -2374,7 +2374,12 @@ export default function Requisitions() {
     const examenValue = String((req as any).examen_status ?? '').toUpperCase()
     const statusValue = getRequisitionStatus(req)
     const hasEligibleExamenStatus = examenValue === 'NON_EXAMINE' || examenValue === 'REJETE'
-    const hasLines = (req as any).lignes_count == null ? true : Number((req as any).lignes_count) > 0
+    // Seule une réquisition budgétaire est portée par des lignes (même règle
+    // que le serveur, `requisition_exige_des_lignes`). Hors budget, fonds de
+    // tiers et remboursement d'une recette à identifier autorisent un montant
+    // en bloc : leur demander une ligne cachait le bouton pour toujours.
+    const exigeDesLignes = String((req as any).nature_requisition || 'BUDGETAIRE').toUpperCase() === 'BUDGETAIRE'
+    const hasLines = !exigeDesLignes || (req as any).lignes_count == null || Number((req as any).lignes_count) > 0
     if (req.dossier_id || !hasEligibleExamenStatus) return false
     return (
       Boolean((req as any).service_id) &&
@@ -3426,6 +3431,7 @@ export default function Requisitions() {
                             <label htmlFor="req-tiers-org">Tiers concerné</label>
                             <OrganisationAutocomplete
                               inputId="req-tiers-org"
+                              excludeCurrentOrganisation
                               value={formData.tiers_organisation_id}
                               onChange={(value, organisation) => {
                                 setFormData({

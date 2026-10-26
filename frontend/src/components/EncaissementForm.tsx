@@ -144,7 +144,7 @@ export default function EncaissementForm({
   comptesBancaires,
   comptesBancairesLoading,
   isCashClosed,
-  tauxChange,
+  tauxChange: tauxChangeParametres,
   libellePresets,
   budgetTree,
   onClose,
@@ -240,6 +240,12 @@ export default function EncaissementForm({
   const [searchParams] = useSearchParams()
   const identifierId = isPage ? searchParams.get('identifier') : null
   const [recetteSource, setRecetteSource] = useState<RecetteAIdentifier | null>(null)
+  // Identifier une recette en francs, c'est reprendre des francs reçus au taux
+  // du jour de leur réception : le serveur convertit à ce taux-là, le
+  // formulaire aussi, sans quoi le reste dû affiché ne serait pas le vrai.
+  const tauxChange = recetteSource?.devise === 'CDF'
+    ? toNumber(recetteSource.taux_change_applique) || tauxChangeParametres
+    : tauxChangeParametres
   const verrouBanque = destinationLock?.canal === 'BANQUE' || recetteSource !== null
   useEffect(() => {
     if (!identifierId) {

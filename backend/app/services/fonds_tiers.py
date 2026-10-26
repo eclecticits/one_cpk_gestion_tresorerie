@@ -202,6 +202,10 @@ async def fonds_tiers_amounts(
         )
     )
     montant_rembourse = _money(remb_res.scalar_one() or 0)
+    # Requalifié en recette propre : l'argent n'est plus dû à personne, même
+    # s'il n'a jamais quitté la caisse.
+    if operation.statut == "REQUALIFIE":
+        return montant_recu, devise, montant_rembourse, Decimal("0.00")
     solde = max(Decimal("0.00"), montant_recu - montant_rembourse)
     return montant_recu, devise, montant_rembourse, solde
 
@@ -217,7 +221,7 @@ async def refresh_fonds_tiers_status(
         organisation_id=organisation_id,
         operation=operation,
     )
-    if operation.statut == "ANNULE":
+    if operation.statut in ("ANNULE", "REQUALIFIE"):
         return
     if montant_recu <= 0:
         operation.statut = "ANNULE"
@@ -242,6 +246,8 @@ async def assert_fonds_tiers_refundable(
     operation = await get_fonds_tiers_locked(db, organisation_id=organisation_id, operation_id=operation_id)
     if operation.statut == "ANNULE":
         raise HTTPException(status_code=400, detail="Fonds de tiers annulé")
+    if operation.statut == "REQUALIFIE":
+        raise HTTPException(status_code=400, detail="Fonds requalifié en recette : plus rien à reverser")
     montant_recu, devise_origine, _rembourse, solde = await fonds_tiers_amounts(
         db,
         organisation_id=organisation_id,
@@ -392,7 +398,7 @@ async def valider_fonds_tiers_requisition(
         )
         if operation is None:
             raise HTTPException(status_code=404, detail="Fonds de tiers introuvable")
-        if operation.statut in ("ANNULE", "REGULARISE"):
+        if operation.statut in ("ANNULE", "REGULARISE", "REQUALIFIE"):
             raise HTTPException(status_code=400, detail="Ce fonds de tiers n'a plus rien à reverser")
         _recu, devise_fonds, _rembourse, solde = await fonds_tiers_amounts(
             db, organisation_id=organisation_id, operation=operation
@@ -494,7 +500,7 @@ async def repartir_versement_fonds_tiers(
         operation = await get_fonds_tiers_locked(
             db, organisation_id=organisation_id, operation_id=ligne.fonds_tiers_operation_id
         )
-        if operation.statut == "ANNULE":
+        if operation.statut in ("ANNULE", "REQUALIFIE"):
             continue
         _recu, devise_fonds, _rembourse, solde = await fonds_tiers_amounts(
             db, organisation_id=organisation_id, operation=operation

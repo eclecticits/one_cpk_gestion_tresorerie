@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -11,6 +12,7 @@ from app.models.budget import BudgetPoste
 from app.models.encaissement import Encaissement
 from app.models.regularisation_budgetaire import RegularisationBudgetaire
 from app.models.sortie_fonds import SortieFonds
+from app.services.fonds_tiers import fonds_tiers_amounts, fonds_tiers_reservations, get_fonds_tiers_locked
 from app.services.mouvements_budgetaires import create_budget_imputation, sum_active_budget_imputations
 
 
@@ -258,5 +260,146 @@ async def affecter_sortie_hors_budget(
         sortie.hors_budget_status = "AFFECTE_BUDGET"
         if len({pid for pid, _ in lignes}) == 1:
             sortie.budget_poste_id = lignes[0][0]
+    await db.flush()
+    return regularisation
+
+
+async def requalifier_fonds_tiers_en_recette(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    operation_id: uuid.UUID,
+    lignes: list[tuple[int, Decimal]],
+    justification: str,
+    reference: str | None,
+    idempotency_key: str,
+    user_id: uuid.UUID | None,
+    client_nom: str | None = None,
+) -> RegularisationBudgetaire:
+    """Un fonds reçu « pour compte de tiers » se révèle appartenir à
+    l'organisation qui le détient.
+
+    Il ne repart pas : aucune sortie n'est créée, la caisse ne bouge pas —
+    l'argent y est déjà, et une sortie fictive y creuserait un écart à
+    l'arrêté. Seule la nature change : l'encaissement devient budgétaire et
+    son montant est imputé en recette réalisée sur les postes désignés.
+
+    Tout ou rien : un fonds déjà partiellement reversé, ou promis à une
+    réquisition en cours, mêlerait sur un même encaissement de l'argent
+    reparti et de l'argent gardé. Le budget compterait alors le tout.
+    """
+    existing_res = await db.execute(
+        select(RegularisationBudgetaire).where(
+            RegularisationBudgetaire.organisation_id == organisation_id,
+            RegularisationBudgetaire.idempotency_key == idempotency_key,
+        )
+    )
+    existing = existing_res.scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    operation = await get_fonds_tiers_locked(db, organisation_id=organisation_id, operation_id=operation_id)
+    if operation.statut != "OUVERT":
+        raise HTTPException(status_code=400, detail="Seul un fonds de tiers ouvert, sans aucun reversement, peut être requalifié")
+
+    enc_res = await db.execute(
+        select(Encaissement)
+        .where(Encaissement.id == operation.encaissement_id, Encaissement.organisation_id == organisation_id)
+        .with_for_update()
+    )
+    encaissement = enc_res.scalar_one_or_none()
+    if encaissement is None or (encaissement.statut_operation or "ACTIVE").upper() != "ACTIVE":
+        raise HTTPException(status_code=400, detail="Encaissement d'origine inactif")
+    if (encaissement.nature_mouvement or "").upper() != "FONDS_DE_TIERS":
+        raise HTTPException(status_code=400, detail="L'encaissement n'est pas un fonds de tiers")
+    # Une recette budgétaire nomme son payeur (`ck_encaissements_client_ref`),
+    # un fonds de tiers en était dispensé.
+    payeur = (client_nom or "").strip() or (encaissement.client_nom or "").strip() or (operation.payeur_origine or "").strip()
+    est_expert = (encaissement.type_client or "") in ("expert_comptable", "sec") and encaissement.expert_comptable_id
+    if not est_expert and not payeur:
+        raise HTTPException(status_code=400, detail="Indiquez qui a payé : une recette budgétaire nomme son payeur")
+
+    montant_recu, devise, montant_rembourse, _solde = await fonds_tiers_amounts(
+        db, organisation_id=organisation_id, operation=operation
+    )
+    if montant_rembourse > 0:
+        raise HTTPException(status_code=400, detail="Fonds déjà partiellement reversé : requalification impossible")
+    reservations = await fonds_tiers_reservations(db, organisation_id=organisation_id, operation_ids=[operation.id])
+    if operation.id in reservations:
+        _reserve, numeros = reservations[operation.id]
+        raise HTTPException(
+            status_code=409,
+            detail=f"Fonds retenu par la réquisition {', '.join(numeros)} : rejetez-la avant de requalifier",
+        )
+
+    total_demande = _money(sum((Decimal(str(m)) for _pid, m in lignes), Decimal("0")))
+    if any(_money(m) <= 0 for _pid, m in lignes):
+        raise HTTPException(status_code=400, detail="Chaque poste doit recevoir un montant positif")
+    if total_demande != montant_recu:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La requalification porte sur tout le fonds : {montant_recu} {devise} à répartir",
+        )
+
+    postes: dict[int, BudgetPoste] = {}
+    for poste_id, _montant in lignes:
+        if poste_id in postes:
+            continue
+        poste_res = await db.execute(
+            select(BudgetPoste)
+            .where(BudgetPoste.id == poste_id, BudgetPoste.organisation_id == organisation_id, BudgetPoste.is_deleted.is_(False))
+            .with_for_update()
+        )
+        poste = poste_res.scalar_one_or_none()
+        if poste is None or (poste.type or "").upper() != "RECETTE":
+            raise HTTPException(status_code=400, detail=f"Poste recette invalide: {poste_id}")
+        postes[poste_id] = poste
+
+    taux = encaissement.taux_change_applique
+    total_budget = _money(sum((_to_budget_currency(Decimal(str(m)), devise, taux) for _pid, m in lignes), Decimal("0")))
+    regularisation = RegularisationBudgetaire(
+        organisation_id=organisation_id,
+        encaissement_id=encaissement.id,
+        ancien_nature_mouvement="FONDS_DE_TIERS",
+        nouveau_nature_mouvement="BUDGETAIRE",
+        montant_mouvement=total_demande,
+        devise_mouvement=devise,
+        montant_budget=total_budget,
+        exchange_rate_snapshot=taux,
+        justification=justification,
+        reference=(reference or "").strip() or None,
+        idempotency_key=idempotency_key,
+        created_by=user_id,
+    )
+    db.add(regularisation)
+    await db.flush()
+
+    for poste_id, montant in lignes:
+        montant_clean = _money(montant)
+        montant_budget = _to_budget_currency(montant_clean, devise, taux)
+        await create_budget_imputation(
+            db,
+            organisation_id=organisation_id,
+            encaissement_id=encaissement.id,
+            regularisation_budgetaire_id=regularisation.id,
+            budget_poste_id=poste_id,
+            sens="RECETTE_REALISEE",
+            montant_mouvement=montant_clean,
+            devise_mouvement=devise,
+            montant_budget=montant_budget,
+            exchange_rate_snapshot=taux,
+            created_by=user_id,
+        )
+        postes[poste_id].montant_paye = _money((postes[poste_id].montant_paye or 0) + montant_budget)
+
+    # Pas de `budget_poste_id` d'en-tête : les versements de cette note n'ont
+    # aucune imputation propre, et le repli « sans registre » de l'exécution
+    # budgétaire les compterait une seconde fois par-dessus celles-ci.
+    if not est_expert:
+        encaissement.client_nom = payeur
+    encaissement.nature_mouvement = "BUDGETAIRE"
+    encaissement.impact_budgetaire = True
+    operation.statut = "REQUALIFIE"
+    operation.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return regularisation

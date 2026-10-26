@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import case, func, null, or_, select, union_all
+from sqlalchemy import and_, case, func, null, or_, select, union_all
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.encaissement import Encaissement
@@ -40,13 +40,33 @@ def encaissements_retenus(organisation_id: int):
     )
 
 
+def facteur_devise_sql():
+    """Expression SQL de `encaissement_payments.facteur_devise` : unités de la
+    devise de perception par unité de la note (le taux pour une note en francs,
+    libellée en dollars ; 1 sinon, et pour une recette à identifier, tenue dans
+    la devise de son compte)."""
+    return case(
+        (
+            and_(
+                Encaissement.devise_perception == "CDF",
+                func.coalesce(Encaissement.nature_mouvement, "BUDGETAIRE") != "A_IDENTIFIER",
+                func.coalesce(Encaissement.taux_change_applique, 0) > 0,
+            ),
+            Encaissement.taux_change_applique,
+        ),
+        else_=1,
+    )
+
+
 def flux_encaissements(organisation_id: int):
     """Sous-requête des entrées d'argent, une ligne par versement encaissé.
 
     Colonnes : `encaissement_id`, `versement_id` (nul pour un repli d'en-tête),
     `canal`, `compte_bancaire_id`, `devise`, `mode_paiement`, `reference`,
-    `montant` (dans la devise de perception) et `date_flux` (la date à laquelle
-    l'argent est entré, pas celle de la note).
+    `montant` (dans la devise de perception), `date_flux` (la date à laquelle
+    l'argent est entré, pas celle de la note) et `facteur` (cf.
+    `facteur_devise_sql` : `montant / facteur` est le montant dans l'unité de
+    la note, celle de son total).
     """
     versements = (
         select(
@@ -59,6 +79,7 @@ def flux_encaissements(organisation_id: int):
             PaymentHistory.reference.label("reference"),
             PaymentHistory.montant.label("montant"),
             func.coalesce(PaymentHistory.date_paiement, PaymentHistory.created_at).label("date_flux"),
+            facteur_devise_sql().label("facteur"),
         )
         .join(Encaissement, Encaissement.id == PaymentHistory.encaissement_id)
         .where(
@@ -95,6 +116,7 @@ def flux_encaissements(organisation_id: int):
             else_=func.coalesce(Encaissement.montant_paye, 0),
         ).label("montant"),
         Encaissement.date_encaissement.label("date_flux"),
+        facteur_devise_sql().label("facteur"),
     ).where(
         *encaissements_retenus(organisation_id),
         sans_versement,
@@ -111,7 +133,8 @@ def versements_numerotes(organisation_id: int):
     """`flux_encaissements()` enrichi du rang de chaque versement dans sa note.
 
     Colonnes ajoutées : `rang` (1 = premier versement), `nombre` (versements
-    actifs de la note) et `cumul` (payé sur la note APRÈS ce versement). La
+    actifs de la note) et `cumul` (payé sur la note APRÈS ce versement, dans
+    l'unité de la note : il se compare à son total, même payée en francs). La
     numérotation porte sur toute l'histoire de la note : filtrer la période
     AUTOUR de cette sous-requête, jamais dedans, sans quoi un complément
     versé dans la période se verrait numéroté « 1 » et pris pour un acompte.
@@ -125,7 +148,7 @@ def versements_numerotes(organisation_id: int):
         *flux.c,
         func.row_number().over(**fenetre).label("rang"),
         func.count().over(partition_by=flux.c.encaissement_id).label("nombre"),
-        func.sum(flux.c.montant).over(**fenetre).label("cumul"),
+        func.sum(flux.c.montant / flux.c.facteur).over(**fenetre).label("cumul"),
     ).subquery("versements_numerotes")
 
 

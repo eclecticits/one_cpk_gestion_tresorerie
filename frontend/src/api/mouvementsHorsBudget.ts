@@ -12,7 +12,7 @@ export interface FondsTiersOperation {
   id: string
   organisation_id: number
   encaissement_id: string
-  statut: 'OUVERT' | 'PARTIELLEMENT_REMBOURSE' | 'REGULARISE' | 'ANNULE'
+  statut: 'OUVERT' | 'PARTIELLEMENT_REMBOURSE' | 'REGULARISE' | 'REQUALIFIE' | 'ANNULE'
   tiers_concerne?: string | null
   tiers_organisation_id?: number | null
   tiers_nom_libre?: string | null
@@ -78,7 +78,14 @@ export const FONDS_TIERS_STATUT_LABELS: Record<FondsTiersOperation['statut'], st
   OUVERT: 'À rembourser',
   PARTIELLEMENT_REMBOURSE: 'Partiellement remboursé',
   REGULARISE: 'Soldé',
+  REQUALIFIE: 'Requalifié en recette',
   ANNULE: 'Annulé',
+}
+
+/** Libellé du filtre « nature » posé par un lien (tableau de bord). */
+export function libelleFiltreNature(nature: string): string {
+  if (nature === 'HORS_BUDGET_A_REGULARISER') return 'Hors budget à régulariser'
+  return NATURE_MOUVEMENT_LABELS[nature as NatureMouvement] ?? nature
 }
 
 /** Un mouvement est-il encore en attente d'une décision d'affectation ? */
@@ -114,6 +121,15 @@ export async function affecterEncaissementBudget(
   payload: AffecterBudgetPayload,
 ): Promise<AffecterBudgetResult> {
   return apiRequest<AffecterBudgetResult>('POST', `/encaissements/${encaissementId}/affecter-budget`, payload)
+}
+
+/** Le fonds appartenait à l'organisation : il devient recette budgétaire
+ *  sans quitter la caisse. Payeur omis : le payeur d'origine du fonds. */
+export async function requalifierFondsTiers(
+  operationId: string,
+  payload: AffecterBudgetPayload & { client_nom?: string | null },
+): Promise<AffecterBudgetResult> {
+  return apiRequest<AffecterBudgetResult>('POST', `/fonds-tiers/${operationId}/requalifier`, payload)
 }
 
 export async function affecterSortieBudget(

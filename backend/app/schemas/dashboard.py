@@ -54,6 +54,10 @@ class DashboardStats(DecimalBaseModel):
     #: confondues : c'est un encours, pas un flux.
     hors_budget_a_regulariser_montant: Decimal = Decimal("0")
     hors_budget_a_regulariser_count: int = 0
+    #: Le même décompte, par sens : le lien du tableau de bord doit ouvrir la
+    #: liste où se trouvent réellement ces mouvements.
+    hors_budget_a_regulariser_encaissements_count: int = 0
+    hors_budget_a_regulariser_sorties_count: int = 0
     #: Argent détenu pour autrui et pas encore reversé. Présent en trésorerie,
     #: absent du budget, et dû.
     fonds_tiers_solde: Decimal = Decimal("0")

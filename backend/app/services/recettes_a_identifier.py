@@ -356,6 +356,9 @@ class Engagements:
     reserve: Decimal = Decimal("0.00")
     remboursements: list[dict[str, Any]] = field(default_factory=list)
     reservations: list[str] = field(default_factory=list)
+    #: Les mêmes réquisitions, avec leur statut : l'écran dit où chacune en est
+    #: du circuit, et ne propose de payer que celles qui sont approuvées.
+    reservations_detail: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def bloque(self) -> Decimal:
@@ -424,6 +427,14 @@ async def engagements_recettes(
         eng = resultat.setdefault(req.recette_a_identifier_id, Engagements())
         eng.reserve = _money(eng.reserve + reste)
         eng.reservations.append(req.numero_requisition or str(req.id))
+        eng.reservations_detail.append(
+            {
+                "requisition_id": str(req.id),
+                "numero": req.numero_requisition or str(req.id),
+                "statut": (req.status or "").upper(),
+                "montant": str(reste),
+            }
+        )
     return resultat
 
 
@@ -499,6 +510,11 @@ async def verifier_remboursement(
             detail += f" (déjà promis par {', '.join(engagement.reservations)})"
         raise HTTPException(status_code=400, detail=detail)
     return source
+
+
+def _facteur(enc: Encaissement, en_francs: bool) -> Decimal:
+    taux = Decimal(str(enc.taux_change_applique or 0))
+    return taux if en_francs and taux > 0 else Decimal("1")
 
 
 def _nom_client(enc: Encaissement, experts: dict[uuid.UUID, str]) -> str | None:
@@ -601,6 +617,7 @@ async def lister_recettes_a_identifier(
                 "reste": str(reste),
                 "disponible": str(disponible),
                 "reservations": engagement.reservations,
+                "reservations_detail": engagement.reservations_detail,
                 "remboursements": engagement.remboursements,
                 "age_jours": age,
                 "tranche": tranche,
@@ -667,7 +684,11 @@ async def pistes_identification(
         raise HTTPException(status_code=404, detail="Recette à identifier introuvable")
     engagement = (await engagements_recettes(db, organisation_id=organisation_id, source_ids=[source.id])).get(source.id)
     reste_source = _money(_money(source.montant_paye) - (engagement.bloque if engagement else Decimal("0")))
-    reste_du = Encaissement.montant_total - Encaissement.montant_paye
+    # La note est libellée en dollars ; en francs, son reste dû se compare à la
+    # recette (tenue en francs) au taux figé sur la note.
+    en_francs = (source.devise_perception or "USD").upper() == "CDF"
+    facteur_note = func.coalesce(func.nullif(Encaissement.taux_change_applique, 0), 1) if en_francs else 1
+    reste_du = (Encaissement.montant_total - Encaissement.montant_paye) * facteur_note
 
     base = (
         select(Encaissement)
@@ -729,8 +750,8 @@ async def pistes_identification(
             "client": _nom_client(enc, experts),
             "libelle": enc.libelle,
             "date": enc.date_encaissement.date().isoformat() if enc.date_encaissement else None,
-            "montant_total": str(_money(enc.montant_total)),
-            "reste_du": str(_money(_money(enc.montant_total) - _money(enc.montant_paye))),
+            "montant_total": str(_money(_money(enc.montant_total) * _facteur(enc, en_francs))),
+            "reste_du": str(_money((_money(enc.montant_total) - _money(enc.montant_paye)) * _facteur(enc, en_francs))),
             "devise": enc.devise_perception,
             "raison": raison,
         }

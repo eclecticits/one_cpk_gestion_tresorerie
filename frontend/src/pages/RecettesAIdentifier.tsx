@@ -7,6 +7,8 @@ import { listComptesBancaires } from '../api/banques'
 import { getServices } from '../api/services'
 import { HORS_BUDGET_STATUS_LABELS } from '../api/mouvementsHorsBudget'
 import {
+  ETAPE_REMBOURSEMENT,
+  STATUTS_REMBOURSEMENT_PAYABLE,
   TRANCHE_LABELS,
   createRecetteAIdentifier,
   createRequisitionRemboursement,
@@ -212,6 +214,11 @@ export default function RecettesAIdentifier() {
                 const reste = toNumber(r.reste)
                 const disponible = toNumber(r.disponible)
                 const ouverte = reste > 0 && r.statut_operation === 'ACTIVE'
+                // Payer n'a de sens qu'une fois la réquisition approuvée : avant,
+                // le formulaire de sortie n'aurait aucune pièce à proposer.
+                const remboursementPayable = r.reservations_detail
+                  ? r.reservations_detail.some((d) => STATUTS_REMBOURSEMENT_PAYABLE.includes(d.statut))
+                  : r.reservations.length > 0
                 return (
                   <tr key={r.id} className={ouverte && r.age_jours > SEUIL_ALERTE_JOURS ? styles.rowAlerte : undefined}>
                     <td data-label="Date de valeur">
@@ -247,7 +254,16 @@ export default function RecettesAIdentifier() {
                       )}
                       {r.reservations.length > 0 && (
                         <div className={styles.reserve}>
-                          Remboursement en cours : {formatMontant(r.montant_reserve, r.devise)} · {r.reservations.join(', ')}
+                          Remboursement en cours : {formatMontant(r.montant_reserve, r.devise)} ·{' '}
+                          {r.reservations_detail?.length
+                            ? r.reservations_detail.map((d, index) => (
+                                <span key={d.requisition_id}>
+                                  {index > 0 && ', '}
+                                  <Link to="/requisitions">{d.numero}</Link>
+                                  {' '}({ETAPE_REMBOURSEMENT[d.statut] || d.statut.toLowerCase()})
+                                </span>
+                              ))
+                            : r.reservations.join(', ')}
                         </div>
                       )}
                     </td>
@@ -275,9 +291,13 @@ export default function RecettesAIdentifier() {
                     <td data-label="Actions">
                       {ouverte && (
                         <div className={styles.actions}>
-                          {peutIdentifier && disponible > 0 && r.devise === 'USD' && (
-                            <Link to={`/encaissements/nouveau?identifier=${r.id}`} className={styles.primaryLink}>
-                              Nouvelle recette
+                          {peutIdentifier && disponible > 0 && (
+                            <Link
+                              to={`/encaissements/nouveau?identifier=${r.id}`}
+                              className={styles.primaryLink}
+                              title="Le payeur est connu mais n'a pas encore de note : émettre sa note et son reçu à partir de ce versement, sans nouveau mouvement en banque. Le client reçoit un courriel lui confirmant que son virement a été identifié."
+                            >
+                              Identifier le payeur
                             </Link>
                           )}
                           {peutIdentifier && disponible > 0 && (
@@ -290,7 +310,7 @@ export default function RecettesAIdentifier() {
                               Rembourser
                             </button>
                           )}
-                          {peutPayer && r.reservations.length > 0 && (
+                          {peutPayer && remboursementPayable && (
                             <Link
                               to="/sorties-fonds/nouvelle?type_sortie=remboursement_recette_a_identifier"
                               className={styles.secondaryBtn}

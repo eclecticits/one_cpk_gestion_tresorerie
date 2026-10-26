@@ -25,7 +25,7 @@ class FondsTiersOperation(Base):
     __tablename__ = "fonds_tiers_operations"
     __table_args__ = (
         CheckConstraint(
-            "statut IN ('OUVERT','PARTIELLEMENT_REMBOURSE','REGULARISE','ANNULE')",
+            "statut IN ('OUVERT','PARTIELLEMENT_REMBOURSE','REGULARISE','REQUALIFIE','ANNULE')",
             name="ck_fonds_tiers_statut",
         ),
         CheckConstraint(

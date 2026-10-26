@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
@@ -14,7 +15,11 @@ from app.models.user import User
 from app.schemas.payment import PaymentHistoryCancelPayload, PaymentHistoryCreate, PaymentHistoryResponse
 from app.services.client_receipt_email import schedule_client_payment_email
 from app.services.audit_service import get_request_ip
-from app.services.encaissement_payments import cancel_encaissement_payment, record_encaissement_payment
+from app.services.encaissement_payments import (
+    cancel_encaissement_payment,
+    facteur_devise,
+    record_encaissement_payment,
+)
 from app.api.v1.endpoints.encaissements import _notify_paiement_whatsapp
 from app.services.notifications import PAYMENT_COMPLEMENT
 
@@ -98,6 +103,7 @@ async def create_payment(
         organisation_id=tenant_id,
         encaissement_id=payload.encaissement_id,
         montant=payload.montant,
+        montant_devise=payload.montant_devise,
         mode_paiement=payload.mode_paiement,
         reference=payload.reference,
         notes=payload.notes,
@@ -134,7 +140,9 @@ async def create_payment(
             encaissement=encaissement,
             tenant_id=encaissement.organisation_id,
             event_type=PAYMENT_COMPLEMENT,
-            montant_recu=payment.montant,
+            # Le message chiffre le total et le reste de la note, en dollars :
+            # le reçu s'y lit dans la même unité.
+            montant_recu=(Decimal(str(payment.montant)) / facteur_devise(encaissement)).quantize(Decimal("0.01")),
             mode_paiement_recu=payment.mode_paiement,
             canal_recu=payment.canal,
             entity_type="payment_history",

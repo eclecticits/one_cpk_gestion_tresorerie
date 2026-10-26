@@ -32,6 +32,9 @@ class PaymentHistoryCreate(PaymentHistoryBase):
     #: destination de la note, comme avant le règlement mixte.
     canal: CanalPaiement | None = None
     compte_bancaire_id: int | None = None
+    #: L'argent reçu, dans la devise de la note (des francs pour une note en
+    #: francs). Donné, il fait foi et `montant` en est déduit au taux de la note.
+    montant_devise: Decimal | None = Field(default=None, gt=0)
 
 
 class PaymentHistoryResponse(PaymentHistoryBase):
@@ -217,6 +220,12 @@ class AffecterBudgetPayload(DecimalBaseModel):
     justification: str = Field(min_length=3)
     reference: str | None = Field(default=None, max_length=100)
     idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class RequalifierFondsTiersPayload(AffecterBudgetPayload):
+    # Une recette budgétaire nomme qui l'a payée, ce qu'un fonds de tiers ne
+    # demandait pas. Omis : le payeur d'origine du fonds.
+    client_nom: str | None = Field(default=None, max_length=300)
 
 
 class ProformaConversion(DecimalBaseModel):

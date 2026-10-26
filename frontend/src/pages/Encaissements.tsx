@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Check, Printer, Ban } from 'lucide-react'
 import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
@@ -24,6 +24,7 @@ import NotificationModal from '../components/NotificationModal'
 import EncaissementForm from '../components/EncaissementForm'
 import EncaissementTable from '../components/EncaissementTable'
 import AffecterBudgetModal from '../components/AffecterBudgetModal'
+import { libelleFiltreNature } from '../api/mouvementsHorsBudget'
 import ReimputationEncaissement from '../components/ReimputationEncaissement'
 import EncaissementFilters from '../components/EncaissementFilters'
 // pdfGeneratorReports tire jspdf (135 ko gz) : importe statiquement ici, il
@@ -82,6 +83,10 @@ export default function Encaissements() {
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const confirmWithInput = useConfirmWithInput()
   const location = useLocation()
+  // Posé par le tableau de bord (« À régulariser ») : un encours n'a pas de
+  // période, la liste l'affiche donc sans borne de dates tant qu'il est actif.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const natureParam = (searchParams.get('nature_mouvement') || '').toUpperCase()
   const navigate = useNavigate()
   const isCreatePage = location.pathname === '/encaissements/nouveau'
 
@@ -209,7 +214,7 @@ export default function Encaissements() {
       // reste muette derrière une période qu'on n'a pas pensé à élargir, et
       // l'écran répond « aucun encaissement » à propos de ce qu'il venait de
       // proposer lui-même. La période reste maîtresse du reste du temps.
-      const rechercheCiblee = Boolean(filterNumeroRecu || filterClient)
+      const rechercheCiblee = Boolean(filterNumeroRecu || filterClient || natureParam)
 
       const encPath =
         '/encaissements' + buildQuery({
@@ -221,7 +226,9 @@ export default function Encaissements() {
           client: filterClient,
           budget_poste_id: filterBudgetPosteId,
           operation_status: filterOperationStatus,
-          deleted_status: filterDeletedStatus,
+          // Le tableau de bord ne compte pas les notes supprimées.
+          deleted_status: natureParam ? 'active' : filterDeletedStatus,
+          nature_mouvement: natureParam,
           est_proforma: false,
           order: 'date_encaissement.desc',
           limit: pageSize,
@@ -336,6 +343,7 @@ export default function Encaissements() {
     filterBudgetPosteId,
     filterOperationStatus,
     filterDeletedStatus,
+    natureParam,
     pageSize,
     page,
     isCreatePage,
@@ -1009,6 +1017,26 @@ export default function Encaissements() {
             disabled={safePage === totalPages}
           >
             Suivant →
+          </button>
+        </div>
+      )}
+
+      {natureParam && !isCreatePage && (
+        <div className={styles.filtreNature}>
+          <span>
+            <strong>{libelleFiltreNature(natureParam)}</strong> · toutes périodes, les dates sont ignorées
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams)
+              next.delete('nature_mouvement')
+              setSearchParams(next, { replace: true })
+              setPage(1)
+            }}
+            aria-label="Retirer ce filtre"
+          >
+            Retirer ×
           </button>
         </div>
       )}

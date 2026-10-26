@@ -21,7 +21,7 @@ import SortieFondsNotification from '../components/SortieFondsNotification'
 import AffecterBudgetModal from '../components/AffecterBudgetModal'
 import NatureMouvementBadge from '../components/NatureMouvementBadge'
 import ExportAnnulationsToggle from '../components/ExportAnnulationsToggle'
-import { estAffectable, listFondsTiers, type FondsTiersOperation } from '../api/mouvementsHorsBudget'
+import { estAffectable, libelleFiltreNature, listFondsTiers, type FondsTiersOperation } from '../api/mouvementsHorsBudget'
 import { CATEGORIES_SORTIE, natureDuTypeSortie, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
 type PdfGeneratorSortieModule = typeof import('../utils/pdfGeneratorSortie')
@@ -87,8 +87,11 @@ export default function SortiesFonds() {
   const confirmWithInput = useConfirmWithInput()
   const location = useLocation()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const isCreatePage = location.pathname.endsWith('/nouvelle')
+  // Posé par le tableau de bord (« À régulariser ») : un encours n'a pas de
+  // période, la liste l'affiche donc sans borne de dates tant qu'il est actif.
+  const natureParam = (searchParams.get('nature_mouvement') || '').toUpperCase()
   const serviceParam = searchParams.get('service_id')
   const typeSortieParam = searchParams.get('type_sortie')
   const fondsTiersOperationParam = searchParams.get('fonds_tiers_operation_id')
@@ -306,6 +309,7 @@ export default function SortiesFonds() {
     filterModePaiement,
     filterStatut,
     filterNumeroRequisition,
+    natureParam,
     pageSize,
     page,
   ] as const
@@ -317,12 +321,13 @@ export default function SortiesFonds() {
         apiRequest<any>('GET', '/sorties-fonds', {
           params: {
             include: 'requisition',
-            date_debut: dateDebut || undefined,
-            date_fin: dateFin || undefined,
+            date_debut: natureParam ? undefined : dateDebut || undefined,
+            date_fin: natureParam ? undefined : dateFin || undefined,
             type_sortie: filterType,
             mode_paiement: filterModePaiement,
             statut: filterStatut,
             requisition_numero: filterNumeroRequisition,
+            nature_mouvement: natureParam || undefined,
             order: 'created_at.desc',
             limit: pageSize,
             offset: (page - 1) * pageSize,
@@ -2148,7 +2153,15 @@ export default function SortiesFonds() {
     dateDebut || dateFin || filterType || filterModePaiement || filterStatut || filterNumeroRequisition
   )
 
+  const retirerFiltreNature = useCallback(() => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('nature_mouvement')
+    setSearchParams(next, { replace: true })
+    setPage(1)
+  }, [searchParams, setSearchParams])
+
   const resetFilters = useCallback(() => {
+    if (natureParam) retirerFiltreNature()
     setDateDebut(today)
     setDateFin(today)
     setPendingDateDebut(today)
@@ -2158,7 +2171,7 @@ export default function SortiesFonds() {
     setFilterStatut('')
     setFilterNumeroRequisition('')
     setPage(1)
-  }, [today])
+  }, [today, natureParam, retirerFiltreNature])
 
   const isCancelable = (sortie: SortieFonds) => {
     // Ligne du moteur dédié : « annuler » y crée un transfert inverse daté du
@@ -2449,6 +2462,17 @@ export default function SortiesFonds() {
             {totalCount} opération{totalCount > 1 ? 's' : ''}
           </span>
         </div>
+
+        {natureParam && (
+          <div className={styles.filtreNature}>
+            <span>
+              <strong>{libelleFiltreNature(natureParam)}</strong> · toutes périodes, les dates ci-dessous sont ignorées
+            </span>
+            <button type="button" onClick={retirerFiltreNature} aria-label="Retirer ce filtre">
+              Retirer ×
+            </button>
+          </div>
+        )}
 
         <div className={styles.filtersGrid}>
           <div className={styles.filterGroup}>

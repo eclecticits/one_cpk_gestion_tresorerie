@@ -3,15 +3,22 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, has_any_permission
+from app.api.deps import get_current_tenant_id, get_current_user, has_any_permission, has_permission
 from app.db.session import get_db
 from app.models.fonds_tiers_operation import FondsTiersOperation
+from app.models.user import User
 from app.schemas.fonds_tiers import FondsTiersOut
+from app.schemas.payment import RequalifierFondsTiersPayload
+from app.services.audit_service import get_request_ip, log_action
 from app.services.fonds_tiers import fonds_tiers_amounts, fonds_tiers_reservations, resolve_fonds_tiers_display_name
+from app.services.regularisations_budgetaires import requalifier_fonds_tiers_en_recette
+from app.services.report_cache import invalidate_report_summary_cache
 
 
 router = APIRouter()
@@ -105,3 +112,48 @@ async def get_fonds_tiers(
         raise HTTPException(status_code=404, detail="Fonds de tiers introuvable")
     reservations = await fonds_tiers_reservations(db, organisation_id=tenant_id, operation_ids=[operation.id])
     return await _to_out(db, tenant_id, operation, reservations.get(operation.id))
+
+
+@router.post("/{operation_id}/requalifier", dependencies=[Depends(has_permission("treso.budget.update"))])
+async def requalifier_fonds_tiers(
+    operation_id: str,
+    payload: RequalifierFondsTiersPayload,
+    request: Request,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Le fonds appartient en fait à l'organisation : il devient recette
+    budgétaire sans quitter la caisse."""
+    try:
+        operation_uuid = uuid.UUID(operation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="operation_id invalide")
+    regularisation = await requalifier_fonds_tiers_en_recette(
+        db,
+        organisation_id=tenant_id,
+        operation_id=operation_uuid,
+        lignes=[(ligne.budget_poste_id, ligne.montant) for ligne in payload.lignes],
+        justification=payload.justification,
+        reference=payload.reference,
+        idempotency_key=payload.idempotency_key,
+        user_id=user.id,
+        client_nom=payload.client_nom,
+    )
+    await log_action(
+        db,
+        user_id=user.id,
+        action="FONDS_TIERS_REQUALIFIE",
+        target_table="regularisations_budgetaires",
+        target_id=str(regularisation.id),
+        new_value={
+            "fonds_tiers_operation_id": operation_id,
+            "encaissement_id": str(regularisation.encaissement_id),
+            "montant": str(regularisation.montant_mouvement),
+            "reference": regularisation.reference,
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
+    return {"id": str(regularisation.id), "status": "ok"}

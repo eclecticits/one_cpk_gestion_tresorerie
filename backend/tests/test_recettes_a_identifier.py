@@ -460,6 +460,8 @@ async def test_remboursement_reserve_puis_sort_de_la_banque(db_session, sans_not
 
     (item,) = (await lister(statut="ouvertes", tenant_id=org.id, db=db))["items"]
     assert item["disponible"] == "200.00" and item["reservations"] == [req.numero_requisition]
+    # L'écran dit où en est la réquisition, et ne propose de payer qu'approuvée.
+    assert [(d["numero"], d["statut"]) for d in item["reservations_detail"]] == [(req.numero_requisition, "EN_ATTENTE")]
 
     from app.services.recettes_a_identifier import verifier_remboursement
 
@@ -556,3 +558,65 @@ async def test_remboursement_comptabilise_contre_le_compte_d_attente(db_session,
         "4718": (Decimal("90"), Decimal("0")),
         "512": (Decimal("0"), Decimal("90")),
     }
+
+
+async def test_remboursement_parcourt_tout_le_circuit(db_session, sans_notifications, numeros_sortie):
+    """Le remboursement tel que l'écran le mène : réquisition créée depuis la
+    recette, signée, examinée, validée, visée, puis payée par une sortie."""
+    from app.models.service import Service
+    from app.schemas.requisition import RequisitionCreate, RequisitionExamenPayload
+    from app.services.requisition_service import (
+        create_requisition_logic,
+        sign_commission_requisition_logic,
+        submit_requisition_examen_logic,
+        validate_requisition_examen_logic,
+        validate_requisition_logic,
+        vise_requisition_logic,
+    )
+
+    db = db_session
+    org = await _org(db)
+    demandeur = await _user(db, org)
+    viseur = await _user(db, org)
+    banque = await _banque(db, org)
+    service = Service(code=f"SRV-{_suffix()[:6]}", libelle="Trésorerie", organisation_id=org.id)
+    db.add(service)
+    await db.commit()
+    source_id = await _saisir(db, org, demandeur, banque, "500")
+
+    # Même corps que `createRequisitionRemboursement` côté écran.
+    req = await create_requisition_logic(
+        db=db,
+        payload=RequisitionCreate(
+            objet="Remboursement du versement reçu par erreur",
+            mode_paiement="virement",
+            type_requisition="classique",
+            nature_requisition="RECETTE_A_IDENTIFIER",
+            recette_a_identifier_id=source_id,
+            montant_total=Decimal("10"),
+            devise="USD",
+            service_id=service.id,
+            compte_bancaire_id=banque.id,
+            beneficiaire="Société Kasaï Trading",
+        ),
+        user=demandeur,
+        tenant_id=org.id,
+        request=None,
+    )
+    if req.status == "BROUILLON":
+        req = await sign_commission_requisition_logic(db=db, requisition_id=req.id, user=demandeur, tenant_id=org.id)
+    if req.status == "SIGNEE_SERVICE":
+        req = await submit_requisition_examen_logic(db=db, requisition_id=req.id, tenant_id=org.id)
+    if (req.examen_status or "").upper() == "EN_EXAMEN":
+        req = await validate_requisition_examen_logic(
+            db=db, requisition_id=req.id, payload=RequisitionExamenPayload(commentaire="ok"), user=demandeur, tenant_id=org.id
+        )
+    req = await validate_requisition_logic(db=db, requisition_id=req.id, user=demandeur, tenant_id=org.id)
+    if req.status == "AUTORISEE":
+        req = await vise_requisition_logic(db=db, requisition_id=req.id, user=viseur, tenant_id=org.id)
+    assert req.status == "APPROUVEE"
+
+    sortie = await _payer(db, org, demandeur, banque, req, "10")
+    await db.refresh(banque)
+    assert banque.solde_actuel == Decimal("490")
+    assert sortie.recette_a_identifier_id == source_id

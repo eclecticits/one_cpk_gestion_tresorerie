@@ -7,7 +7,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import and_, select, func, or_
+from sqlalchemy import and_, case, select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_tenant_id, get_current_user
@@ -29,6 +29,20 @@ from app.schemas.dashboard import (
     DashboardStatsResponse,
     PeriodInfo,
 )
+
+
+def _montant_encaisse():
+    """Ce qu'une note a fait entrer, dans sa devise de perception.
+
+    Les totaux du tableau de bord sont tenus par devise. Une note en francs est
+    libellée en dollars : son `montant_paye` en est l'équivalent, et c'est
+    `montant_percu` qui dit les francs reçus (même règle que le repli de
+    `flux_encaissements`).
+    """
+    return case(
+        (Encaissement.devise_perception == "CDF", func.coalesce(Encaissement.montant_percu, 0)),
+        else_=func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0),
+    )
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_dashboard")
@@ -195,7 +209,7 @@ async def stats(
 
         enc_all_stmt = select(
             func.coalesce(
-                func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
+                func.sum(_montant_encaisse()),
                 0,
             )
         ).where(*enc_filters)
@@ -221,7 +235,7 @@ async def stats(
 
         enc_period_stmt = select(
             func.coalesce(
-                func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
+                func.sum(_montant_encaisse()),
                 0,
             ).label("total"),
             func.count().label("count"),
@@ -441,7 +455,7 @@ async def stats(
         enc_day_filters.append(Encaissement.date_encaissement < func.current_date() + 1)
         enc_day_stmt = select(
             func.coalesce(
-                func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
+                func.sum(_montant_encaisse()),
                 0,
             ).label("total"),
             func.count().label("count"),
@@ -504,7 +518,7 @@ async def stats(
             select(
                 enc_day,
                 func.coalesce(
-                    func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
+                    func.sum(_montant_encaisse()),
                     0,
                 ).label("total"),
             )
@@ -620,7 +634,7 @@ async def stats(
             enc_budget_filters.append(Encaissement.date_encaissement >= date_start)
         if date_end_excl:
             enc_budget_filters.append(Encaissement.date_encaissement < date_end_excl)
-        montant_enc = func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)
+        montant_enc = _montant_encaisse()
 
         recettes_budget = Decimal(
             (
@@ -698,7 +712,7 @@ async def stats(
         row_enc = (
             await db.execute(
                 select(
-                    func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)), 0),
+                    func.coalesce(func.sum(_montant_encaisse()), 0),
                     func.count(),
                 ).where(*enc_attente_filters)
             )
@@ -718,8 +732,11 @@ async def stats(
         stats_out.hors_budget_a_regulariser_montant = Decimal(
             (row_enc[0] if row_enc else 0) or 0
         ) + Decimal((row_sortie[0] if row_sortie else 0) or 0)
-        stats_out.hors_budget_a_regulariser_count = int((row_enc[1] if row_enc else 0) or 0) + int(
-            (row_sortie[1] if row_sortie else 0) or 0
+        stats_out.hors_budget_a_regulariser_encaissements_count = int((row_enc[1] if row_enc else 0) or 0)
+        stats_out.hors_budget_a_regulariser_sorties_count = int((row_sortie[1] if row_sortie else 0) or 0)
+        stats_out.hors_budget_a_regulariser_count = (
+            stats_out.hors_budget_a_regulariser_encaissements_count
+            + stats_out.hors_budget_a_regulariser_sorties_count
         )
     except Exception as exc:
         logger.error("Erreur critique Dashboard (encours hors budget): %s", exc, exc_info=True)

@@ -147,11 +147,12 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
   const handleAddPayment = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    const montant = parseFloat(paymentData.montant)
-    if (isNaN(montant) || montant <= 0) {
+    const saisie = parseFloat(paymentData.montant)
+    if (isNaN(saisie) || saisie <= 0) {
       notifyWarning('Montant invalide', 'Veuillez saisir un montant supérieur à 0.')
       return
     }
+    const montant = saisieEnFrancs ? Math.round((saisie / tauxNote) * 100) / 100 : saisie
 
     if (!destinationChoisie) {
       notifyWarning('Destination manquante', 'Choisissez où cet argent est encaissé.')
@@ -162,6 +163,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
       await createPayment({
         encaissement_id: encaissement.id,
         montant,
+        ...(saisieEnFrancs ? { montant_devise: saisie } : {}),
         mode_paiement: destinationChoisie.mode,
         canal: destinationChoisie.canal,
         compte_bancaire_id: destinationChoisie.compteId,
@@ -189,10 +191,10 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
     return compte ? libelleCompte(compte) : 'Banque'
   }
 
-  const formatCurrency = (amount: string | number | null | undefined) => {
+  const formatCurrency = (amount: string | number | null | undefined, devise: string = 'USD') => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
-      currency: 'USD',
+      currency: devise === 'CDF' ? 'CDF' : 'USD',
     }).format(toNumber(amount))
   }
 
@@ -214,6 +216,12 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
   const montantTotal = toNumber(encaissement.montant_total)
   const montantPaye = toNumber(encaissement.montant_paye)
   const montantRestant = montantTotal - montantPaye
+  // Une note en francs est libellée en dollars mais payée en francs : le
+  // caissier saisit les francs qu'il reçoit, au taux figé sur la note.
+  const tauxNote = toNumber((encaissement as any).taux_change_applique)
+  const saisieEnFrancs = deviseNote === 'CDF' && tauxNote > 0
+  const deviseSaisie = saisieEnFrancs ? 'CDF' : 'USD'
+  const restantSaisie = saisieEnFrancs ? Math.round(montantRestant * tauxNote * 100) / 100 : montantRestant
   const isCancelled = (encaissement.statut_operation || 'ACTIVE') === 'ANNULEE'
 
   const statut = getStatutLabel()
@@ -388,16 +396,23 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
             <form onSubmit={handleAddPayment}>
               <div className={styles.fieldRow}>
                 <div className={styles.field}>
-                  <label>Montant (USD) *</label>
+                  <label>Montant ({deviseSaisie}) *</label>
                   <input
                     type="number"
                     step="0.01"
                     value={paymentData.montant}
                     onChange={(e) => setPaymentData({ ...paymentData, montant: e.target.value })}
-                    placeholder={`Montant à encaisser (max: ${formatAmount(montantRestant)})`}
-                    max={montantRestant}
+                    placeholder={`Montant à encaisser (max: ${formatAmount(restantSaisie)})`}
+                    max={restantSaisie}
                     required
                   />
+                  {saisieEnFrancs && (
+                    <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                      Note libellée en dollars, payée en francs au taux de la note (1 USD = {formatAmount(tauxNote)} FC).
+                      {toNumber(paymentData.montant) > 0 &&
+                        ` Soit ${formatCurrency(toNumber(paymentData.montant) / tauxNote)} sur la note.`}
+                    </div>
+                  )}
                   <div style={{
                     fontSize: '12px',
                     color: '#6b7280',
@@ -428,7 +443,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                       // `formatAmount` écrit à la française (virgule) : un champ
                       // numérique la refuserait. Le point décimal est ici une
                       // valeur, pas un affichage.
-                      onClick={() => setPaymentData({ ...paymentData, montant: montantRestant.toFixed(2) })}
+                      onClick={() => setPaymentData({ ...paymentData, montant: restantSaisie.toFixed(2) })}
                       style={{
                         padding: 0,
                         border: 'none',
@@ -440,7 +455,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                         cursor: 'pointer'
                       }}
                     >
-                      Ou solder ({formatCurrency(montantRestant)})
+                      Ou solder ({formatCurrency(restantSaisie, deviseSaisie)})
                     </button>
                   </div>
                 </div>
@@ -548,7 +563,8 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
               {history.map((payment) => (
                 <div key={payment.id} className={styles.historyItem}>
                   <div className={styles.historyHeader}>
-                    <span className={styles.historyAmount}>{formatCurrency(payment.montant)}</span>
+                    {/* Le versement porte l'argent réellement reçu, dans sa devise. */}
+                    <span className={styles.historyAmount}>{formatCurrency(payment.montant, payment.devise)}</span>
                     <span className={styles.historyDate}>
                       {format(new Date(payment.created_at), 'dd/MM/yyyy HH:mm')}
                     </span>

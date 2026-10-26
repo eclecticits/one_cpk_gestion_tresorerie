@@ -22,6 +22,9 @@ export interface PaymentHistoryItem {
 export interface CreatePaymentRequest {
   encaissement_id: string
   montant: number
+  /** L'argent reçu dans la devise de la note (des francs pour une note en
+   *  francs). Donné, il fait foi : le serveur en déduit `montant`. */
+  montant_devise?: number
   mode_paiement: ModePaiement
   // Vides = la destination de la note, comme avant le règlement mixte.
   canal?: CanalPaiement

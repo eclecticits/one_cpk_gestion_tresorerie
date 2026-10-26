@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { FileSpreadsheet, FileText, RefreshCw } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
+import AffecterBudgetModal from '../components/AffecterBudgetModal'
 import {
   FONDS_TIERS_STATUT_LABELS,
   fondsTiersDisponible,
@@ -16,6 +17,7 @@ import {
 } from '../utils/reportExcelStyles'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
+import { useToast } from '../hooks/useToast'
 import styles from './FondsTiers.module.css'
 
 type XlsxModule = typeof import('xlsx')
@@ -58,6 +60,7 @@ type FiltreStatut = 'A_REVERSER' | 'TOUS' | FondsTiersOperation['statut']
 const FILTRES: [FiltreStatut, string][] = [
   ['A_REVERSER', 'À reverser'],
   ['REGULARISE', 'Soldés'],
+  ['REQUALIFIE', 'Requalifiés'],
   ['ANNULE', 'Annulés'],
   ['TOUS', 'Tous'],
 ]
@@ -75,6 +78,11 @@ const dateFichier = () => {
 const estAReverser = (op: FondsTiersOperation) =>
   (op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE') && fondsTiersDisponible(op) > 0
 
+// Même règle que le serveur : tout le fonds ou rien, donc ni reversement
+// entamé ni réquisition en cours qui le retienne.
+const estRequalifiable = (op: FondsTiersOperation) =>
+  op.statut === 'OUVERT' && toNumber(op.montant_rembourse) === 0 && toNumber(op.montant_reserve) === 0
+
 export default function FondsTiers() {
   const [operations, setOperations] = useState<FondsTiersOperation[]>([])
   const [chargement, setChargement] = useState(true)
@@ -90,6 +98,11 @@ export default function FondsTiers() {
   const { user } = useAuth()
   const { hasPermission } = usePermissions()
   const peutVerser = hasPermission('requisitions') || hasPermission('services')
+  const peutRequalifier = hasPermission('treso.budget.update')
+  const { notifySuccess, notifyWarning } = useToast()
+  // Fonds qui appartenait en fait à l'organisation : il devient recette sans
+  // sortir de la caisse.
+  const [aRequalifier, setARequalifier] = useState<FondsTiersOperation | null>(null)
 
   const charger = useCallback(async () => {
     setChargement(true)
@@ -460,12 +473,24 @@ export default function FondsTiers() {
                   <td data-label="Reçu le">{new Date(op.created_at).toLocaleDateString('fr-FR')}</td>
                   <td data-label="Action">
                     {(op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE') && (
-                      <Link
-                        to={`/sorties-fonds/nouvelle?type_sortie=remboursement_fonds_tiers&fonds_tiers_operation_id=${op.id}`}
-                        className={styles.primaryLink}
-                      >
-                        Rembourser
-                      </Link>
+                      <div className={styles.rowActions}>
+                        <Link
+                          to={`/sorties-fonds/nouvelle?type_sortie=remboursement_fonds_tiers&fonds_tiers_operation_id=${op.id}`}
+                          className={styles.primaryLink}
+                        >
+                          Rembourser
+                        </Link>
+                        {peutRequalifier && estRequalifiable(op) && (
+                          <button
+                            type="button"
+                            className={styles.secondaryBtn}
+                            onClick={() => setARequalifier(op)}
+                            title={`L'argent appartient à ${user?.organisation_name || "l'organisation"} : le garder en recette, sans sortie de caisse`}
+                          >
+                            Requalifier en recette
+                          </button>
+                        )}
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -474,6 +499,24 @@ export default function FondsTiers() {
           </tbody>
         </table>
       </div>
+
+      {aRequalifier && (
+        <AffecterBudgetModal
+          cible="fonds_tiers"
+          mouvementId={aRequalifier.id}
+          resteAAffecter={toNumber(aRequalifier.montant_recu) || 0}
+          devise={aRequalifier.devise}
+          libelle={`Fonds « ${aRequalifier.tiers_display_name} »`}
+          payeurInitial={aRequalifier.payeur_origine}
+          onClose={() => setARequalifier(null)}
+          onSuccess={(message) => {
+            notifySuccess('Fonds requalifié', message)
+            charger()
+            window.dispatchEvent(new Event('dashboard-refresh'))
+          }}
+          onError={(title, message) => notifyWarning(title, message)}
+        />
+      )}
     </div>
   )
 }

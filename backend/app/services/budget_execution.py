@@ -30,6 +30,7 @@ from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.encaissement import Encaissement
+from app.services.encaissement_flux import facteur_devise_sql
 from app.models.mouvement_budget_imputation import MouvementBudgetImputation
 from app.models.payment_history import PaymentHistory
 from app.models.retour_caisse import RetourCaisse
@@ -220,7 +221,9 @@ async def _recettes_sans_registre(
     versements = (
         select(
             Encaissement.budget_poste_id,
-            func.coalesce(func.sum(PaymentHistory.montant), 0),
+            # Le versement porte l'argent réel ; le budget, son équivalent dans
+            # l'unité de la note (dollars pour une note payée en francs).
+            func.coalesce(func.sum(PaymentHistory.montant / facteur_devise_sql()), 0),
         )
         .join(Encaissement, Encaissement.id == PaymentHistory.encaissement_id)
         .where(

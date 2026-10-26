@@ -254,6 +254,11 @@
   color: #166534;
 }
 
+.statut[data-statut='REQUALIFIE'] {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
 .statut[data-statut='ANNULE'] {
   background: #fee2e2;
   color: #b91c1c;
@@ -438,6 +443,10 @@
     width: 100%;
   }
 
+  .table tbody td:last-child .rowActions > * {
+    flex: 1 1 100%;
+  }
+
   .table tbody td[colspan] {
     display: block;
     padding: 28px 14px;
@@ -549,4 +558,11 @@
   font-size: 0.75rem;
   font-weight: 600;
   color: #92400e;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }

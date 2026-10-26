@@ -12,7 +12,7 @@ class FondsTiersOut(DecimalBaseModel):
     id: UUID
     organisation_id: int
     encaissement_id: UUID
-    statut: Literal["OUVERT", "PARTIELLEMENT_REMBOURSE", "REGULARISE", "ANNULE"]
+    statut: Literal["OUVERT", "PARTIELLEMENT_REMBOURSE", "REGULARISE", "REQUALIFIE", "ANNULE"]
     tiers_concerne: str | None = None
     tiers_organisation_id: int | None = None
     tiers_nom_libre: str | None = None

@@ -53,6 +53,8 @@ class RecetteAIdentifierCreate(BaseModel):
 
 class ReglerNotePayload(BaseModel):
     encaissement_id: uuid.UUID
+    #: Dans la devise de la recette, comme le relevé : de l'argent réel. Pour
+    #: une note en francs, la note en reçoit l'équivalent en dollars.
     montant: Decimal = Field(gt=0)
 
 
@@ -149,6 +151,7 @@ async def regler_note(
         organisation_id=tenant_id,
         encaissement_id=note.id,
         montant=payload.montant,
+        montant_devise=payload.montant,
         mode_paiement=source.mode_paiement,
         reference=source.reference,
         notes=f"Identifié depuis la recette {source.numero_recu}",
@@ -166,5 +169,6 @@ async def regler_note(
         tenant_id,
         montant_recu=versement.montant,
         mode_paiement_recu=source.mode_paiement,
+        identification=source,
     )
     return {"versement_id": str(versement.id), "encaissement_id": str(note.id), "numero_recu": note.numero_recu}

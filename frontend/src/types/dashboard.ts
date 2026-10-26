@@ -36,6 +36,8 @@ export interface DashboardStats {
   /** Encours en attente d'imputation, toutes périodes confondues. */
   hors_budget_a_regulariser_montant?: Money
   hors_budget_a_regulariser_count?: number
+  hors_budget_a_regulariser_encaissements_count?: number
+  hors_budget_a_regulariser_sorties_count?: number
   /** Argent détenu pour autrui, présent en caisse et dû. */
   fonds_tiers_solde?: Money
   fonds_tiers_count?: number

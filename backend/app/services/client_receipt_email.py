@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.client import Client
+from app.models.compte_bancaire import CompteBancaire
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
@@ -34,6 +35,14 @@ MODE_PAIEMENT_LABELS = {
 def _fmt_usd(amount: float) -> str:
     # Usage français : espace pour les milliers, virgule décimale (1 250,00 $).
     return f"{amount:,.2f}".replace(",", " ").replace(".", ",") + " $"
+
+
+def _fmt_devise(amount: float, devise: str | None) -> str:
+    # Un versement porte l'argent réellement reçu : des francs pour une note
+    # payée en francs, même si la note elle-même est libellée en dollars.
+    if (devise or "USD").upper() == "CDF":
+        return f"{amount:,.2f}".replace(",", " ").replace(".", ",") + " FC"
+    return _fmt_usd(amount)
 
 
 def salutation_lignes(
@@ -97,9 +106,17 @@ async def schedule_client_payment_email(
     montant_recu: Decimal | float | None = None,
     mode_paiement_recu: str | None = None,
     date_recu: datetime | None = None,
+    identification: Encaissement | None = None,
 ) -> str | None:
     """Envoie au client (expert-comptable ou client externe) la confirmation
     de son paiement, avec le reste à payer s'il y en a un.
+
+    `identification` : la recette à identifier d'où vient ce versement. Le
+    client n'a rien payé aujourd'hui : il avait viré de l'argent sans qu'on
+    sache qu'il venait de lui, et on vient de le reconnaître. Le message le dit
+    — date de valeur, compte, référence du virement —, précise qu'aucun nouveau
+    paiement n'est attendu pour ce montant, et indique comment libeller les
+    prochains virements pour qu'ils soient affectés sans délai.
 
     `montant_recu`, `mode_paiement_recu`, `date_recu` décrivent le versement
     qui déclenche l'envoi : sans eux, un complément n'annoncerait que le cumul
@@ -185,13 +202,65 @@ async def schedule_client_payment_email(
                 "",
                 *signature,
             ]
+        elif identification is not None:
+            date_valeur = identification.date_encaissement
+            date_txt = f" du {date_valeur.strftime('%d/%m/%Y')}" if date_valeur else ""
+            compte_txt = ""
+            if identification.compte_bancaire_id:
+                compte = await db.get(CompteBancaire, identification.compte_bancaire_id)
+                if compte is not None and compte.intitule:
+                    compte_txt = f" sur notre compte {compte.intitule}"
+            montant_txt = (
+                _fmt_devise(float(montant_recu), getattr(encaissement, "devise_perception", None))
+                if montant_recu is not None
+                else None
+            )
+            body_lines = [
+                *salutation,
+                "",
+                f"Nous avons reçu{compte_txt} un virement{date_txt} dont le libellé ne permettait pas d'en "
+                "identifier l'auteur. Nos services l'ont rapproché de votre dossier : il est désormais "
+                "affecté à votre note de débit.",
+                "",
+                "Virement identifié",
+                *([f"Date de valeur : {date_valeur.strftime('%d/%m/%Y')}"] if date_valeur else []),
+                *([f"Référence bancaire : {identification.reference}"] if identification.reference else []),
+                *([f"Libellé du relevé : {identification.libelle}"] if identification.libelle else []),
+                *([f"Montant affecté : {montant_txt}"] if montant_txt else []),
+                "",
+                "Affectation",
+                *([f"Objet : {objet}"] if objet else []),
+                f"Note de débit N° : {numero}",
+                f"Montant total de la note : {_fmt_usd(total)}",
+                f"Total payé à ce jour : {_fmt_usd(paye)}",
+            ]
+            if reste > 0.009:
+                title = "Virement identifié — solde restant"
+                subject = f"Votre virement{date_txt} a été identifié – Note de débit {numero} – reste {_fmt_usd(reste)}"
+                body_lines += [f"Reste à payer : {_fmt_usd(reste)}"]
+            else:
+                title = "Virement identifié — note soldée"
+                subject = f"Votre virement{date_txt} a été identifié – Note de débit {numero} – soldée"
+                body_lines += ["", "Votre note de débit est entièrement réglée."]
+            body_lines += [
+                "",
+                "Aucun nouveau paiement n'est attendu de votre part pour ce montant : il s'agit de l'argent "
+                "déjà viré, et non d'un second versement.",
+                "",
+                "Pour que vos prochains virements soient affectés sans délai, merci d'indiquer dans leur "
+                "libellé votre nom (ou votre numéro d'ordre) et le numéro de la note de débit réglée.",
+                "Si ce virement n'est pas le vôtre, merci de nous le signaler en réponse à ce message.",
+                "",
+                *signature,
+            ]
         else:
             date_paiement = date_recu or encaissement.date_paiement or encaissement.date_encaissement
             recu_ligne: list[str] = []
             if montant_recu is not None:
                 mode = MODE_PAIEMENT_LABELS.get((mode_paiement_recu or "").strip().lower(), "")
                 recu_ligne = [
-                    f"Montant reçu : {_fmt_usd(float(montant_recu))}" + (f" ({mode.lower()})" if mode else "")
+                    f"Montant reçu : {_fmt_devise(float(montant_recu), getattr(encaissement, 'devise_perception', None))}"
+                    + (f" ({mode.lower()})" if mode else "")
                 ]
             body_lines = [
                 *salutation,

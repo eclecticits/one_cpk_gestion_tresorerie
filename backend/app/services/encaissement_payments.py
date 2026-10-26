@@ -59,6 +59,42 @@ def clean_money(value: Decimal | str | int | float | None) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def facteur_devise(encaissement: Encaissement) -> Decimal:
+    """Combien d'unités de la devise de perception vaut une unité de la note.
+
+    Une note en francs est libellée en dollars (ses articles, son reste dû, son
+    budget) mais payée en francs : son versement, lui, est de l'argent réel, et
+    c'est en francs qu'il entre en caisse ou en banque. Le facteur est le taux
+    figé sur la note. Une recette à identifier fait exception : elle est tenue
+    dans la devise du compte crédité, son montant EST déjà de l'argent réel.
+    """
+    if (encaissement.devise_perception or "USD").upper() != "CDF" or est_recette_a_identifier(encaissement):
+        return Decimal("1")
+    taux = Decimal(str(encaissement.taux_change_applique or 0))
+    return taux if taux > 0 else Decimal("1")
+
+
+def _en_devise(montant_note: Decimal, facteur: Decimal) -> Decimal:
+    return clean_money(montant_note * facteur) if facteur != 1 else clean_money(montant_note)
+
+
+def _en_note(montant_devise: Decimal, facteur: Decimal) -> Decimal:
+    return clean_money(montant_devise / facteur) if facteur != 1 else clean_money(montant_devise)
+
+
+def _parts_en_devise(repartition: list[tuple[int, Decimal]], total_devise: Decimal, facteur: Decimal) -> list[tuple[int, Decimal]]:
+    """La répartition par poste, convertie, sans perdre un centime à l'arrondi :
+    la dernière part prend l'écart, la somme égale exactement le versement."""
+    if facteur == 1 or not repartition:
+        return list(repartition)
+    parts = [(poste_id, _en_devise(part, facteur)) for poste_id, part in repartition]
+    ecart = clean_money(total_devise - sum((m for _p, m in parts), Decimal("0")))
+    if ecart:
+        poste_id, dernier = parts[-1]
+        parts[-1] = (poste_id, clean_money(dernier + ecart))
+    return parts
+
+
 def _payment_status_for(encaissement: Encaissement, paid: Decimal) -> str:
     total = clean_money(encaissement.montant_total or 0)
     if paid > total:
@@ -283,8 +319,15 @@ async def record_encaissement_payment(
     ip_address: str | None = None,
     rubrique_produit_defaut: str | None = None,
     identification_source_id: uuid.UUID | None = None,
+    montant_devise: Decimal | None = None,
 ) -> PaymentHistory:
     """Enregistre un versement sur une note.
+
+    `montant` est dans l'unité de la note (dollars pour une note en francs, cf.
+    `facteur_devise`). `montant_devise`, s'il est donné, est l'argent réellement
+    reçu dans la devise de perception et fait foi : `montant` en est déduit. Le
+    versement enregistré, la trésorerie et l'écriture comptable portent l'argent
+    réel ; la note et le budget, son équivalent dans l'unité de la note.
 
     `identification_source_id` : le versement est tiré d'une recette à
     identifier. Il reprend la destination et la date de valeur du versement
@@ -292,8 +335,14 @@ async def record_encaissement_payment(
     comptable est le compte d'attente au lieu de la banque.
     """
     encaissement = await _lock_encaissement(db, organisation_id=organisation_id, encaissement_id=encaissement_id)
-    montant = clean_money(montant)
-    if montant <= 0:
+    facteur = facteur_devise(encaissement)
+    if montant_devise is not None:
+        montant_devise = clean_money(montant_devise)
+        montant = _en_note(montant_devise, facteur)
+    else:
+        montant = clean_money(montant)
+        montant_devise = _en_devise(montant, facteur)
+    if montant <= 0 or montant_devise <= 0:
         raise HTTPException(status_code=400, detail="montant invalide")
 
     devise = (encaissement.devise_perception or "USD").upper()
@@ -337,7 +386,7 @@ async def record_encaissement_payment(
             recent_created_at = recent_created_at.replace(tzinfo=timezone.utc)
         same_double_click_payment = (
             now - recent_created_at <= PAYMENT_DOUBLE_CLICK_WINDOW
-            and clean_money(recent_payment.montant) == montant
+            and clean_money(recent_payment.montant) == montant_devise
             and recent_payment.mode_paiement == mode_paiement
             and recent_payment.reference == reference
             and recent_payment.notes == notes
@@ -355,7 +404,10 @@ async def record_encaissement_payment(
     if montant - remaining > Decimal("0.01"):
         raise HTTPException(status_code=400, detail=f"Montant trop élevé. Restant dû: {remaining}")
     if source is not None:
-        montant = prelever(source, versement_source, montant, bloque)
+        # La recette à identifier est tenue en argent réel : c'est ce montant-là
+        # qu'on lui prend, et la note reçoit son équivalent.
+        montant_devise = prelever(source, versement_source, montant_devise, bloque)
+        montant = _en_note(montant_devise, facteur)
 
     payment_date = date_paiement or now
     if payment_date.tzinfo is None:
@@ -392,10 +444,11 @@ async def record_encaissement_payment(
             # la plus grosse part, et non le poste d'origine, figé avec son exercice.
             budget_poste_id = max(repartition, key=lambda item: item[1])[0]
 
+    parts_devise = _parts_en_devise(repartition, montant_devise, facteur)
     payment = PaymentHistory(
         organisation_id=organisation_id,
         encaissement_id=encaissement.id,
-        montant=montant,
+        montant=montant_devise,
         devise=devise,
         canal=canal,
         compte_bancaire_id=compte_bancaire_id,
@@ -420,14 +473,16 @@ async def record_encaissement_payment(
             source=source,
             destination_id=encaissement.id,
             versement_id=payment.id,
-            montant=montant,
+            montant=montant_devise,
             ip_address=ip_address,
         )
 
     previous_paid = clean_money(encaissement.montant_paye or 0)
     new_paid = clean_money(previous_paid + montant)
     encaissement.montant_paye = new_paid
-    encaissement.montant_percu = new_paid
+    # Le perçu se lit dans la devise de perception : des francs pour une note
+    # en francs, comme à sa création.
+    encaissement.montant_percu = _en_devise(new_paid, facteur)
     encaissement.statut_paiement = _payment_status_for(encaissement, new_paid)
     encaissement.date_paiement = payment_date
     # Premier versement d'une note encore vierge : l'en-tête suit la destination
@@ -446,7 +501,7 @@ async def record_encaissement_payment(
             encaissement.bank_statement_ref = source.bank_statement_ref
 
     if impact_budgetaire:
-        for poste_id, part in repartition:
+        for (poste_id, part), (_p, part_devise) in zip(repartition, parts_devise):
             await _adjust_budget(
                 db,
                 organisation_id=organisation_id,
@@ -460,7 +515,7 @@ async def record_encaissement_payment(
                 payment_history_id=payment.id,
                 budget_poste_id=poste_id,
                 sens="RECETTE_REALISEE",
-                montant_mouvement=part,
+                montant_mouvement=part_devise,
                 devise_mouvement=devise,
                 montant_budget=part,
                 exchange_rate_snapshot=taux_change,
@@ -476,7 +531,7 @@ async def record_encaissement_payment(
             canal=canal,
             devise=devise,
             compte_bancaire_id=compte_bancaire_id,
-            montant=montant,
+            montant=montant_devise,
         )
 
     integration_mode = await get_accounting_integration_mode(db, organisation_id)
@@ -493,7 +548,7 @@ async def record_encaissement_payment(
             # Un reclassement se passe le jour où l'on identifie le payeur ;
             # l'entrée en banque, elle, est déjà écrite à sa date de valeur.
             date_operation=(datetime.now(timezone.utc) if source is not None else payment_date).date(),
-            montant=montant,
+            montant=montant_devise,
             devise=devise,
             canal=canal,  # type: ignore[arg-type]
             compte_bancaire_id=compte_bancaire_id,
@@ -505,7 +560,7 @@ async def record_encaissement_payment(
             rubrique_produit_defaut=rubrique_produit_defaut,
             # Une recette répartie porte un produit par poste : l'écriture suit
             # la même répartition que le budget, sinon les deux se contrediraient.
-            imputations=repartition if len(repartition) > 1 else None,
+            imputations=parts_devise if len(parts_devise) > 1 else None,
             **({"rubrique_contrepartie": RUBRIQUE_RECETTE_A_IDENTIFIER} if source is not None else {}),
         )
         payment.statut_comptabilisation = PAYMENT_COMPTA_RECORDED
@@ -520,7 +575,7 @@ async def record_encaissement_payment(
             organisation_id=organisation_id,
             encaissement_id=str(encaissement.id),
             date_operation=payment_date.date(),
-            montant=montant,
+            montant=montant_devise,
             devise=devise,
             canal=canal,  # type: ignore[arg-type]
             compte_bancaire_id=compte_bancaire_id,
@@ -552,7 +607,8 @@ async def record_encaissement_payment(
         target_id=str(payment.id),
         new_value={
             "encaissement_id": str(encaissement.id),
-            "montant": str(montant),
+            "montant": str(montant_devise),
+            "montant_note": str(montant),
             "devise": devise,
             "canal": canal,
             "compte_bancaire_id": compte_bancaire_id,
@@ -589,7 +645,9 @@ async def cancel_encaissement_payment(
         raise HTTPException(status_code=400, detail="Ce paiement est déjà annulé")
 
     encaissement = await _lock_encaissement(db, organisation_id=organisation_id, encaissement_id=payment.encaissement_id)
+    # Le versement porte l'argent réel ; la note et le budget, son équivalent.
     montant = clean_money(payment.montant)
+    montant_note = _en_note(montant, facteur_devise(encaissement))
     # La destination du versement fait foi. Depuis le règlement mixte elle peut
     # différer de celle de la note — acompte en caisse, solde par virement — et
     # rendre l'argent ailleurs que là où il est entré creuserait un trou dans une
@@ -654,7 +712,7 @@ async def cancel_encaissement_payment(
                 db,
                 organisation_id=organisation_id,
                 budget_poste_id=budget_poste_id,
-                montant=montant,
+                montant=montant_note,
                 direction=-1,
             )
 
@@ -689,11 +747,14 @@ async def cancel_encaissement_payment(
         user_id=user_id,
     )
 
-    new_paid = clean_money((encaissement.montant_paye or 0) - montant)
+    new_paid = clean_money((encaissement.montant_paye or 0) - montant_note)
+    # Un centime d'arrondi de conversion ne doit pas bloquer l'annulation.
+    if Decimal("-0.01") <= new_paid < 0:
+        new_paid = Decimal("0.00")
     if new_paid < 0:
         raise HTTPException(status_code=400, detail="Montant payé insuffisant pour neutraliser exactement ce paiement.")
     encaissement.montant_paye = new_paid
-    encaissement.montant_percu = new_paid
+    encaissement.montant_percu = _en_devise(new_paid, facteur_devise(encaissement))
     encaissement.statut_paiement = _payment_status_for(encaissement, new_paid)
 
     now = datetime.now(timezone.utc)

@@ -49,6 +49,8 @@ export interface RecetteAIdentifier {
   /** Ce qui peut encore s'identifier ou se rembourser : le reste moins la réserve. */
   disponible: Money
   reservations: string[]
+  /** Les mêmes réquisitions, avec leur statut dans le circuit de validation. */
+  reservations_detail?: ReservationRecette[]
   remboursements: RemboursementRecette[]
   age_jours: number
   tranche: TrancheAnciennete
@@ -56,6 +58,27 @@ export interface RecetteAIdentifier {
   statut_operation?: string | null
   identifications: IdentificationRecette[]
 }
+
+export interface ReservationRecette {
+  requisition_id: string
+  numero: string
+  statut: string
+  montant: Money
+}
+
+/** Où en est la réquisition de remboursement, dit en termes d'action. */
+export const ETAPE_REMBOURSEMENT: Record<string, string> = {
+  BROUILLON: 'à signer par le service',
+  SIGNEE_SERVICE: "à soumettre à l'examen",
+  EN_ATTENTE: 'en examen / validation',
+  EN_ATTENTE_COMMISSION: 'en attente de la commission',
+  AUTORISEE: 'à viser',
+  APPROUVEE: 'approuvée, à payer',
+  EN_DECAISSEMENT: 'en cours de paiement',
+}
+
+/** Statuts où la réquisition peut être payée par une sortie de fonds. */
+export const STATUTS_REMBOURSEMENT_PAYABLE = ['APPROUVEE', 'EN_DECAISSEMENT']
 
 export interface TotauxRecettesAIdentifier {
   devise: 'USD' | 'CDF'

@@ -646,6 +646,7 @@ async def list_sorties_fonds(
     requisition_id: str | None = Query(default=None),
     requisition_numero: str | None = Query(default=None),
     reference: str | None = Query(default=None),
+    nature_mouvement: str | None = Query(default=None, description="Ex: HORS_BUDGET_A_REGULARISER"),
     order: str | None = Query(default=None, description="Ex: date_paiement.desc"),
     limit: int = Query(default=100, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
@@ -713,6 +714,9 @@ async def list_sorties_fonds(
         conditions.append((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
     if reference:
         conditions.append(SortieFonds.reference.ilike(f"%{reference}%"))
+    # Appelée en direct (tests), la fonction reçoit l'objet `Query` par défaut.
+    if isinstance(nature_mouvement, str) and nature_mouvement.strip():
+        conditions.append(SortieFonds.nature_mouvement == nature_mouvement.strip().upper())
     if requisition_id:
         try:
             req_uid = uuid.UUID(requisition_id)

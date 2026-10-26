@@ -152,3 +152,71 @@ async def test_copie_des_paiements_visible_et_sans_le_payeur(monkeypatch):
     # Le payeur n'est pas recopié en CC de son propre message.
     assert kwargs["cc_emails"] == "compta@onec.cd, tresorier@onec.cd"
 
+
+
+class _FakeDbAvecCompte(_FakeDb):
+    def __init__(self, compte, *values):
+        super().__init__(*values)
+        self._compte = compte
+
+    async def get(self, _model, _id):
+        return self._compte
+
+
+@pytest.mark.asyncio
+async def test_identification_dit_que_le_virement_a_ete_reconnu(monkeypatch):
+    """Le client n'a rien payé aujourd'hui : on a reconnu un virement ancien.
+
+    Le message le dit, rappelle le virement (date de valeur, compte, référence),
+    écarte l'idée d'un second paiement et dit comment libeller les prochains.
+    """
+
+    async def fake_settings(*_args, **_kwargs):
+        return object()
+
+    monkeypatch.setattr(module, "get_system_settings", fake_settings)
+    monkeypatch.setattr(
+        module,
+        "resolve_smtp_config",
+        lambda _ns: SimpleNamespace(host="h", port=25, user="u", password="p", sender="s@x.cd"),
+    )
+    expert = SimpleNamespace(email="jean@ex.cd", nom_denomination="MUKENDI Jean", sexe="M", associe_gerant=None)
+    note = SimpleNamespace(
+        id=uuid.uuid4(),
+        type_client="expert_comptable",
+        expert_comptable_id=uuid.uuid4(),
+        client_nom=None,
+        montant_total=Decimal("100"),
+        montant_paye=Decimal("100"),
+        numero_recu="REC-0300",
+        numero_proforma=None,
+        libelle="Cotisation annuelle",
+        date_paiement=None,
+        date_encaissement=datetime(2026, 10, 24, tzinfo=timezone.utc),
+        devise_perception="USD",
+    )
+    recette = SimpleNamespace(
+        date_encaissement=datetime(2026, 10, 2, tzinfo=timezone.utc),
+        reference="FT26275XYZ",
+        libelle="VIR RECU DE M J 8841",
+        compte_bancaire_id=7,
+    )
+    tasks = BackgroundTasks()
+    await schedule_client_payment_email(
+        _FakeDbAvecCompte(SimpleNamespace(intitule="Rawbank USD"), expert, "ONEC Kinshasa"),
+        tasks,
+        note,
+        1,
+        montant_recu=Decimal("100"),
+        identification=recette,
+    )
+
+    kwargs = tasks.tasks[0].kwargs
+    lignes = kwargs["body_lines"]
+    assert kwargs["subject"] == "Votre virement du 02/10/2026 a été identifié – Note de débit REC-0300 – soldée"
+    assert kwargs["title"] == "Virement identifié — note soldée"
+    assert any("sur notre compte Rawbank USD un virement du 02/10/2026" in ligne for ligne in lignes)
+    assert "Référence bancaire : FT26275XYZ" in lignes
+    assert "Montant affecté : 100,00 $" in lignes
+    assert any(ligne.startswith("Aucun nouveau paiement n'est attendu") for ligne in lignes)
+    assert not any("accusons réception" in ligne for ligne in lignes)

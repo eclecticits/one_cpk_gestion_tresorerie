@@ -1609,6 +1609,7 @@ async def list_encaissements(
     operation_status: str | None = Query(default="ACTIVE", description="ACTIVE, ANNULEE, ALL"),
     deleted_status: str | None = Query(default="all", description="all, active, deleted"),
     est_proforma: bool | None = Query(default=False),
+    nature_mouvement: str | None = Query(default=None, description="Ex: HORS_BUDGET_A_REGULARISER"),
     order: str | None = Query(default=None, description="Ex: date_encaissement.desc"),
     limit: int = Query(default=50, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
@@ -1668,6 +1669,9 @@ async def list_encaissements(
         conditions.append(Encaissement.budget_poste_id == budget_poste_id)
     if type_client:
         conditions.append(Encaissement.type_client == type_client)
+    # Appelée en direct (tests), la fonction reçoit l'objet `Query` par défaut.
+    if isinstance(nature_mouvement, str) and nature_mouvement.strip():
+        conditions.append(Encaissement.nature_mouvement == nature_mouvement.strip().upper())
     if mode_paiement:
         conditions.append(Encaissement.mode_paiement == mode_paiement)
     if canal:
@@ -2181,14 +2185,9 @@ async def create_encaissement(
         ).scalar_one_or_none()
         if source_identification is None or not est_recette_a_identifier(source_identification):
             raise HTTPException(status_code=404, detail="Recette à identifier introuvable")
-        # Une note en francs convertit son montant en dollars à la création,
-        # alors que la recette à identifier est tenue en francs : les deux ne se
-        # prélèvent pas l'un sur l'autre sans fausser la trésorerie.
-        if (source_identification.devise_perception or "USD").upper() != "USD":
-            raise HTTPException(
-                status_code=400,
-                detail="Recette en francs : identifiez-la en réglant une note existante.",
-            )
+        # En francs, la note est libellée en dollars et payée en francs : le
+        # versement prélève sur la recette les francs perçus (`montant_percu`),
+        # au taux du jour de réception, et la note en reçoit l'équivalent.
         payload = payload.model_copy(
             update={
                 "canal": source_identification.canal,
@@ -2259,10 +2258,17 @@ async def create_encaissement(
     montant_paye = _clean_money(payload.montant_paye or 0)
 
     if devise == "CDF":
-        if montant_percu <= 0:
-            montant_percu = montant_total or montant or montant_paye
-        montant_total = (montant_percu / taux_change) if taux_change > 0 else Decimal("0.00")
-        montant_paye = montant_total
+        # La note est libellée en dollars (ses articles) et payée en francs :
+        # `montant_percu` est l'argent reçu, `montant_paye` son équivalent. Un
+        # paiement partiel en francs laisse donc un reste dû, comme en dollars.
+        if montant_percu <= 0 and montant_paye > 0:
+            montant_percu = montant_paye * taux_change
+        if montant_total <= 0:
+            montant_total = montant or ((montant_percu / taux_change) if taux_change > 0 else Decimal("0.00"))
+        montant_paye = (montant_percu / taux_change) if taux_change > 0 else Decimal("0.00")
+        # L'arrondi de conversion ne fait pas d'un paiement exact une avance.
+        if abs(_clean_money(montant_paye) - _clean_money(montant_total)) <= Decimal("0.01"):
+            montant_paye = montant_total
     else:
         if montant_total == 0 and montant > 0:
             montant_total = montant
@@ -2531,6 +2537,8 @@ async def create_encaissement(
                     user_id=current_user_id,
                     date_paiement=date_encaissement,
                     identification_source_id=payload.identification_source_id,
+                    # En francs, l'argent reçu fait foi (cf. facteur_devise).
+                    montant_devise=montant_percu if devise == "CDF" else None,
                 )
 
             await db.commit()
@@ -2586,8 +2594,10 @@ async def create_encaissement(
             background_tasks,
             encaissement,
             tenant_id,
-            montant_recu=montant_paye,
+            # L'argent reçu : des francs pour une note payée en francs.
+            montant_recu=montant_percu if devise == "CDF" else montant_paye,
             mode_paiement_recu=payload.mode_paiement,
+            identification=source_identification,
         )
 
     expert = None
@@ -2942,8 +2952,13 @@ async def convertir_proforma(
             montant_percu = _clean_money(encaissement.montant_percu or 0)
         if montant_percu <= 0:
             raise HTTPException(status_code=400, detail="montant_percu requis pour devise CDF")
-        montant_total = (montant_percu / taux_change) if taux_change > 0 else Decimal("0.00")
-        montant_paye = montant_total
+        # Même règle qu'à la création : le total reste celui de la pro forma (en
+        # dollars), le payé est l'équivalent des francs perçus.
+        if montant_total <= 0:
+            montant_total = (montant_percu / taux_change) if taux_change > 0 else Decimal("0.00")
+        montant_paye = _clean_money((montant_percu / taux_change) if taux_change > 0 else Decimal("0.00"))
+        if abs(montant_paye - montant_total) <= Decimal("0.01"):
+            montant_paye = montant_total
     else:
         montant_paye = _clean_money(
             montant_paye_input if montant_paye_input is not None else montant_total
@@ -3004,6 +3019,7 @@ async def convertir_proforma(
         notes=notes_paiement,
         user_id=getattr(user, "id", None),
         date_paiement=date_paiement,
+        montant_devise=montant_percu if devise == "CDF" else None,
     )
 
     await db.commit()
@@ -3026,7 +3042,7 @@ async def convertir_proforma(
         background_tasks,
         encaissement,
         tenant_id,
-        montant_recu=montant_paye,
+        montant_recu=montant_percu if devise == "CDF" else montant_paye,
         mode_paiement_recu=mode_paiement,
     )
 

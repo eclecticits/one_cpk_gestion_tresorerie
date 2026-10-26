@@ -59,6 +59,9 @@ interface Stats {
   /** Encours : ce qui attend une décision d'imputation, hors période. */
   horsBudgetARegulariser: number
   horsBudgetARegulariserCount: number
+  /** Le même encours, par sens : c'est lui qui dit quelle liste ouvrir. */
+  horsBudgetARegulariserEncaissementsCount: number
+  horsBudgetARegulariserSortiesCount: number
   /** Argent détenu pour autrui, présent mais dû. */
   fondsTiersSolde: number
   fondsTiersCount: number
@@ -96,6 +99,8 @@ const DEFAULT_STATS: Stats = {
   depensesHorsBudget: 0,
   horsBudgetARegulariser: 0,
   horsBudgetARegulariserCount: 0,
+  horsBudgetARegulariserEncaissementsCount: 0,
+  horsBudgetARegulariserSortiesCount: 0,
   fondsTiersSolde: 0,
   fondsTiersCount: 0,
   caisseOverlimit: false,
@@ -435,6 +440,16 @@ export default function Dashboard() {
         // renvoient le même décompte, on n'en garde qu'un.
         horsBudgetARegulariserCount: Number(
           usdStats?.hors_budget_a_regulariser_count ?? cdfStats?.hors_budget_a_regulariser_count ?? 0
+        ),
+        horsBudgetARegulariserEncaissementsCount: Number(
+          usdStats?.hors_budget_a_regulariser_encaissements_count
+            ?? cdfStats?.hors_budget_a_regulariser_encaissements_count
+            ?? 0
+        ),
+        horsBudgetARegulariserSortiesCount: Number(
+          usdStats?.hors_budget_a_regulariser_sorties_count
+            ?? cdfStats?.hors_budget_a_regulariser_sorties_count
+            ?? 0
         ),
         fondsTiersSolde: convertToPivotCurrency(
           toNumber(usdStats?.fonds_tiers_solde ?? 0),
@@ -1209,18 +1224,55 @@ export default function Dashboard() {
 
           {(stats.horsBudgetARegulariserCount > 0 || stats.fondsTiersCount > 0) && (
             <div className={styles.horsBudgetStrip}>
-              {stats.horsBudgetARegulariserCount > 0 && (
-                <Link to="/encaissements" className={styles.horsBudgetItem}>
-                  <span className={styles.horsBudgetLabel}>À régulariser</span>
-                  <strong className={styles.horsBudgetValue}>
-                    {formatCurrencyByCode(stats.horsBudgetARegulariser, pivotCurrency)}
-                  </strong>
-                  <span className={styles.horsBudgetHint}>
-                    {stats.horsBudgetARegulariserCount} mouvement
-                    {stats.horsBudgetARegulariserCount > 1 ? 's' : ''} en attente d'imputation
-                  </span>
-                </Link>
-              )}
+              {stats.horsBudgetARegulariserCount > 0 && (() => {
+                // L'encours mêle recettes et dépenses : le lien ouvre la liste
+                // où ces mouvements se trouvent, filtrée sur eux et sans borne
+                // de période — sinon on arrive sur une liste qui ne les montre pas.
+                const nbEnc = stats.horsBudgetARegulariserEncaissementsCount
+                const nbSorties = stats.horsBudgetARegulariserSortiesCount
+                const versEncaissements = '/encaissements?nature_mouvement=HORS_BUDGET_A_REGULARISER'
+                const versSorties = '/sorties-fonds?nature_mouvement=HORS_BUDGET_A_REGULARISER'
+                const contenu = (hint: React.ReactNode) => (
+                  <>
+                    <span className={styles.horsBudgetLabel}>À régulariser</span>
+                    <strong className={styles.horsBudgetValue}>
+                      {formatCurrencyByCode(stats.horsBudgetARegulariser, pivotCurrency)}
+                    </strong>
+                    <span className={styles.horsBudgetHint}>{hint}</span>
+                  </>
+                )
+                if (nbEnc > 0 && nbSorties > 0) {
+                  return (
+                    <div className={styles.horsBudgetItem}>
+                      {contenu(
+                        <>
+                          <Link to={versEncaissements}>
+                            {nbEnc} encaissement{nbEnc > 1 ? 's' : ''}
+                          </Link>
+                          {' · '}
+                          <Link to={versSorties}>
+                            {nbSorties} sortie{nbSorties > 1 ? 's' : ''}
+                          </Link>
+                          {' en attente d\'imputation'}
+                        </>
+                      )}
+                    </div>
+                  )
+                }
+                return (
+                  <Link to={nbSorties > 0 ? versSorties : versEncaissements} className={styles.horsBudgetItem}>
+                    {contenu(
+                      <>
+                        {stats.horsBudgetARegulariserCount}{' '}
+                        {nbSorties > 0
+                          ? `sortie${nbSorties > 1 ? 's' : ''}`
+                          : `mouvement${stats.horsBudgetARegulariserCount > 1 ? 's' : ''}`}{' '}
+                        en attente d'imputation
+                      </>
+                    )}
+                  </Link>
+                )
+              })()}
               {stats.fondsTiersCount > 0 && (
                 <Link to="/fonds-tiers" className={styles.horsBudgetItem}>
                   <span className={styles.horsBudgetLabel}>Fonds de tiers détenus</span>

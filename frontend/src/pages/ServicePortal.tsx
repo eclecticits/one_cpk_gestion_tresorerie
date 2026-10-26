@@ -85,6 +85,7 @@ type RequisitionItem = {
   status: string
   service_id?: number | null
   type_requisition?: string | null
+  nature_requisition?: string | null
   dossier_id?: string | null
   examen_status?: string | null
   signed_by_id?: string | null
@@ -559,11 +560,19 @@ export default function ServicePortal() {
     )
   }, [budgetLinesWithUsage, budgetSearch, topBudgetLines])
 
+  // Seule une réquisition budgétaire est portée par des lignes (même règle que
+  // le serveur, `requisition_exige_des_lignes`) : hors budget, fonds de tiers et
+  // remboursement d'une recette à identifier autorisent un montant en bloc.
+  const aSesLignes = (req: RequisitionItem) =>
+    String(req.nature_requisition || 'BUDGETAIRE').toUpperCase() !== 'BUDGETAIRE'
+    || req.lignes_count == null
+    || req.lignes_count > 0
+
   const canSubmitToExamen = (req: RequisitionItem) => {
     const status = String(req.status || '').toUpperCase()
     const examenStatus = String(req.examen_status || '').toUpperCase()
     const hasEligibleExamenStatus = examenStatus === 'NON_EXAMINE' || examenStatus === 'REJETE'
-    const hasLines = req.lignes_count == null ? true : req.lignes_count > 0
+    const hasLines = aSesLignes(req)
     return (
       !req.dossier_id &&
       Boolean(req.service_id) &&
@@ -577,7 +586,7 @@ export default function ServicePortal() {
 
   const canSignRequisition = (req: RequisitionItem) => {
     const status = String(req.status || '').toUpperCase()
-    const hasLines = req.lignes_count == null ? true : req.lignes_count > 0
+    const hasLines = aSesLignes(req)
     return status === 'BROUILLON' && Boolean(req.service_id) && hasLines
   }
 

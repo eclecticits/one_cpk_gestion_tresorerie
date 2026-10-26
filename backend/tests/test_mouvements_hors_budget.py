@@ -976,6 +976,21 @@ async def test_dashboard_separe_tresorerie_et_budget(db_session, monkeypatch):
     # Et l'encours qui appelle une décision.
     assert Decimal(res.stats.hors_budget_a_regulariser_montant) == Decimal("700.00")
     assert res.stats.hors_budget_a_regulariser_count == 1
+    # Décompté par sens : le lien du tableau de bord ouvre la liste où il se trouve.
+    assert res.stats.hors_budget_a_regulariser_encaissements_count == 1
+    assert res.stats.hors_budget_a_regulariser_sorties_count == 0
+
+    # Et cette liste, filtrée sur la nature, ne montre que lui.
+    from app.api.v1.endpoints.encaissements import list_encaissements
+
+    filtres = await list_encaissements(
+        include=None, date_debut=None, date_fin=None, statut_paiement=None, numero_recu=None,
+        client=None, budget_poste_id=None, type_client=None, mode_paiement=None, canal=None,
+        compte_bancaire_id=None, expert_comptable_id=None, operation_status="ACTIVE",
+        deleted_status="active", est_proforma=False, nature_mouvement="HORS_BUDGET_A_REGULARISER",
+        order=None, limit=10, offset=0, include_summary=False, tenant_id=org.id, user=user, db=db,
+    )
+    assert [e["nature_mouvement"] for e in filtres] == ["HORS_BUDGET_A_REGULARISER"]
 
 
 async def _none():
@@ -1775,3 +1790,171 @@ async def test_fonds_tiers_meme_montant_payeurs_differents_ne_sont_pas_des_doubl
     with pytest.raises(HTTPException) as exc:
         await creer(" jean  MUKENDI ")
     assert exc.value.status_code == 409
+
+
+async def _requalifier(db, org, user, op, lignes, cle=None, client_nom="Cabinet Mbala"):
+    from app.api.v1.endpoints.fonds_tiers import requalifier_fonds_tiers
+    from app.schemas.payment import RequalifierFondsTiersPayload
+
+    return await requalifier_fonds_tiers(
+        operation_id=str(op.id),
+        payload=RequalifierFondsTiersPayload(
+            lignes=[BudgetAffectationLine(budget_poste_id=pid, montant=m) for pid, m in lignes],
+            client_nom=client_nom,
+            justification="Frais de dossier dus à l'instance elle-même",
+            reference="PV-12",
+            idempotency_key=cle or f"req-{uuid.uuid4().hex}",
+        ),
+        request=_FakeRequest(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fonds_tiers_requalifie_en_recette_sans_toucher_la_tresorerie(db_session, monkeypatch):
+    """Un fonds reçu « pour un tiers » appartenait en fait à l'instance.
+
+    Il ne repart pas : la trésorerie reste où elle est, le fonds sort de la
+    liste des sommes dues, et le budget voit la recette une fois, et une
+    seule.
+    """
+    from app.api.v1.endpoints.fonds_tiers import list_fonds_tiers
+    from app.models.encaissement import Encaissement
+    from app.schemas.requisition import FondsTiersLigneIn
+    from app.services.budget_execution import recettes_realisees_par_poste
+    from app.services.requisition_service import _controler_fonds_tiers_lignes
+
+    db = db_session
+    org = await _org(db, "ft-requal")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    poste_a = await _poste(db, org, "RECETTE")
+    poste_b = BudgetPoste(
+        organisation_id=org.id,
+        exercice_id=poste_a.exercice_id,
+        code=f"REC-{uuid.uuid4().hex[:6]}",
+        libelle="Autre poste RECETTE",
+        type="RECETTE",
+        active=True,
+        montant_prevu=Decimal("10000"),
+        montant_engage=0,
+        montant_paye=0,
+        is_deleted=False,
+    )
+    db.add(poste_b)
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+    op = await _encaisser_fonds_tiers(
+        db, org, user, banque, Decimal("300"), FondsTiersCreate(tiers_nom_libre="Reçu par erreur")
+    )
+    await db.refresh(banque)
+    assert banque.solde_actuel == Decimal("300")
+
+    # Ni payeur saisi ni payeur d'origine : la recette n'aurait personne à nommer.
+    with pytest.raises(HTTPException) as exc:
+        await _requalifier(db, org, user, op, [(poste_a.id, Decimal("300"))], client_nom=None)
+    assert exc.value.status_code == 400
+
+    # Tout le fonds, ou rien : une part laissée « due » n'aurait plus d'encaissement où vivre.
+    with pytest.raises(HTTPException) as exc:
+        await _requalifier(db, org, user, op, [(poste_a.id, Decimal("200"))])
+    assert exc.value.status_code == 400
+
+    cle = f"req-{uuid.uuid4().hex}"
+    premier = await _requalifier(db, org, user, op, [(poste_a.id, Decimal("200")), (poste_b.id, Decimal("100"))], cle)
+    # Un double clic retombe sur la même décision.
+    assert (await _requalifier(db, org, user, op, [(poste_a.id, Decimal("300"))], cle))["id"] == premier["id"]
+
+    await db.refresh(banque)
+    assert banque.solde_actuel == Decimal("300")
+    await db.refresh(op)
+    assert op.statut == "REQUALIFIE"
+    enc = await db.get(Encaissement, op.encaissement_id)
+    await db.refresh(enc)
+    assert (enc.nature_mouvement, enc.impact_budgetaire, enc.client_nom) == ("BUDGETAIRE", True, "Cabinet Mbala")
+    reg = (
+        await db.execute(select(RegularisationBudgetaire).where(RegularisationBudgetaire.encaissement_id == enc.id))
+    ).scalar_one()
+    assert (reg.ancien_nature_mouvement, reg.montant_mouvement) == ("FONDS_DE_TIERS", Decimal("300.00"))
+
+    realise = await recettes_realisees_par_poste(db, organisation_id=org.id, poste_ids=[poste_a.id, poste_b.id])
+    assert realise == {poste_a.id: Decimal("200.00"), poste_b.id: Decimal("100.00")}
+
+    [out] = await list_fonds_tiers(statut=None, tenant_id=org.id, db=db)
+    assert (out.statut, out.solde_restant) == ("REQUALIFIE", Decimal("0.00"))
+    with pytest.raises(HTTPException):
+        await _controler_fonds_tiers_lignes(
+            db,
+            tenant_id=org.id,
+            nature="FONDS_DE_TIERS",
+            lignes=[FondsTiersLigneIn(fonds_tiers_operation_id=op.id, montant=Decimal("10"))],
+            devise="USD",
+            montant_total=Decimal("10"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_fonds_tiers_reverse_ou_reserve_ne_se_requalifie_pas(db_session, monkeypatch):
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+    from app.models.fonds_tiers_versement import RequisitionFondsTiers
+
+    db = db_session
+    org = await _org(db, "ft-requal-refus")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    poste = await _poste(db, org, "RECETTE")
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    async def fake_num(*_args, **_kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    reserve = await _encaisser_fonds_tiers(db, org, user, banque, Decimal("100"), FondsTiersCreate(tiers_nom_libre="CP A"))
+    req = await _requisition_approuvee(
+        db, org, nature="FONDS_DE_TIERS", montant=Decimal("100"), tiers_nom_libre="CP A", status="EN_ATTENTE"
+    )
+    db.add(RequisitionFondsTiers(organisation_id=org.id, requisition_id=req.id, fonds_tiers_operation_id=reserve.id, montant=Decimal("100")))
+    await db.flush()
+    with pytest.raises(HTTPException) as exc:
+        await _requalifier(db, org, user, reserve, [(poste.id, Decimal("100"))])
+    assert exc.value.status_code == 409
+
+    entame = await _encaisser_fonds_tiers(db, org, user, banque, Decimal("100"), FondsTiersCreate(tiers_nom_libre="CP B"))
+    req_b = await _requisition_approuvee(
+        db, org, nature="FONDS_DE_TIERS", montant=Decimal("40"), mode_paiement="virement", tiers_nom_libre="CP B"
+    )
+    db.add(RequisitionFondsTiers(organisation_id=org.id, requisition_id=req_b.id, fonds_tiers_operation_id=entame.id, montant=Decimal("40")))
+    await db.flush()
+    await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="remboursement_fonds_tiers",
+            requisition_id=req_b.id,
+            nature_mouvement="FONDS_DE_TIERS",
+            montant_paye=Decimal("40"),
+            mode_paiement="virement",
+            devise="USD",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            motif="Reversement partiel",
+        ),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    await db.refresh(entame)
+    with pytest.raises(HTTPException) as exc:
+        await _requalifier(db, org, user, entame, [(poste.id, Decimal("100"))])
+    assert exc.value.status_code == 400

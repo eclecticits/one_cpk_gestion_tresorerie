@@ -4,6 +4,7 @@ import { getBudgetPostes } from '../api/budget'
 import {
   affecterEncaissementBudget,
   affecterSortieBudget,
+  requalifierFondsTiers,
 } from '../api/mouvementsHorsBudget'
 import type { BudgetPosteSummary } from '../types/budget'
 import { toNumber } from '../utils/amount'
@@ -16,9 +17,13 @@ import styles from './AffecterBudgetModal.module.css'
  * quel(s) poste(s) l'imputer, et exige une justification parce que c'est une
  * décision, pas une saisie. On peut n'affecter qu'une partie du montant — le
  * reste demeure à régulariser et l'écran se rouvre pour le solde.
+ *
+ * Même écran pour requalifier un fonds de tiers qui appartenait en fait à
+ * l'organisation : là, tout le fonds doit être réparti d'un coup, et le payeur
+ * nommé, puisque la note devient une recette budgétaire.
  */
 
-export type CibleAffectation = 'encaissement' | 'sortie'
+export type CibleAffectation = 'encaissement' | 'sortie' | 'fonds_tiers'
 
 interface Props {
   cible: CibleAffectation
@@ -28,6 +33,8 @@ interface Props {
   devise: string
   /** Référence lisible (numéro de reçu ou de paiement) affichée en en-tête. */
   libelle: string
+  /** Fonds de tiers : payeur proposé par défaut (payeur d'origine). */
+  payeurInitial?: string | null
   onClose: () => void
   onSuccess: (message: string) => void
   onError: (title: string, message: string) => void
@@ -57,20 +64,23 @@ export default function AffecterBudgetModal({
   resteAAffecter,
   devise,
   libelle,
+  payeurInitial,
   onClose,
   onSuccess,
   onError,
 }: Props) {
+  const requalification = cible === 'fonds_tiers'
   // Le sens du mouvement décide du type de poste : une recette hors budget
   // s'impute sur un poste RECETTE, une dépense sur un poste DEPENSE. Proposer
   // les deux n'aurait aucun sens et le serveur refuserait de toute façon.
-  const typePoste = cible === 'encaissement' ? 'RECETTE' : 'DEPENSE'
+  const typePoste = cible === 'sortie' ? 'DEPENSE' : 'RECETTE'
 
   const [postes, setPostes] = useState<BudgetPosteSummary[]>([])
   const [chargement, setChargement] = useState(true)
   const [lignes, setLignes] = useState<LigneDraft[]>([nouvelleLigne()])
   const [justification, setJustification] = useState('')
   const [reference, setReference] = useState('')
+  const [payeur, setPayeur] = useState(payeurInitial || '')
   const [envoiEnCours, setEnvoiEnCours] = useState(false)
 
   // Clé d'idempotence figée à l'ouverture : un double clic, ou un renvoi après
@@ -131,6 +141,12 @@ export default function AffecterBudgetModal({
     if (lignes.some((l) => (toNumber(l.montant) || 0) <= 0)) {
       return 'Chaque ligne doit porter un montant supérieur à zéro.'
     }
+    if (requalification && !payeur.trim()) {
+      return 'Indiquez qui a payé : la recette doit nommer son payeur.'
+    }
+    if (requalification && Math.abs(totalSaisi - resteAAffecter) > 0.001) {
+      return `La requalification porte sur tout le fonds : répartissez ${formatMontant(resteAAffecter, devise)}.`
+    }
     if (totalSaisi > resteAAffecter + 0.001) {
       return `Le total réparti (${formatMontant(totalSaisi, devise)}) dépasse le reste à affecter (${formatMontant(resteAAffecter, devise)}).`
     }
@@ -154,6 +170,12 @@ export default function AffecterBudgetModal({
         reference: reference.trim() || null,
         idempotency_key: idempotencyKey,
       }
+      if (requalification) {
+        await requalifierFondsTiers(mouvementId, { ...payload, client_nom: payeur.trim() })
+        onSuccess(`${formatMontant(totalSaisi, devise)} requalifiés en recette. La trésorerie n'a pas bougé.`)
+        onClose()
+        return
+      }
       if (cible === 'encaissement') {
         await affecterEncaissementBudget(mouvementId, payload)
       } else {
@@ -167,7 +189,10 @@ export default function AffecterBudgetModal({
       )
       onClose()
     } catch (e: any) {
-      onError('Affectation refusée', e?.message || "L'affectation budgétaire a échoué.")
+      onError(
+        requalification ? 'Requalification refusée' : 'Affectation refusée',
+        e?.message || (requalification ? 'La requalification a échoué.' : "L'affectation budgétaire a échoué."),
+      )
     } finally {
       setEnvoiEnCours(false)
     }
@@ -178,9 +203,10 @@ export default function AffecterBudgetModal({
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
         <header className={styles.header}>
           <div>
-            <h2 className={styles.title}>Affecter au budget</h2>
+            <h2 className={styles.title}>{requalification ? 'Requalifier en recette' : 'Affecter au budget'}</h2>
             <p className={styles.subtitle}>
-              {libelle} · reste à affecter <strong>{formatMontant(resteAAffecter, devise)}</strong>
+              {libelle} · {requalification ? 'montant du fonds' : 'reste à affecter'}{' '}
+              <strong>{formatMontant(resteAAffecter, devise)}</strong>
             </p>
           </div>
           <button type="button" className={styles.closeBtn} onClick={onClose} aria-label="Fermer">
@@ -188,11 +214,33 @@ export default function AffecterBudgetModal({
           </button>
         </header>
 
-        <p className={styles.note}>
-          La trésorerie a déjà bougé lors de l'opération. Cette décision ne touche que le budget :
-          elle impute le montant sur {typePoste === 'RECETTE' ? 'un ou plusieurs postes de recette' : 'un ou plusieurs postes de dépense'} et
-          reste tracée avec son auteur et sa justification.
-        </p>
+        {requalification ? (
+          <p className={styles.note}>
+            Cet argent n'est dû à personne : il appartient à l'organisation. Il ne sort pas de la
+            trésorerie, où il se trouve déjà. Le fonds est clos sans reversement et la note devient une
+            recette budgétaire imputée sur un ou plusieurs postes de recette. La décision reste tracée
+            avec son auteur et sa justification.
+          </p>
+        ) : (
+          <p className={styles.note}>
+            La trésorerie a déjà bougé lors de l'opération. Cette décision ne touche que le budget :
+            elle impute le montant sur {typePoste === 'RECETTE' ? 'un ou plusieurs postes de recette' : 'un ou plusieurs postes de dépense'} et
+            reste tracée avec son auteur et sa justification.
+          </p>
+        )}
+
+        {requalification && (
+          <div className={styles.champ}>
+            <label>Payé par *</label>
+            <input
+              type="text"
+              maxLength={300}
+              value={payeur}
+              onChange={(e) => setPayeur(e.target.value)}
+              placeholder="Qui a versé cet argent"
+            />
+          </div>
+        )}
 
         <div className={styles.lignes}>
           {lignes.map((ligne) => (
@@ -247,8 +295,9 @@ export default function AffecterBudgetModal({
 
         <div className={styles.totaux}>
           <span>Total réparti <strong>{formatMontant(totalSaisi, devise)}</strong></span>
-          <span className={restant < 0 ? styles.totalNegatif : undefined}>
-            Restera à régulariser <strong>{formatMontant(Math.max(restant, 0), devise)}</strong>
+          <span className={restant < 0 || (requalification && restant !== 0) ? styles.totalNegatif : undefined}>
+            {requalification ? 'Reste à répartir' : 'Restera à régulariser'}{' '}
+            <strong>{formatMontant(Math.max(restant, 0), devise)}</strong>
           </span>
         </div>
 
@@ -278,7 +327,9 @@ export default function AffecterBudgetModal({
             Annuler
           </button>
           <button type="button" className={styles.primaryBtn} onClick={soumettre} disabled={envoiEnCours}>
-            {envoiEnCours ? 'Affectation…' : 'Affecter au budget'}
+            {envoiEnCours
+              ? requalification ? 'Requalification…' : 'Affectation…'
+              : requalification ? 'Requalifier en recette' : 'Affecter au budget'}
           </button>
         </footer>
       </div>
