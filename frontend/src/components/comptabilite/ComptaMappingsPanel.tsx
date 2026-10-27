@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, CheckCircle2, Info, Wand2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Info, Wand2 } from 'lucide-react'
 import {
   appliquerComptaMappingsDefaut,
   getComptaMappings,
@@ -10,8 +10,10 @@ import {
   setComptaMappingRubrique,
 } from '../../api/comptabilite'
 import { useToast } from '../../hooks/useToast'
-import type { ComptaCompte } from '../../types/comptabilite'
+import type { ComptaCompte, ComptaImportPlanResult } from '../../types/comptabilite'
+import { exporterPlanActuel } from '../../utils/planComptableExcel'
 import CompteSelect from './CompteSelect'
+import ImportPlanComptableModal from './ImportPlanComptableModal'
 import TauxChangeSection from './TauxChangeSection'
 import styles from './ComptaMappingsPanel.module.css'
 
@@ -33,6 +35,21 @@ export default function ComptaMappingsPanel({ comptes, canParametrer }: Props) {
   const queryClient = useQueryClient()
   const { notifyError, notifySuccess } = useToast()
   const [ligneEnCours, setLigneEnCours] = useState<string | null>(null)
+  const [importOuvert, setImportOuvert] = useState(false)
+
+  // Répartition par classe : ce qu'un comptable regarde d'abord pour juger
+  // si le plan couvre l'activité (une classe vide saute aux yeux).
+  const comptesParClasse = Array.from({ length: 9 }, (_, i) => String(i + 1)).map(classe => ({
+    classe,
+    total: comptes.filter(c => (c.classe ?? c.numero[0]) === classe).length,
+  }))
+
+  const apresImport = async (result: ComptaImportPlanResult) => {
+    setImportOuvert(false)
+    await queryClient.invalidateQueries({ queryKey: ['compta-referentiel'] })
+    await invalider()
+    notifySuccess('Plan comptable importé', result.message)
+  }
 
   const mappingsQuery = useQuery({
     queryKey: ['compta-mappings'],
@@ -134,6 +151,49 @@ export default function ComptaMappingsPanel({ comptes, canParametrer }: Props) {
           </div>
         </div>
       )}
+
+      {/* ── Plan comptable ─────────────────────────────────────────────── */}
+      <section className={styles.section}>
+        <header className={styles.sectionHeader}>
+          <h3>Plan comptable — {comptes.length} compte{comptes.length > 1 ? 's' : ''}</h3>
+          <p>
+            Comptes disponibles pour la saisie et les mappings. Complétez le plan de démarrage en
+            important vos comptes depuis Excel : rien n’est supprimé, et la simulation montre chaque
+            ligne avant tout enregistrement.
+          </p>
+        </header>
+        <div className={styles.planBarre}>
+          <div className={styles.planClasses} aria-label="Comptes par classe">
+            {comptesParClasse.map(({ classe, total }) => (
+              <span
+                key={classe}
+                className={`${styles.planClasse} ${total === 0 ? styles.planClasseVide : ''}`}
+                title={`Classe ${classe} : ${total} compte(s)`}
+              >
+                <strong>{classe}</strong>
+                {total}
+              </span>
+            ))}
+          </div>
+          <div className={styles.planActions}>
+            <button
+              type="button"
+              className={styles.boutonSecondaire}
+              onClick={() => exporterPlanActuel(comptes)}
+              disabled={comptes.length === 0}
+            >
+              <Download size={15} />
+              Exporter (Excel)
+            </button>
+            {canParametrer && (
+              <button type="button" className={styles.bannerAction} onClick={() => setImportOuvert(true)}>
+                <FileSpreadsheet size={15} />
+                Importer depuis Excel
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* ── Postes budgétaires ─────────────────────────────────────────── */}
       <section className={styles.section}>
@@ -316,6 +376,14 @@ export default function ComptaMappingsPanel({ comptes, canParametrer }: Props) {
         </table>
       </section>
       <TauxChangeSection canParametrer={canParametrer} />
+
+      {importOuvert && (
+        <ImportPlanComptableModal
+          comptes={comptes}
+          onClose={() => setImportOuvert(false)}
+          onImporte={apresImport}
+        />
+      )}
     </div>
   )
 }

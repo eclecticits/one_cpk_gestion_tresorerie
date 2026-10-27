@@ -297,3 +297,66 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ── Plan comptable ──────────────────────────────────────────────────── */
+
+.planBarre {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.planClasses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.planClasse {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-surface, #ffffff);
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #64748b);
+  font-variant-numeric: tabular-nums;
+}
+
+.planClasse strong {
+  color: var(--tenant-primary, #1f6b5c);
+}
+
+.planClasseVide {
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.planActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.boutonSecondaire {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-surface, #ffffff);
+  color: var(--color-title, #0f172a);
+  font-size: 0.83rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.boutonSecondaire:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

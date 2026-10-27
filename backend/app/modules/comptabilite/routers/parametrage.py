@@ -15,10 +15,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, has_permission
+from app.api.deps import get_current_tenant_id, get_current_user, has_permission
 from app.db.session import get_db
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.compte_bancaire import CompteBancaire
+from app.models.user import User
 from app.modules.comptabilite.models import (
     RUBRIQUES_DESCRIPTIONS,
     RUBRIQUES_TECHNIQUES,
@@ -43,8 +44,14 @@ from app.modules.comptabilite.schemas.parametrage import (
     TauxChangeManquantOut,
     TauxChangeOut,
 )
+from app.modules.comptabilite.schemas.plan_import import ImportPlanIn, ImportPlanOut
 from app.modules.comptabilite.services.change_service import taux_tresorerie_vers_comptable
+from app.modules.comptabilite.services.import_plan_service import (
+    ReferentielIntrouvable,
+    importer_plan_comptable,
+)
 from app.modules.comptabilite.services.mapping_defaut_service import generer_mappings_par_defaut
+from app.services.audit_service import log_action
 from app.utils.budget_code import cle_tri_code_budget
 
 router = APIRouter()
@@ -578,3 +585,56 @@ async def delete_taux_change(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taux introuvable.")
     await db.delete(taux)
     await db.commit()
+
+
+# ── Plan comptable : import Excel ────────────────────────────────────────────
+
+
+@router.post(
+    "/plan-comptable/import",
+    response_model=ImportPlanOut,
+    dependencies=[Depends(has_permission("compta.parametrage"))],
+)
+async def import_plan_comptable(
+    payload: ImportPlanIn,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> ImportPlanOut:
+    """Crée ou met à jour des comptes du plan à partir des lignes d'un fichier Excel.
+
+    En simulation (par défaut), rien n'est écrit : la réponse dit ce que
+    l'import ferait de chaque ligne. Sinon, l'import est tout ou rien.
+    """
+    try:
+        result = await importer_plan_comptable(
+            db,
+            organisation_id=tenant_id,
+            lignes=payload.lignes,
+            mode=payload.mode,
+            simulation=payload.simulation,
+        )
+    except ReferentielIntrouvable:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Comptabilité non activée pour cette organisation.",
+        )
+
+    if result.enregistre:
+        await log_action(
+            db,
+            user_id=user.id,
+            action="COMPTA_PLAN_IMPORT",
+            target_table="compta_comptes",
+            new_value={
+                "fichier": payload.nom_fichier,
+                "mode": payload.mode,
+                "crees": result.crees,
+                "mis_a_jour": result.mis_a_jour,
+                "comptes": [
+                    ligne.numero for ligne in result.lignes if ligne.action in {"CREER", "METTRE_A_JOUR"}
+                ],
+            },
+        )
+        await db.commit()
+    return result

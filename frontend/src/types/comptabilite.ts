@@ -406,3 +406,57 @@ export interface ComptaMappingsDefautResult {
   rubriques_mappees: number
   compte_caisse_defaut_id: number | null
 }
+
+// ── Import du plan comptable ─────────────────────────────────────────────
+
+export type ComptaModeImportPlan = 'add_only' | 'update_existing'
+export type ComptaActionLignePlan = 'CREER' | 'METTRE_A_JOUR' | 'INCHANGE' | 'IGNORE' | 'ERREUR'
+
+/** Une ligne lue dans le fichier. Une colonne absente reste undefined et n'écrase rien. */
+export interface ComptaLignePlanInput {
+  ligne: number
+  numero: string
+  libelle: string
+  nature?: string
+  sens?: string
+  parent?: string
+  collectif?: string
+  auxiliaire?: string
+  actif?: string
+}
+
+export interface ComptaImportPlanInput {
+  lignes: ComptaLignePlanInput[]
+  mode: ComptaModeImportPlan
+  simulation: boolean
+  nom_fichier?: string
+}
+
+export interface ComptaLignePlanResult {
+  ligne: number
+  numero: string
+  libelle: string
+  action: ComptaActionLignePlan
+  nature: NatureCompte | null
+  sens_normal: SensNormal | null
+  parent_numero: string | null
+  is_collectif: boolean | null
+  is_auxiliaire: boolean | null
+  actif: boolean | null
+  deduits: string[]
+  changements: string[]
+  message: string | null
+}
+
+export interface ComptaImportPlanResult {
+  simulation: boolean
+  enregistre: boolean
+  total_lignes: number
+  crees: number
+  mis_a_jour: number
+  inchanges: number
+  ignores: number
+  erreurs: number
+  lignes: ComptaLignePlanResult[]
+  message: string
+}

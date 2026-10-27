@@ -28,6 +28,8 @@ import type {
   ComptaTauxChange,
   ComptaTauxChangeInput,
   ComptaTauxChangeListe,
+  ComptaImportPlanInput,
+  ComptaImportPlanResult,
   ComptaValidationLotInput,
   ComptaValidationLotResult,
 } from '../types/comptabilite'
@@ -222,4 +224,10 @@ export async function reporterComptaANouveaux(
     `/comptabilite/exercices/${exerciceId}/a-nouveaux`,
     { exercice_suivant_id: exerciceSuivantId }
   )
+}
+
+// Simulation par défaut côté serveur : l'appelant doit demander
+// `simulation: false` pour que les comptes soient réellement écrits.
+export async function importerComptaPlan(input: ComptaImportPlanInput): Promise<ComptaImportPlanResult> {
+  return apiRequest<ComptaImportPlanResult>('POST', '/comptabilite/plan-comptable/import', input)
 }
