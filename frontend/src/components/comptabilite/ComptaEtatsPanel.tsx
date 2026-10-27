@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, Download, FileSpreadsheet } from 'lucide-react'
 import {
@@ -25,6 +26,12 @@ import EcritureDetailModal from './EcritureDetailModal'
 import styles from './ComptaEtatsPanel.module.css'
 
 type Etat = 'balance' | 'grand-livre' | 'journal'
+
+const ETATS = new Set<Etat>(['balance', 'grand-livre', 'journal'])
+
+function parseEtat(value: string | null): Etat {
+  return value && ETATS.has(value as Etat) ? (value as Etat) : 'balance'
+}
 
 /** Mouvements par page du Grand Livre. */
 const LIMITE_GRAND_LIVRE = 100
@@ -55,7 +62,15 @@ function formatMontant(value: string | number): string {
 export default function ComptaEtatsPanel({ comptes, journaux, exercices, canValider }: Props) {
   const { notifyError } = useToast()
 
-  const [etat, setEtat] = useState<Etat>('balance')
+  // L'état affiché vit dans l'URL : le menu latéral ouvre directement la
+  // Balance, le Grand Livre ou le Journal, et suit les changements faits ici.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const etat = parseEtat(searchParams.get('etat'))
+  const setEtat = (next: Etat) => {
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('etat', next)
+    setSearchParams(nextParams)
+  }
   const [exerciceId, setExerciceId] = useState<number | ''>(exercices[0]?.id ?? '')
   const [dateDebut, setDateDebut] = useState('')
   const [dateFin, setDateFin] = useState('')
@@ -80,6 +95,13 @@ export default function ComptaEtatsPanel({ comptes, journaux, exercices, canVali
     setCurseurs([null])
     setPageIndex(0)
   }
+
+  // Arriver par le menu sur un autre état ne passe pas par les boutons
+  // ci-dessous : la pagination doit repartir de zéro dans ce cas aussi.
+  useEffect(() => {
+    reinitialiserPagination()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [etat])
 
   const balanceQuery = useQuery({
     queryKey: ['compta-balance', ...cleFiltres],

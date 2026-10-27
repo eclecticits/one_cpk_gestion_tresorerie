@@ -215,9 +215,9 @@ export default function Comptabilite() {
 
   const handleOngletChange = (nextOnglet: Onglet) => {
     setOnglet(nextOnglet)
-    const nextParams = new URLSearchParams(searchParams)
-    nextParams.set('tab', nextOnglet)
-    setSearchParams(nextParams)
+    // On repart d'une URL propre : un `etat` laissé par l'onglet Grand Livre
+    // empêcherait le menu latéral de reconnaître l'onglet suivant.
+    setSearchParams({ tab: nextOnglet })
   }
 
   if (permissionsLoading || statutQuery.isLoading) {

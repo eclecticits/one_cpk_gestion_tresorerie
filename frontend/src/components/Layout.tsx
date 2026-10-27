@@ -38,6 +38,7 @@ import {
   FileQuestion,
   FileText,
   FolderOpen,
+  Inbox,
   GitCompare,
   Landmark,
   Layers,
@@ -50,6 +51,7 @@ import {
   Send,
   Settings2,
   ShieldCheck,
+  Scale,
   SlidersHorizontal,
   Upload,
   UserCog,
@@ -313,18 +315,32 @@ const COMPTA_ANY_PERMISSION = [
   'compta.export',
 ]
 
+// Menu à plat, dans l'ordre du travail comptable : saisir, rattraper ce que
+// l'automatisme n'a pas passé, consulter les états, clôturer, paramétrer.
+// La Balance, le Grand Livre et le Journal ont chacun leur entrée : ils
+// partagent l'onglet « Grand Livre » mais l'état affiché suit `etat` dans l'URL.
+const COMPTA_ETATS_PERMISSION = ['compta.lecture', 'compta.validation', 'compta.cloture', 'compta.parametrage', 'compta.export']
+
 const COMPTABILITE_NAV: NavItem[] = [
   {
-    label: 'Comptabilité',
+    path: '/comptabilite?tab=ecritures',
+    label: 'Écritures',
     permission: COMPTA_ANY_PERMISSION,
     icon: <BookOpenCheck size={18} />,
-    subItems: [
-      { path: '/comptabilite?tab=ecritures', label: 'Écritures', permission: COMPTA_ANY_PERMISSION, icon: <BookOpenCheck size={16} /> },
-      { path: '/comptabilite?tab=etats', label: 'Grand Livre', permission: ['compta.lecture', 'compta.validation', 'compta.cloture', 'compta.parametrage', 'compta.export'], icon: <FileBarChart2 size={16} /> },
-      { path: '/comptabilite?tab=etats-financiers', label: 'États financiers', permission: ['compta.lecture', 'compta.cloture', 'compta.parametrage', 'compta.export'], icon: <FileText size={16} /> },
-      { path: '/comptabilite?tab=parametrage', label: 'Paramétrage', permission: 'compta.parametrage', icon: <Settings2 size={16} /> },
-    ],
+    matchSearches: ['', '?tab=ecritures'],
   },
+  { path: '/comptabilite?tab=a-comptabiliser', label: 'À comptabiliser', permission: COMPTA_ANY_PERMISSION, icon: <Inbox size={18} /> },
+  {
+    path: '/comptabilite?tab=etats&etat=balance',
+    label: 'Balance générale',
+    permission: COMPTA_ETATS_PERMISSION,
+    icon: <Scale size={18} />,
+    matchSearches: ['?tab=etats', '?tab=etats&etat=balance'],
+  },
+  { path: '/comptabilite?tab=etats&etat=grand-livre', label: 'Grand Livre', permission: COMPTA_ETATS_PERMISSION, icon: <FileBarChart2 size={18} /> },
+  { path: '/comptabilite?tab=etats&etat=journal', label: 'Journal', permission: COMPTA_ETATS_PERMISSION, icon: <LayoutList size={18} /> },
+  { path: '/comptabilite?tab=etats-financiers', label: 'États financiers', permission: ['compta.lecture', 'compta.cloture', 'compta.parametrage', 'compta.export'], icon: <FileText size={18} /> },
+  { path: '/comptabilite?tab=parametrage', label: 'Paramétrage', permission: 'compta.parametrage', icon: <Settings2 size={18} /> },
 ]
 
 const NAV_BY_APP = {
