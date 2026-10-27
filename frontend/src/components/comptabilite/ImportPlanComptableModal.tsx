@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Upload, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, LoaderCircle, Upload, X } from 'lucide-react'
 import { importerComptaPlan } from '../../api/comptabilite'
 import { useToast } from '../../hooks/useToast'
 import type {
@@ -43,6 +43,9 @@ const BADGE: Record<ComptaActionLignePlan, string> = {
 }
 
 const LIGNES_AFFICHEES = 300
+const LIGNES_MAX = 5000
+const TAILLE_MAX = 15 * 1024 * 1024
+const EXTENSIONS_ACCEPTEES = /\.(xlsx|xls|csv)$/i
 
 /**
  * Import du plan comptable depuis Excel.
@@ -54,10 +57,16 @@ const LIGNES_AFFICHEES = 300
 export default function ImportPlanComptableModal({ comptes, onClose, onImporte }: Props) {
   const { notifyError } = useToast()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const modalRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const importEnCoursRef = useRef(false)
   const [nomFichier, setNomFichier] = useState('')
   const [feuilles, setFeuilles] = useState<FeuillePlan[]>([])
   const [feuilleNom, setFeuilleNom] = useState('')
   const [erreurLecture, setErreurLecture] = useState<string | null>(null)
+  const [erreurSimulation, setErreurSimulation] = useState<string | null>(null)
+  const [lectureEnCours, setLectureEnCours] = useState(false)
+  const [glisserActif, setGlisserActif] = useState(false)
   const [mode, setMode] = useState<ComptaModeImportPlan>('update_existing')
   const [simulation, setSimulation] = useState<ComptaImportPlanResult | null>(null)
   const [simulationEnCours, setSimulationEnCours] = useState(false)
@@ -65,12 +74,29 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
   const [filtre, setFiltre] = useState<ComptaActionLignePlan | 'TOUT'>('TOUT')
 
   const feuille = feuilles.find(f => f.nom === feuilleNom) ?? null
+  importEnCoursRef.current = importEnCours
 
   const choisirFichier = async (file: File | undefined) => {
-    if (!file) return
+    if (!file || importEnCours || lectureEnCours) return
+    // Un fichier refusé doit pouvoir être choisi de nouveau une fois corrigé :
+    // sans remise à zéro, le sélecteur ne signale plus le même nom.
+    const refuser = (message: string) => {
+      setErreurLecture(message)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+    if (!EXTENSIONS_ACCEPTEES.test(file.name)) {
+      refuser('Format non pris en charge. Utilisez un fichier Excel (.xlsx, .xls) ou CSV (.csv).')
+      return
+    }
+    if (file.size > TAILLE_MAX) {
+      refuser('Le fichier dépasse la taille maximale de 15 Mo.')
+      return
+    }
     setNomFichier(file.name)
     setSimulation(null)
     setErreurLecture(null)
+    setErreurSimulation(null)
+    setLectureEnCours(true)
     try {
       const lues = await lireClasseurPlan(file)
       setFeuilles(lues)
@@ -84,15 +110,65 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
       setFeuilles([])
       setErreurLecture(err?.message || 'Lecture du fichier impossible.')
     } finally {
+      setLectureEnCours(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
   useEffect(() => {
+    const elementPrecedent = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const overflowPrecedent = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeButtonRef.current?.focus()
+
+    const gererClavier = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !importEnCoursRef.current) {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab' || !modalRef.current) return
+      const elements = Array.from(
+        modalRef.current.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])'
+        )
+      )
+      if (elements.length === 0) return
+      const premier = elements[0]
+      const dernier = elements[elements.length - 1]
+      if (event.shiftKey && document.activeElement === premier) {
+        event.preventDefault()
+        dernier.focus()
+      } else if (!event.shiftKey && document.activeElement === dernier) {
+        event.preventDefault()
+        premier.focus()
+      }
+    }
+    document.addEventListener('keydown', gererClavier)
+    return () => {
+      document.removeEventListener('keydown', gererClavier)
+      document.body.style.overflow = overflowPrecedent
+      elementPrecedent?.focus()
+    }
+    // La fenêtre reste montée pendant l'import ; les refs donnent toujours
+    // l'état courant sans réinstaller le piège de focus à chaque rendu.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
     if (!feuille) return
     let annule = false
+    setSimulation(null)
+    setErreurSimulation(null)
     setSimulationEnCours(true)
     setFiltre('TOUT')
+    if (feuille.lignes.length > LIGNES_MAX) {
+      setSimulationEnCours(false)
+      setErreurSimulation(
+        `La feuille contient ${feuille.lignes.length} lignes. La limite est de ${LIGNES_MAX} lignes par import.`
+      )
+      return
+    }
     importerComptaPlan({ lignes: feuille.lignes, mode, simulation: true, nom_fichier: nomFichier })
       .then(result => {
         if (annule) return
@@ -101,7 +177,12 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
         if (result.erreurs > 0) setFiltre('ERREUR')
       })
       .catch(err => {
-        if (!annule) notifyError('Simulation impossible', err?.message || 'Erreur inattendue.')
+        if (!annule) {
+          const message = err?.message || 'Erreur inattendue.'
+          setSimulation(null)
+          setErreurSimulation(message)
+          notifyError('Simulation impossible', message)
+        }
       })
       .finally(() => {
         if (!annule) setSimulationEnCours(false)
@@ -160,14 +241,30 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
     : []
 
   return (
-    <div className={styles.overlay} role="dialog" aria-modal="true" aria-labelledby="ipc-titre">
-      <div className={styles.modal}>
+    <div
+      className={styles.overlay}
+      onMouseDown={event => {
+        // Un clic à côté ne ferme que tant qu'aucun fichier n'est lu : au-delà,
+        // il ferait perdre la lecture et la simulation sur un simple écart de souris.
+        if (event.target === event.currentTarget && !importEnCours && !nomFichier) onClose()
+      }}
+    >
+      <div
+        ref={modalRef}
+        className={styles.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ipc-titre"
+        aria-describedby="ipc-description"
+        aria-busy={lectureEnCours || simulationEnCours || importEnCours}
+      >
         <header className={styles.entete}>
           <h2 id="ipc-titre">
             <FileSpreadsheet size={18} />
             Importer le plan comptable
           </h2>
           <button
+            ref={closeButtonRef}
             type="button"
             className={styles.fermer}
             onClick={onClose}
@@ -181,17 +278,31 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
         <div className={styles.corps}>
           {/* ── Fichier ─────────────────────────────────────────────── */}
           <div
-            className={styles.depot}
-            onDragOver={e => e.preventDefault()}
+            className={`${styles.depot} ${glisserActif ? styles.depotActif : ''} ${nomFichier ? styles.depotPret : ''}`}
+            onDragEnter={event => {
+              event.preventDefault()
+              if (!importEnCours && !lectureEnCours) setGlisserActif(true)
+            }}
+            onDragLeave={event => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setGlisserActif(false)
+            }}
+            onDragOver={event => event.preventDefault()}
             onDrop={e => {
               e.preventDefault()
+              setGlisserActif(false)
               choisirFichier(e.dataTransfer.files?.[0])
             }}
           >
-            <Upload size={20} className={styles.depotIcone} />
+            {lectureEnCours ? (
+              <LoaderCircle size={20} className={`${styles.depotIcone} ${styles.rotation}`} />
+            ) : nomFichier ? (
+              <CheckCircle2 size={20} className={styles.depotIcone} />
+            ) : (
+              <Upload size={20} className={styles.depotIcone} />
+            )}
             <div className={styles.depotTexte}>
-              <strong>{nomFichier || 'Déposez un fichier Excel ou choisissez-le'}</strong>
-              <span>
+              <strong>{lectureEnCours ? 'Lecture du fichier…' : nomFichier || 'Déposez un fichier Excel ou choisissez-le'}</strong>
+              <span id="ipc-description">
                 Colonnes obligatoires : Numéro et Libellé. Nature, Sens et Compte parent sont déduits du
                 numéro s’ils manquent.
               </span>
@@ -203,7 +314,8 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
                 type="file"
                 accept=".xlsx,.xls,.csv"
                 onChange={e => choisirFichier(e.target.files?.[0])}
-                disabled={importEnCours}
+                disabled={importEnCours || lectureEnCours}
+                aria-label="Choisir un fichier de plan comptable"
               />
             </label>
           </div>
@@ -218,7 +330,7 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
           </div>
 
           {erreurLecture && (
-            <div className={styles.avertissement}>
+            <div className={styles.avertissement} role="alert">
               <AlertTriangle size={16} />
               <span>{erreurLecture}</span>
             </div>
@@ -296,15 +408,27 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
               {/* ── Simulation ───────────────────────────────────────── */}
               {simulationEnCours && <div className={styles.attente}>Simulation en cours…</div>}
 
+              {erreurSimulation && (
+                <div className={styles.avertissement} role="alert">
+                  <AlertTriangle size={16} />
+                  <span><strong>Simulation impossible.</strong> {erreurSimulation}</span>
+                </div>
+              )}
+
               {simulation && !simulationEnCours && (
                 <>
-                  <div className={styles.resume} role="tablist" aria-label="Filtrer les lignes">
+                  <div className={styles.resumeEntete}>
+                    <strong>Résultat de la simulation</strong>
+                    <button type="button" onClick={() => setFiltre('TOUT')} disabled={filtre === 'TOUT'}>
+                      Tout afficher
+                    </button>
+                  </div>
+                  <div className={styles.resume} aria-label="Filtrer les lignes">
                     {ACTIONS.filter(a => a.action !== 'IGNORE' || mode === 'add_only').map(a => (
                       <button
                         key={a.action}
                         type="button"
-                        role="tab"
-                        aria-selected={filtre === a.action}
+                        aria-pressed={filtre === a.action}
                         className={`${styles.carte} ${styles[`carte${a.action}`]} ${
                           filtre === a.action ? styles.carteChoisie : ''
                         }`}
@@ -317,7 +441,7 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
                   </div>
 
                   {simulation.erreurs > 0 ? (
-                    <div className={styles.avertissement}>
+                    <div className={styles.avertissement} role="alert">
                       <AlertTriangle size={16} />
                       <span>
                         <strong>{simulation.message}</strong> L’import est tout ou rien : aucun compte ne sera
@@ -332,7 +456,7 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
                       </button>
                     </div>
                   ) : (
-                    <div className={styles.toutBon}>
+                    <div className={styles.toutBon} role="status">
                       <CheckCircle2 size={16} />
                       <span>{simulation.message}</span>
                     </div>
@@ -340,6 +464,7 @@ export default function ImportPlanComptableModal({ comptes, onClose, onImporte }
 
                   <div className={styles.tableWrap}>
                     <table className={styles.table}>
+                      <caption className={styles.srOnly}>Aperçu des comptes à importer</caption>
                       <thead>
                         <tr>
                           <th>Ligne</th>
