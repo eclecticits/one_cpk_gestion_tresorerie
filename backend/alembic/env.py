@@ -130,6 +130,8 @@ from app.modules.comptabilite.models import (  # noqa: F401
     ComptaEcriture,
     ComptaEtablissement,
     ComptaExercice,
+    ComptaExportEcriture,
+    ComptaExportHistorique,
     ComptaJournal,
     ComptaLigneEcriture,
     ComptaPeriode,
@@ -142,6 +144,8 @@ from app.modules.comptabilite.models import (  # noqa: F401
     ComptaSequence,
     ComptaSociete,
     ComptaTauxChange,
+    ComptaReleveBancaireImport,
+    ComptaReleveBancaireLigne,
 )
 
 config = context.config

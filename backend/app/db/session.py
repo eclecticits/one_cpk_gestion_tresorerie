@@ -81,6 +81,8 @@ from app.modules.comptabilite.models import (
     ComptaEcriture,
     ComptaEtablissement,
     ComptaExercice,
+    ComptaExportEcriture,
+    ComptaExportHistorique,
     ComptaJournal,
     ComptaLigneEcriture,
     ComptaPeriode,
@@ -93,6 +95,8 @@ from app.modules.comptabilite.models import (
     ComptaSequence,
     ComptaSociete,
     ComptaTauxChange,
+    ComptaReleveBancaireImport,
+    ComptaReleveBancaireLigne,
 )
 
 logger = logging.getLogger("onec_cpk_db_pool")
@@ -629,6 +633,10 @@ def _tenant_loader_options(tenant_id) -> tuple:
         with_loader_criteria(ComptaPosteEtatCompte, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ComptaEcriture, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ComptaLigneEcriture, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaExportHistorique, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaExportEcriture, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaReleveBancaireImport, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaReleveBancaireLigne, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )
 
 

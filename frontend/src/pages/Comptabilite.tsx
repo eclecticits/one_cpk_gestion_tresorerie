@@ -19,6 +19,8 @@ import ComptaSetupScreen from '../components/comptabilite/ComptaSetupScreen'
 import ComptaEtatsPanel from '../components/comptabilite/ComptaEtatsPanel'
 import ComptaEtatsFinanciersPanel from '../components/comptabilite/ComptaEtatsFinanciersPanel'
 import ComptaMappingsPanel from '../components/comptabilite/ComptaMappingsPanel'
+import ComptaExportsPanel from '../components/comptabilite/ComptaExportsPanel'
+import ComptaBanquesPanel from '../components/comptabilite/ComptaBanquesPanel'
 import EcritureFormModal from '../components/comptabilite/EcritureFormModal'
 import EcritureDetailModal from '../components/comptabilite/EcritureDetailModal'
 import ValidationLotModal from '../components/comptabilite/ValidationLotModal'
@@ -27,11 +29,13 @@ import styles from './Comptabilite.module.css'
 
 const STATUTS = ['BROUILLON', 'VALIDEE', 'CLOTUREE', 'ANNULEE']
 
-type Onglet = 'ecritures' | 'a-comptabiliser' | 'etats' | 'etats-financiers' | 'parametrage'
+type Onglet = 'ecritures' | 'a-comptabiliser' | 'banques' | 'exports' | 'etats' | 'etats-financiers' | 'parametrage'
 
 const ONGLETS: [Onglet, string][] = [
   ['ecritures', 'Écritures'],
-  ['a-comptabiliser', 'À comptabiliser'],
+  ['a-comptabiliser', 'À imputer'],
+  ['banques', 'Banques'],
+  ['exports', 'Exports'],
   ['etats', 'Grand Livre'],
   ['etats-financiers', 'États financiers'],
   ['parametrage', 'Paramétrage'],
@@ -45,7 +49,9 @@ function parseOnglet(value: string | null): Onglet {
 
 const SOUS_TITRES: Record<Onglet, string> = {
   ecritures: 'Écritures comptables',
-  'a-comptabiliser': 'Opérations en attente de comptabilisation manuelle',
+  'a-comptabiliser': 'Opérations incomplètes en attente d’imputation comptable',
+  banques: 'Comptes, mouvements et rapprochements bancaires',
+  exports: 'Exports comptables contrôlés et traçables',
   etats: 'Grand Livre, Journal et Balance',
   'etats-financiers': 'Bilan, Résultat, SIG et clôture',
   parametrage: 'Paramétrage comptable',
@@ -78,6 +84,9 @@ export default function Comptabilite() {
   const canValider = hasPermission('compta.validation')
   const canParametrer = hasPermission('compta.parametrage')
   const canCloturer = hasPermission('compta.cloture')
+  const canExport = hasPermission('compta.export')
+  const canEncaisser = hasPermission('encaissements')
+  const canDecaisser = hasPermission('sorties_fonds')
 
   const [setupSubmitting, setSetupSubmitting] = useState(false)
   const [setupError, setSetupError] = useState<string | null>(null)
@@ -282,7 +291,16 @@ export default function Comptabilite() {
         ))}
       </div>
 
-      {onglet === 'parametrage' ? (
+      {onglet === 'exports' ? (
+        <ComptaExportsPanel canExport={canExport} />
+      ) : onglet === 'banques' ? (
+        <ComptaBanquesPanel
+          canSaisir={canSaisir}
+          canValider={canValider}
+          canEncaisser={canEncaisser}
+          canDecaisser={canDecaisser}
+        />
+      ) : onglet === 'parametrage' ? (
         <ComptaMappingsPanel comptes={comptes} canParametrer={canParametrer} />
       ) : onglet === 'etats-financiers' ? (
         <ComptaEtatsFinanciersPanel exercices={exercices} canCloturer={canCloturer} />
@@ -309,6 +327,7 @@ export default function Comptabilite() {
                   <th>Libellé</th>
                   <th>Poste budgétaire</th>
                   <th style={{ textAlign: 'right' }}>Montant</th>
+                  <th>Motif de mise en attente</th>
                   <th>Statut</th>
                 </tr>
               </thead>
@@ -327,8 +346,11 @@ export default function Comptabilite() {
                     <td className={styles.amountCell}>
                       {formatMontant(toNumber(operation.montant))} {operation.devise}
                     </td>
+                    <td className={styles.libelleCell}>
+                      {operation.message_comptabilisation || 'Imputation comptable à compléter.'}
+                    </td>
                     <td>
-                      <span className={`${styles.badge} ${styles.badgeBrouillon}`}>À saisir</span>
+                      <span className={`${styles.badge} ${styles.badgeBrouillon}`}>À imputer</span>
                     </td>
                   </tr>
                 ))}

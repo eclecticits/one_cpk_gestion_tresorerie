@@ -31,7 +31,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -790,4 +790,169 @@ class ComptaMappingCompteBancaire(Base):
     compte_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("compta_comptes.id", ondelete="RESTRICT"), nullable=False, index=True
     )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+# ── Exports comptables et rapprochement bancaire ───────────────────────────
+
+
+class ComptaExportHistorique(Base):
+    """Trace immuable d'un fichier remis au comptable ou utilisé en contrôle.
+
+    Le contenu binaire n'est pas stocké en base. Son empreinte, les filtres et
+    les écritures incluses suffisent à prouver ce qui a été généré et à
+    empêcher une double importation involontaire.
+    """
+
+    __tablename__ = "compta_exports"
+    __table_args__ = (
+        CheckConstraint(
+            "type_export IN ('LOGICIEL_COMPTABLE','CONTROLE_BANCAIRE')",
+            name="ck_compta_export_type",
+        ),
+        CheckConstraint("format IN ('XLSX','CSV')", name="ck_compta_export_format"),
+        CheckConstraint("journal IN ('CAISSE','BANQUE','TOUS')", name="ck_compta_export_journal"),
+        CheckConstraint("devise IN ('USD','CDF')", name="ck_compta_export_devise"),
+        CheckConstraint("date_fin >= date_debut", name="ck_compta_export_dates"),
+        Index("ix_compta_exports_org_created", "organisation_id", "created_at"),
+        Index("ix_compta_exports_org_fingerprint", "organisation_id", "empreinte_selection"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    type_export: Mapped[str] = mapped_column(String(30), nullable=False)
+    format: Mapped[str] = mapped_column(String(10), nullable=False)
+    journal: Mapped[str] = mapped_column(String(10), nullable=False)
+    compte_bancaire_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("comptes_bancaires.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    devise: Mapped[str] = mapped_column(String(3), nullable=False)
+    date_debut: Mapped[date] = mapped_column(Date, nullable=False)
+    date_fin: Mapped[date] = mapped_column(Date, nullable=False)
+    nombre_ecritures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    nombre_lignes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_debit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    total_credit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    ecart: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    nom_fichier: Mapped[str] = mapped_column(String(255), nullable=False)
+    empreinte_fichier: Mapped[str] = mapped_column(String(64), nullable=False)
+    empreinte_selection: Mapped[str] = mapped_column(String(64), nullable=False)
+    genere_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    reexport_de_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("compta_exports.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class ComptaExportEcriture(Base):
+    """Écriture incluse dans un export logiciel (preuve anti-réimportation)."""
+
+    __tablename__ = "compta_export_ecritures"
+    __table_args__ = (
+        UniqueConstraint("export_id", "ecriture_id", name="uq_compta_export_ecriture"),
+        Index("ix_compta_export_ecritures_org_ecriture", "organisation_id", "ecriture_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    export_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("compta_exports.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ecriture_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("compta_ecritures.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+
+
+class ComptaReleveBancaireImport(Base):
+    """Un fichier de relevé chargé pour un compte bancaire déterminé."""
+
+    __tablename__ = "compta_releves_bancaires"
+    __table_args__ = (
+        UniqueConstraint(
+            "organisation_id", "compte_bancaire_id", "empreinte_fichier",
+            name="uq_compta_releve_fichier",
+        ),
+        CheckConstraint("format IN ('XLSX','CSV')", name="ck_compta_releve_format"),
+        CheckConstraint(
+            "statut IN ('IMPORTE','PARTIEL','RAPPROCHE')", name="ck_compta_releve_statut"
+        ),
+        Index("ix_compta_releves_org_compte_created", "organisation_id", "compte_bancaire_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    compte_bancaire_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("comptes_bancaires.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    devise: Mapped[str] = mapped_column(String(3), nullable=False)
+    nom_fichier: Mapped[str] = mapped_column(String(255), nullable=False)
+    format: Mapped[str] = mapped_column(String(10), nullable=False)
+    empreinte_fichier: Mapped[str] = mapped_column(String(64), nullable=False)
+    statut: Mapped[str] = mapped_column(String(20), nullable=False, default="IMPORTE")
+    nombre_lignes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    nombre_doublons: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    nombre_propositions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    nombre_rapprochees: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    importe_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class ComptaReleveBancaireLigne(Base):
+    """Ligne normalisée d'un relevé, jamais rapprochée sans décision humaine."""
+
+    __tablename__ = "compta_releve_bancaire_lignes"
+    __table_args__ = (
+        UniqueConstraint("releve_import_id", "numero_ligne", name="uq_compta_releve_ligne_numero"),
+        CheckConstraint("debit >= 0 AND credit >= 0", name="ck_compta_releve_ligne_montants"),
+        CheckConstraint("NOT (debit > 0 AND credit > 0)", name="ck_compta_releve_ligne_sens"),
+        CheckConstraint("(debit + credit) > 0", name="ck_compta_releve_ligne_non_nulle"),
+        CheckConstraint(
+            "statut_rapprochement IN ('NON_RAPPROCHE','PROPOSE','INCERTAIN','RAPPROCHE','IGNORE')",
+            name="ck_compta_releve_ligne_statut",
+        ),
+        Index(
+            "ix_compta_releve_lignes_org_compte_empreinte",
+            "organisation_id", "compte_bancaire_id", "empreinte_ligne",
+        ),
+        Index("ix_compta_releve_lignes_import_statut", "releve_import_id", "statut_rapprochement"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    releve_import_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("compta_releves_bancaires.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    compte_bancaire_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("comptes_bancaires.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    numero_ligne: Mapped[int] = mapped_column(Integer, nullable=False)
+    date_operation: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    date_valeur: Mapped[date | None] = mapped_column(Date, nullable=True)
+    reference: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    tiers: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    libelle: Mapped[str] = mapped_column(Text, nullable=False)
+    debit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    credit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    solde: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    devise: Mapped[str] = mapped_column(String(3), nullable=False)
+    empreinte_ligne: Mapped[str] = mapped_column(String(64), nullable=False)
+    est_doublon: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    doublon_de_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("compta_releve_bancaire_lignes.id", ondelete="SET NULL"), nullable=True
+    )
+    statut_rapprochement: Mapped[str] = mapped_column(String(20), nullable=False, default="NON_RAPPROCHE")
+    operation_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    propositions: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
+    rapproche_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    rapproche_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

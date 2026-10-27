@@ -68,6 +68,7 @@ from app.modules.comptabilite.routers import ecritures as comptabilite
 from app.modules.comptabilite.routers import parametrage as comptabilite_parametrage
 from app.modules.comptabilite.routers import restitutions as comptabilite_restitutions
 from app.modules.comptabilite.routers import etats as comptabilite_etats
+from app.modules.comptabilite.routers import exports as comptabilite_exports
 
 logger = logging.getLogger("onec_cpk_api")
 
@@ -182,3 +183,4 @@ api_router.include_router(comptabilite.router, prefix="/comptabilite", tags=["co
 api_router.include_router(comptabilite_parametrage.router, prefix="/comptabilite", tags=["comptabilite"], dependencies=[Depends(require_module("comptabilite"))])
 api_router.include_router(comptabilite_restitutions.router, prefix="/comptabilite", tags=["comptabilite"], dependencies=[Depends(require_module("comptabilite"))])
 api_router.include_router(comptabilite_etats.router, prefix="/comptabilite", tags=["comptabilite"], dependencies=[Depends(require_module("comptabilite"))])
+api_router.include_router(comptabilite_exports.router, prefix="/comptabilite", tags=["comptabilite"], dependencies=[Depends(require_module("comptabilite"))])

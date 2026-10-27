@@ -34,6 +34,7 @@ import {
   CircleDollarSign,
   Clock,
   Cog,
+  Download,
   FileBarChart2,
   FileQuestion,
   FileText,
@@ -329,7 +330,9 @@ const COMPTABILITE_NAV: NavItem[] = [
     icon: <BookOpenCheck size={18} />,
     matchSearches: ['', '?tab=ecritures'],
   },
-  { path: '/comptabilite?tab=a-comptabiliser', label: 'À comptabiliser', permission: COMPTA_ANY_PERMISSION, icon: <Inbox size={18} /> },
+  { path: '/comptabilite?tab=a-comptabiliser', label: 'À imputer', permission: COMPTA_ANY_PERMISSION, icon: <Inbox size={18} /> },
+  { path: '/comptabilite?tab=banques', label: 'Banques', permission: COMPTA_ANY_PERMISSION, icon: <Landmark size={18} /> },
+  { path: '/comptabilite?tab=exports', label: 'Exports comptables', permission: 'compta.export', icon: <Download size={18} /> },
   {
     path: '/comptabilite?tab=etats&etat=balance',
     label: 'Balance générale',

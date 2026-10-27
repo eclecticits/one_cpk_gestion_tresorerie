@@ -460,3 +460,127 @@ export interface ComptaImportPlanResult {
   lignes: ComptaLignePlanResult[]
   message: string
 }
+
+// ── Exports comptables et rapprochement bancaire ─────────────────────────
+
+export type ComptaJournalExport = 'CAISSE' | 'BANQUE' | 'TOUS'
+export type ComptaFormatExport = 'XLSX' | 'CSV'
+
+export interface ComptaExportFiltres {
+  date_debut: string
+  date_fin: string
+  journal: ComptaJournalExport
+  compte_bancaire_id?: number | null
+  devise: 'USD' | 'CDF'
+  format: ComptaFormatExport
+  autoriser_reexport?: boolean
+}
+
+export interface ComptaExportAnomalie {
+  code: string
+  message: string
+  bloquante: boolean
+  ecriture_id?: string | null
+  numero?: string | null
+}
+
+export interface ComptaExportLigneApercu {
+  ecriture_id: string
+  date: string
+  piece: string
+  compte: string
+  libelle: string
+  debit: string
+  credit: string
+}
+
+export interface ComptaExportApercu {
+  date_debut: string
+  date_fin: string
+  journal: ComptaJournalExport
+  compte_bancaire_id?: number | null
+  devise: string
+  nombre_ecritures: number
+  nombre_lignes: number
+  total_debit: string
+  total_credit: string
+  ecart: string
+  equilibre: boolean
+  exportable: boolean
+  nombre_deja_exportees: number
+  lignes: ComptaExportLigneApercu[]
+  anomalies: ComptaExportAnomalie[]
+}
+
+export interface ComptaExportHistorique {
+  id: string
+  type_export: 'LOGICIEL_COMPTABLE' | 'CONTROLE_BANCAIRE'
+  format: ComptaFormatExport
+  journal: ComptaJournalExport
+  compte_bancaire_id?: number | null
+  devise: string
+  date_debut: string
+  date_fin: string
+  nombre_ecritures: number
+  nombre_lignes: number
+  total_debit: string
+  total_credit: string
+  ecart: string
+  nom_fichier: string
+  genere_par?: string | null
+  reexport_de_id?: string | null
+  created_at: string
+}
+
+export interface ComptaPropositionRapprochement {
+  operation_type: string
+  operation_id: string
+  date_operation: string
+  reference?: string | null
+  libelle: string
+  tiers?: string | null
+  debit: string
+  credit: string
+  score: string
+}
+
+export interface ComptaReleveLigne {
+  id: string
+  releve_import_id: string
+  compte_bancaire_id: number
+  numero_ligne: number
+  date_operation: string
+  date_valeur?: string | null
+  reference?: string | null
+  tiers?: string | null
+  libelle: string
+  debit: string
+  credit: string
+  solde?: string | null
+  devise: string
+  est_doublon: boolean
+  doublon_de_id?: string | null
+  statut_rapprochement: 'NON_RAPPROCHE' | 'PROPOSE' | 'INCERTAIN' | 'RAPPROCHE' | 'IGNORE'
+  operation_type?: string | null
+  operation_id?: string | null
+  score?: string | null
+  propositions: ComptaPropositionRapprochement[]
+  rapproche_par?: string | null
+  rapproche_le?: string | null
+}
+
+export interface ComptaReleveImport {
+  id: string
+  compte_bancaire_id: number
+  devise: string
+  nom_fichier: string
+  format: string
+  statut: 'IMPORTE' | 'PARTIEL' | 'RAPPROCHE'
+  nombre_lignes: number
+  nombre_doublons: number
+  nombre_propositions: number
+  nombre_rapprochees: number
+  importe_par?: string | null
+  created_at: string
+  lignes: ComptaReleveLigne[]
+}

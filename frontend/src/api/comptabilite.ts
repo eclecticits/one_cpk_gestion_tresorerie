@@ -1,4 +1,5 @@
-import { apiRequest } from '../lib/apiClient'
+import { API_BASE_URL, apiRequest, getAuthHeaders } from '../lib/apiClient'
+import type { ReportJournalResponse } from '../types/reports'
 import type {
   ComptaANouveauxResult,
   ComptaBalance,
@@ -30,6 +31,11 @@ import type {
   ComptaTauxChangeListe,
   ComptaImportPlanInput,
   ComptaImportPlanResult,
+  ComptaExportApercu,
+  ComptaExportFiltres,
+  ComptaExportHistorique,
+  ComptaReleveImport,
+  ComptaReleveLigne,
   ComptaValidationLotInput,
   ComptaValidationLotResult,
 } from '../types/comptabilite'
@@ -230,4 +236,88 @@ export async function reporterComptaANouveaux(
 // `simulation: false` pour que les comptes soient réellement écrits.
 export async function importerComptaPlan(input: ComptaImportPlanInput): Promise<ComptaImportPlanResult> {
   return apiRequest<ComptaImportPlanResult>('POST', '/comptabilite/plan-comptable/import', input)
+}
+
+export async function getComptaExportApercu(input: ComptaExportFiltres): Promise<ComptaExportApercu> {
+  return apiRequest<ComptaExportApercu>('POST', '/comptabilite/exports/apercu', input)
+}
+
+export async function getComptaExportHistorique(): Promise<ComptaExportHistorique[]> {
+  return apiRequest<ComptaExportHistorique[]>('GET', '/comptabilite/exports/historique')
+}
+
+function resolveApiUrl(path: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000'
+  let base = API_BASE_URL.replace(/\/+$/, '')
+  if (base.startsWith('/')) base = `${origin}${base}`
+  else if (!/^https?:\/\//i.test(base)) base = `${origin}/${base.replace(/^\/+/, '')}`
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+export async function downloadComptaExport(
+  type: 'logiciel-comptable' | 'controle-bancaire',
+  input: ComptaExportFiltres
+): Promise<string> {
+  const response = await fetch(resolveApiUrl(`/comptabilite/exports/${type}`), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    const detail = payload?.detail
+    const message = typeof detail === 'string' ? detail : detail?.message || JSON.stringify(detail || {})
+    throw new Error(message || `Export impossible (HTTP ${response.status}).`)
+  }
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `export_comptable.${input.format.toLowerCase()}`
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+  return filename
+}
+
+export async function getComptaMouvementsBancaires(params: {
+  compte_bancaire_id: number
+  devise: string
+  date_debut?: string
+  date_fin?: string
+}): Promise<ReportJournalResponse> {
+  return apiRequest<ReportJournalResponse>('GET', '/comptabilite/banques/mouvements', { params })
+}
+
+export async function importComptaReleveBancaire(
+  compteBancaireId: number,
+  file: File
+): Promise<ComptaReleveImport> {
+  const form = new FormData()
+  form.append('file', file)
+  return apiRequest<ComptaReleveImport>(
+    'POST',
+    `/comptabilite/banques/releves/import?compte_bancaire_id=${compteBancaireId}`,
+    form
+  )
+}
+
+export async function getComptaRelevesBancaires(compteBancaireId?: number): Promise<ComptaReleveImport[]> {
+  return apiRequest<ComptaReleveImport[]>('GET', '/comptabilite/banques/releves', {
+    params: compteBancaireId ? { compte_bancaire_id: compteBancaireId } : undefined,
+  })
+}
+
+export async function getComptaReleveBancaire(id: string): Promise<ComptaReleveImport> {
+  return apiRequest<ComptaReleveImport>('GET', `/comptabilite/banques/releves/${id}`)
+}
+
+export async function deciderComptaRapprochement(
+  ligneId: string,
+  input: { decision: 'RAPPROCHER' | 'IGNORER' | 'ANNULER'; operation_type?: string; operation_id?: string }
+): Promise<ComptaReleveLigne> {
+  return apiRequest<ComptaReleveLigne>('PATCH', `/comptabilite/banques/releves/lignes/${ligneId}`, input)
 }
