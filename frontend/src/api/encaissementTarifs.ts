@@ -9,6 +9,8 @@ export interface EncaissementTarif {
   montant: number | string | null
   devise: 'USD' | 'CDF'
   budget_poste_code: string | null
+  /** Projet ou activité proposé à l'encaissement (jamais imposé). */
+  project_activity_id: number | null
   is_active: boolean
   position: number
   /** Poste de l'exercice courant auquel le code se résout aujourd'hui.
@@ -31,7 +33,10 @@ export interface EncaissementTarif {
 }
 
 export type EncaissementTarifPayload = Partial<
-  Pick<EncaissementTarif, 'libelle' | 'montant' | 'devise' | 'budget_poste_code' | 'is_active' | 'position'>
+  Pick<
+    EncaissementTarif,
+    'libelle' | 'montant' | 'devise' | 'budget_poste_code' | 'project_activity_id' | 'is_active' | 'position'
+  >
 >
 
 export function listEncaissementTarifs(

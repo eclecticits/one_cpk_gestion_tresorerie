@@ -8,12 +8,19 @@ import type { BudgetPosteSummary } from '../types/budget'
 import {
   annexerPiecesReunion,
   deleteRemboursementTransportBrouillon,
+  deposerPieceRemboursement,
+  deposerPieceReunion,
+  listPiecesRemboursement,
   listRemboursementTransportBrouillons,
   loadDossierRemboursementsTransport,
+  pieceReunionPath,
+  pieceRemboursementPath,
+  retirerPieceReunion,
   saveRemboursementTransportBrouillon,
   uploadRemboursementTransportPdf,
   type PieceReunion,
   type PieceReunionKind,
+  type PiecesRemboursement,
   type RemboursementTransportBrouillon,
 } from '../api/remboursementsTransport'
 import ConvocationReunionModal from '../components/ConvocationReunionModal'
@@ -52,6 +59,9 @@ import BudgetPosteSelect from '../components/BudgetPosteSelect'
 import styles from './RemboursementTransport.module.css'
 
 const TODAY = format(new Date(), 'yyyy-MM-dd')
+// Ouverte depuis une unité organisationnelle, la liste couvre l'année en cours
+// (1er janvier → aujourd'hui) plutôt que la seule journée du jour.
+const START_OF_YEAR = `${TODAY.slice(0, 4)}-01-01`
 
 interface RemboursementTransport {
   id: string
@@ -141,6 +151,10 @@ export default function RemboursementTransport() {
   const [ordreFicheModifie, setOrdreFicheModifie] = useState(false)
   const [ordreFicheEnCours, setOrdreFicheEnCours] = useState(false)
   const [selectedBudgetLines, setSelectedBudgetLines] = useState<BudgetDecisionLine[]>([])
+  // Liste de présence et PV d'un remboursement déjà créé : null tant que non
+  // chargés ou si la fiche n'a pas de réquisition à laquelle les joindre.
+  const [selectedPieces, setSelectedPieces] = useState<PiecesRemboursement | null>(null)
+  const detailsRequestRef = useRef(0)
   const [selectedRemboursementUsers, setSelectedRemboursementUsers] = useState<{
     demandeur?: { prenom: string; nom: string }
     validateur?: { prenom: string; nom: string }
@@ -216,8 +230,11 @@ export default function RemboursementTransport() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterServiceId, setFilterServiceId] = useState<string>(serviceContextId || '')
-  const [dateDebut, setDateDebut] = useState(TODAY)
+  const defaultDateDebut = serviceContextId ? START_OF_YEAR : TODAY
+  const [dateDebut, setDateDebut] = useState(defaultDateDebut)
   const [dateFin, setDateFin] = useState(TODAY)
+  const remboursementsRequestRef = useRef(0)
+  const filtresRemboursementsInitialisesRef = useRef(false)
   const [expertSearchCache, setExpertSearchCache] = useState<Record<string, ExpertComptable[]>>({})
   const [expertSearchLoading, setExpertSearchLoading] = useState(false)
   const [activeSearchTerm, setActiveSearchTerm] = useState('')
@@ -315,6 +332,15 @@ export default function RemboursementTransport() {
     }
   }, [serviceContextId, filterServiceId])
 
+  // La page reste montée quand on passe d'une unité à la vue globale (ou
+  // l'inverse) : la borne de début suit alors le nouveau défaut.
+  const previousServiceContextRef = useRef(serviceContextId)
+  useEffect(() => {
+    if (previousServiceContextRef.current === serviceContextId) return
+    previousServiceContextRef.current = serviceContextId
+    setDateDebut(defaultDateDebut)
+  }, [serviceContextId, defaultDateDebut])
+
   const canAutofillParticipants = () => {
     const participantsEmpty = participants.every(
       (p) =>
@@ -387,18 +413,45 @@ export default function RemboursementTransport() {
     fetchMembers()
   }, [showForm, formData.service_id])
 
+  const chargerRemboursements = async () => {
+    const requestId = ++remboursementsRequestRef.current
+    const pageSize = 200
+    let offset = 0
+    const tous: RemboursementTransport[] = []
+
+    // L'API limite volontairement une page à 200 lignes. Parcourir toutes les
+    // pages de la période évite qu'une vue annuelle de service soit tronquée
+    // silencieusement aux 200 opérations les plus récentes.
+    for (;;) {
+      const page: any = await apiRequest('GET', '/remboursements-transport', {
+        params: {
+          include: 'requisition',
+          service_id: filterServiceId || undefined,
+          date_debut: dateDebut || undefined,
+          date_fin: dateFin || undefined,
+          limit: pageSize,
+          offset,
+        },
+      })
+      if (requestId !== remboursementsRequestRef.current) return
+      const items = Array.isArray(page) ? page : page?.items ?? page?.data ?? []
+      tous.push(...items)
+      if (items.length < pageSize) break
+      offset += pageSize
+    }
+    if (requestId === remboursementsRequestRef.current) setRemboursements(tous)
+  }
+
   const loadData = async () => {
     try {
-      const [remboursementsRes, expertsRes, servicesRes] = await Promise.all([
-        apiRequest('GET', '/remboursements-transport', { params: { include: 'requisition', limit: 200, offset: 0 } }),
+      const [, expertsRes, servicesRes] = await Promise.all([
+        chargerRemboursements(),
         apiRequest('GET', '/experts-comptables', { params: { active: true, limit: 200, offset: 0 } }),
         getServices({ active: true }),
       ])
 
-      const remb = Array.isArray(remboursementsRes) ? remboursementsRes : (remboursementsRes as any)?.items ?? (remboursementsRes as any)?.data ?? []
       const exp = Array.isArray(expertsRes) ? expertsRes : (expertsRes as any)?.items ?? (expertsRes as any)?.data ?? []
 
-      setRemboursements(remb as any)
       setExperts(exp as any)
       setServices(Array.isArray(servicesRes) ? servicesRes : [])
       try {
@@ -415,6 +468,24 @@ export default function RemboursementTransport() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!filtresRemboursementsInitialisesRef.current) {
+      filtresRemboursementsInitialisesRef.current = true
+      return
+    }
+    chargerRemboursements().catch((error) => {
+      console.error('Error loading filtered reimbursements:', error)
+      setNotification({
+        show: true,
+        type: 'error',
+        message: 'Impossible de charger tous les remboursements de la période.',
+      })
+    })
+    // `chargerRemboursements` lit précisément ces trois filtres. Le garder
+    // local évite de recréer toute la fonction de chargement avec useCallback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterServiceId, dateDebut, dateFin])
 
   useEffect(() => {
     const loadRubriques = async () => {
@@ -1142,9 +1213,26 @@ export default function RemboursementTransport() {
   }
 
   const viewDetails = async (remboursement: RemboursementTransport) => {
+    const requestId = ++detailsRequestRef.current
     setSelectedRemboursementDetails(remboursement)
+    setSelectedPieces(null)
+    const peutJoindrePieces =
+      (hasPermission('remboursement_transport') || hasPermission('menu_services')) &&
+      Boolean(remboursement.requisition?.id || remboursement.requisition_id)
+    if (peutJoindrePieces) {
+      listPiecesRemboursement(remboursement.id)
+        .then((pieces) => {
+          if (requestId === detailsRequestRef.current) setSelectedPieces(pieces)
+        })
+        .catch((error) => {
+          if (requestId !== detailsRequestRef.current) return
+          console.error('Error loading meeting documents:', error)
+          setNotification({ show: true, type: 'error', message: 'Impossible de charger les pièces de la réunion.' })
+        })
+    }
     try {
       const participantsRes: any = await apiRequest('GET', '/participants-transport', { params: { remboursement_id: remboursement.id, limit: 500 } })
+      if (requestId !== detailsRequestRef.current) return
       const participantsData = Array.isArray(participantsRes) ? participantsRes : (participantsRes as any)?.items ?? (participantsRes as any)?.data ?? []
       setSelectedParticipants(participantsData || [])
       setOrdreFicheModifie(false)
@@ -1152,6 +1240,7 @@ export default function RemboursementTransport() {
       const requisitionId = remboursement.requisition?.id || remboursement.requisition_id
       if (requisitionId) {
         const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: requisitionId } })
+        if (requestId !== detailsRequestRef.current) return
         const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
         setSelectedBudgetLines(lignesData || [])
       } else {
@@ -1166,6 +1255,7 @@ export default function RemboursementTransport() {
       setSelectedRemboursementUsers(users)
       setShowDetailModal(true)
     } catch (error: any) {
+      if (requestId !== detailsRequestRef.current) return
       console.error('Error loading remboursement details:', error)
       setNotification({
         show: true,
@@ -1491,7 +1581,7 @@ export default function RemboursementTransport() {
     return matchSearch && matchStatut && matchService && matchDateDebut && matchDateFin
   })
   const hasActiveFilters = Boolean(
-    searchQuery || filterStatut || filterServiceId || dateDebut !== TODAY || dateFin !== TODAY
+    searchQuery || filterStatut || filterServiceId || dateDebut !== defaultDateDebut || dateFin !== TODAY
   )
   // Total de ce que la liste montre réellement : c'est le montant que l'agent
   // recoupe avec sa caisse, il doit suivre les filtres et non le stock complet.
@@ -1964,13 +2054,26 @@ export default function RemboursementTransport() {
               <div className={styles.formSection}>
                 <h3>Après la réunion — pièces à joindre</h3>
                 <ReunionPieces
-                  brouillonId={draftId}
                   pieces={(draftServeur?.pieces || {}) as Partial<Record<PieceReunionKind, PieceReunion>>}
-                  ensureBrouillon={async () => (await persistDraft())?.id ?? null}
-                  onDeposee={(b) => {
+                  onDeposer={async (kind, file, filename) => {
+                    // Crée le brouillon s'il n'existe pas encore : une pièce s'y rattache.
+                    const id = draftId || (await persistDraft())?.id
+                    if (!id) return false
+                    const b = await deposerPieceReunion(id, kind, file, filename)
                     setDraftServeur(b.contenu || {})
                     loadBrouillons()
+                    return true
                   }}
+                  voirPath={draftId ? (kind) => pieceReunionPath(draftId, kind) : undefined}
+                  onRetirer={
+                    draftId
+                      ? async (kind) => {
+                          const b = await retirerPieceReunion(draftId, kind)
+                          setDraftServeur(b.contenu || {})
+                          loadBrouillons()
+                        }
+                      : undefined
+                  }
                   onMessage={(type, message) => setNotification({ show: true, type, message })}
                   disabled={submitting || savingDraft}
                 />
@@ -2343,7 +2446,7 @@ export default function RemboursementTransport() {
                 setSearchQuery('')
                 setFilterStatut('')
                 setFilterServiceId(serviceContextId || '')
-                setDateDebut(TODAY)
+                setDateDebut(defaultDateDebut)
                 setDateFin(TODAY)
               }}
             >
@@ -2467,8 +2570,8 @@ export default function RemboursementTransport() {
                       <div className={styles.emptySubtitle}>
                         {remboursementsList.length} remboursement{remboursementsList.length > 1 ? 's' : ''} au total.
                       </div>
-                      {/* Vide les bornes de date au lieu de les remettre à TODAY :
-                          la vue s'ouvre sur la journée du jour, remettre les
+                      {/* Vide les bornes de date au lieu de les remettre par défaut :
+                          la vue s'ouvre sur la journée (ou l'année) en cours, remettre les
                           valeurs par défaut aurait reconduit le filtre qui
                           masque tout. */}
                       <button
@@ -2637,7 +2740,13 @@ export default function RemboursementTransport() {
           <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
             <div className={styles.modalHeader}>
               <h2>Détails du remboursement {selectedRemboursementDetails.numero_remboursement}</h2>
-              <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn}>×</button>
+              <button
+                onClick={() => {
+                  detailsRequestRef.current += 1
+                  setShowDetailModal(false)
+                }}
+                className={styles.closeBtn}
+              >×</button>
             </div>
 
             <div className={styles.detailContent}>
@@ -2781,6 +2890,23 @@ export default function RemboursementTransport() {
                     </div>
                   )}                </div>
               </div>
+
+              {selectedPieces && (
+                <div className={styles.detailSection}>
+                  <h3>Pièces de la réunion</h3>
+                  <ReunionPieces
+                    pieces={selectedPieces}
+                    onDeposer={async (kind, file, filename) => {
+                      setSelectedPieces(await deposerPieceRemboursement(selectedRemboursementDetails.id, kind, file, filename))
+                      return true
+                    }}
+                    voirPath={(kind) => pieceRemboursementPath(selectedRemboursementDetails.id, kind)}
+                    confirmationDepot="Elle est jointe à la réquisition."
+                    canUpload={hasPermission('remboursement_transport')}
+                    onMessage={(type, message) => setNotification({ show: true, type, message })}
+                  />
+                </div>
+              )}
 
               <div className={styles.detailSection}>
                 <h3>Repères budgétaires</h3>

@@ -51,6 +51,7 @@ import { useConfirm } from '../contexts/ConfirmContext'
 import PageHeader from '../components/PageHeader'
 import BackButton from '../components/BackButton'
 import ResponsiveModal from '../components/ResponsiveModal'
+import ProjetActiviteSelect from '../components/ProjetActiviteSelect'
 import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, saisieDepuis, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
 import styles from './SortieDirecteProgrammee.module.css'
 
@@ -137,6 +138,8 @@ export default function SortieDirecteProgrammee() {
   const [montantParPersonne, setMontantParPersonne] = useState('')
   const [devise, setDevise] = useState<'USD' | 'CDF'>('USD')
   const [motif, setMotif] = useState('')
+  // Projet ou activité que la dépense finance : facultatif.
+  const [projetActiviteId, setProjetActiviteId] = useState('')
   const [lignes, setLignes] = useState<LigneForm[]>([emptyLigne()])
   const formRef = useRef<HTMLFormElement>(null)
 
@@ -318,6 +321,7 @@ export default function SortieDirecteProgrammee() {
     setBeneficiaire('')
     setBeneficiaireSaisie(BENEFICIAIRE_VIDE)
     setMotif('')
+    setProjetActiviteId('')
     setDevise('USD')
     setLignes([emptyLigne()])
     setTypeSortie('SIMPLE')
@@ -344,6 +348,7 @@ export default function SortieDirecteProgrammee() {
     setBeneficiaire(brut.beneficiaire || '')
     setBeneficiaireSaisie(saisieDepuis(brut, brut.beneficiaire))
     setMotif(brut.motif || '')
+    setProjetActiviteId(brut.project_activity_id ? String(brut.project_activity_id) : '')
     setDevise((brut.devise === 'CDF' ? 'CDF' : 'USD') as 'USD' | 'CDF')
     // La correction rejoue tous les contrôles : reprendre une collation sans
     // son type en ferait une sortie simple de 200 USD, aussitôt refusée.
@@ -558,6 +563,7 @@ export default function SortieDirecteProgrammee() {
         participants: estCollation ? nbParticipants : null,
         montant_par_personne: estCollation ? prixParTete : null,
         service_id: Number(serviceId),
+        project_activity_id: projetActiviteId ? Number(projetActiviteId) : null,
         lignes: lignesValides.map((l) => ({
           budget_poste_id: l.budget_poste_id,
           rubrique: l.budget_poste_id ? postesById.get(l.budget_poste_id)?.code || '' : '',
@@ -978,6 +984,14 @@ export default function SortieDirecteProgrammee() {
             />
           </div>
           )}
+
+          <ProjetActiviteSelect
+            id="direct-projet"
+            value={projetActiviteId}
+            onChange={setProjetActiviteId}
+            className={styles.field}
+            hintClassName={styles.fieldHint}
+          />
         </div>
 
         <div className={styles.formFooter}>

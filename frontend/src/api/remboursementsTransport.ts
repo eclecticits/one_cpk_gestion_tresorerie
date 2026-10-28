@@ -85,6 +85,10 @@ export type PieceReunion = {
   deposee_le: string
   deposee_par?: string | null
   annexee?: string
+  version?: number | null
+  supersedes_id?: string | null
+  source?: string | null
+  content_sha256?: string | null
 }
 
 export function pieceReunionPath(brouillonId: string, kind: PieceReunionKind) {
@@ -99,6 +103,24 @@ export function deposerPieceReunion(brouillonId: string, kind: PieceReunionKind,
 
 export function retirerPieceReunion(brouillonId: string, kind: PieceReunionKind) {
   return apiRequest<RemboursementTransportBrouillon>('DELETE', pieceReunionPath(brouillonId, kind))
+}
+
+// Pièces d'une réunion déjà passée en remboursement, même payé : elles vont
+// directement en annexe de la réquisition. La plus récente de chaque sorte fait foi.
+export type PiecesRemboursement = Record<PieceReunionKind, (PieceReunion & { annexe_id: string }) | null>
+
+export function pieceRemboursementPath(remboursementId: string, kind: PieceReunionKind) {
+  return `/remboursements-transport/${remboursementId}/pieces/${kind}`
+}
+
+export function listPiecesRemboursement(remboursementId: string) {
+  return apiRequest<PiecesRemboursement>('GET', `/remboursements-transport/${remboursementId}/pieces`)
+}
+
+export function deposerPieceRemboursement(remboursementId: string, kind: PieceReunionKind, file: Blob, filename: string) {
+  const form = new FormData()
+  form.append('file', file, filename)
+  return apiRequest<PiecesRemboursement>('POST', pieceRemboursementPath(remboursementId, kind), form)
 }
 
 export function annexerPiecesReunion(brouillonId: string, requisitionId: string) {

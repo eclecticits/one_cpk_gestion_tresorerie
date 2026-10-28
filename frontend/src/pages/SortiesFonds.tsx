@@ -61,6 +61,7 @@ const generateSortiesReportPDF: PdfGeneratorReportsModule['generateSortiesReport
 import { useToast } from '../hooks/useToast'
 import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import PageHeader from '../components/PageHeader'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import RetourCaisseModal, { RetourSortieSource } from '../components/RetourCaisseModal'
@@ -142,6 +143,17 @@ export default function SortiesFonds() {
   // hors totaux ; décoché, l'export ne porte que les validés.
   const [exportAvecAnnulations, setExportAvecAnnulations] = useState(true)
   const [filterNumeroRequisition, setFilterNumeroRequisition] = useState('')
+  // N° de sortie (PAY-…) ou de retour, ou référence externe. Une sortie et ses
+  // retours se trouvent ensemble.
+  const [filterNumero, setFilterNumero] = useState('')
+  const numeroSaisi = useDebouncedValue(filterNumero.trim())
+  const numeroRecherche = numeroSaisi.length >= 3 ? numeroSaisi : ''
+  const numeroTropCourt = filterNumero.trim().length > 0 && filterNumero.trim().length < 3
+  // Un numéro désigne une pièce précise : la chercher dans la seule période
+  // affichée (le mois en cours par défaut) la rendrait introuvable dès le
+  // mois suivant. Pendant une recherche par numéro, les dates ne bornent rien.
+  const periodeDebut = numeroRecherche ? '' : dateDebut
+  const periodeFin = numeroRecherche ? '' : dateFin
   const [budgetSearch, setBudgetSearch] = useState('')
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
@@ -303,12 +315,13 @@ export default function SortiesFonds() {
 
   const sortiesFondsQueryKey = [
     'sorties-fonds',
-    dateDebut,
-    dateFin,
+    periodeDebut,
+    periodeFin,
     filterType,
     filterModePaiement,
     filterStatut,
     filterNumeroRequisition,
+    numeroRecherche,
     natureParam,
     pageSize,
     page,
@@ -321,12 +334,13 @@ export default function SortiesFonds() {
         apiRequest<any>('GET', '/sorties-fonds', {
           params: {
             include: 'requisition',
-            date_debut: natureParam ? undefined : dateDebut || undefined,
-            date_fin: natureParam ? undefined : dateFin || undefined,
+            date_debut: natureParam ? undefined : periodeDebut || undefined,
+            date_fin: natureParam ? undefined : periodeFin || undefined,
             type_sortie: filterType,
             mode_paiement: filterModePaiement,
             statut: filterStatut,
             requisition_numero: filterNumeroRequisition,
+            numero: numeroRecherche || undefined,
             nature_mouvement: natureParam || undefined,
             order: 'created_at.desc',
             limit: pageSize,
@@ -444,11 +458,15 @@ export default function SortiesFonds() {
   const retoursApplicables =
     !filterType && !filterModePaiement && (!filterStatut || ['VALIDE', 'ALL'].includes(String(filterStatut).toUpperCase()))
   const retoursQuery = useQuery({
-    queryKey: ['sorties-fonds', 'retours', dateDebut, dateFin, retoursApplicables],
+    queryKey: ['sorties-fonds', 'retours', periodeDebut, periodeFin, numeroRecherche, retoursApplicables],
     enabled: retoursApplicables,
     queryFn: async () => {
       const res = await apiRequest<any>('GET', '/reports/retours', {
-        params: { date_debut: dateDebut || undefined, date_fin: dateFin || undefined },
+        params: {
+          date_debut: periodeDebut || undefined,
+          date_fin: periodeFin || undefined,
+          numero: numeroRecherche || undefined,
+        },
       })
       return (Array.isArray(res) ? res : []) as any[]
     },
@@ -511,6 +529,18 @@ export default function SortiesFonds() {
   }, [formData.ordre_decaissement_id, ordresDirects, ordresAutorises])
   const compteImposeParOrdre =
     selectedOrdre?.compte_bancaire_id != null ? String(selectedOrdre.compte_bancaire_id) : ''
+  // Sortie directe programmée : le projet choisi à la programmation est
+  // proposé, la caisse peut encore le changer. Ne se rejoue qu'au changement
+  // d'ordre, pour ne pas écraser un choix fait ensuite.
+  const projetOrdreDirect = formData.type_sortie === 'sortie_directe' ? selectedOrdre?.project_activity_id : undefined
+  const projetHeriteDeLOrdre = Boolean(
+    selectedOrdre && String(projetOrdreDirect ?? '') === projetActiviteId,
+  )
+  useEffect(() => {
+    if (formData.type_sortie !== 'sortie_directe' || !selectedOrdre) return
+    setProjetActiviteId(projetOrdreDirect != null ? String(projetOrdreDirect) : '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrdre?.id, projetOrdreDirect])
   const compteBancaireLabel = useCallback(
     (compteId: unknown) => {
       const compte = comptesBancaires.find((c) => String(c.id) === String(compteId))
@@ -629,7 +659,7 @@ export default function SortiesFonds() {
 
   useEffect(() => {
     setPage(1)
-  }, [dateDebut, dateFin, filterType, filterModePaiement, filterStatut, filterNumeroRequisition, pageSize])
+  }, [dateDebut, dateFin, filterType, filterModePaiement, filterStatut, filterNumeroRequisition, numeroRecherche, pageSize])
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const safePage = Math.min(page, totalPages)
@@ -2150,7 +2180,7 @@ export default function SortiesFonds() {
   )
   const totalSorties = totalMontantSorties
   const hasActiveFilters = Boolean(
-    dateDebut || dateFin || filterType || filterModePaiement || filterStatut || filterNumeroRequisition
+    dateDebut || dateFin || filterType || filterModePaiement || filterStatut || filterNumeroRequisition || filterNumero
   )
 
   const retirerFiltreNature = useCallback(() => {
@@ -2170,6 +2200,7 @@ export default function SortiesFonds() {
     setFilterModePaiement('')
     setFilterStatut('')
     setFilterNumeroRequisition('')
+    setFilterNumero('')
     setPage(1)
   }, [today, natureParam, retirerFiltreNature])
 
@@ -2266,19 +2297,22 @@ export default function SortiesFonds() {
 
   const exportToExcel = async () => {
     if (exportExcelEnCours) return
-    const suffix = `${dateDebut || 'debut'}_${dateFin || 'fin'}`
+    const suffix = numeroRecherche
+      ? numeroRecherche.replace(/[^\w.-]+/g, '-')
+      : `${dateDebut || 'debut'}_${dateFin || 'fin'}`
     // Sans ce catch, un échec d'export partait en rejet de promesse non traité :
     // l'utilisateur cliquait, rien ne se passait, aucun message. C'est
     // précisément le refus d'export trop volumineux qui doit se voir.
     setExportExcelEnCours(true)
     try {
       await downloadExcel('/exports/sorties-fonds', {
-        date_debut: dateDebut,
-        date_fin: dateFin,
+        date_debut: periodeDebut,
+        date_fin: periodeFin,
         type_sortie: filterType,
         mode_paiement: filterModePaiement,
         statut: filterStatut,
         requisition_numero: filterNumeroRequisition,
+        numero: numeroRecherche,
         avec_annulations: exportAvecAnnulations,
       }, `sorties_fonds_${suffix}.xlsx`, {
         // Le serveur a répondu 202 : la génération dure et le bouton désactivé
@@ -2302,12 +2336,13 @@ export default function SortiesFonds() {
       const sortiesRes = await apiRequest<any>('GET', '/sorties-fonds', {
         params: {
           include: 'requisition',
-          date_debut: dateDebut,
-          date_fin: dateFin,
+          date_debut: periodeDebut,
+          date_fin: periodeFin,
           type_sortie: filterType,
           mode_paiement: filterModePaiement,
           statut: filterStatut,
           requisition_numero: filterNumeroRequisition,
+          numero: numeroRecherche || undefined,
           order: 'created_at.desc',
           limit: 5000,
           offset: 0,
@@ -2322,7 +2357,13 @@ export default function SortiesFonds() {
       if (includeRetours) {
         try {
           const res = await apiRequest<any>('GET', '/retours-caisse', {
-            params: { date_debut: dateDebut, date_fin: dateFin, statut: 'VALIDE', limit: 5000 },
+            params: {
+              date_debut: periodeDebut,
+              date_fin: periodeFin,
+              numero: numeroRecherche || undefined,
+              statut: 'VALIDE',
+              limit: 5000,
+            },
           })
           retours = Array.isArray(res) ? res : res?.items || []
         } catch {
@@ -2330,14 +2371,15 @@ export default function SortiesFonds() {
         }
       }
       await generateSortiesReportPDF(sortiesForPdf as any[], {
-        dateDebut,
-        dateFin,
+        dateDebut: periodeDebut,
+        dateFin: periodeFin,
         retours,
         filters: [
           filterType ? { label: 'Type', value: getTypeLabel(filterType) } : null,
           filterModePaiement ? { label: 'Mode', value: getModePaiementLabel(filterModePaiement) } : null,
           filterStatut ? { label: 'Statut', value: filterStatut === 'ALL' ? 'Tous' : filterStatut } : null,
           filterNumeroRequisition ? { label: 'N° Réquisition', value: filterNumeroRequisition } : null,
+          numeroRecherche ? { label: 'N° sortie / retour', value: numeroRecherche } : null,
         ],
       })
     } catch (error: any) {
@@ -2520,6 +2562,21 @@ export default function SortiesFonds() {
             </select>
           </div>
 
+          <div className={`${styles.filterGroup} ${styles.operationSearch}`}>
+            <label htmlFor="filtre-numero-sortie">N° sortie / retour</label>
+            <input
+              id="filtre-numero-sortie"
+              type="search"
+              value={filterNumero}
+              onChange={(e) => setFilterNumero(e.target.value)}
+              placeholder="Ex. PAY-ADM-2026-00239"
+              title="N° de sortie (PAY-…), n° de retour ou référence (chèque, virement). Cherche sur toutes les dates."
+              aria-describedby="filtre-numero-aide"
+            />
+            {numeroTropCourt && <small id="filtre-numero-aide" className={styles.filterHint}>Saisissez au moins 3 caractères</small>}
+            {numeroRecherche && <small id="filtre-numero-aide" className={styles.filterScope}>Recherche dans toutes les périodes</small>}
+          </div>
+
           <div className={styles.filterGroup}>
             <label>N° Réquisition</label>
             <input
@@ -2536,6 +2593,8 @@ export default function SortiesFonds() {
               type="date"
               value={pendingDateDebut}
               onChange={(e) => setPendingDateDebut(e.target.value)}
+              disabled={Boolean(numeroRecherche)}
+              title={numeroRecherche ? 'Les dates sont ignorées pendant une recherche par numéro.' : undefined}
             />
           </div>
 
@@ -2545,6 +2604,8 @@ export default function SortiesFonds() {
               type="date"
               value={pendingDateFin}
               onChange={(e) => setPendingDateFin(e.target.value)}
+              disabled={Boolean(numeroRecherche)}
+              title={numeroRecherche ? 'Les dates sont ignorées pendant une recherche par numéro.' : undefined}
             />
           </div>
         </div>
@@ -2562,7 +2623,7 @@ export default function SortiesFonds() {
             type="button"
             onClick={applyDateFilters}
             className={styles.applyBtn}
-            disabled={!hasPendingDateFilters}
+            disabled={!hasPendingDateFilters || Boolean(numeroRecherche)}
           >
             Appliquer la période
           </button>
@@ -3112,6 +3173,14 @@ export default function SortiesFonds() {
                   value={projetActiviteId}
                   onChange={setProjetActiviteId}
                   className={styles.field}
+                  label={selectedOrdre ? (projetHeriteDeLOrdre ? 'Projet programmé' : 'Projet retenu au paiement') : undefined}
+                  hint={
+                    selectedOrdre
+                      ? projetHeriteDeLOrdre
+                        ? "Repris de l'ordre programmé ; vous pouvez le corriger avant le paiement."
+                        : "Choix du caissier, différent de la programmation d'origine."
+                      : undefined
+                  }
                 />
               )}
 
@@ -3855,7 +3924,9 @@ export default function SortiesFonds() {
             {filteredSorties.length === 0 && retoursSansSortie.length === 0 ? (
               <tr>
                 <td colSpan={9} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
-                  {dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
+                  {numeroRecherche
+                    ? `Aucune sortie ni retour ne porte le numéro « ${numeroRecherche} »`
+                    : dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
                 </td>
               </tr>
             ) : (
@@ -4087,7 +4158,9 @@ export default function SortiesFonds() {
         ))}
         {filteredSorties.length === 0 ? (
           <div className={styles.emptyCards}>
-            {dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
+            {numeroRecherche
+                    ? `Aucune sortie ni retour ne porte le numéro « ${numeroRecherche} »`
+                    : dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
           </div>
         ) : (
           filteredSorties.map((sortie) => {

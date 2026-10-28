@@ -16,6 +16,8 @@ class EncaissementTarifBase(DecimalBaseModel):
     devise: Literal["USD", "CDF"] = "USD"
     #: Code du poste de recette ; vide = imputation libre.
     budget_poste_code: str | None = Field(default=None, max_length=50)
+    #: Projet proposé à l'encaissement ; vide = aucun.
+    project_activity_id: int | None = None
     is_active: bool = True
     position: int = 0
 
@@ -29,6 +31,7 @@ class EncaissementTarifUpdate(DecimalBaseModel):
     montant: Decimal | None = Field(default=None, gt=0)
     devise: Literal["USD", "CDF"] | None = None
     budget_poste_code: str | None = Field(default=None, max_length=50)
+    project_activity_id: int | None = None
     is_active: bool | None = None
     position: int | None = None
 

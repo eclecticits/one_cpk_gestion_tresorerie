@@ -42,6 +42,8 @@ class OrdreDecaissementCreate(DecimalBaseModel):
     # Répartition de la tranche par poste budgétaire. Chaque entrée :
     # {budget_poste_id, montant (ou montant_total), libelle?}. Somme = montant.
     lignes: list[dict[str, Any]] | None = None
+    # Projet ou activité financé (facultatif, sorties directes seulement).
+    project_activity_id: int | None = None
     # Volet de règlement de la tranche. Absent, l'ordre hérite du mode de la
     # réquisition — comportement historique. Le canal est toujours déduit du
     # mode, jamais reçu du client.
@@ -83,6 +85,7 @@ class OrdreDecaissementOut(DecimalBaseModel):
     montant_par_personne: Decimal | None = None
     service_id: int | None = None
     lignes: list[dict[str, Any]] | None = None
+    project_activity_id: int | None = None
     mode_paiement: str | None = None
     canal: str | None = None
     compte_bancaire_id: int | None = None

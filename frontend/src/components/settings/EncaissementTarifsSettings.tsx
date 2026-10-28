@@ -8,6 +8,7 @@ import {
   type EncaissementTarif,
 } from '../../api/encaissementTarifs'
 import { getBudgetPostes } from '../../api/budget'
+import { listProjetsActivites, type ProjetActivite } from '../../api/projetsActivites'
 import { useConfirm } from '../../contexts/ConfirmContext'
 import { useNotification } from '../../contexts/NotificationContext'
 import styles from './EncaissementTarifsSettings.module.css'
@@ -19,6 +20,8 @@ interface Ligne {
   montant: string
   devise: 'USD' | 'CDF'
   budget_poste_code: string
+  /** Projet proposé à l'encaissement ; vide = aucun. */
+  project_activity_id: string
   is_active: boolean
   /** Poste auquel le code se résout aujourd'hui ; vide = code introuvable. */
   poste_resolu: string | null
@@ -39,6 +42,7 @@ const versLigne = (tarif: EncaissementTarif): Ligne => ({
   montant: tarif.montant === null || tarif.montant === undefined ? '' : String(tarif.montant),
   devise: tarif.devise || 'USD',
   budget_poste_code: tarif.budget_poste_code || '',
+  project_activity_id: tarif.project_activity_id ? String(tarif.project_activity_id) : '',
   is_active: tarif.is_active,
   poste_resolu: tarif.budget_poste_id ? tarif.budget_poste_libelle : null,
   utilisations: tarif.utilisations || 0,
@@ -49,6 +53,7 @@ const ligneVide = (): Ligne => ({
   montant: '',
   devise: 'USD',
   budget_poste_code: '',
+  project_activity_id: '',
   is_active: true,
   poste_resolu: null,
   utilisations: 0,
@@ -59,7 +64,15 @@ const ligneVide = (): Ligne => ({
  *  plutôt que de laisser quitter la page sans un mot. */
 const empreinte = (lignes: Ligne[]) =>
   JSON.stringify(
-    lignes.map((l) => [l.id ?? 0, l.libelle.trim(), l.montant.trim(), l.devise, l.budget_poste_code, l.is_active]),
+    lignes.map((l) => [
+      l.id ?? 0,
+      l.libelle.trim(),
+      l.montant.trim(),
+      l.devise,
+      l.budget_poste_code,
+      l.project_activity_id,
+      l.is_active,
+    ]),
   )
 
 const pluriel = (nombre: number, singulier: string, pluriel_: string) => (nombre > 1 ? pluriel_ : singulier)
@@ -74,6 +87,9 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
   const [lignes, setLignes] = useState<Ligne[]>([])
   const [initiales, setInitiales] = useState<EncaissementTarif[]>([])
   const [postes, setPostes] = useState<PosteOption[]>([])
+  // Tous les projets, actifs ou non : un libellé relié à un projet désactivé
+  // doit encore pouvoir le nommer, et l'écran le signaler.
+  const [projets, setProjets] = useState<ProjetActivite[]>([])
   // Les versions closes ne s'éditent pas : elles se relisent. Les tenir hors
   // des lignes éditables évite qu'un enregistrement ne tente de les réécrire.
   const [closes, setCloses] = useState<EncaissementTarif[]>([])
@@ -85,13 +101,15 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
   const charger = useCallback(async () => {
     setChargement(true)
     try {
-      const [tarifs, budget, histoire] = await Promise.all([
+      const [tarifs, budget, histoire, listeProjets] = await Promise.all([
         listEncaissementTarifs(),
         // Les postes de recette de l'exercice courant : un encaissement
         // alimente une recette, jamais une dépense.
         getBudgetPostes({ type: 'RECETTE', active: true }).catch(() => ({ postes: [] as any[] })),
         listEncaissementTarifs(undefined, true).catch(() => [] as EncaissementTarif[]),
+        listProjetsActivites().catch(() => [] as ProjetActivite[]),
       ])
+      setProjets(listeProjets)
       setInitiales(tarifs)
       setLignes(tarifs.map(versLigne))
       setCloses(histoire.filter((t) => t.effet_au !== null))
@@ -137,6 +155,14 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
       !!ligne.budget_poste_code &&
       !postes.some((p) => p.code.toUpperCase() === ligne.budget_poste_code.toUpperCase()),
     [postes],
+  )
+
+  const projetsParId = useMemo(() => new Map(projets.map((p) => [String(p.id), p])), [projets])
+  const projetsActifs = useMemo(() => projets.filter((p) => p.is_active), [projets])
+  /** Relié à un projet désactivé : il ne sera plus proposé à la caisse. */
+  const projetInactif = useCallback(
+    (ligne: Ligne) => !!ligne.project_activity_id && projetsParId.get(ligne.project_activity_id)?.is_active === false,
+    [projetsParId],
   )
 
   const parId = useMemo(() => new Map(initiales.map((t) => [t.id, t])), [initiales])
@@ -189,6 +215,7 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
   }
 
   const alertes = useMemo(() => lignes.filter(codeInconnu).length, [lignes, codeInconnu])
+  const projetsInactifs = useMemo(() => lignes.filter(projetInactif).length, [lignes, projetInactif])
 
   const compte = useMemo(
     () => ({
@@ -196,6 +223,7 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
       actifs: lignes.filter((l) => l.is_active).length,
       prixFixe: lignes.filter((l) => l.montant.trim() !== '').length,
       imputes: lignes.filter((l) => l.budget_poste_code.trim() !== '').length,
+      relies: lignes.filter((l) => l.project_activity_id !== '').length,
     }),
     [lignes],
   )
@@ -217,9 +245,13 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
             ? true
             : ligne.libelle.toLowerCase().includes(filtre) ||
               ligne.budget_poste_code.toLowerCase().includes(filtre) ||
-              (ligne.poste_resolu || '').toLowerCase().includes(filtre),
+              (ligne.poste_resolu || '').toLowerCase().includes(filtre) ||
+              (() => {
+                const projet = projetsParId.get(ligne.project_activity_id)
+                return !!projet && `${projet.code} ${projet.libelle}`.toLowerCase().includes(filtre)
+              })(),
         ),
-    [lignes, filtre],
+    [lignes, filtre, projetsParId],
   )
 
   const enregistrer = async () => {
@@ -250,6 +282,7 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
           montant: ligne.montant.trim() === '' ? null : Number(ligne.montant),
           devise: ligne.devise,
           budget_poste_code: ligne.budget_poste_code.trim() || null,
+          project_activity_id: ligne.project_activity_id ? Number(ligne.project_activity_id) : null,
           is_active: ligne.is_active,
           position: index,
         }
@@ -280,6 +313,12 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
         Un libellé peut porter un <strong>montant</strong>, un <strong>poste budgétaire</strong>, ou les
         deux. Ce qui est défini ici s'impose à l'encaissement ; ce qui reste vide demeure libre à la
         saisie. Le montant est un <strong>prix unitaire</strong> : la quantité reste toujours modifiable.
+        {projets.length > 0 && (
+          <>
+            {' '}Le <strong>projet / activité</strong>, lui, est seulement <em>proposé</em> : la caisse le
+            trouve déjà choisi et peut le changer.
+          </>
+        )}
       </p>
 
       {alertes > 0 && (
@@ -287,6 +326,13 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
           {alertes === 1 ? 'Un code de poste ne correspond' : `${alertes} codes de poste ne correspondent`} à
           aucune recette de l'exercice en cours. Ces tarifs n'imputeront rien tant que le code reste
           introuvable.
+        </div>
+      )}
+
+      {projetsInactifs > 0 && (
+        <div className={styles.alerte}>
+          {projetsInactifs === 1 ? 'Un libellé est relié' : `${projetsInactifs} libellés sont reliés`} à un projet
+          désactivé : il ne sera plus proposé à la caisse.
         </div>
       )}
 
@@ -298,6 +344,7 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
           <span className={styles.compteurDetail}>
             {compte.actifs} {pluriel(compte.actifs, 'actif', 'actifs')} · {compte.prixFixe} à prix fixé ·{' '}
             {compte.imputes} {pluriel(compte.imputes, 'imputé', 'imputés')}
+            {projets.length > 0 && <> · {compte.relies} {pluriel(compte.relies, 'relié', 'reliés')} à un projet</>}
           </span>
         </div>
         <div className={styles.outils}>
@@ -319,7 +366,7 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
               className={styles.recherche}
               value={recherche}
               onChange={(e) => setRecherche(e.target.value)}
-              placeholder="Filtrer par libellé ou poste"
+              placeholder={projets.length > 0 ? 'Filtrer par libellé, poste ou projet' : 'Filtrer par libellé ou poste'}
             />
           </div>
         </div>
@@ -333,7 +380,7 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
               <th className={styles.colLibelle}>Libellé</th>
               <th className={styles.colMontant}>Montant unitaire</th>
               <th className={styles.colDevise}>Devise</th>
-              <th className={styles.colPoste}>Poste budgétaire (recette)</th>
+              <th className={styles.colPoste}>Affectation proposée</th>
               <th className={styles.colActif}>Actif</th>
               <th className={styles.colActions}>Ordre</th>
             </tr>
@@ -398,25 +445,54 @@ export default function EncaissementTarifsSettings({ canEdit }: Props) {
                     <option value="CDF">CDF</option>
                   </select>
                 </td>
-                <td>
-                  <select
-                    value={ligne.budget_poste_code}
-                    onChange={(e) => modifier(index, 'budget_poste_code', e.target.value)}
-                    disabled={!canEdit}
-                    className={codeInconnu(ligne) ? styles.champAlerte : ''}
-                  >
-                    <option value="">Libre (choisi à la saisie)</option>
-                    {codeInconnu(ligne) && (
-                      <option value={ligne.budget_poste_code}>
-                        {ligne.budget_poste_code} — introuvable dans cet exercice
-                      </option>
+                <td className={styles.colPoste}>
+                  <div className={`${styles.affectationGrid} ${projets.length === 0 ? styles.affectationUnique : ''}`}>
+                    <label className={styles.affectationChamp}>
+                      <span>Poste de recette</span>
+                      <select
+                        value={ligne.budget_poste_code}
+                        onChange={(e) => modifier(index, 'budget_poste_code', e.target.value)}
+                        disabled={!canEdit}
+                        className={codeInconnu(ligne) ? styles.champAlerte : ''}
+                      >
+                        <option value="">Libre à la saisie</option>
+                        {codeInconnu(ligne) && (
+                          <option value={ligne.budget_poste_code}>
+                            {ligne.budget_poste_code} — introuvable dans cet exercice
+                          </option>
+                        )}
+                        {postes.map((poste) => (
+                          <option key={poste.code} value={poste.code}>
+                            {poste.code} - {poste.libelle}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {projets.length > 0 && (
+                    <label className={styles.affectationChamp}>
+                      <span>Projet / activité</span>
+                    <select
+                      value={ligne.project_activity_id}
+                      onChange={(e) => modifier(index, 'project_activity_id', e.target.value)}
+                      disabled={!canEdit}
+                      className={projetInactif(ligne) ? styles.champAlerte : ''}
+                      title="Proposé à l'encaissement ; la caisse peut le changer"
+                    >
+                      <option value="">Aucun projet</option>
+                      {projetInactif(ligne) && (
+                        <option value={ligne.project_activity_id}>
+                          {projetsParId.get(ligne.project_activity_id)?.code} — désactivé
+                        </option>
+                      )}
+                      {projetsActifs.map((projet) => (
+                        <option key={projet.id} value={String(projet.id)}>
+                          {projet.code} - {projet.libelle}
+                        </option>
+                      ))}
+                    </select>
+                    </label>
                     )}
-                    {postes.map((poste) => (
-                      <option key={poste.code} value={poste.code}>
-                        {poste.code} - {poste.libelle}
-                      </option>
-                    ))}
-                  </select>
+                  </div>
                 </td>
                 <td className={styles.colActif}>
                   <input

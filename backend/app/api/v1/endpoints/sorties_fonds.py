@@ -72,7 +72,7 @@ from app.services.document_sequences import generate_document_number
 from app.services.tranches_decaissement import TrancheDecaissement, tranches_par_sortie
 from app.services import beneficiaires as beneficiaires_service
 from app.services import justificatifs
-from app.services import transferts_delegues
+from app.services import recherche_numero, transferts_delegues
 from app.services.transferts_internes_service import (
     contrepasser_transfer,
     create_transfer,
@@ -646,6 +646,9 @@ async def list_sorties_fonds(
     requisition_id: str | None = Query(default=None),
     requisition_numero: str | None = Query(default=None),
     reference: str | None = Query(default=None),
+    numero: str | None = Query(
+        default=None, description="N° de sortie ou de retour (ex. PAY-ADM-2026-00239), ou référence externe"
+    ),
     nature_mouvement: str | None = Query(default=None, description="Ex: HORS_BUDGET_A_REGULARISER"),
     order: str | None = Query(default=None, description="Ex: date_paiement.desc"),
     limit: int = Query(default=100, ge=1, le=5000),
@@ -714,6 +717,11 @@ async def list_sorties_fonds(
         conditions.append((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
     if reference:
         conditions.append(SortieFonds.reference.ilike(f"%{reference}%"))
+    # N° de la sortie, ou d'un de ses retours. `motif` ignore l'objet `Query`
+    # reçu par défaut quand la fonction est appelée en direct (tests).
+    motif_numero = recherche_numero.motif(numero)
+    if motif_numero:
+        conditions.append(recherche_numero.condition_sortie(motif_numero))
     # Appelée en direct (tests), la fonction reçoit l'objet `Query` par défaut.
     if isinstance(nature_mouvement, str) and nature_mouvement.strip():
         conditions.append(SortieFonds.nature_mouvement == nature_mouvement.strip().upper())
@@ -747,6 +755,7 @@ async def list_sorties_fonds(
         compte_bancaire_id=compte_bancaire_id,
         statut=statut,
         reference=reference,
+        numero=numero if motif_numero else None,
         filtre_requisition=bool(requisition_id or requisition_numero),
         restreint_aux_services=restreint_aux_services,
     )
@@ -949,6 +958,9 @@ async def list_sorties_fonds(
             r_conditions.append(RetourCaisse.canal == canal.upper())
         if compte_bancaire_id:
             r_conditions.append(RetourCaisse.compte_bancaire_id == compte_bancaire_id)
+        # Le total des retours suit la recherche par numéro, comme la liste.
+        if motif_numero:
+            r_conditions.append(recherche_numero.condition_retour(motif_numero))
         r_query = select(func.coalesce(func.sum(RetourCaisse.montant), 0)).where(*r_conditions)
         total_retours_caisse = Decimal(
             (await db.execute(r_query)).scalar_one() or 0
@@ -1479,6 +1491,26 @@ async def _deleguer_transfert_interne(
     if projection is None:  # pragma: no cover - la ligne vient d'être écrite
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transfert introuvable après écriture")
     return projection
+
+
+async def _projet_sortie_directe(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    ordre: OrdreDecaissement | None,
+    project_activity_id: int | None,
+) -> int | None:
+    """Résout le projet payé sans invalider une programmation historique.
+
+    Un projet peut être désactivé entre l'autorisation de l'ordre et son
+    paiement. Sa reprise à l'identique reste alors légitime ; seul un nouveau
+    choix doit encore désigner un projet actif de l'organisation.
+    """
+    if ordre is not None and project_activity_id == ordre.project_activity_id:
+        return ordre.project_activity_id
+    if project_activity_id is None:
+        return ordre.project_activity_id if ordre is not None else None
+    return await resoudre_projet_activite(db, project_activity_id, tenant_id)
 
 
 @router.post("", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
@@ -2449,11 +2481,17 @@ async def create_sortie_fonds(
         # Programmeur (demandeur) : repris de l'ordre pour les sorties directes.
         programme_par_id=(ordre.autorise_par if ordre is not None else None),
         # Projet facultatif, propre aux sorties directes : une sortie qui paie
-        # une réquisition suit le projet de la réquisition.
+        # une réquisition suit le projet de la réquisition. Sans choix à la
+        # caisse, celle qui paie un ordre direct reprend le projet programmé.
         project_activity_id=(
-            await resoudre_projet_activite(db, payload.project_activity_id, tenant_id)
-            if requisition_uid is None
-            else None
+            None
+            if requisition_uid is not None
+            else await _projet_sortie_directe(
+                db,
+                tenant_id=tenant_id,
+                ordre=ordre,
+                project_activity_id=payload.project_activity_id,
+            )
         ),
     )
     if source_identifiee is not None:

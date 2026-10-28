@@ -4,7 +4,8 @@ import os
 import re
 import uuid
 import logging
-from datetime import datetime, timezone
+import hashlib
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -43,6 +44,7 @@ from app.schemas.remboursement_transport import (
 )
 from app.schemas.requisition import RequisitionAnnexeOut
 from app.services.convocation_reunion import envoyer_convocations, reunion_depuis_brouillon
+from app.services.audit_service import log_action
 from app.services.document_sequences import generate_document_number
 from app.services.email_config import resolve_smtp_config
 from app.services.mailer import send_in_thread
@@ -131,6 +133,12 @@ def _annexe_payload(annexe: RequisitionAnnexe) -> dict[str, Any]:
         "file_type": annexe.file_type,
         "file_size": annexe.file_size,
         "upload_date": annexe.upload_date,
+        "document_kind": annexe.document_kind,
+        "document_version": annexe.document_version,
+        "supersedes_id": annexe.supersedes_id,
+        "uploaded_by": annexe.uploaded_by,
+        "document_source": annexe.document_source,
+        "content_sha256": annexe.content_sha256,
     }
 
 
@@ -187,6 +195,9 @@ def _requisition_payload(req: Requisition, users_map: dict[uuid.UUID, User], ann
 async def list_remboursements_transport(
     include: str | None = Query(default=None),
     requisition_id: str | None = Query(default=None),
+    service_id: int | None = None,
+    date_debut: date | None = None,
+    date_fin: date | None = None,
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(
@@ -211,7 +222,7 @@ async def list_remboursements_transport(
             Requisition.organisation_id == tenant_id,
             Requisition.is_deleted.is_(False),
         )
-        .order_by(RemboursementTransport.created_at.desc())
+        .order_by(RemboursementTransport.created_at.desc(), RemboursementTransport.id.desc())
         .offset(offset)
         .limit(limit)
     )
@@ -221,6 +232,18 @@ async def list_remboursements_transport(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
         query = query.where(RemboursementTransport.requisition_id == rid)
+    if service_id is not None:
+        query = query.where(Requisition.service_id == service_id)
+    if date_debut is not None:
+        query = query.where(
+            RemboursementTransport.date_reunion
+            >= datetime.combine(date_debut, time.min, tzinfo=timezone.utc)
+        )
+    if date_fin is not None:
+        query = query.where(
+            RemboursementTransport.date_reunion
+            <= datetime.combine(date_fin, time.max, tzinfo=timezone.utc)
+        )
     if not await can_view_all_services(db, user):
         service_ids = await get_user_service_ids(db, user)
         if not service_ids:
@@ -722,6 +745,7 @@ async def reorder_participants_transport(
 # ----------------------------------------------------------------------
 
 BROUILLON_PERMISSIONS = ["remboursement_transport", "menu_services"]
+PIECE_WRITE_PERMISSIONS = ["remboursement_transport"]
 BROUILLON_SERVER_KEYS = frozenset({"convocation", "pieces"})
 
 
@@ -1117,7 +1141,40 @@ async def deposer_piece_reunion(
 ) -> RemboursementTransportBrouillonResponse:
     kind = _piece_kind(kind)
     brouillon = await _get_brouillon(db, user, tenant_id, brouillon_id)
+    dest_path, nouvelle_piece = await _enregistrer_fichier_piece(file, kind, tenant_uuid, user)
 
+    contenu = dict(brouillon.contenu or {})
+    pieces = dict(contenu.get("pieces") or {})
+    ancienne_piece = pieces.get(kind)
+    pieces[kind] = nouvelle_piece
+    contenu["pieces"] = pieces
+    brouillon.contenu = contenu
+    brouillon.updated_by = user.id
+    brouillon.updated_at = datetime.now(timezone.utc)
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        _retirer_fichier_orphelin(dest_path)
+        raise
+    # En cas d'échec de la base, l'ancienne pièce reste donc intacte. Après le
+    # commit seulement, elle peut être retirée sans casser les métadonnées.
+    _supprimer_fichier_piece(ancienne_piece if isinstance(ancienne_piece, dict) else None)
+    await db.refresh(brouillon)
+    return (await _brouillon_responses(db, [brouillon]))[0]
+
+
+def _retirer_fichier_orphelin(dest_path: str) -> None:
+    try:
+        os.remove(dest_path)
+    except OSError:
+        logger.warning("Nouvelle pièce de réunion non nettoyée après échec : %s", dest_path)
+
+
+async def _enregistrer_fichier_piece(
+    file: UploadFile, kind: str, tenant_uuid: str, user: User
+) -> tuple[str, dict[str, Any]]:
+    """Contrôle et écrit sur disque une pièce de réunion ; renvoie le chemin et ses métadonnées."""
     content_type = (file.content_type or "").lower()
     ext = PIECE_ALLOWED_TYPES.get(content_type)
     if ext is None:
@@ -1142,35 +1199,16 @@ async def deposer_piece_reunion(
     with open(dest_path, "wb") as handle:
         handle.write(contents)
 
-    contenu = dict(brouillon.contenu or {})
-    pieces = dict(contenu.get("pieces") or {})
-    ancienne_piece = pieces.get(kind)
-    pieces[kind] = {
+    return dest_path, {
         "file_path": f"/uploads/{rel_dir}/{stored}",
         "filename": file.filename or f"{PIECES_REUNION[kind]}{ext}",
         "file_type": content_type,
         "file_size": len(contents),
         "deposee_le": now.isoformat(),
         "deposee_par": _user_label(user),
+        "deposee_par_id": str(user.id),
+        "content_sha256": hashlib.sha256(contents).hexdigest(),
     }
-    contenu["pieces"] = pieces
-    brouillon.contenu = contenu
-    brouillon.updated_by = user.id
-    brouillon.updated_at = now
-    try:
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        try:
-            os.remove(dest_path)
-        except OSError:
-            logger.warning("Nouvelle pièce de réunion non nettoyée après échec : %s", dest_path)
-        raise
-    # En cas d'échec de la base, l'ancienne pièce reste donc intacte. Après le
-    # commit seulement, elle peut être retirée sans casser les métadonnées.
-    _supprimer_fichier_piece(ancienne_piece if isinstance(ancienne_piece, dict) else None)
-    await db.refresh(brouillon)
-    return (await _brouillon_responses(db, [brouillon]))[0]
 
 
 @router.get("/brouillons/{brouillon_id}/pieces/{kind}")
@@ -1275,6 +1313,9 @@ async def annexer_pieces_reunion(
             )
         )
         existantes = set(result.scalars().all())
+    # Même verrou que le dépôt direct : les versions se numérotent sans collision.
+    await db.execute(select(Requisition.id).where(Requisition.id == req.id).with_for_update())
+    courantes = await _pieces_remboursement(db, req.id)
     creees: list[RequisitionAnnexe] = []
     for kind in PIECES_REUNION:
         piece = pieces.get(kind)
@@ -1283,6 +1324,11 @@ async def annexer_pieces_reunion(
         if piece.get("annexee") == str(req.id) or piece.get("file_path") in existantes:
             piece["annexee"] = str(req.id)
             continue
+        precedente = courantes.get(kind) or {}
+        try:
+            uploaded_by = uuid.UUID(str(piece.get("deposee_par_id")))
+        except (TypeError, ValueError, AttributeError):
+            uploaded_by = user.id
         annexe = RequisitionAnnexe(
             organisation_id=tenant_id,
             requisition_id=req.id,
@@ -1292,13 +1338,215 @@ async def annexer_pieces_reunion(
             file_type=piece.get("file_type") or "application/pdf",
             file_size=int(piece.get("file_size") or 0),
             upload_date=datetime.now(timezone.utc),
+            document_kind=kind,
+            document_version=int(precedente.get("version") or 0) + 1,
+            supersedes_id=(uuid.UUID(precedente["annexe_id"]) if precedente.get("annexe_id") else None),
+            uploaded_by=uploaded_by,
+            document_source="BROUILLON_REUNION",
+            content_sha256=piece.get("content_sha256"),
         )
         db.add(annexe)
         creees.append(annexe)
         piece["annexee"] = str(req.id)
     contenu["pieces"] = pieces
     brouillon.contenu = contenu
+    await db.flush()
+    for annexe in creees:
+        await log_action(
+            db,
+            user_id=user.id,
+            action="REMBOURSEMENT_PIECE_ANNEXEE",
+            target_table="requisition_annexes",
+            target_id=str(annexe.id),
+            new_value={
+                "requisition_id": str(req.id),
+                "document_kind": annexe.document_kind,
+                "version": annexe.document_version,
+                "source": annexe.document_source,
+                "sha256": annexe.content_sha256,
+            },
+        )
     await db.commit()
     for a in creees:
         await db.refresh(a)
     return [RequisitionAnnexeOut.model_validate(_annexe_payload(a)) for a in creees]
+
+
+# ----------------------------------------------------------------------
+# Pièces d'une réunion déjà passée en remboursement : la liste de présence ou
+# le PV arrivent parfois après coup, une fois le remboursement créé, voire
+# payé. Ils se joignent alors directement à la réquisition, quel que soit son
+# statut. Une pièce remplacée n'est pas effacée : l'annexe précédente reste au
+# dossier, la plus récente fait foi.
+# ----------------------------------------------------------------------
+
+
+async def _get_remboursement_requisition(
+    db: AsyncSession, user: User, tenant_id: int, remboursement_id: str
+) -> tuple[RemboursementTransport, Requisition]:
+    rid = _coerce_uuid(remboursement_id, "remboursement_id")
+    row = (
+        await db.execute(
+            select(RemboursementTransport, Requisition)
+            .join(Requisition, Requisition.id == RemboursementTransport.requisition_id)
+            .where(
+                RemboursementTransport.id == rid,
+                RemboursementTransport.organisation_id == tenant_id,
+                Requisition.organisation_id == tenant_id,
+                Requisition.is_deleted.is_(False),
+            )
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remboursement introuvable")
+    remboursement, requisition = row
+    if requisition.service_id is not None:
+        await _ensure_service_access(db, user, tenant_id, requisition.service_id)
+    elif not await can_view_all_services(db, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
+    return remboursement, requisition
+
+
+def _kind_annexe(annexe: RequisitionAnnexe) -> str | None:
+    if annexe.document_kind in PIECES_REUNION:
+        return annexe.document_kind
+    # Compatibilité avec les annexes créées avant le versionnement structuré.
+    for kind, libelle in PIECES_REUNION.items():
+        if (annexe.filename or "").startswith(libelle):
+            return kind
+    return None
+
+
+async def _pieces_remboursement(db: AsyncSession, requisition_id: uuid.UUID) -> dict[str, dict[str, Any] | None]:
+    annexes = (
+        await db.execute(
+            select(RequisitionAnnexe)
+            .where(RequisitionAnnexe.requisition_id == requisition_id)
+            .order_by(
+                RequisitionAnnexe.upload_date.desc(),
+                RequisitionAnnexe.document_version.desc().nullslast(),
+                RequisitionAnnexe.id.desc(),
+            )
+        )
+    ).scalars().all()
+    uploader_ids = {annexe.uploaded_by for annexe in annexes if annexe.uploaded_by}
+    users_map: dict[uuid.UUID, User] = {}
+    if uploader_ids:
+        users = (await db.execute(select(User).where(User.id.in_(uploader_ids)))).scalars().all()
+        users_map = {item.id: item for item in users}
+    pieces: dict[str, dict[str, Any] | None] = {kind: None for kind in PIECES_REUNION}
+    for annexe in annexes:
+        kind = _kind_annexe(annexe)
+        if kind is None or pieces[kind] is not None:
+            continue
+        pieces[kind] = {
+            "annexe_id": str(annexe.id),
+            "file_path": annexe.file_path,
+            "filename": annexe.filename,
+            "file_type": annexe.file_type,
+            "file_size": annexe.file_size,
+            "deposee_le": annexe.upload_date.isoformat() if annexe.upload_date else None,
+            "deposee_par": _user_label(users_map.get(annexe.uploaded_by)) if annexe.uploaded_by else None,
+            "version": annexe.document_version,
+            "supersedes_id": str(annexe.supersedes_id) if annexe.supersedes_id else None,
+            "source": annexe.document_source,
+            "content_sha256": annexe.content_sha256,
+        }
+    return pieces
+
+
+@router.get("/{remboursement_id}/pieces")
+async def list_pieces_remboursement(
+    remboursement_id: str,
+    user: User = Depends(has_any_permission(BROUILLON_PERMISSIONS)),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, dict[str, Any] | None]:
+    _, requisition = await _get_remboursement_requisition(db, user, tenant_id, remboursement_id)
+    return await _pieces_remboursement(db, requisition.id)
+
+
+@router.post("/{remboursement_id}/pieces/{kind}")
+async def deposer_piece_remboursement(
+    remboursement_id: str,
+    kind: str,
+    file: UploadFile = File(...),
+    user: User = Depends(has_any_permission(PIECE_WRITE_PERMISSIONS)),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, dict[str, Any] | None]:
+    kind = _piece_kind(kind)
+    _, requisition = await _get_remboursement_requisition(db, user, tenant_id, remboursement_id)
+    # Sérialise deux remplacements simultanés pour garantir une version unique
+    # et une chaîne `supersedes_id` sans embranchement.
+    await db.execute(
+        select(Requisition.id).where(Requisition.id == requisition.id).with_for_update()
+    )
+    precedente = (await _pieces_remboursement(db, requisition.id)).get(kind) or {}
+    dest_path, piece = await _enregistrer_fichier_piece(file, kind, tenant_uuid, user)
+    annexe = RequisitionAnnexe(
+        organisation_id=tenant_id,
+        requisition_id=requisition.id,
+        file_path=piece["file_path"],
+        filename=f"{PIECES_REUNION[kind]}{os.path.splitext(piece['file_path'])[1]}",
+        file_type=piece["file_type"],
+        file_size=piece["file_size"],
+        upload_date=datetime.now(timezone.utc),
+        document_kind=kind,
+        document_version=int(precedente.get("version") or 0) + 1,
+        supersedes_id=(uuid.UUID(precedente["annexe_id"]) if precedente.get("annexe_id") else None),
+        uploaded_by=user.id,
+        document_source="REMBOURSEMENT_POSTERIEUR",
+        content_sha256=piece["content_sha256"],
+    )
+    db.add(annexe)
+    try:
+        await db.flush()
+        await log_action(
+            db,
+            user_id=user.id,
+            action="REMBOURSEMENT_PIECE_VERSION_AJOUTEE",
+            target_table="requisition_annexes",
+            target_id=str(annexe.id),
+            old_value=(
+                {
+                    "annexe_id": precedente.get("annexe_id"),
+                    "version": precedente.get("version"),
+                    "sha256": precedente.get("content_sha256"),
+                }
+                if precedente
+                else None
+            ),
+            new_value={
+                "requisition_id": str(requisition.id),
+                "document_kind": kind,
+                "version": annexe.document_version,
+                "supersedes_id": str(annexe.supersedes_id) if annexe.supersedes_id else None,
+                "source": annexe.document_source,
+                "sha256": annexe.content_sha256,
+            },
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        _retirer_fichier_orphelin(dest_path)
+        raise
+    return await _pieces_remboursement(db, requisition.id)
+
+
+@router.get("/{remboursement_id}/pieces/{kind}")
+async def voir_piece_remboursement(
+    remboursement_id: str,
+    kind: str,
+    user: User = Depends(has_any_permission(BROUILLON_PERMISSIONS)),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    kind = _piece_kind(kind)
+    _, requisition = await _get_remboursement_requisition(db, user, tenant_id, remboursement_id)
+    piece = (await _pieces_remboursement(db, requisition.id)).get(kind)
+    path = _remboursement_pdf_fs_path((piece or {}).get("file_path"))
+    if not piece or not path or not os.path.exists(path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pièce introuvable")
+    return FileResponse(path, media_type=piece.get("file_type") or "application/octet-stream")

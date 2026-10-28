@@ -357,6 +357,11 @@
   min-height: 68px;
 }
 
+.fieldHint {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .currencyField select {
   font-weight: 700;
 }

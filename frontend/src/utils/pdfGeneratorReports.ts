@@ -497,9 +497,14 @@ export const generateSortiesReportPDF = async (
   const sortieEntries = list.map((s) => {
     const typeSortie = s?.type_sortie || 'requisition'
     const isReq = typeSortie === 'requisition'
-    const reference = isReq
-      ? s?.requisition?.numero_requisition || s?.reference_numero || s?.reference || '—'
-      : s?.reference_numero || s?.reference || '—'
+    // Le numéro de la sortie d'abord : c'est celui de la pièce, et celui qu'on
+    // cherche. La réquisition payée suit, sur la ligne d'en dessous.
+    const numeroSortie = s?.reference_numero || s?.reference || ''
+    const numeroRequisition = isReq ? s?.requisition?.numero_requisition || '' : ''
+    const reference =
+      [numeroSortie, numeroRequisition && numeroRequisition !== numeroSortie ? numeroRequisition : '']
+        .filter(Boolean)
+        .join('\n') || '—'
     const beneficiaire = s?.beneficiaire || (isReq ? s?.requisition?.objet : '') || '—'
     const objet = isReq ? s?.requisition?.objet || s?.motif || '—' : s?.motif || '—'
     // Une tranche se lit sous l'objet : sans elle, deux paiements du même

@@ -63,7 +63,7 @@ from app.models.requisition_status_history import RequisitionStatusHistory
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
-from app.services import transferts_delegues
+from app.services import recherche_numero, transferts_delegues
 from app.services.recherche_documents import condition_numero
 from app.models.retour_caisse import RetourCaisse
 from app.models.user import User
@@ -2824,6 +2824,7 @@ async def construire_classeur_sorties_fonds(
     statut: str | None = None,
     requisition_numero: str | None = None,
     reference: str | None = None,
+    numero: str | None = None,
     inclure_annulations: bool = False,
     seuil_bascule: int | None = None,
 ) -> tuple[Workbook, str]:
@@ -2898,6 +2899,10 @@ async def construire_classeur_sorties_fonds(
         query = query.where(SortieFonds.reference.ilike(f"%{reference}%"))
     if requisition_numero:
         query = query.where(Requisition.numero_requisition.ilike(f"%{requisition_numero}%"))
+    # Même recherche que l'écran : la sortie ou l'un de ses retours.
+    motif_numero = recherche_numero.motif(numero)
+    if motif_numero:
+        query = query.where(recherche_numero.condition_sortie(motif_numero))
 
     query = query.order_by(SortieFonds.created_at.desc())
 
@@ -2985,6 +2990,7 @@ async def construire_classeur_sorties_fonds(
                 mode_paiement=None,
                 statut=statut,
                 reference=reference,
+                numero=numero if motif_numero else None,
                 filtre_requisition=bool(requisition_numero),
             ),
         )
@@ -3007,6 +3013,8 @@ async def construire_classeur_sorties_fonds(
             r_query = r_query.where(RetourCaisse.date_retour <= end_dt)
         if requisition_numero:
             r_query = r_query.where(Requisition.numero_requisition.ilike(f"%{requisition_numero}%"))
+        if motif_numero:
+            r_query = r_query.where(recherche_numero.condition_retour(motif_numero))
         retours_rows = (await db.execute(r_query)).all()
 
     # Un versement groupé solde plusieurs fonds et ne porte donc aucun
@@ -3061,6 +3069,9 @@ async def construire_classeur_sorties_fonds(
         ws.title = "Sorties"
 
         headers = [
+            # Le numéro attribué à l'opération (PAY-…, n° de retour) : celui
+            # qu'on recherche à l'écran et qui figure sur la pièce.
+            "N° opération",
             "Type d'opération",
             "Source / Mode",
             "Banque source",
@@ -3153,7 +3164,8 @@ async def construire_classeur_sorties_fonds(
             # libellé écrit — jamais le remplacer (impression N&B, daltonisme).
             entries.append((
                 sortie.created_at,
-                _financial_source_columns("Sortie des fonds", sortie.canal, sortie.compte_bancaire)
+                [sortie.reference_numero or ""]
+                + _financial_source_columns("Sortie des fonds", sortie.canal, sortie.compte_bancaire)
                 + [
                     sortie.created_at.strftime("%d/%m/%Y") if sortie.created_at else "",
                     sortie.date_paiement.strftime("%d/%m/%Y") if sortie.date_paiement else "",
@@ -3191,7 +3203,8 @@ async def construire_classeur_sorties_fonds(
             totals_by_mode[mode_label] += montant
             entries.append((
                 ligne["created_at"],
-                _source_columns(
+                [ligne["reference"]]
+                + _source_columns(
                     "Sortie des fonds", ligne["canal"], ligne["banque_nom"], ligne["compte_numero"]
                 )
                 + [
@@ -3262,7 +3275,8 @@ async def construire_classeur_sorties_fonds(
                 objet_retour = f"{objet_retour} (sur sortie {origine})"
             entries.append((
                 retour.created_at,
-                _financial_source_columns("Sortie des fonds", retour.canal, retour.compte_bancaire)
+                [retour.reference_numero or ""]
+                + _financial_source_columns("Sortie des fonds", retour.canal, retour.compte_bancaire)
                 + [
                     retour.created_at.strftime("%d/%m/%Y") if retour.created_at else "",
                     retour.date_retour.strftime("%d/%m/%Y") if retour.date_retour else "",
@@ -3321,6 +3335,7 @@ async def construire_classeur_sorties_fonds(
             if transfert_rows
             else ""
         )
+        col_montant = headers.index("Montant payé (USD)") + 1
         _build_list_sheet(
             ws,
             title="SORTIES DE FONDS (retours en négatif ; total net)",
@@ -3330,8 +3345,9 @@ async def construire_classeur_sorties_fonds(
             ),
             headers=headers,
             data_rows=data_rows,
-            money_cols=(19,),
-            total_values={19: float(total_paye)},
+            # Position lue sur l'en-tête : ajouter une colonne ne la décale plus.
+            money_cols=(col_montant,),
+            total_values={col_montant: float(total_paye)},
             organisation=organisation,
             highlight_rows=transfert_rows,
             highlight_fill=transfert_fill,
@@ -3398,6 +3414,7 @@ async def export_sorties_fonds(
     statut: str | None = Query(default=None),
     requisition_numero: str | None = Query(default=None),
     reference: str | None = Query(default=None),
+    numero: str | None = Query(default=None, description="N° de sortie ou de retour, ou référence externe"),
     avec_annulations: Annotated[
         bool, Query(description="Faux : validées seules, sans les annulées")
     ] = True,
@@ -3420,6 +3437,7 @@ async def export_sorties_fonds(
             "statut": statut,
             "requisition_numero": requisition_numero,
             "reference": reference,
+            "numero": numero,
             "inclure_annulations": inclure_annulations,
     }
     try:
@@ -3433,6 +3451,7 @@ async def export_sorties_fonds(
             statut=statut,
             requisition_numero=requisition_numero,
             reference=reference,
+            numero=numero,
             inclure_annulations=inclure_annulations,
             seuil_bascule=_seuil_bascule("sorties-fonds"),
         )

@@ -326,6 +326,12 @@ class RequisitionAnnexeOut(DecimalBaseModel):
     file_type: str
     file_size: int
     upload_date: datetime
+    document_kind: str | None = None
+    document_version: int | None = None
+    supersedes_id: UUID | None = None
+    uploaded_by: UUID | None = None
+    document_source: str | None = None
+    content_sha256: str | None = None
 
 
 class LigneRequisitionCreate(DecimalBaseModel):

@@ -16,6 +16,7 @@ from app.services.encaissement_flux import (
     nature_versement,
     versements_numerotes,
 )
+from app.services import recherche_numero
 from app.services.report_cache import report_summary_cache_key
 from app.core.config import settings
 from app.db.session import get_db
@@ -1516,6 +1517,7 @@ async def retours(
     date_fin: str | None = None,
     canal: str | None = None,
     devise: str | None = None,
+    numero: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
@@ -1552,6 +1554,10 @@ async def retours(
         conditions.append(RetourCaisse.canal == canal_value)
     if devise_value:
         conditions.append(RetourCaisse.devise == devise_value)
+    # N° du retour, ou de la sortie qu'il corrige.
+    motif_numero = recherche_numero.motif(numero)
+    if motif_numero:
+        conditions.append(recherche_numero.condition_retour(motif_numero))
     if date_start:
         conditions.append(
             RetourCaisse.date_retour >= datetime.combine(date_start, datetime.min.time(), tzinfo=timezone.utc)

@@ -268,6 +268,8 @@ export interface OrdreDecaissement {
     montant_total?: number | string
     libelle?: string | null
   }> | null
+  /** Projet ou activité financé (facultatif), repris par la sortie au paiement. */
+  project_activity_id?: number | null
   /** Volet réglé par cet ordre : décision ferme, la caisse ne la rediscute pas. */
   mode_paiement?: ModePaiement | string | null
   canal?: 'CAISSE' | 'BANQUE' | string | null

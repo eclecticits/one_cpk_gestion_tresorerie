@@ -1,14 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { ArrowLeft, ArrowRight, Camera, Eye, FileUp, Trash2, X } from 'lucide-react'
-import {
-  deposerPieceReunion,
-  pieceReunionPath,
-  retirerPieceReunion,
-  type PieceReunion,
-  type PieceReunionKind,
-  type RemboursementTransportBrouillon,
-} from '../api/remboursementsTransport'
+import type { PieceReunion, PieceReunionKind } from '../api/remboursementsTransport'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { openAuthenticatedFile } from '../utils/download'
 import styles from './ReunionPieces.module.css'
@@ -29,20 +22,34 @@ const PIECES: { kind: PieceReunionKind; titre: string; aide: string; nomFichier:
 ]
 
 type Props = {
-  brouillonId: string | null
-  pieces: Partial<Record<PieceReunionKind, PieceReunion>>
-  // Crée le brouillon s'il n'existe pas encore : une pièce s'y rattache.
-  ensureBrouillon: () => Promise<string | null>
-  onDeposee: (brouillon: RemboursementTransportBrouillon) => void
+  pieces: Partial<Record<PieceReunionKind, Omit<PieceReunion, 'file_path'> | null>>
+  // Envoie le document assemblé là où il doit aller (brouillon ou réquisition
+  // d'un remboursement existant) ; false si le dépôt n'a pas pu avoir lieu.
+  onDeposer: (kind: PieceReunionKind, file: Blob, filename: string) => Promise<boolean>
+  // Chemin de consultation de la pièce déposée, s'il y en a un.
+  voirPath?: (kind: PieceReunionKind) => string | null
+  // Absent : une pièce déposée ne se retire pas, elle se remplace.
+  onRetirer?: (kind: PieceReunionKind) => Promise<void>
+  confirmationDepot?: string
   onMessage: (type: 'success' | 'error', message: string) => void
   disabled?: boolean
+  canUpload?: boolean
 }
 
 type PageEnAttente = { file: File; url: string }
 const MAX_PHOTO_PAGES = 20
 const MAX_PHOTO_SOURCE_BYTES = 60 * 1024 * 1024
 
-export default function ReunionPieces({ brouillonId, pieces, ensureBrouillon, onDeposee, onMessage, disabled }: Props) {
+export default function ReunionPieces({
+  pieces,
+  onDeposer,
+  voirPath,
+  onRetirer,
+  confirmationDepot = 'Elle sera jointe à la réquisition à la création du remboursement.',
+  onMessage,
+  disabled,
+  canUpload = true,
+}: Props) {
   // Photos prises une à une au téléphone : elles s'accumulent ici, dans
   // l'ordre des pages, avant d'être réunies en un seul PDF.
   const [attente, setAttente] = useState<Partial<Record<PieceReunionKind, PageEnAttente[]>>>({})
@@ -71,15 +78,9 @@ export default function ReunionPieces({ brouillonId, pieces, ensureBrouillon, on
     try {
       const { preparerScan } = await import('../utils/scanToPdf')
       const scan = await preparerScan(files, def.nomFichier)
-      const id = brouillonId || (await ensureBrouillon())
-      if (!id) return
-      const brouillon = await deposerPieceReunion(id, kind, scan.blob, scan.filename)
-      onDeposee(brouillon)
+      if (!(await onDeposer(kind, scan.blob, scan.filename))) return
       viderAttente(kind)
-      onMessage(
-        'success',
-        `${def.titre} déposée${scan.pages > 1 ? ` (${scan.pages} pages)` : ''}. Elle sera jointe à la réquisition à la création du remboursement.`,
-      )
+      onMessage('success', `${def.titre} déposée${scan.pages > 1 ? ` (${scan.pages} pages)` : ''}. ${confirmationDepot}`)
     } catch (error: any) {
       onMessage('error', error?.message || 'Dépôt impossible.')
     } finally {
@@ -133,7 +134,7 @@ export default function ReunionPieces({ brouillonId, pieces, ensureBrouillon, on
   }
 
   const retirer = async (kind: PieceReunionKind) => {
-    if (!brouillonId) return
+    if (!onRetirer) return
     const def = PIECES.find((piece) => piece.kind === kind)!
     const ok = await confirm({
       title: 'Retirer cette pièce ?',
@@ -144,7 +145,7 @@ export default function ReunionPieces({ brouillonId, pieces, ensureBrouillon, on
     if (!ok) return
     setEnCours(kind)
     try {
-      onDeposee(await retirerPieceReunion(brouillonId, kind))
+      await onRetirer(kind)
     } catch (error: any) {
       onMessage('error', error?.message || 'Retrait impossible.')
     } finally {
@@ -164,7 +165,9 @@ export default function ReunionPieces({ brouillonId, pieces, ensureBrouillon, on
             <div className={styles.head}>
               <h4 id={titreId}>{def.titre}</h4>
               {piece ? (
-                <span className={`${styles.badge} ${styles.badgeOk}`}>Déposée</span>
+                <span className={`${styles.badge} ${styles.badgeOk}`}>
+                  {piece.version ? `Version ${piece.version} courante` : 'Déposée'}
+                </span>
               ) : def.kind === 'liste_presence' ? (
                 <span className={`${styles.badge} ${styles.badgeWarn}`}>À déposer</span>
               ) : null}
@@ -172,8 +175,9 @@ export default function ReunionPieces({ brouillonId, pieces, ensureBrouillon, on
 
             {piece ? (
               <p className={styles.meta}>
-                {format(new Date(piece.deposee_le), "dd/MM/yyyy 'à' HH:mm")}
+                {piece.deposee_le ? format(new Date(piece.deposee_le), "dd/MM/yyyy 'à' HH:mm") : 'Déposée'}
                 {piece.deposee_par ? ` par ${piece.deposee_par}` : ''} · {Math.max(1, Math.round(piece.file_size / 1024))} Ko
+                {piece.version ? ` · version ${piece.version}` : ''}
               </p>
             ) : (
               <p className={styles.aide}>{def.aide}</p>
@@ -212,25 +216,29 @@ export default function ReunionPieces({ brouillonId, pieces, ensureBrouillon, on
             )}
 
             <div className={styles.actions}>
-              <button type="button" className={styles.secondary} onClick={() => photoInputs.current[def.kind]?.click()} disabled={occupe}>
-                <Camera size={15} aria-hidden="true" /> {pages.length ? 'Page suivante' : 'Photographier'}
-              </button>
-              <button type="button" className={styles.secondary} onClick={() => fileInputs.current[def.kind]?.click()} disabled={occupe}>
-                <FileUp size={15} aria-hidden="true" /> {piece ? 'Remplacer' : 'Importer un scan'}
-              </button>
-              {piece && brouillonId && (
+              {canUpload && (
                 <>
-                  <button
-                    type="button"
-                    className={styles.ghost}
-                    onClick={() => openAuthenticatedFile(pieceReunionPath(brouillonId, def.kind)).catch(() => onMessage('error', 'Ouverture impossible.'))}
-                  >
-                    <Eye size={15} aria-hidden="true" /> Voir
+                  <button type="button" className={styles.secondary} onClick={() => photoInputs.current[def.kind]?.click()} disabled={occupe}>
+                    <Camera size={15} aria-hidden="true" /> {pages.length ? 'Page suivante' : 'Photographier'}
                   </button>
-                  <button type="button" className={styles.ghost} onClick={() => retirer(def.kind)} disabled={occupe}>
-                    <Trash2 size={15} aria-hidden="true" /> Retirer
+                  <button type="button" className={styles.secondary} onClick={() => fileInputs.current[def.kind]?.click()} disabled={occupe}>
+                    <FileUp size={15} aria-hidden="true" /> {piece ? 'Ajouter une version' : 'Importer un scan'}
                   </button>
                 </>
+              )}
+              {piece && voirPath?.(def.kind) && (
+                <button
+                  type="button"
+                  className={styles.ghost}
+                  onClick={() => openAuthenticatedFile(voirPath(def.kind)!).catch(() => onMessage('error', 'Ouverture impossible.'))}
+                >
+                  <Eye size={15} aria-hidden="true" /> Voir
+                </button>
+              )}
+              {piece && onRetirer && (
+                <button type="button" className={styles.ghost} onClick={() => retirer(def.kind)} disabled={occupe}>
+                  <Trash2 size={15} aria-hidden="true" /> Retirer
+                </button>
               )}
               {enCours === def.kind && !pages.length && <span className={styles.meta} role="status">Dépôt en cours…</span>}
             </div>

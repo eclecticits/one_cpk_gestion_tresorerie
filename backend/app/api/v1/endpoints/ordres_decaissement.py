@@ -37,6 +37,7 @@ from app.services import beneficiaires as beneficiaires_service
 from app.services.audit_service import get_request_ip, log_action
 from app.services.budget_execution import bornes_periode
 from app.services.document_sequences import generate_document_number
+from app.services.projets_activites import resoudre_projet_activite
 from app.services.reglement import (
     CANAL_BANQUE,
     MODE_PAIEMENT_MIXTE,
@@ -536,6 +537,7 @@ def _ordre_out(
         "montant_par_personne": getattr(ordre, "montant_par_personne", None),
         "service_id": ordre.service_id,
         "lignes": ordre.lignes,
+        "project_activity_id": getattr(ordre, "project_activity_id", None),
         "montant_usd_snapshot": getattr(ordre, "montant_usd_snapshot", None),
         "mode_paiement": ordre.mode_paiement,
         "canal": ordre.canal,
@@ -710,6 +712,7 @@ async def create_ordre_decaissement(
             service_id=payload.service_id,
             **arrete,
             lignes=payload.lignes,
+            project_activity_id=await resoudre_projet_activite(db, payload.project_activity_id, tenant_id),
             mode_paiement=mode_direct,
             canal=canal_direct,
             compte_bancaire_id=compte_direct,
@@ -1198,6 +1201,7 @@ async def update_ordre_decaissement(
         "motif": ordre.motif,
         "service_id": ordre.service_id,
         "lignes": ordre.lignes,
+        "project_activity_id": ordre.project_activity_id,
         "type_sortie": ordre.type_sortie,
         "participants": ordre.participants,
     }
@@ -1207,6 +1211,10 @@ async def update_ordre_decaissement(
     ordre.devise = payload.devise
     ordre.service_id = payload.service_id
     ordre.lignes = payload.lignes
+    # Un projet désactivé depuis la programmation reste accepté tel quel : la
+    # correction ne doit pas forcer à le retirer.
+    if payload.project_activity_id != ordre.project_activity_id:
+        ordre.project_activity_id = await resoudre_projet_activite(db, payload.project_activity_id, tenant_id)
     ordre.mode_paiement = mode_direct
     ordre.canal = canal_direct
     ordre.compte_bancaire_id = compte_direct
@@ -1235,6 +1243,7 @@ async def update_ordre_decaissement(
             "motif": ordre.motif,
             "service_id": ordre.service_id,
             "lignes": ordre.lignes,
+            "project_activity_id": ordre.project_activity_id,
         },
         ip_address=get_request_ip(request),
     )

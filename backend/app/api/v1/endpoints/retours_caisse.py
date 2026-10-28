@@ -61,6 +61,7 @@ from app.schemas.retour_caisse import (
     RetourCaisseStatusUpdate,
     RetoursCaisseListResponse,
 )
+from app.services import recherche_numero
 from app.services.audit_service import get_request_ip, log_action
 from app.services.document_sequences import generate_document_number
 from app.services.mouvements_budgetaires import cancel_budget_imputations, create_budget_imputation
@@ -403,6 +404,7 @@ async def list_retours_caisse(
     statut: str | None = Query(default=None),
     date_debut: str | None = Query(default=None),
     date_fin: str | None = Query(default=None),
+    numero: str | None = Query(default=None, description="N° du retour ou de la sortie qu'il corrige"),
     include_summary: bool = Query(default=False),
     limit: int = Query(default=100, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
@@ -426,6 +428,9 @@ async def list_retours_caisse(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="requisition_id invalide")
     if type_retour:
         conditions.append(RetourCaisse.type_retour == type_retour)
+    motif_numero = recherche_numero.motif(numero)
+    if motif_numero:
+        conditions.append(recherche_numero.condition_retour(motif_numero))
 
     if statut:
         statut_value = statut.strip().upper()

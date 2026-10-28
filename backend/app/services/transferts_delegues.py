@@ -49,6 +49,7 @@ from app.models.transfert_interne import (
 )
 from app.models.user import User
 from app.schemas.sortie_fonds import SortieFondsOut
+from app.services import recherche_numero
 
 TYPE_VERSEMENT_BANQUE = "versement_banque"
 TYPE_APPROVISIONNEMENT_CAISSE = "approvisionnement_caisse"
@@ -105,6 +106,9 @@ class FiltresSorties:
     compte_bancaire_id: int | None = None
     statut: str | None = None
     reference: str | None = None
+    #: Numéro cherché (sortie, retour ou référence) : un transfert ne porte que
+    #: sa référence, c'est donc elle qui est comparée.
+    numero: str | None = None
     #: Le filtre porte sur une réquisition (identifiant ou numéro).
     filtre_requisition: bool = False
     #: L'utilisateur n'a pas accès au menu et ne voit que ses services.
@@ -185,6 +189,9 @@ def _conditions(tenant_id: int, filtres: FiltresSorties) -> list:
         conditions.append(_jambe_bancaire() == filtres.compte_bancaire_id)
     if filtres.reference:
         conditions.append(TransfertInterne.reference.ilike(f"%{filtres.reference}%"))
+    motif_numero = recherche_numero.motif(filtres.numero)
+    if motif_numero:
+        conditions.append(TransfertInterne.reference.ilike(motif_numero, escape="\\"))
 
     statut = (filtres.statut or "").strip().upper()
     if statut == STATUT_CONTREPASSE:

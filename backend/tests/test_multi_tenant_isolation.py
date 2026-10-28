@@ -253,6 +253,9 @@ async def test_financial_resources_remain_tenant_scoped(db_session):
     cpk_items = await list_remboursements_transport(
         include="requisition",
         requisition_id=None,
+        service_id=None,
+        date_debut=now.date(),
+        date_fin=now.date(),
         limit=50,
         offset=0,
         user=user_cpk,
@@ -263,6 +266,9 @@ async def test_financial_resources_remain_tenant_scoped(db_session):
     congres_items = await list_remboursements_transport(
         include="requisition",
         requisition_id=None,
+        service_id=None,
+        date_debut=now.date(),
+        date_fin=now.date(),
         limit=50,
         offset=0,
         user=user_congres,

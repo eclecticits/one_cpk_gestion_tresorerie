@@ -969,6 +969,23 @@
   color: #64748b;
 }
 
+.filterHint {
+  margin-top: -4px;
+  font-size: 12px;
+  color: #b45309;
+}
+
+.filterScope {
+  margin-top: -4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tenant-primary, #2563eb);
+}
+
+.operationSearch {
+  grid-column: span 2;
+}
+
 .filterGroup input,
 .filterGroup select {
   width: 100%;
@@ -985,6 +1002,13 @@
   border-color: #3b82f6;
   outline: none;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.filterGroup input:disabled {
+  cursor: not-allowed;
+  color: #94a3b8;
+  background: #f8fafc;
+  border-color: #e2e8f0;
 }
 
 .filtersActions {
@@ -1249,6 +1273,16 @@
   }
 }
 
+/* La règle de base de la grille est déclarée après le premier breakpoint dans
+   ce fichier historique : la répéter ici garantit bien trois colonnes sur les
+   tablettes et petits ordinateurs. */
+@media (min-width: 901px) and (max-width: 1180px) {
+  .filtersGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
 @media (max-width: 560px) {
   .filtersSection {
     padding: 14px;
@@ -1261,6 +1295,10 @@
   .filtersGrid {
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+
+  .operationSearch {
+    grid-column: span 1;
   }
 
   .filtersActions,

@@ -380,3 +380,78 @@ async def test_brouillon_abandonne_emporte_son_scan(db_session, acces, tmp_path,
     assert os.path.exists(chemin)
     await rt.delete_brouillon(brouillon_id=str(brouillon.id), user=user, tenant_id=org.id, db=db_session)
     assert not os.path.exists(chemin)
+
+
+@pytest.mark.asyncio
+async def test_pv_et_liste_joints_a_un_remboursement_deja_paye(db_session, acces, tmp_path, monkeypatch):
+    monkeypatch.setattr(rt, "UPLOAD_ROOT", str(tmp_path))
+    org, service, user, _ = await _contexte(db_session)
+    req = Requisition(
+        organisation_id=org.id, service_id=service.id,
+        numero_requisition=f"REQ-{_suffix()}", reference_numero=f"REF-{_suffix()}",
+        objet="Transport", mode_paiement="cash", type_requisition="remboursement_transport",
+        status="PAYEE", montant_total=Decimal("40"), devise="USD",
+    )
+    db_session.add(req)
+    await db_session.flush()
+    remboursement = rt.RemboursementTransport(
+        organisation_id=org.id, numero_remboursement=f"REM-{_suffix()}", instance="ONEC",
+        type_reunion="bureau", nature_reunion="Session", lieu="Siège",
+        date_reunion=datetime(2026, 3, 5, tzinfo=timezone.utc), montant_total=Decimal("40"),
+        requisition_id=req.id,
+    )
+    db_session.add(remboursement)
+    db_session.add(RequisitionAnnexe(
+        organisation_id=org.id, requisition_id=req.id, file_path="/uploads/x/facture.pdf",
+        filename="facture.pdf", file_type="application/pdf", file_size=3,
+    ))
+    await db_session.commit()
+    rid = str(remboursement.id)
+    tenant_uuid = str(uuid.uuid4())
+
+    vides = await rt.list_pieces_remboursement(remboursement_id=rid, user=user, tenant_id=org.id, db=db_session)
+    assert vides == {"liste_presence": None, "pv": None}
+
+    with pytest.raises(HTTPException) as exc:
+        await rt.deposer_piece_remboursement(
+            remboursement_id=rid, kind="pv", file=_fichier("pv.pdf", b"pas un PDF", "application/pdf"),
+            user=user, tenant_id=org.id, tenant_uuid=tenant_uuid, db=db_session,
+        )
+    assert exc.value.status_code == 400
+
+    premier = await rt.deposer_piece_remboursement(
+        remboursement_id=rid, kind="pv", file=_fichier("scan.pdf", b"%PDF-1 v1", "application/pdf"),
+        user=user, tenant_id=org.id, tenant_uuid=tenant_uuid, db=db_session,
+    )
+    assert premier["liste_presence"] is None
+    assert premier["pv"]["filename"] == "Procès-verbal.pdf"
+    assert premier["pv"]["version"] == 1
+    assert premier["pv"]["content_sha256"]
+    # Un PV remplacé reste au dossier : la réquisition est payée, rien n'en sort.
+    second = await rt.deposer_piece_remboursement(
+        remboursement_id=rid, kind="pv", file=_fichier("scan2.pdf", b"%PDF-1 v2", "application/pdf"),
+        user=user, tenant_id=org.id, tenant_uuid=tenant_uuid, db=db_session,
+    )
+    assert second["pv"]["annexe_id"] != premier["pv"]["annexe_id"]
+    assert second["pv"]["version"] == 2
+    assert second["pv"]["supersedes_id"] == premier["pv"]["annexe_id"]
+    assert second["pv"]["source"] == "REMBOURSEMENT_POSTERIEUR"
+    assert os.path.exists(rt._remboursement_pdf_fs_path(premier["pv"]["file_path"]))
+    await rt.deposer_piece_remboursement(
+        remboursement_id=rid, kind="liste_presence", file=_fichier("liste.png", b"\x89PNG\r\n\x1a\nx", "image/png"),
+        user=user, tenant_id=org.id, tenant_uuid=tenant_uuid, db=db_session,
+    )
+
+    noms = (await db_session.scalars(
+        select(RequisitionAnnexe.filename).where(RequisitionAnnexe.requisition_id == req.id)
+    )).all()
+    assert sorted(noms) == ["Liste de présence signée.png", "Procès-verbal.pdf", "Procès-verbal.pdf", "facture.pdf"]
+    await db_session.refresh(req)
+    assert req.status == "PAYEE"
+
+    reponse = await rt.voir_piece_remboursement(remboursement_id=rid, kind="pv", user=user, tenant_id=org.id, db=db_session)
+    assert open(reponse.path, "rb").read() == b"%PDF-1 v2"
+
+    with pytest.raises(HTTPException) as exc:
+        await rt.list_pieces_remboursement(remboursement_id=str(uuid.uuid4()), user=user, tenant_id=org.id, db=db_session)
+    assert exc.value.status_code == 404

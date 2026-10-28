@@ -434,6 +434,35 @@ export default function EncaissementForm({
     return tarif?.budget_poste_libelle || null
   }, [postePrincipalDesLignes, tarifs])
 
+  /** Projets que les libellés saisis proposent (seulement ceux encore
+   *  actifs). Un seul : il est retenu d'office. Plusieurs : l'écran le dit et
+   *  laisse choisir, plutôt que d'en élire un en silence. */
+  const projetsProposesParLignes = useMemo(() => {
+    const actifs = new Set(projetsActivites.map((p) => String(p.id)))
+    const ids = new Set<string>()
+    for (const article of articles) {
+      const id = tarifDeLigne(article)?.project_activity_id
+      if (id && actifs.has(String(id))) ids.add(String(id))
+    }
+    return [...ids]
+  }, [articles, tarifDeLigne, projetsActivites])
+  // Un fonds de tiers n'a pas de champ projet à l'écran : rien ne s'y glisse.
+  const projetPropose = !estFondsDeTiers && projetsProposesParLignes.length === 1 ? projetsProposesParLignes[0] : ''
+  /** Le caissier a choisi le projet lui-même : la proposition ne l'écrase plus. */
+  const [projetChoisiALaMain, setProjetChoisiALaMain] = useState(false)
+
+  useEffect(() => {
+    if (projetChoisiALaMain) return
+    setFormData((prev) =>
+      prev.project_activity_id === projetPropose ? prev : { ...prev, project_activity_id: projetPropose },
+    )
+  }, [projetPropose, projetChoisiALaMain])
+
+  const libelleProjet = (id: string) => {
+    const projet = projetsActivites.find((p) => String(p.id) === id)
+    return projet ? `${projet.code} - ${projet.libelle}` : ''
+  }
+
   /** Le poste retenu pour l'encaissement : celui que l'agent a choisi, sinon
    *  celui que ses lignes désignent. */
   const postePourEncaissement = useMemo(
@@ -805,6 +834,7 @@ export default function EncaissementForm({
       ft_reference: '',
     })
     setArticles([{ libelle: '', quantite: '1', prix_unitaire: '' }])
+    setProjetChoisiALaMain(false)
     setSearchEC('')
     setSelectedExpert(null)
     resetClientSelection()
@@ -1780,7 +1810,10 @@ export default function EncaissementForm({
               <label>Projet / Activité</label>
               <select
                 value={formData.project_activity_id}
-                onChange={e => setFormData(prev => ({ ...prev, project_activity_id: e.target.value }))}
+                onChange={e => {
+                  setProjetChoisiALaMain(true)
+                  setFormData(prev => ({ ...prev, project_activity_id: e.target.value }))
+                }}
               >
                 <option value="">Aucun (facultatif)</option>
                 {projetsActivites.map(item => (
@@ -1789,6 +1822,24 @@ export default function EncaissementForm({
                   </option>
                 ))}
               </select>
+              {!projetChoisiALaMain && projetPropose && (
+                <small className={styles.fieldHint}>Proposé par le libellé saisi.</small>
+              )}
+              {!projetChoisiALaMain && projetsProposesParLignes.length > 1 && (
+                <small className={styles.warningText}>
+                  Les libellés renvoient à {projetsProposesParLignes.length} projets différents : choisissez celui
+                  de l'encaissement.
+                </small>
+              )}
+              {projetChoisiALaMain && projetPropose && formData.project_activity_id !== projetPropose && (
+                <button
+                  type="button"
+                  className={styles.tarifForcer}
+                  onClick={() => setProjetChoisiALaMain(false)}
+                >
+                  Reprendre le projet du libellé ({libelleProjet(projetPropose)})
+                </button>
+              )}
             </div>
           </div>
           </div>
@@ -1856,6 +1907,11 @@ export default function EncaissementForm({
                       {tarifLigne?.budget_poste_id && (
                         <span className={styles.tarifPoste}>
                           → {tarifLigne.budget_poste_libelle}
+                        </span>
+                      )}
+                      {tarifLigne?.project_activity_id && libelleProjet(String(tarifLigne.project_activity_id)) && (
+                        <span className={styles.tarifPoste}>
+                          Projet : {libelleProjet(String(tarifLigne.project_activity_id))}
                         </span>
                       )}
                         </td>

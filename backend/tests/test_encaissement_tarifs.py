@@ -561,3 +561,49 @@ async def test_la_ligne_garde_le_tarif_et_dit_si_le_prix_fut_force(db_session):
     assert forcee["tarif_id"] == tarif.id
     assert forcee["tarif_force"] is True
     assert ecarts and ecarts[0]["champ"] == "prix_unitaire"
+
+
+@pytest.mark.asyncio
+async def test_le_projet_d_un_libelle_se_relie_sans_ouvrir_de_version(db_session):
+    """Le projet n'est qu'une proposition faite à la caisse : il ne change ni le
+    prix ni l'imputation, et se corrige donc sur place même après usage. Il
+    suit en revanche le tarif quand une vraie version s'ouvre."""
+    from app.models.projet_activite import ProjetActivite
+
+    org, user, _exercice, _poste = await _contexte(db_session)
+    projet = ProjetActivite(organisation_id=org.id, code=f"P-{uuid.uuid4().hex[:6]}", libelle="Formation", type="PROJET")
+    autre = ProjetActivite(organisation_id=org.id, code=f"Q-{uuid.uuid4().hex[:6]}", libelle="Autre", type="ACTIVITE")
+    db_session.add_all([projet, autre])
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await _creer(db_session, org, user, libelle="Inscription", project_activity_id=999_999)
+    assert exc.value.status_code == 400
+
+    tarif = await _creer(db_session, org, user, libelle="Inscription", montant=Decimal("50"), project_activity_id=projet.id)
+    assert tarif.project_activity_id == projet.id
+    await _faire_servir(db_session, org, user, tarif.id)
+
+    appel = dict(tarif_id=tarif.id, user=user, tenant_id=org.id, db=db_session)
+    relie = await update_encaissement_tarif(payload=EncaissementTarifUpdate(project_activity_id=autre.id), **appel)
+    assert relie.id == tarif.id and relie.project_activity_id == autre.id
+
+    # Désactivé depuis : un enregistrement qui ne le change pas reste accepté.
+    autre.is_active = False
+    await db_session.commit()
+    meme = await update_encaissement_tarif(
+        payload=EncaissementTarifUpdate(project_activity_id=autre.id, position=4), **appel
+    )
+    assert meme.project_activity_id == autre.id
+
+    nouvelle = await update_encaissement_tarif(
+        payload=EncaissementTarifUpdate(montant=Decimal("80"), project_activity_id=projet.id), **appel
+    )
+    assert nouvelle.id != tarif.id
+    assert nouvelle.project_activity_id == projet.id
+
+    sans = await update_encaissement_tarif(
+        tarif_id=nouvelle.id, payload=EncaissementTarifUpdate(project_activity_id=None),
+        user=user, tenant_id=org.id, db=db_session,
+    )
+    assert sans.project_activity_id is None

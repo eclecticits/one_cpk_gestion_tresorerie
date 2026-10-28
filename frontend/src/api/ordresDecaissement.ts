@@ -59,6 +59,8 @@ export async function createOrdreDecaissement(input: {
   service_id?: number | null
   /** Répartition de la tranche par poste (progressif) ou lignes directes. */
   lignes?: Array<OrdreDirectLigne | OrdreRepartitionLigne> | null
+  /** Projet ou activité financé par une sortie directe (facultatif). */
+  project_activity_id?: number | null
   /**
    * Volet réglé par la tranche. Obligatoire dès que la réquisition mêle
    * plusieurs modes : le mode saisi par le demandeur n'est qu'une proposition,
@@ -94,6 +96,7 @@ export async function updateOrdreDecaissement(
     montant_par_personne?: number | null
     service_id?: number | null
     lignes?: Array<OrdreDirectLigne | OrdreRepartitionLigne> | null
+    project_activity_id?: number | null
     mode_paiement?: string | null
     compte_bancaire_id?: number | null
   }

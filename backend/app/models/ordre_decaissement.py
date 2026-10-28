@@ -186,6 +186,11 @@ class OrdreDecaissement(BeneficiaireIdentifieMixin, Base):
         Integer, ForeignKey("services.id"), nullable=True, index=True
     )
     lignes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    #: Projet ou activité que finance une sortie directe (facultatif), choisi
+    #: à la programmation ; la sortie de fonds qui la paie en hérite.
+    project_activity_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("projets_activites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="AUTORISE", index=True)
 

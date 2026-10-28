@@ -75,6 +75,12 @@ class EncaissementTarif(Base):
     #: Code du poste de recette, résolu à l'exercice courant. Nul = imputation
     #: laissée libre.
     budget_poste_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    #: Projet ou activité que ce libellé finance d'ordinaire. Il est PROPOSÉ à
+    #: l'encaissement, jamais imposé : le caissier peut en choisir un autre, ou
+    #: aucun. N'engage pas le reçu, donc ne fait pas naître de version.
+    project_activity_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("projets_activites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     #: Ordre d'affichage voulu par l'administrateur (la pré-liste se classait
     #: déjà à la main, avec ses flèches monter/descendre).

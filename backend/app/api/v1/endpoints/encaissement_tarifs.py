@@ -33,6 +33,7 @@ from app.schemas.encaissement_tarif import (
 )
 from app.services.audit_service import log_action
 from app.services.encaissement_tarifs import postes_par_code, tarifs_resolus
+from app.services.projets_activites import resoudre_projet_activite
 
 router = APIRouter(prefix="/encaissement-tarifs")
 
@@ -52,6 +53,7 @@ def _sortie(
         montant=tarif.montant,
         devise=tarif.devise,
         budget_poste_code=tarif.budget_poste_code,
+        project_activity_id=tarif.project_activity_id,
         is_active=tarif.is_active,
         position=tarif.position,
         budget_poste_id=poste.id if poste else None,
@@ -172,6 +174,7 @@ async def create_encaissement_tarif(
         montant=payload.montant,
         devise=payload.devise,
         budget_poste_code=(payload.budget_poste_code or "").strip().upper() or None,
+        project_activity_id=await resoudre_projet_activite(db, payload.project_activity_id, tenant_id),
         is_active=payload.is_active,
         position=payload.position or int(derniere) + 1,
         effet_du=date.today(),
@@ -185,7 +188,7 @@ async def create_encaissement_tarif(
         action="ENCAISSEMENT_TARIF_CREE",
         target_table="encaissement_tarifs",
         target_id=str(tarif.id),
-        new_value=_journal(_valeurs(tarif)),
+        new_value={**_journal(_valeurs(tarif)), "project_activity_id": tarif.project_activity_id},
     )
     await db.commit()
     await db.refresh(tarif)
@@ -233,6 +236,14 @@ async def update_encaissement_tarif(
     if "budget_poste_code" in data:
         voulu["budget_poste_code"] = (data["budget_poste_code"] or "").strip().upper() or None
 
+    # Le projet n'est qu'une proposition faite à la caisse : il se corrige
+    # sur place, sans version. Un projet désactivé depuis reste accepté tant
+    # qu'on ne le change pas.
+    projet_avant = tarif.project_activity_id
+    projet_voulu = projet_avant
+    if "project_activity_id" in data and data["project_activity_id"] != projet_avant:
+        projet_voulu = await resoudre_projet_activite(db, data["project_activity_id"], tenant_id)
+
     avant = _valeurs(tarif)
     substantiel = voulu != avant
     renomme = normaliser_libelle(voulu["libelle"]) != tarif.libelle_normalise
@@ -262,6 +273,7 @@ async def update_encaissement_tarif(
             montant=voulu["montant"],
             devise=voulu["devise"] or "USD",
             budget_poste_code=voulu["budget_poste_code"],
+            project_activity_id=projet_voulu,
             is_active=data.get("is_active") if data.get("is_active") is not None else tarif.is_active,
             position=tarif.position,
             effet_du=aujourdhui,
@@ -276,8 +288,13 @@ async def update_encaissement_tarif(
             action="ENCAISSEMENT_TARIF_VERSION",
             target_table="encaissement_tarifs",
             target_id=str(nouvelle.id),
-            old_value={**_journal(avant), "id": tarif.id, "utilise": utilise},
-            new_value={**_journal(_valeurs(nouvelle)), "id": nouvelle.id, "remplace_id": tarif.id},
+            old_value={**_journal(avant), "id": tarif.id, "utilise": utilise, "project_activity_id": projet_avant},
+            new_value={
+                **_journal(_valeurs(nouvelle)),
+                "id": nouvelle.id,
+                "remplace_id": tarif.id,
+                "project_activity_id": projet_voulu,
+            },
         )
         await db.commit()
         await db.refresh(nouvelle)
@@ -293,20 +310,21 @@ async def update_encaissement_tarif(
     tarif.montant = voulu["montant"]
     tarif.devise = voulu["devise"] or "USD"
     tarif.budget_poste_code = voulu["budget_poste_code"]
+    tarif.project_activity_id = projet_voulu
     if "is_active" in data and data["is_active"] is not None:
         tarif.is_active = data["is_active"]
     if "position" in data and data["position"] is not None:
         tarif.position = data["position"]
 
-    if substantiel:
+    if substantiel or projet_voulu != projet_avant:
         await log_action(
             db,
             user_id=user.id,
             action="ENCAISSEMENT_TARIF_MODIFIE",
             target_table="encaissement_tarifs",
             target_id=str(tarif.id),
-            old_value=_journal(avant),
-            new_value=_journal(voulu),
+            old_value={**_journal(avant), "project_activity_id": projet_avant},
+            new_value={**_journal(voulu), "project_activity_id": projet_voulu},
         )
     await db.commit()
     await db.refresh(tarif)
