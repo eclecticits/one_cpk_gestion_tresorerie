@@ -79,6 +79,8 @@ DELETE_TARGETS: tuple[Target, ...] = (
     Target("transferts_internes", "delete", "organisation_id = :organisation_id"),
     Target("ouvertures_caisse", "delete", "organisation_id = :organisation_id"),
     Target("clotures", "delete", "organisation_id = :organisation_id"),
+    # Preuve d'export (RESTRICT sur l'écriture) : à vider avant les écritures.
+    Target("compta_export_ecritures", "delete", "organisation_id = :organisation_id", ("compta_ecritures",)),
     Target("compta_lignes_ecriture", "delete", "organisation_id = :organisation_id", ("compta_ecritures",)),
     Target("compta_ecritures", "delete", "organisation_id = :organisation_id"),
     Target("budget_audit_logs", "delete", "organisation_id = :organisation_id"),
