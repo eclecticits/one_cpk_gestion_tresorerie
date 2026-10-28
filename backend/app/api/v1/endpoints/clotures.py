@@ -20,6 +20,7 @@ from app.db.session import get_db
 from app.utils.excel_io import save_workbook
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.caisse_centrale import CaisseCentrale
+from app.models.denomination import Denomination
 from app.models.organisation import Organisation
 from app.models.ouverture_caisse import OuvertureCaisse
 from app.models.print_settings import PrintSettings
@@ -37,6 +38,7 @@ from app.services.regularisation_caisse import (
     regulariser_ecart,
 )
 from app.schemas.cloture import ClotureBalanceResponse, ClotureCreateRequest, ClotureOut, CloturePdfData, CloturePdfDetail, EcartRegularisationRequest, OuvertureCreateRequest, OuvertureOut
+from app.schemas.denomination import DenominationOut
 from app.core.config import settings
 from app.services.audit_service import get_request_ip, log_action
 from app.services.document_sequences import generate_document_number
@@ -50,8 +52,125 @@ PDF_ALLOWED_EXT = {".pdf"}
 CLTURE_PDF_DIR = os.path.abspath(os.path.join(settings.upload_dir, "clotures"))
 
 
-def _decimal(value: Decimal | int | float | None) -> Decimal:
+# Clé du billetage archivé pour le montant compté hors des coupures configurées.
+BILLETAGE_AUTRES = "autres"
+
+
+def _decimal(value: Decimal | int | float | str | None) -> Decimal:
     return Decimal(value or 0).quantize(Decimal("0.01"))
+
+
+def _billetage_total(
+    billetage: dict[str, int] | None,
+    devise: str,
+    coupures_autorisees: set[Decimal] | None = None,
+) -> Decimal | None:
+    """Calcule et valide un billetage transmis par le client.
+
+    Les clés sont les valeurs faciales, et non les identifiants des lignes de
+    configuration : le PV reste ainsi interprétable si une dénomination est
+    renommée ou désactivée plus tard.
+    """
+    if billetage is None:
+        return None
+
+    total = Decimal("0")
+    valeurs_vues: set[Decimal] = set()
+    for valeur_brute, quantite in billetage.items():
+        try:
+            valeur = Decimal(str(valeur_brute))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Billetage {devise} invalide : coupure {valeur_brute!r} inconnue.",
+            ) from exc
+
+        if not valeur.is_finite() or valeur <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Billetage {devise} invalide : la valeur d'une coupure doit être positive.",
+            )
+        if valeur in valeurs_vues:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Billetage {devise} invalide : coupure {valeur} fournie plusieurs fois.",
+            )
+        valeurs_vues.add(valeur)
+        if coupures_autorisees is not None and _decimal(valeur) not in coupures_autorisees:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Billetage {devise} invalide : la coupure {valeur} n'est pas configurée.",
+            )
+
+        if isinstance(quantite, bool) or not isinstance(quantite, int) or quantite < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Billetage {devise} invalide : les quantités doivent être des entiers positifs ou nuls.",
+            )
+        total += valeur * quantite
+
+    return _decimal(total)
+
+
+def _billetage_lisible(billetage: dict | None) -> str:
+    """Billetage pour l'export Excel, comme l'écran et le PV : « 98 × 100 · 4 × 50 »."""
+    if billetage is None:
+        return "Non renseigné"
+    lignes = []
+    autres = _decimal(billetage.get(BILLETAGE_AUTRES) or 0)
+    for valeur, quantite in billetage.items():
+        if valeur == BILLETAGE_AUTRES:
+            continue
+        try:
+            v, q = Decimal(str(valeur)), int(quantite)
+        except (ArithmeticError, TypeError, ValueError):
+            continue
+        if v > 0 and q > 0:
+            lignes.append((v, q))
+    if not lignes and not autres:
+        return "Aucune coupure"
+    lignes.sort(key=lambda l: l[0], reverse=True)
+    morceaux = [f"{q} × {v.normalize():f}" for v, q in lignes]
+    if autres:
+        morceaux.append(f"Autres : {autres:.2f}")
+    return " · ".join(morceaux)
+
+
+def _verifier_coherence_billetage(
+    *,
+    billetage: dict[str, int] | None,
+    solde_physique: Decimal,
+    devise: str,
+    coupures_autorisees: set[Decimal] | None = None,
+    autres: Decimal = Decimal("0"),
+) -> None:
+    """Refuse une clôture dont le total saisi contredit ses coupures.
+
+    `autres` couvre ce que la liste des coupures ne permet pas de compter
+    (pièces, petites coupures non configurées, billet abîmé) : il entre dans le
+    total au même titre qu'elles.
+    """
+    total = _billetage_total(billetage, devise, coupures_autorisees)
+    if total is None:
+        return
+    total = _decimal(total + autres)
+    if total != _decimal(solde_physique):
+        detail_autres = f" (dont {_decimal(autres):.2f} en « Autres »)" if autres else ""
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Billetage {devise} incohérent : les coupures totalisent {total:.2f} "
+                f"{devise}{detail_autres}, mais le solde physique vaut "
+                f"{_decimal(solde_physique):.2f} {devise}."
+            ),
+        )
+
+
+def _billetage_avec_autres(billetage: dict[str, int] | None, autres: Decimal) -> dict | None:
+    """Billetage tel qu'archivé : les coupures, plus « autres » s'il y en a."""
+    if billetage is None or not autres:
+        return billetage
+    return {**billetage, BILLETAGE_AUTRES: f"{_decimal(autres):.2f}"}
 
 
 async def _appliquer_regularisations(
@@ -303,6 +422,19 @@ async def _compute_balance(db: AsyncSession, tenant_id: int) -> ClotureBalanceRe
         date_fin=date_fin,
         strict_debut=True,
     )
+    denominations_res = await db.execute(
+        select(Denomination)
+        .where(Denomination.est_actif.is_(True))
+        .order_by(Denomination.devise.asc(), Denomination.ordre.asc(), Denomination.valeur.desc())
+    )
+    denominations: list[DenominationOut] = []
+    denominations_vues: set[tuple[str, Decimal]] = set()
+    for denomination in denominations_res.scalars().all():
+        cle = (denomination.devise.upper(), _decimal(denomination.valeur))
+        if cle in denominations_vues:
+            continue
+        denominations_vues.add(cle)
+        denominations.append(DenominationOut.model_validate(denomination))
 
     return ClotureBalanceResponse(
         date_debut=date_debut,
@@ -335,6 +467,7 @@ async def _compute_balance(db: AsyncSession, tenant_id: int) -> ClotureBalanceRe
             }
             for ligne in lignes_entrees_internes
         ],
+        denominations=denominations,
     )
 
 
@@ -550,6 +683,8 @@ async def export_clotures_xlsx(
             "solde_theorique_cdf",
             "solde_physique_cdf",
             "ecart_cdf",
+            "billetage_usd",
+            "billetage_cdf",
             "statut",
             "observation",
         ]
@@ -574,6 +709,8 @@ async def export_clotures_xlsx(
                 float(c.solde_theorique_cdf or 0),
                 float(c.solde_physique_cdf or 0),
                 float(c.ecart_cdf or 0),
+                _billetage_lisible(c.billetage_usd),
+                _billetage_lisible(c.billetage_cdf),
                 c.statut,
                 c.observation or "",
             ]
@@ -634,8 +771,60 @@ async def create_cloture(
 
     balance = await _compute_balance(db, tenant_id)
 
+    # Le billetage est obligatoire dès que des coupures sont configurées. Un
+    # dictionnaire vide reste valide et signifie que la caisse a été comptée
+    # à zéro ; `None`, en revanche, signifie que le client a omis le comptage.
+    devises_configurees = {denomination.devise.upper() for denomination in balance.denominations}
+    if "USD" in devises_configurees and payload.billetage_usd is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le billetage USD est obligatoire pour clôturer la caisse.",
+        )
+    if "CDF" in devises_configurees and payload.billetage_cdf is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le billetage CDF est obligatoire pour clôturer la caisse.",
+        )
+
     solde_physique_usd = _decimal(payload.solde_physique_usd)
     solde_physique_cdf = _decimal(payload.solde_physique_cdf)
+    coupures_usd = {
+        _decimal(str(denomination.valeur))
+        for denomination in balance.denominations
+        if denomination.devise.upper() == "USD"
+    }
+    coupures_cdf = {
+        _decimal(str(denomination.valeur))
+        for denomination in balance.denominations
+        if denomination.devise.upper() == "CDF"
+    }
+    autres_usd = _decimal(payload.autres_usd)
+    autres_cdf = _decimal(payload.autres_cdf)
+    if autres_usd < 0 or autres_cdf < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le montant « Autres » du billetage ne peut pas être négatif.",
+        )
+    # « Autres » échappe au contrôle par coupure : il doit être expliqué.
+    if (autres_usd or autres_cdf) and not (payload.observation or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Précisez dans l'observation ce que contient la ligne « Autres » du billetage.",
+        )
+    _verifier_coherence_billetage(
+        billetage=payload.billetage_usd,
+        solde_physique=solde_physique_usd,
+        devise="USD",
+        coupures_autorisees=coupures_usd or None,
+        autres=autres_usd,
+    )
+    _verifier_coherence_billetage(
+        billetage=payload.billetage_cdf,
+        solde_physique=solde_physique_cdf,
+        devise="CDF",
+        coupures_autorisees=coupures_cdf or None,
+        autres=autres_cdf,
+    )
     taux_change = _decimal(balance.taux_change or 1)
     if taux_change <= 0:
         taux_change = Decimal("1")
@@ -662,8 +851,8 @@ async def create_cloture(
         ecart_usd=ecart_usd,
         ecart_cdf=ecart_cdf,
         taux_change_applique=taux_change,
-        billetage_usd=payload.billetage_usd,
-        billetage_cdf=payload.billetage_cdf,
+        billetage_usd=_billetage_avec_autres(payload.billetage_usd, autres_usd),
+        billetage_cdf=_billetage_avec_autres(payload.billetage_cdf, autres_cdf),
         observation=(payload.observation or "").strip() or None,
         statut="VALIDEE",
     )

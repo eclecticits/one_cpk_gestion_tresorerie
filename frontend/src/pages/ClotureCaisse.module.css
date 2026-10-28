@@ -69,6 +69,45 @@
   align-items: center;
 }
 
+.countConfirmation {
+  margin: -4px 0 20px;
+  padding: 14px 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #eff6ff;
+}
+
+.countConfirmation label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #1e3a8a;
+  cursor: pointer;
+}
+
+.countConfirmation input {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  accent-color: #1d4ed8;
+}
+
+.countConfirmation span,
+.countConfirmation small {
+  display: block;
+}
+
+.countConfirmation strong {
+  font-size: 13px;
+}
+
+.countConfirmation small {
+  margin-top: 3px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .verdict span {
   font-size: 12px;
   color: #64748b;
@@ -202,6 +241,41 @@
   font-size: 13px;
   background: white;
   min-width: 280px;
+}
+
+.archivedBilletage {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.archivedBilletage > strong {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.archivedBilletage div {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.archivedBilletage span {
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.archivedBilletage p {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .historyFilters {

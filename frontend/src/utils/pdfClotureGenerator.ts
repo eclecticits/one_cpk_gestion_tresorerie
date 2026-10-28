@@ -20,6 +20,8 @@ type ClotureReport = {
   solde_theorique_cdf?: number | string
   solde_physique_cdf?: number | string
   ecart_cdf?: number | string
+  billetage_usd?: Record<string, number | string> | null
+  billetage_cdf?: Record<string, number | string> | null
   observation?: string | null
 }
 
@@ -28,6 +30,37 @@ const formatNumber = (value: number) => formatAmount(value)
 const formatMoney = (value: number) => `${formatNumber(value)} USD`
 
 const formatMoneyCdf = (value: number) => `${formatNumber(value)} CDF`
+
+const billetageRows = (data: ClotureReport) => {
+  const rows: (string | number)[][] = []
+  const addCurrency = (
+    devise: 'USD' | 'CDF',
+    billetage: Record<string, number | string> | null | undefined,
+  ) => {
+    if (billetage == null) return
+    // « autres » : montant compté hors des coupures listées, pas une coupure.
+    const autres = Number(billetage.autres || 0)
+    const entries = Object.entries(billetage)
+      .filter(([valeur]) => valeur !== 'autres')
+      .map(([valeur, quantite]) => ({ valeur: Number(valeur), quantite: Number(quantite) }))
+      .filter((entry) => Number.isFinite(entry.valeur) && entry.valeur > 0 && entry.quantite > 0)
+      .sort((a, b) => b.valeur - a.valeur)
+
+    const format = devise === 'USD' ? formatMoney : formatMoneyCdf
+    if (entries.length === 0 && !(autres > 0)) {
+      rows.push([devise, 'Aucune coupure', 0, format(0)])
+      return
+    }
+    entries.forEach(({ valeur, quantite }) => {
+      rows.push([devise, format(valeur), quantite, format(valeur * quantite)])
+    })
+    if (autres > 0) rows.push([devise, 'Autres (voir observation)', '—', format(autres)])
+  }
+
+  addCurrency('USD', data.billetage_usd)
+  addCurrency('CDF', data.billetage_cdf)
+  return rows
+}
 
 const formatDateValue = (value: string | Date) => {
   const parsed = value instanceof Date ? value : new Date(value)
@@ -97,7 +130,28 @@ export const generateCloturePDF = async (
       headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
     })
 
-    const finalY = (doc as any).lastAutoTable.finalY + 15
+    let finalY = (doc as any).lastAutoTable.finalY + 10
+    const rows = billetageRows(data)
+    if (rows.length > 0) {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(11)
+      doc.text('Détail du billetage', 14, finalY)
+      autoTable(doc, {
+        startY: finalY + 3,
+        head: [['Devise', 'Coupure', 'Quantité', 'Sous-total']],
+        body: rows,
+        theme: 'grid',
+        headStyles: { fillColor: [30, 64, 175], textColor: [255, 255, 255], fontStyle: 'bold' },
+        columnStyles: {
+          2: { halign: 'right' },
+          3: { halign: 'right' },
+        },
+        styles: { fontSize: 8.5, cellPadding: 2.2 },
+      })
+      finalY = (doc as any).lastAutoTable.finalY + 10
+    } else {
+      finalY += 5
+    }
     doc.setFont('helvetica', 'bold')
     doc.text('Observations :', 14, finalY)
     doc.setFont('helvetica', 'normal')

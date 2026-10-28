@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from uuid import UUID
 
 from app.schemas.base import DecimalBaseModel
+from app.schemas.denomination import DenominationOut
 
 
 class BilletagePayload(BaseModel):
@@ -39,6 +40,10 @@ class ClotureBalanceResponse(DecimalBaseModel):
     entrees_retours_cdf: Decimal = Decimal("0")
     # Lignes d'approvisionnement de la période (montants sérialisés en texte).
     approvisionnements: list[dict] = []
+    # Les coupures sont renvoyées avec la balance : le caissier qui peut
+    # clôturer n'a pas nécessairement accès au menu d'administration des
+    # dénominations.
+    denominations: list[DenominationOut] = []
 
 
 class ClotureCreateRequest(BaseModel):
@@ -46,6 +51,10 @@ class ClotureCreateRequest(BaseModel):
     solde_physique_cdf: Decimal
     billetage_usd: dict[str, int] | None = None
     billetage_cdf: dict[str, int] | None = None
+    # Compté hors des coupures configurées (pièces, petites coupures, billet
+    # abîmé) : entre dans le total du billetage, à expliquer dans l'observation.
+    autres_usd: Decimal = Decimal("0")
+    autres_cdf: Decimal = Decimal("0")
     observation: str | None = None
     # Un écart constaté ne modifie le solde que si l'utilisateur demande sa
     # régularisation : elle crée alors un encaissement (excédent) ou une sortie

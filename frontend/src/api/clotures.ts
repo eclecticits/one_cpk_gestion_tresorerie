@@ -1,4 +1,5 @@
 import { apiRequest } from '../lib/apiClient'
+import type { Denomination } from './denominations'
 
 export type ClotureBalance = {
   date_debut?: string | null
@@ -23,6 +24,7 @@ export type ClotureBalance = {
   entrees_retours_usd?: string
   entrees_retours_cdf?: string
   approvisionnements?: EntreeCaisseLigne[]
+  denominations?: Denomination[]
 }
 
 /** Entrée de caisse hors note de débit (approvisionnement banque -> caisse). */
@@ -44,6 +46,10 @@ export type ClotureCreate = {
   solde_physique_cdf: number | string
   billetage_usd?: Record<string, number>
   billetage_cdf?: Record<string, number>
+  // Compte hors des coupures listees (pieces, petites coupures) : a expliquer
+  // dans l'observation.
+  autres_usd?: number
+  autres_cdf?: number
   observation?: string
   // Un ecart ne deplace le solde que si la regularisation est demandee : elle
   // cree alors un encaissement (excedent) ou une sortie (deficit). Sinon la
@@ -109,8 +115,9 @@ export type ClotureOut = {
   regularisations?: RegularisationCreee[]
   regularisation_erreurs?: string[]
   taux_change_applique: string
-  billetage_usd?: Record<string, number>
-  billetage_cdf?: Record<string, number>
+  // Quantités par coupure, plus « autres » : montant compté hors des coupures listées.
+  billetage_usd?: Record<string, number | string> | null
+  billetage_cdf?: Record<string, number | string> | null
   observation?: string | null
   pdf_path?: string | null
   statut: string

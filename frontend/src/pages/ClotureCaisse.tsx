@@ -27,7 +27,12 @@ const generateCloturePDF: PdfClotureGeneratorModule['generateCloturePDF'] = asyn
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import styles from './ClotureCaisse.module.css'
 import { useAuth } from '../contexts/AuthContext'
-import ClotureFields from '../components/Treasury/ClotureFields'
+import ClotureFields, {
+  montantAutres,
+  serialiserBilletage,
+  totalBilletage,
+  type BilletageSaisie,
+} from '../components/Treasury/ClotureFields'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import EcartsCaisseEnAttente from '../components/Treasury/EcartsCaisseEnAttente'
 import { listOuvertures, getCaisseStatus, type Ouverture } from '../api/caisse'
@@ -36,6 +41,25 @@ const formatMoney = (value: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(value)
 const formatMoneyCdf = (value: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(value)
+
+const formatBilletageResume = (
+  billetage: Record<string, number | string> | null | undefined,
+  devise: 'USD' | 'CDF',
+) => {
+  if (billetage == null) return 'Non renseigné pour cette ancienne clôture'
+  // « autres » : montant compté hors des coupures listées, pas une coupure.
+  const autres = Number(billetage.autres || 0)
+  const entries = Object.entries(billetage)
+    .filter(([valeur]) => valeur !== 'autres')
+    .map(([valeur, quantite]) => ({ valeur: Number(valeur), quantite: Number(quantite) }))
+    .filter((entry) => Number.isFinite(entry.valeur) && entry.valeur > 0 && entry.quantite > 0)
+    .sort((a, b) => b.valeur - a.valeur)
+  if (entries.length === 0 && !(autres > 0)) return 'Aucune coupure (solde physique nul)'
+  const format = devise === 'USD' ? formatMoney : formatMoneyCdf
+  const morceaux = entries.map(({ valeur, quantite }) => `${quantite} × ${format(valeur)}`)
+  if (autres > 0) morceaux.push(`Autres : ${format(autres)}`)
+  return morceaux.join('  ·  ')
+}
 
 export default function ClotureCaisse() {
   const { user } = useAuth()
@@ -54,8 +78,13 @@ export default function ClotureCaisse() {
     caissier_id: '',
   })
   const [caissiers, setCaissiers] = useState<{ id: string; label: string }[]>([])
-  const [physiqueUsd, setPhysiqueUsd] = useState(0)
-  const [physiqueCdf, setPhysiqueCdf] = useState(0)
+  const [billetageUsd, setBilletageUsd] = useState<BilletageSaisie>({})
+  const [billetageCdf, setBilletageCdf] = useState<BilletageSaisie>({})
+  const [physiqueManuelUsd, setPhysiqueManuelUsd] = useState(0)
+  const [physiqueManuelCdf, setPhysiqueManuelCdf] = useState(0)
+  const [autresUsd, setAutresUsd] = useState('')
+  const [autresCdf, setAutresCdf] = useState('')
+  const [comptageConfirme, setComptageConfirme] = useState(false)
   const [regulariser, setRegulariser] = useState(false)
   const [motifRegul, setMotifRegul] = useState('')
   const [showVentilation, setShowVentilation] = useState(false)
@@ -66,8 +95,15 @@ export default function ClotureCaisse() {
       try {
         const data = await getClotureBalance()
         setBalance(data)
-        setPhysiqueUsd(toNumber(data.solde_theorique_usd || 0))
-        setPhysiqueCdf(toNumber(data.solde_theorique_cdf || 0))
+        // Un nouveau comptage repart de zéro. Préremplir le physique avec le
+        // théorique permettrait de clôturer sans avoir ouvert le tiroir.
+        setBilletageUsd({})
+        setBilletageCdf({})
+        setPhysiqueManuelUsd(0)
+        setPhysiqueManuelCdf(0)
+        setAutresUsd('')
+        setAutresCdf('')
+        setComptageConfirme(false)
       } catch (error: any) {
         notifyError('Erreur', error?.payload?.detail || error?.message || 'Impossible de charger le solde.')
       } finally {
@@ -104,6 +140,18 @@ export default function ClotureCaisse() {
   const tauxChange = toNumber(balance?.taux_change || 1)
   const soldeTheoUsd = toNumber(balance?.solde_theorique_usd || 0)
   const soldeTheoCdf = toNumber(balance?.solde_theorique_cdf || 0)
+  const denominations = balance?.denominations ?? []
+  const denominationsUsd = denominations.filter((denomination) => denomination.devise === 'USD')
+  const denominationsCdf = denominations.filter((denomination) => denomination.devise === 'CDF')
+  // « Autres » n'existe qu'à côté des coupures : sans elles, le total est saisi.
+  const autresUsdMontant = denominationsUsd.length > 0 ? montantAutres(autresUsd) : 0
+  const autresCdfMontant = denominationsCdf.length > 0 ? montantAutres(autresCdf) : 0
+  const physiqueUsd = denominationsUsd.length > 0
+    ? Math.round((totalBilletage(denominationsUsd, billetageUsd) + autresUsdMontant) * 100) / 100
+    : physiqueManuelUsd
+  const physiqueCdf = denominationsCdf.length > 0
+    ? Math.round((totalBilletage(denominationsCdf, billetageCdf) + autresCdfMontant) * 100) / 100
+    : physiqueManuelCdf
   const ecartUsd = physiqueUsd - soldeTheoUsd
   const ecartCdf = physiqueCdf - soldeTheoCdf
   // Approvisionnements banque -> caisse de la période : ils sont déjà dans le
@@ -111,6 +159,9 @@ export default function ClotureCaisse() {
   const approvisionnements = balance?.approvisionnements ?? []
   const approUsd = toNumber(balance?.entrees_approvisionnements_usd || 0)
   const approCdf = toNumber(balance?.entrees_approvisionnements_cdf || 0)
+  const selectedCloture = selectedClotureId == null
+    ? null
+    : history.find((cloture) => cloture.id === selectedClotureId) ?? null
 
   // Ventilation des entrées. La tuile « Entrées USD » agrège quatre sources ;
   // sans le détail, un caissier qui ne compte que ses notes de débit croit à un
@@ -176,11 +227,27 @@ export default function ClotureCaisse() {
   }
 
   const handleSubmit = async () => {
+    if (!comptageConfirme) {
+      notifyError('Comptage non confirmé', 'Confirmez le billetage physique avant de valider la clôture.')
+      return
+    }
+    if ((autresUsdMontant > 0 || autresCdfMontant > 0) && !observation.trim()) {
+      notifyError('Observation requise', 'Précisez dans l’observation ce que contient la ligne « Autres » du billetage.')
+      return
+    }
     setSaving(true)
     try {
       const payload = {
         solde_physique_usd: physiqueUsd,
         solde_physique_cdf: physiqueCdf,
+        billetage_usd: denominationsUsd.length > 0
+          ? serialiserBilletage(denominationsUsd, billetageUsd)
+          : undefined,
+        billetage_cdf: denominationsCdf.length > 0
+          ? serialiserBilletage(denominationsCdf, billetageCdf)
+          : undefined,
+        autres_usd: autresUsdMontant,
+        autres_cdf: autresCdfMontant,
         observation: observation.trim() || undefined,
         regulariser_ecart: regulariser,
         motif_regularisation: regulariser ? motifRegul.trim() : undefined,
@@ -205,6 +272,7 @@ export default function ClotureCaisse() {
       }
       setRegulariser(false)
       setMotifRegul('')
+      setComptageConfirme(false)
       window.dispatchEvent(new Event('cash-closure-updated'))
       setCaisseOuverte(false) // la caisse est désormais fermée
       refreshCaisse()
@@ -229,6 +297,8 @@ export default function ClotureCaisse() {
         solde_theorique_cdf: data.cloture.solde_theorique_cdf,
         solde_physique_cdf: data.cloture.solde_physique_cdf,
         ecart_cdf: data.cloture.ecart_cdf,
+        billetage_usd: data.cloture.billetage_usd,
+        billetage_cdf: data.cloture.billetage_cdf,
         observation: data.cloture.observation,
       }, { returnBlob: true })
       if (blob) {
@@ -525,14 +595,61 @@ export default function ClotureCaisse() {
         </section>
       )}
 
-      <ClotureFields
-        soldeTheoriqueUsd={soldeTheoUsd}
-        soldeTheoriqueCdf={soldeTheoCdf}
-        physiqueUsd={physiqueUsd}
-        physiqueCdf={physiqueCdf}
-        onPhysiqueUsdChange={setPhysiqueUsd}
-        onPhysiqueCdfChange={setPhysiqueCdf}
-      />
+      {balance && (
+        <>
+          <ClotureFields
+            soldeTheoriqueUsd={soldeTheoUsd}
+            soldeTheoriqueCdf={soldeTheoCdf}
+            denominations={denominations}
+            billetageUsd={billetageUsd}
+            billetageCdf={billetageCdf}
+            physiqueManuelUsd={physiqueManuelUsd}
+            physiqueManuelCdf={physiqueManuelCdf}
+            autresUsd={autresUsd}
+            autresCdf={autresCdf}
+            onAutresChange={(devise, value) => {
+              if (devise === 'USD') setAutresUsd(value)
+              else setAutresCdf(value)
+              setComptageConfirme(false)
+              setRegulariser(false)
+              setMotifRegul('')
+            }}
+            onBilletageChange={(devise, key, value) => {
+              if (devise === 'USD') {
+                setBilletageUsd((prev) => ({ ...prev, [key]: value }))
+              } else {
+                setBilletageCdf((prev) => ({ ...prev, [key]: value }))
+              }
+              setComptageConfirme(false)
+              setRegulariser(false)
+              setMotifRegul('')
+            }}
+            onPhysiqueManuelChange={(devise, value) => {
+              if (devise === 'USD') setPhysiqueManuelUsd(value)
+              else setPhysiqueManuelCdf(value)
+              setComptageConfirme(false)
+              setRegulariser(false)
+              setMotifRegul('')
+            }}
+          />
+          <section className={styles.countConfirmation}>
+            <label>
+              <input
+                type="checkbox"
+                checked={comptageConfirme}
+                onChange={(event) => setComptageConfirme(event.target.checked)}
+              />
+              <span>
+                <strong>Je confirme avoir compté le contenu physique de la caisse.</strong>
+                <small>
+                  Les soldes physiques ci-dessous proviennent du billetage saisi et seront
+                  conservés avec la clôture.
+                </small>
+              </span>
+            </label>
+          </section>
+        </>
+      )}
 
       <section className={styles.verdict}>
         <div>
@@ -572,9 +689,11 @@ export default function ClotureCaisse() {
             Le comptage physique ne remplace pas le solde du logiciel. Pour que les deux
             correspondent, l’écart doit donner lieu à une opération identifiable :{' '}
             <strong>
-              {ecartUsd + ecartCdf >= 0
-                ? 'un encaissement de régularisation'
-                : 'une sortie de régularisation'}
+              {((ecartUsd > 0 || ecartCdf > 0) && (ecartUsd < 0 || ecartCdf < 0))
+                ? 'des opérations de régularisation distinctes par devise'
+                : (ecartUsd > 0 || ecartCdf > 0)
+                  ? 'un encaissement de régularisation'
+                  : 'une sortie de régularisation'}
             </strong>
             .
           </p>
@@ -623,7 +742,7 @@ export default function ClotureCaisse() {
             Caisse fermée — ouvrez-la (bandeau ci-dessus) pour pouvoir la clôturer.
           </span>
         ) : (
-          <button type="button" onClick={handleSubmit} disabled={saving || loading}>
+          <button type="button" onClick={handleSubmit} disabled={saving || loading || !comptageConfirme}>
             {saving ? 'Enregistrement...' : 'Valider la clôture'}
           </button>
         )}
@@ -650,6 +769,19 @@ export default function ClotureCaisse() {
             ))}
           </select>
         </div>
+        {selectedCloture && (
+          <div className={styles.archivedBilletage}>
+            <strong>Billetage enregistré — {selectedCloture.reference_numero}</strong>
+            <div>
+              <span>USD</span>
+              <p>{formatBilletageResume(selectedCloture.billetage_usd, 'USD')}</p>
+            </div>
+            <div>
+              <span>CDF</span>
+              <p>{formatBilletageResume(selectedCloture.billetage_cdf, 'CDF')}</p>
+            </div>
+          </div>
+        )}
         <div className={styles.historyFilters}>
           <input
             type="date"

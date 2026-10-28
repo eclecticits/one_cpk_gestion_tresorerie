@@ -12,7 +12,12 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from app.api.v1.endpoints.clotures import create_cloture, open_caisse
+from app.api.v1.endpoints.clotures import (
+    _billetage_total,
+    _verifier_coherence_billetage,
+    create_cloture,
+    open_caisse,
+)
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement
@@ -277,6 +282,8 @@ async def test_cloture_ne_realigne_plus_le_solde_sur_le_comptage(db_session):
     payload = ClotureCreateRequest(
         solde_physique_usd=Decimal("9900"),
         solde_physique_cdf=Decimal("0"),
+        billetage_usd={"100": 99},
+        billetage_cdf={},
         regulariser_ecart=False,
     )
     out = await create_cloture(
@@ -284,9 +291,54 @@ async def test_cloture_ne_realigne_plus_le_solde_sur_le_comptage(db_session):
     )
 
     assert out.solde_physique_usd == Decimal("9900.00")
+    assert out.billetage_usd == {"100": 99}
+    assert out.billetage_cdf == {}
     assert out.regularisations == []
     # Le solde reste théorique : l'écart n'est pas absorbé en silence.
     assert await _solde(db_session, caisse.id) == Decimal("10000.00")
+
+
+def test_billetage_totalise_les_coupures_avec_centimes():
+    assert _billetage_total({"100": 2, "50": 1, "0.50": 2}, "USD") == Decimal("251.00")
+
+
+def test_billetage_incoherent_est_refuse_avant_la_cloture():
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        _verifier_coherence_billetage(
+            billetage={"100": 2, "50": 1},
+            solde_physique=Decimal("260"),
+            devise="USD",
+        )
+
+    assert exc.value.status_code == 400
+    assert "totalisent 250.00 USD" in exc.value.detail
+
+
+def test_billetage_refuse_deux_ecritures_de_la_meme_coupure():
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        _billetage_total({"100": 1, "100.00": 1}, "USD")
+
+    assert exc.value.status_code == 400
+    assert "plusieurs fois" in exc.value.detail
+
+
+def test_billetage_refuse_une_coupure_non_configuree():
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        _billetage_total(
+            {"100": 1, "75": 1},
+            "USD",
+            coupures_autorisees={Decimal("100.00"), Decimal("50.00")},
+        )
+
+    assert exc.value.status_code == 400
+    assert "75" in exc.value.detail
+    assert "pas configurée" in exc.value.detail
 
 
 @pytest.mark.asyncio
@@ -410,3 +462,141 @@ async def test_regularisation_a_posteriori_sans_poste_configure_echoue_propremen
         )
     assert exc.value.status_code == 400
     assert "poste budgétaire" in exc.value.detail
+
+
+# ---------------------------------------------------------------------------
+# Billetage obligatoire dès que des coupures sont configurées. La base de test
+# n'en a aucune, la production si (migration `20260212_denominations`) : sans
+# ces tests, la règle n'était jamais exercée de bout en bout.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def coupures(db_session):
+    """Configure des coupures le temps d'un test.
+
+    La table est commune à toutes les organisations : on la rend telle qu'on
+    l'a trouvée, sinon les clôtures des autres tests exigeraient un billetage.
+    """
+    from sqlalchemy import delete
+
+    from app.models.denomination import Denomination
+
+    creees: list[int] = []
+
+    async def poser(*lignes: tuple[str, str, bool]):
+        for devise, valeur, actif in lignes:
+            d = Denomination(devise=devise, valeur=Decimal(valeur), label=f"{valeur} {devise}", est_actif=actif)
+            db_session.add(d)
+            await db_session.flush()
+            creees.append(d.id)
+        await db_session.commit()
+
+    yield poser
+    if creees:
+        await db_session.execute(delete(Denomination).where(Denomination.id.in_(creees)))
+        await db_session.commit()
+
+
+async def _cloturer(db_session, org, user, **billetage):
+    payload = ClotureCreateRequest(
+        solde_physique_usd=Decimal("10000"),
+        solde_physique_cdf=Decimal("0"),
+        regulariser_ecart=False,
+        **billetage,
+    )
+    return await create_cloture(payload=payload, request=None, user=user, db=db_session, tenant_id=org.id)
+
+
+@pytest.mark.asyncio
+async def test_cloture_exige_le_billetage_des_devises_configurees(db_session, coupures):
+    from fastapi import HTTPException
+
+    await coupures(("USD", "100", True), ("USD", "50", True))
+    org, user, _, _, _ = await _setup(db_session)
+    await _ouvrir(db_session, org, user, compte=Decimal("10000"), regulariser=False)
+
+    # Billetage USD omis : refusé. Le CDF, sans coupure configurée, reste libre.
+    with pytest.raises(HTTPException) as exc:
+        await _cloturer(db_session, org, user)
+    assert exc.value.status_code == 400
+    assert "billetage USD est obligatoire" in exc.value.detail
+
+    # Coupure non configurée (20) : refusée, même si le total tombe juste.
+    with pytest.raises(HTTPException) as exc:
+        await _cloturer(db_session, org, user, billetage_usd={"100": 99, "20": 5})
+    assert "pas configurée" in exc.value.detail
+
+    # Coupures qui ne font pas le solde physique annoncé : refusées.
+    with pytest.raises(HTTPException) as exc:
+        await _cloturer(db_session, org, user, billetage_usd={"100": 99})
+    assert "incohérent" in exc.value.detail
+
+    out = await _cloturer(db_session, org, user, billetage_usd={"100": 98, "50": 4})
+    assert out.billetage_usd == {"100": 98, "50": 4}
+
+
+@pytest.mark.asyncio
+async def test_balance_renvoie_les_coupures_actives_sans_doublon(db_session, coupures):
+    from app.api.v1.endpoints.clotures import _compute_balance
+
+    await coupures(("USD", "100", True), ("USD", "100.00", True), ("USD", "2", False), ("CDF", "5000", True))
+    org, user, _, _, _ = await _setup(db_session)
+    await _ouvrir(db_session, org, user, compte=Decimal("10000"), regulariser=False)
+
+    balance = await _compute_balance(db_session, org.id)
+    vues = [(d.devise, Decimal(str(d.valeur))) for d in balance.denominations]
+    # La coupure inactive (2 USD) n'est pas proposée ; le doublon de 100 non plus.
+    assert vues.count(("USD", Decimal("100"))) == 1
+    assert ("USD", Decimal("2")) not in vues
+    assert ("CDF", Decimal("5000")) in vues
+
+
+def test_billetage_lisible_dans_l_export():
+    from app.api.v1.endpoints.clotures import _billetage_lisible
+
+    assert _billetage_lisible({"50": 4, "100": 98, "0.50": 2, "20": 0}) == "98 × 100 · 4 × 50 · 2 × 0.5"
+    assert _billetage_lisible({}) == "Aucune coupure"
+    assert _billetage_lisible(None) == "Non renseigné"
+
+
+@pytest.mark.asyncio
+async def test_autres_complete_le_billetage_et_doit_etre_explique(db_session, coupures):
+    """Pièces ou coupures non listées : comptées en « Autres », justifiées en observation."""
+    from fastapi import HTTPException
+
+    await coupures(("USD", "100", True))
+    org, user, _, _, _ = await _setup(db_session)
+    await _ouvrir(db_session, org, user, compte=Decimal("10000"), regulariser=False)
+
+    # 99 × 100 + 100,00 en « Autres » = 10 000 : le total tombe juste, mais
+    # sans observation la ligne « Autres » n'est pas acceptée.
+    with pytest.raises(HTTPException) as exc:
+        await _cloturer(db_session, org, user, billetage_usd={"100": 99}, autres_usd=Decimal("100"))
+    assert "observation" in exc.value.detail
+
+    with pytest.raises(HTTPException) as exc:
+        await _cloturer(
+            db_session, org, user, billetage_usd={"100": 99}, autres_usd=Decimal("-5"), observation="x",
+        )
+    assert "négatif" in exc.value.detail
+
+    # « Autres » entre dans le contrôle du total.
+    with pytest.raises(HTTPException) as exc:
+        await _cloturer(
+            db_session, org, user, billetage_usd={"100": 99}, autres_usd=Decimal("40"), observation="Pièces",
+        )
+    assert "dont 40.00 en « Autres »" in exc.value.detail
+
+    out = await _cloturer(
+        db_session, org, user,
+        billetage_usd={"100": 99}, autres_usd=Decimal("100"), observation="Cinq billets de 20 $",
+    )
+    assert out.billetage_usd == {"100": 99, "autres": "100.00"}
+
+
+def test_billetage_lisible_montre_les_autres():
+    from app.api.v1.endpoints.clotures import _billetage_lisible
+
+    assert _billetage_lisible({"100": 99, "autres": "100.00"}) == "99 × 100 · Autres : 100.00"
+    assert _billetage_lisible({"autres": "12.50"}) == "Autres : 12.50"
