@@ -1073,7 +1073,7 @@ export default function ServicePortal() {
               Nouvelle réquisition
             </button>
             <button
-              className={styles.secondaryAction}
+              className={`${styles.secondaryAction} ${styles.transportAction}`}
               onClick={() =>
                 navigate(`/remboursement-transport?new=1&service_id=${activeServiceId}`, {
                   state: { fromCommission: activeServiceId },

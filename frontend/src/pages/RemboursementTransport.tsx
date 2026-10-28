@@ -53,7 +53,7 @@ import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { isAssistantMember, resolveMemberFunctionLabel, trierParHierarchie } from '../utils/serviceMemberFunctions'
-import { ArrowDown, ArrowUp, Mail, Paperclip, Printer, Search, SearchX, Users } from 'lucide-react'
+import { ArrowDown, ArrowUp, Mail, Paperclip, Plus, Printer, Search, SearchX, Users } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import BudgetPosteSelect from '../components/BudgetPosteSelect'
 import styles from './RemboursementTransport.module.css'
@@ -306,6 +306,16 @@ export default function RemboursementTransport() {
     navigate(
       { pathname: location.pathname, search: nextSearch ? `?${nextSearch}` : '' },
       { replace: true, state: location.state }
+    )
+  }
+
+  const openNewForm = () => {
+    const params = new URLSearchParams(location.search)
+    params.set('new', '1')
+    if (serviceContextId) params.set('service_id', serviceContextId)
+    navigate(
+      { pathname: location.pathname, search: `?${params.toString()}` },
+      { state: location.state }
     )
   }
 
@@ -1665,12 +1675,14 @@ export default function RemboursementTransport() {
           <h1>Remboursement frais de transport</h1>
           <p>Gestion des remboursements pour réunions et commissions</p>
         </div>
-        {canCreate && (
+        {canCreate && !showForm && (
           <button
-            onClick={() => navigate('/remboursement-transport?new=1')}
-            className={styles.primaryBtn}
+            type="button"
+            onClick={openNewForm}
+            className={`${styles.primaryBtn} ${styles.newRequestBtn}`}
           >
-            + Nouveau remboursement
+            <Plus size={18} strokeWidth={2.4} aria-hidden="true" />
+            <span>Nouveau remboursement</span>
           </button>
         )}
       </div>

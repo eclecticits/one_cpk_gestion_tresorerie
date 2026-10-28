@@ -143,11 +143,28 @@
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
 .secondaryAction:hover {
   border-color: #94a3b8;
   background: #f8fafc;
+}
+
+/* Le remboursement est une action métier, pas une commande utilitaire comme
+   l'impression. Une teinte dédiée rend la hiérarchie immédiatement lisible. */
+.transportAction {
+  color: #0f766e;
+  background: #f0fdfa;
+  border-color: #99f6e4;
+  box-shadow: 0 1px 2px rgba(15, 118, 110, 0.08);
+}
+
+.transportAction:hover {
+  color: #115e59;
+  background: #ccfbf1;
+  border-color: #5eead4;
+  box-shadow: 0 3px 10px rgba(15, 118, 110, 0.12);
 }
 
 .alert {
@@ -1348,9 +1365,14 @@
 }
 
 @media (max-width: 1100px) {
-  .header {
+  .headerTop {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .actionButtons {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .insightsGrid {
@@ -1359,6 +1381,18 @@
 
   .filtersGrid {
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .actionButtons {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .actionButtons > button {
+    width: 100%;
+    justify-content: center;
   }
 }
 
