@@ -4,7 +4,7 @@ import type { CellObject, CellStyle, WorkBook, WorkSheet } from 'xlsx'
 type XlsxModule = typeof import('xlsx')
 type SheetValue = string | number | boolean | Date | null | undefined
 
-export type SummaryTone = 'default' | 'positive' | 'negative' | 'accent' | 'warning' | 'bordeaux'
+export type SummaryTone = 'default' | 'positive' | 'negative' | 'accent' | 'warning' | 'bordeaux' | 'rose'
 
 export type ReportSummaryItem = {
   label: string
@@ -28,6 +28,9 @@ const BORDER = 'D1D5DB'
 // Avances « à valoir » (`journalAValoir.ts`) : rouge bordeaux sur fond rosé.
 const BORDEAUX = '800020'
 const BORDEAUX_SOFT = 'F3C4CE'
+// Reliquats d'avance rendus : le rose, couleur sœur du bordeaux.
+const ROSE = 'BE185D'
+const ROSE_SOFT = 'FCE7F3'
 const WHITE = 'FFFFFF'
 const MONEY_FORMAT = '#,##0.00;[Red]-#,##0.00'
 const DATE_FORMAT = 'dd/mm/yyyy'
@@ -39,6 +42,7 @@ const toneFills: Record<SummaryTone, string> = {
   accent: TEAL_SOFT,
   warning: AMBER_SOFT,
   bordeaux: BORDEAUX_SOFT,
+  rose: ROSE_SOFT,
 }
 
 const toneValueColors: Record<SummaryTone, string> = {
@@ -48,6 +52,7 @@ const toneValueColors: Record<SummaryTone, string> = {
   accent: TEAL,
   warning: AMBER,
   bordeaux: BORDEAUX,
+  rose: ROSE,
 }
 
 const thinBorder: NonNullable<CellStyle['border']> = {
@@ -127,6 +132,11 @@ const bordeauxMarkerStyle: CellStyle = {
   alignment: { horizontal: 'center', vertical: 'center' },
   border: thinBorder,
 }
+/** Même pastille, en rose, pour le reliquat rendu. */
+const roseMarkerStyle: CellStyle = {
+  ...bordeauxMarkerStyle,
+  fill: { patternType: 'solid', fgColor: { rgb: ROSE } },
+}
 
 const highlightedBodyVariants = Object.fromEntries(
   Object.entries({
@@ -135,6 +145,7 @@ const highlightedBodyVariants = Object.fromEntries(
     accent: TEAL_SOFT,
     warning: AMBER_SOFT,
     bordeaux: BORDEAUX_SOFT,
+    rose: ROSE_SOFT,
   }).map(([tone, fill]) => [
     tone,
     rowStyleVariants({
@@ -142,8 +153,9 @@ const highlightedBodyVariants = Object.fromEntries(
       font: {
         color: { rgb: toneValueColors[tone as Exclude<SummaryTone, 'default'>] },
         sz: 10,
-        // Le bordeaux est une alerte : en gras, il se repère aussi imprimé.
-        bold: tone === 'bordeaux',
+        // Le bordeaux est une alerte, le rose son retour : en gras, ils se
+        // repèrent aussi imprimés.
+        bold: tone === 'bordeaux' || tone === 'rose',
       },
       fill: { patternType: 'solid', fgColor: { rgb: fill } },
     }),
@@ -428,7 +440,7 @@ export function createReportListSheet(
         cell.c = notes
       }
       cell.s = ordinal && columnIndex === 0
-        ? rowTone === 'bordeaux' ? bordeauxMarkerStyle : variants.centered
+        ? rowTone === 'bordeaux' ? bordeauxMarkerStyle : rowTone === 'rose' ? roseMarkerStyle : variants.centered
         : moneyColumns.has(columnIndex)
         ? variants.money
         : dateColumns.has(columnIndex) && cell.t === 'n'

@@ -14,7 +14,7 @@ import type { ReportSummaryResponse } from '../types/reports'
 import type { ReportJournalResponse } from '../types/reports'
 import { toNumber } from '../utils/amount'
 import { libelleJournalComplet } from '../utils/journalLibelle'
-import { alerteAValoir, bilanAValoir, libelleAvecAValoir } from '../utils/journalAValoir'
+import { alerteAValoir, bilanAValoir, libelleAvecAValoir, tonAValoir, tonAlerteAValoir } from '../utils/journalAValoir'
 import { getStatusMeta } from '../utils/statusMapper'
 import type { Money } from '../types'
 import { getTypeSortieLabel } from '../utils/sortieFondsHelpers'
@@ -488,9 +488,10 @@ export default function Rapports() {
           ? { label: `À valoir (${bilanJournal.nombre})`, value: bilanJournal.reste, tone: 'bordeaux', format: 'money' }
           : { label: 'Mouvements', value: rows.length, format: 'integer' },
       ],
-      notice: { text: alerteAValoir(bilanJournal, journalDeviseEffective), tone: 'bordeaux' },
-      rowTone: (_row, rowIndex) => (journalData.lignes[rowIndex]?.a_valoir ? 'bordeaux' : undefined),
-      // Note sur le libellé : qui doit justifier, pour quand, combien reste dehors.
+      notice: { text: alerteAValoir(bilanJournal, journalDeviseEffective), tone: tonAlerteAValoir(bilanJournal) },
+      rowTone: (_row, rowIndex) => tonAValoir(journalData.lignes[rowIndex]),
+      // Note sur le libellé : qui doit justifier, pour quand, combien reste dehors
+      // (pour un retour : sur quelle avance, et ce qu'il laisse dehors).
       cellComment: (rowIndex, columnIndex) =>
         columnIndex === 1 ? journalData.lignes[rowIndex]?.a_valoir_alerte : undefined,
       footerRow: ['TOTAL MOUVEMENTS', '', totalEntreesJournal, totalSortiesJournal, soldeFinalJournal],
@@ -2176,7 +2177,13 @@ export default function Rapports() {
                   return (
                   <tr
                     key={`${line.date}-${index}`}
-                    className={line.a_valoir ? styles.journalAValoirRow : undefined}
+                    className={
+                      line.a_valoir
+                        ? styles.journalAValoirRow
+                        : line.retour_a_valoir
+                          ? styles.journalRetourAValoirRow
+                          : undefined
+                    }
                     title={line.a_valoir_alerte || undefined}
                   >
                     <td>{formatReportDate(line.date)}</td>
@@ -2185,6 +2192,9 @@ export default function Rapports() {
                         <span className={styles.aValoirBadge}>
                           À valoir{line.a_valoir_statut === 'EN_RETARD' ? ' · en retard' : ''}
                         </span>
+                      )}
+                      {line.retour_a_valoir && (
+                        <span className={styles.retourAValoirBadge}>Retour à valoir</span>
                       )}
                       {line.precision ? (
                         <>

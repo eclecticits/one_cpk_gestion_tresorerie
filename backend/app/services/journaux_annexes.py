@@ -72,6 +72,10 @@ FILET_JOUR = _rgb(203, 213, 225)
 BORDEAUX = _rgb(128, 0, 32)
 BORDEAUX_FOND = _rgb(243, 196, 206)
 A_VALOIR_PREFIXE = "À VALOIR — "
+# Reliquats d'avance rendus : le rose, couleur sœur du bordeaux (même source).
+ROSE = _rgb(190, 24, 93)
+ROSE_FOND = _rgb(252, 231, 243)
+RETOUR_A_VALOIR_PREFIXE = "RETOUR À VALOIR — "
 _ETATS_A_VALOIR = {
     "EN_RETARD": "justificatif EN RETARD",
     "RECU": "justificatif reçu",
@@ -133,18 +137,40 @@ def _etat_a_valoir(ligne, devise: str) -> str:
     return f"{statut} · reste : {_montant(getattr(ligne, 'a_valoir_reste', None))} {devise}"
 
 
+def _etat_retour_a_valoir(ligne, devise: str) -> str:
+    """`etatRetourAValoir` du frontend : seconde ligne du libellé dans le PDF."""
+    return f"reliquat d'avance rendu · reste après ce retour : {_montant(getattr(ligne, 'a_valoir_reste', None))} {devise}"
+
+
+def _prefixe_a_valoir(ligne) -> str:
+    """`libelleAvecAValoir` du frontend : le préfixe garde l'alerte lisible en noir et blanc."""
+    if getattr(ligne, "a_valoir", False):
+        return A_VALOIR_PREFIXE
+    if getattr(ligne, "retour_a_valoir", False):
+        return RETOUR_A_VALOIR_PREFIXE
+    return ""
+
+
 def _alerte_a_valoir(lignes: list, devise: str) -> str:
-    """`alerteAValoir` du frontend : phrase d'alerte, vide sans avance à valoir."""
+    """`alerteAValoir` du frontend : phrase d'alerte, vide sans avance ni retour à valoir."""
     avances = [l for l in lignes if getattr(l, "a_valoir", False)]
-    if not avances:
-        return ""
-    en_retard = sum(1 for l in avances if getattr(l, "a_valoir_statut", None) == "EN_RETARD")
-    reste = sum((Decimal(getattr(l, "a_valoir_reste", None) or 0) for l in avances), Decimal("0"))
-    retard = f", dont {en_retard} au justificatif en retard" if en_retard else ""
-    return (
-        f"Avances à valoir : {len(avances)} sur la période{retard} — reste : "
-        f"{_montant(reste)} {devise}. Lignes signalées en bordeaux."
-    )
+    retours = [l for l in lignes if getattr(l, "retour_a_valoir", False)]
+    phrases = []
+    if avances:
+        en_retard = sum(1 for l in avances if getattr(l, "a_valoir_statut", None) == "EN_RETARD")
+        reste = sum((Decimal(getattr(l, "a_valoir_reste", None) or 0) for l in avances), Decimal("0"))
+        retard = f", dont {en_retard} au justificatif en retard" if en_retard else ""
+        phrases.append(
+            f"Avances à valoir : {len(avances)} sur la période{retard} — reste : "
+            f"{_montant(reste)} {devise}. Lignes signalées en bordeaux."
+        )
+    if retours:
+        rendu = sum((Decimal(getattr(l, "entree", None) or 0) for l in retours), Decimal("0"))
+        phrases.append(
+            f"Reliquats d'avances rendus : {len(retours)} — {_montant(rendu)} {devise} "
+            "revenus en trésorerie. Lignes signalées en rose."
+        )
+    return " ".join(phrases)
 
 
 def _echapper(texte: str) -> str:
@@ -410,6 +436,7 @@ def _pdf(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclus
 
     cellule = ParagraphStyle("cellule", fontName="Helvetica", fontSize=8.5, leading=10, textColor=ENCRE)
     bordeaux = ParagraphStyle("a_valoir", parent=cellule, textColor=BORDEAUX)
+    rose = ParagraphStyle("retour_a_valoir", parent=cellule, textColor=ROSE)
     devise = journal.devise
     donnees: list[list] = [["Date", "Libellé / Référence", f"Entrée ({devise})", f"Sortie ({devise})", f"Solde ({devise})"]]
     donnees.append(["", Paragraph("<b>REPORT À NOUVEAU (solde initial)</b>", cellule), "", "", _montant(journal.solde_initial)])
@@ -445,6 +472,22 @@ def _pdf(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclus
                 f"<b>{_echapper(A_VALOIR_PREFIXE + _libelle_complet(ligne))}</b><br/>"
                 f"{_echapper(_etat_a_valoir(ligne, devise))}",
                 bordeaux,
+            )
+        elif getattr(ligne, "retour_a_valoir", False):
+            # Même dessin que l'avance, en rose : l'argent revenu, pas sorti.
+            styles_lignes += [
+                ("BACKGROUND", (0, rang), (-1, rang), ROSE_FOND),
+                ("BACKGROUND", (0, rang), (0, rang), ROSE),
+                ("TEXTCOLOR", (0, rang), (0, rang), colors.white),
+                ("FONTNAME", (0, rang), (0, rang), "Helvetica-Bold"),
+                ("TEXTCOLOR", (1, rang), (2, rang), ROSE),
+                ("TEXTCOLOR", (4, rang), (4, rang), ROSE),
+                ("FONTNAME", (2, rang), (2, rang), "Helvetica-Bold"),
+            ]
+            libelle = Paragraph(
+                f"<b>{_echapper(RETOUR_A_VALOIR_PREFIXE + _libelle_complet(ligne))}</b><br/>"
+                f"{_echapper(_etat_retour_a_valoir(ligne, devise))}",
+                rose,
             )
         else:
             libelle = Paragraph(_echapper(_libelle_complet(ligne)), cellule)
@@ -514,15 +557,17 @@ def _pdf(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclus
     alerte = _alerte_a_valoir(journal.lignes, devise)
     if alerte:
         # Bandeau d'alerte sous les cartouches, comme `drawAlerteAValoir`.
+        # Bordeaux dès qu'une avance est dehors ; rose s'il n'y a que des retours.
+        avance_dehors = any(getattr(l, "a_valoir", False) for l in journal.lignes)
         bandeau = Table(
-            [[Paragraph(f"<b>{_echapper(alerte)}</b>", bordeaux)]],
+            [[Paragraph(f"<b>{_echapper(alerte)}</b>", bordeaux if avance_dehors else rose)]],
             colWidths=[largeur_utile],
         )
         bandeau.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, -1), BORDEAUX_FOND),
-                    ("BOX", (0, 0), (-1, -1), 0.4 * mm, BORDEAUX),
+                    ("BACKGROUND", (0, 0), (-1, -1), BORDEAUX_FOND if avance_dehors else ROSE_FOND),
+                    ("BOX", (0, 0), (-1, -1), 0.4 * mm, BORDEAUX if avance_dehors else ROSE),
                     ("TOPPADDING", (0, 0), (-1, -1), 2 * mm),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
                     ("LEFTPADDING", (0, 0), (-1, -1), 4 * mm),
@@ -563,6 +608,8 @@ XL_AMBRE = "B45309"
 XL_BORDURE = "D1D5DB"
 XL_BORDEAUX = "800020"
 XL_BORDEAUX_CLAIR = "F3C4CE"
+XL_ROSE = "BE185D"
+XL_ROSE_CLAIR = "FCE7F3"
 XL_FORMAT_MONTANT = "#,##0.00;[Red]-#,##0.00"
 XL_FORMAT_DATE = "dd/mm/yyyy"
 
@@ -662,13 +709,17 @@ def _xlsx(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclu
 
     # Bandeau d'alerte sur la ligne 6, laissée vide sans avance à valoir.
     alerte = _alerte_a_valoir(journal.lignes, journal.devise)
+    # Bordeaux dès qu'une avance est dehors ; rose s'il n'y a que des retours.
+    couleur_alerte, fond_alerte = (
+        (XL_BORDEAUX, XL_BORDEAUX_CLAIR) if avances else (XL_ROSE, XL_ROSE_CLAIR)
+    )
     if alerte:
         ws.merge_cells(f"A6:{derniere_lettre}6")
         ws.cell(row=6, column=1, value=alerte)
         for col in range(1, nb_col + 1):
             c = ws.cell(row=6, column=col)
-            c.font = Font(bold=True, color=XL_BORDEAUX, size=10)
-            c.fill = remplir(XL_BORDEAUX_CLAIR)
+            c.font = Font(bold=True, color=couleur_alerte, size=10)
+            c.fill = remplir(fond_alerte)
             c.border = bordure
             c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         ws.row_dimensions[6].height = 30
@@ -687,8 +738,12 @@ def _xlsx(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclu
     police_a_valoir = Font(color=XL_BORDEAUX, size=10, bold=True)
     zebre = remplir(XL_ARDOISE_CLAIR)
     fond_a_valoir = remplir(XL_BORDEAUX_CLAIR)
+    police_retour = Font(color=XL_ROSE, size=10, bold=True)
+    fond_retour = remplir(XL_ROSE_CLAIR)
     for index, ligne in enumerate(journal.lignes):
         a_valoir = bool(getattr(ligne, "a_valoir", False))
+        retour = not a_valoir and bool(getattr(ligne, "retour_a_valoir", False))
+        marque = XL_BORDEAUX if a_valoir else XL_ROSE if retour else None
         rang = ligne_entete + 1 + index
         date = ligne.date
         if date is not None and date.tzinfo is not None:
@@ -696,20 +751,20 @@ def _xlsx(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclu
         valeurs = [
             index + 1,
             date.date() if date else None,
-            (A_VALOIR_PREFIXE if a_valoir else "") + _libelle_complet(ligne),
+            _prefixe_a_valoir(ligne) + _libelle_complet(ligne),
             float(ligne.entree or 0),
             float(ligne.sortie or 0),
             float(ligne.solde or 0),
         ]
         for col, valeur in enumerate(valeurs, start=1):
             c = ws.cell(row=rang, column=col, value=valeur)
-            c.font = police_a_valoir if a_valoir else police_corps
+            c.font = police_a_valoir if a_valoir else police_retour if retour else police_corps
             c.border = bordure
-            if a_valoir:
-                c.fill = fond_a_valoir
+            if marque:
+                c.fill = fond_a_valoir if a_valoir else fond_retour
                 if col == 1:
                     # Colonne N° en pastille pleine, comme l'export de l'écran.
-                    c.fill = remplir(XL_BORDEAUX)
+                    c.fill = remplir(marque)
                     c.font = Font(color="FFFFFF", size=10, bold=True)
             elif index % 2 == 1:
                 c.fill = zebre
@@ -721,7 +776,7 @@ def _xlsx(journal: JournalAnnexe, identite: Identite, debut: datetime, fin_inclu
             elif col == 3:
                 c.alignment = Alignment(vertical="center", wrap_text=True)
                 alerte_ligne = getattr(ligne, "a_valoir_alerte", None)
-                if a_valoir and alerte_ligne:
+                if marque and alerte_ligne:
                     # Note au survol : qui doit justifier, pour quand, combien reste dehors.
                     c.comment = Comment(alerte_ligne, "ONEC Smart", width=320, height=130)
             else:

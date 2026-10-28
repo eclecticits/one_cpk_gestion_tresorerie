@@ -1664,6 +1664,39 @@ def _alerte_a_valoir(
     }
 
 
+def _alerte_retour_a_valoir(
+    *,
+    origine: str,
+    montant: Decimal,
+    rendu_cumule: Decimal,
+    devise: str,
+    statut: str | None,
+) -> dict:
+    """Ce que les exports disent du reliquat d'une avance rendu en trésorerie.
+
+    Le retour montre ce qu'il a fait à l'avance : combien a été rendu en tout
+    jusqu'à lui, et combien reste dehors après lui. Même règle de reste que
+    l'avance : nul une fois le justificatif reçu ou dispensé.
+    """
+
+    def _montant(valeur: Decimal) -> str:
+        return f"{float(valeur):,.2f}".replace(",", " ").replace(".", ",")
+
+    statut = statut or "NON_REQUIS"
+    reste = Decimal("0") if statut in {"RECU", "DISPENSE"} else max(montant - rendu_cumule, Decimal("0"))
+    lignes = [
+        "RETOUR SUR AVANCE À VALOIR",
+        f"Avance : {origine}",
+        f"Remis : {_montant(montant)} {devise} · Rendu jusqu'à ce retour : {_montant(rendu_cumule)} {devise}",
+        f"Reste après ce retour : {_montant(reste)} {devise}",
+    ]
+    return {
+        "retour_a_valoir": True,
+        "a_valoir_reste": reste,
+        "a_valoir_alerte": "\n".join(lignes),
+    }
+
+
 def _preciser(mouvement: dict, *precisions: str | None, tiers: str | None = None) -> dict:
     """Ajoute au libellé du journal ses précisions entre parenthèses.
 
@@ -2073,6 +2106,9 @@ async def journal_tresorerie(
 
     # Retours en trésorerie : une ENTRÉE à la date du retour. La sortie
     # d'origine reste à sa date, intacte ; le libellé rappelle laquelle.
+    # Le cumul rendu est pris sur toute l'histoire de la sortie : la période
+    # filtre autour de lui, jamais dedans.
+    cumuls = _retours_cumules(tenant_id)
     retour_query = _retours_du_compte(
         select(
             RetourCaisse.id,
@@ -2083,7 +2119,14 @@ async def journal_tresorerie(
             SortieFonds.reference_numero.label("sortie_reference"),
             func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at).label("sortie_date"),
             SortieFonds.beneficiaire.label("sortie_beneficiaire"),
-        ).join(SortieFonds, SortieFonds.id == RetourCaisse.sortie_fonds_id)
+            SortieFonds.montant_paye.label("sortie_montant"),
+            SortieFonds.justificatif_statut.label("sortie_justificatif"),
+            Requisition.a_valoir.label("sortie_a_valoir"),
+            cumuls.c.cumul.label("rendu_cumule"),
+        )
+        .join(SortieFonds, SortieFonds.id == RetourCaisse.sortie_fonds_id)
+        .outerjoin(Requisition, Requisition.id == SortieFonds.requisition_id)
+        .outerjoin(cumuls, cumuls.c.retour_id == RetourCaisse.id)
     )
     if start_dt:
         retour_query = retour_query.where(RetourCaisse.date_retour >= start_dt)
@@ -2093,6 +2136,17 @@ async def journal_tresorerie(
         origine = row.sortie_reference or "sortie"
         if row.sortie_date:
             origine += f" du {row.sortie_date.strftime('%d/%m/%Y')}"
+        alerte = (
+            _alerte_retour_a_valoir(
+                origine=origine,
+                montant=Decimal(row.sortie_montant or 0),
+                rendu_cumule=Decimal(row.rendu_cumule or 0),
+                devise=devise,
+                statut=row.sortie_justificatif,
+            )
+            if row.sortie_a_valoir
+            else {}
+        )
         mouvements.append(_preciser(
             {
                 "date": row.date_retour,
@@ -2107,6 +2161,7 @@ async def journal_tresorerie(
                 "is_reconciled": None,
                 "reconciled_at": None,
                 "bank_statement_ref": None,
+                **alerte,
             },
             # Celui qui rend est celui qui avait reçu la sortie d'origine.
             f"rendu par {row.sortie_beneficiaire}" if row.sortie_beneficiaire else None,

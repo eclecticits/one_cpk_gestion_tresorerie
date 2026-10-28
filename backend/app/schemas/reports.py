@@ -174,6 +174,11 @@ class ReportJournalLine(DecimalBaseModel):
     a_valoir_statut: str | None = Field(default=None, description="ATTENDU | EN_RETARD | RECU | DISPENSE | NON_REQUIS")
     a_valoir_reste: Decimal | None = None
     a_valoir_alerte: str | None = None
+    # Reliquat d'une avance à valoir rendu en trésorerie : signalé en rose, la
+    # couleur sœur du bordeaux, pour que l'œil relie le retour à l'avance.
+    # `a_valoir_reste` y vaut ce qui reste dehors APRÈS ce retour, et
+    # `a_valoir_alerte` porte la note (avance d'origine, remis, rendu, reste).
+    retour_a_valoir: bool = False
 
 
 class ReportVersementLine(DecimalBaseModel):

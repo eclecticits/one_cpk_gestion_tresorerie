@@ -137,6 +137,8 @@ export interface ReportJournalLine {
   a_valoir_reste?: Money | null
   /** Texte de la note Excel et de l'infobulle : qui, pour quand, combien. */
   a_valoir_alerte?: string | null
+  /** Reliquat d'avance à valoir rendu en trésorerie : signalé en rose. */
+  retour_a_valoir?: boolean
 }
 
 export interface ReportJournalResponse {

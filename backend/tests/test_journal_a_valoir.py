@@ -63,6 +63,13 @@ async def _avance_a_valoir(db, *, justificatif="ATTENDU", echeance=AVANCE_LE + t
         devise="USD", canal="CAISSE", mode="cash", date_retour=AVANCE_LE + timedelta(days=3),
         statut="VALIDE",
     ))
+    # Un retour sur une sortie ordinaire n'est pas un reliquat d'avance.
+    db.add(RetourCaisse(
+        organisation_id=org.id, sortie_fonds_id=ordinaire.id, type_retour="trop_percu",
+        reference_numero=f"RT-{uuid.uuid4().hex[:6]}", motif="Trop-perçu papeterie", montant=Decimal("5"),
+        devise="USD", canal="CAISSE", mode="cash", date_retour=AVANCE_LE + timedelta(days=4),
+        statut="VALIDE",
+    ))
     await db.commit()
     return org, user
 
@@ -104,6 +111,30 @@ async def test_un_justificatif_recu_ne_laisse_rien_a_justifier(db_session):
     avance = next(l for l in releve.lignes if l.a_valoir)
     assert avance.a_valoir_statut == "RECU"
     assert avance.a_valoir_reste == Decimal("0")
+    retour = next(l for l in releve.lignes if l.retour_a_valoir)
+    assert retour.a_valoir_reste == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_le_reliquat_rendu_est_relie_a_son_avance(db_session):
+    org, user = await _avance_a_valoir(db_session)
+    releve = await _releve(db_session, org, user)
+
+    retours = [l for l in releve.lignes if l.type_operation == "RETOUR"]
+    reliquat = next(l for l in retours if l.entree == Decimal("120"))
+    trop_percu = next(l for l in retours if l.entree == Decimal("5"))
+
+    # Le reliquat se signale (en rose), sans devenir lui-même une avance.
+    assert reliquat.retour_a_valoir is True
+    assert reliquat.a_valoir is False
+    # 500 remis, 120 rendus : 380 restent dehors après ce retour.
+    assert reliquat.a_valoir_reste == Decimal("380")
+    assert "RETOUR SUR AVANCE À VALOIR" in reliquat.a_valoir_alerte
+    assert "du 15/09/2026" in reliquat.a_valoir_alerte
+    assert "Reste après ce retour : 380,00 USD" in reliquat.a_valoir_alerte
+
+    assert trop_percu.retour_a_valoir is False
+    assert trop_percu.a_valoir_alerte is None
 
 
 def _journal(lignes):
@@ -120,6 +151,16 @@ def _ligne(libelle, montant, **a_valoir):
         entree=Decimal("0"), sortie=Decimal(montant), solde=Decimal("0"),
         a_valoir=bool(a_valoir), a_valoir_statut=a_valoir.get("statut"),
         a_valoir_reste=a_valoir.get("reste"), a_valoir_alerte=a_valoir.get("alerte"),
+        retour_a_valoir=False,
+    )
+
+
+def _retour(libelle, montant, *, reste, alerte="RETOUR SUR AVANCE À VALOIR"):
+    return SimpleNamespace(
+        date=AVANCE_LE, libelle=libelle, libelle_base=libelle, precision=None, reference=None,
+        entree=Decimal(montant), sortie=Decimal("0"), solde=Decimal("0"),
+        a_valoir=False, a_valoir_statut=None, a_valoir_reste=reste, a_valoir_alerte=alerte,
+        retour_a_valoir=True,
     )
 
 
@@ -150,4 +191,49 @@ def test_le_pdf_envoye_se_construit_avec_une_avance_a_valoir():
     journal = _journal([_ligne("Avance mission", "500", statut="ATTENDU", reste=Decimal("500"), alerte="x")])
     tz = ZoneInfo("UTC")
     contenu = _pdf(journal, Identite(nom="Org", contact="", logo=None), AVANCE_LE, AVANCE_LE, tz)
+    assert contenu.startswith(b"%PDF")
+
+
+def test_l_excel_envoye_colore_le_reliquat_rendu_en_rose():
+    from openpyxl import load_workbook
+
+    journal = _journal([
+        _ligne("Avance mission", "500", statut="ATTENDU", reste=Decimal("380"), alerte="AVANCE À VALOIR"),
+        _retour("Retour en trésorerie — Reliquat", "120", reste=Decimal("380")),
+    ])
+    contenu = _xlsx(journal, Identite(nom="Org", contact="", logo=None), AVANCE_LE, AVANCE_LE, ZoneInfo("UTC"))
+    ws = load_workbook(io.BytesIO(contenu)).active
+
+    # Le bandeau dit les deux, et reste bordeaux tant qu'une avance est dehors.
+    assert "Lignes signalées en bordeaux" in ws["A6"].value
+    assert "Reliquats d'avances rendus : 1 — 120,00 USD" in ws["A6"].value
+    assert ws["A6"].font.color.rgb.endswith("800020")
+
+    avance, retour = ws.cell(row=8, column=3), ws.cell(row=9, column=3)
+    assert avance.font.color.rgb.endswith("800020")
+    assert retour.value == "RETOUR À VALOIR — Retour en trésorerie — Reliquat"
+    assert retour.font.color.rgb.endswith("BE185D")
+    assert ws.cell(row=9, column=1).fill.fgColor.rgb.endswith("BE185D")
+    assert retour.comment is not None and "RETOUR SUR AVANCE" in retour.comment.text
+
+
+def test_sans_avance_sur_la_periode_le_bandeau_est_rose():
+    from openpyxl import load_workbook
+
+    journal = _journal([_retour("Retour en trésorerie — Reliquat", "120", reste=Decimal("0"))])
+    contenu = _xlsx(journal, Identite(nom="Org", contact="", logo=None), AVANCE_LE, AVANCE_LE, ZoneInfo("UTC"))
+    ws = load_workbook(io.BytesIO(contenu)).active
+
+    assert ws["A6"].value.startswith("Reliquats d'avances rendus")
+    assert ws["A6"].font.color.rgb.endswith("BE185D")
+    # Pas d'avance : la cinquième cartouche reste le nombre de mouvements.
+    assert ws.cell(row=4, column=5).value == "Mouvements"
+
+
+def test_le_pdf_envoye_se_construit_avec_un_reliquat_rendu():
+    journal = _journal([
+        _ligne("Avance mission", "500", statut="ATTENDU", reste=Decimal("380"), alerte="x"),
+        _retour("Retour en trésorerie — Reliquat", "120", reste=Decimal("380")),
+    ])
+    contenu = _pdf(journal, Identite(nom="Org", contact="", logo=None), AVANCE_LE, AVANCE_LE, ZoneInfo("UTC"))
     assert contenu.startswith(b"%PDF")

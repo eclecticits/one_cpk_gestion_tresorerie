@@ -9,11 +9,21 @@ import {
   type TenantIdentity,
 } from './pdfTenantIdentity'
 import { libelleJournalComplet } from './journalLibelle'
-import { alerteAValoir, bilanAValoir, etatAValoir, libelleAvecAValoir } from './journalAValoir'
+import {
+  alerteAValoir,
+  bilanAValoir,
+  etatAValoir,
+  etatRetourAValoir,
+  libelleAvecAValoir,
+  tonAlerteAValoir,
+} from './journalAValoir'
 
 // Avances à valoir : même bordeaux que l'Excel (`A_VALOIR_BORDEAUX`, `A_VALOIR_FOND`).
 const BORDEAUX: [number, number, number] = [128, 0, 32]
 const BORDEAUX_FOND: [number, number, number] = [243, 196, 206]
+// Reliquats rendus : même rose (`RETOUR_A_VALOIR_ROSE`, `RETOUR_A_VALOIR_FOND`).
+const ROSE: [number, number, number] = [190, 24, 93]
+const ROSE_FOND: [number, number, number] = [252, 231, 243]
 
 type JournalLine = {
   date: string | Date
@@ -27,6 +37,7 @@ type JournalLine = {
   a_valoir?: boolean | null
   a_valoir_statut?: string | null
   a_valoir_reste?: number | string | null
+  retour_a_valoir?: boolean | null
 }
 
 type JournalFilter = {
@@ -83,20 +94,21 @@ const drawSummary = (
   return y + cardH + 6
 }
 
-/** Bandeau d'alerte sous les cartouches, s'il y a des avances à valoir. */
-const drawAlerteAValoir = (doc: jsPDF, y: number, texte: string): number => {
+/** Bandeau d'alerte sous les cartouches, s'il y a des avances ou des retours à valoir. */
+const drawAlerteAValoir = (doc: jsPDF, y: number, texte: string, ton: 'bordeaux' | 'rose'): number => {
   if (!texte) return y
+  const [encre, fond] = ton === 'rose' ? [ROSE, ROSE_FOND] : [BORDEAUX, BORDEAUX_FOND]
   const pageWidth = doc.internal.pageSize.getWidth()
   const margin = 12
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8.5)
   const lignes = doc.splitTextToSize(texte, pageWidth - margin * 2 - 8) as string[]
   const hauteur = 4 + lignes.length * 4
-  doc.setFillColor(...BORDEAUX_FOND)
-  doc.setDrawColor(...BORDEAUX)
+  doc.setFillColor(...fond)
+  doc.setDrawColor(...encre)
   doc.setLineWidth(0.4)
   doc.roundedRect(margin, y, pageWidth - margin * 2, hauteur, 1.5, 1.5, 'FD')
-  doc.setTextColor(...BORDEAUX)
+  doc.setTextColor(...encre)
   doc.text(lignes, margin + 4, y + 5.2)
   return y + hauteur + 4
 }
@@ -164,17 +176,21 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
     sorties: totalSorties,
     final: soldeFinal,
   })
-  const tableTop = drawAlerteAValoir(doc, summaryBottom, alerteAValoir(bilanAValoir(data), filtre.devise))
+  const bilan = bilanAValoir(data)
+  const tableTop = drawAlerteAValoir(doc, summaryBottom, alerteAValoir(bilan, filtre.devise), tonAlerteAValoir(bilan))
 
   const rows = data.map((m) => ({
     __entree: toNumber(m.entree) > 0,
     __sortie: toNumber(m.sortie) > 0,
     __aValoir: Boolean(m.a_valoir),
+    __retourAValoir: !m.a_valoir && Boolean(m.retour_a_valoir),
     date: format(new Date(m.date), 'dd/MM/yyyy'),
     // Préfixe et état en clair : l'alerte reste lisible imprimée en noir et blanc.
     libelle: m.a_valoir
       ? `${libelleAvecAValoir(m, libelleJournalComplet(m))}\n${etatAValoir(m, filtre.devise)}`
-      : libelleJournalComplet(m),
+      : m.retour_a_valoir
+        ? `${libelleAvecAValoir(m, libelleJournalComplet(m))}\n${etatRetourAValoir(m, filtre.devise)}`
+        : libelleJournalComplet(m),
     entree: toNumber(m.entree) > 0 ? formatAmount(toNumber(m.entree)) : '—',
     sortie: toNumber(m.sortie) > 0 ? formatAmount(toNumber(m.sortie)) : '—',
     solde: formatAmount(toNumber(m.solde)),
@@ -255,6 +271,18 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
         hookData.cell.styles.fillColor = BORDEAUX_FOND
         if (hookData.column.index !== 2) hookData.cell.styles.textColor = BORDEAUX
         if (hookData.column.index === 1 || hookData.column.index === 3) hookData.cell.styles.fontStyle = 'bold'
+      }
+      if (row?.__retourAValoir) {
+        // Même dessin que l'avance, en rose : l'argent revenu, pas sorti.
+        if (hookData.column.index === 0) {
+          hookData.cell.styles.fillColor = ROSE
+          hookData.cell.styles.textColor = [255, 255, 255]
+          hookData.cell.styles.fontStyle = 'bold'
+          return
+        }
+        hookData.cell.styles.fillColor = ROSE_FOND
+        if (hookData.column.index !== 3) hookData.cell.styles.textColor = ROSE
+        if (hookData.column.index === 1 || hookData.column.index === 2) hookData.cell.styles.fontStyle = 'bold'
       }
       if (!row?.__rowType) return
       hookData.cell.styles.fontStyle = 'bold'
