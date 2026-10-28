@@ -97,3 +97,37 @@ class RemboursementTransportBrouillonResponse(DecimalBaseModel):
     updated_by_nom: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ----------------------------------------------------------------------
+# Convocation d'une réunion en préparation (brouillon)
+# ----------------------------------------------------------------------
+
+
+class ConvocationDestinataire(DecimalBaseModel):
+    nom: str = ""
+    titre_fonction: str = ""
+    # Adresse proposée : celle de la dernière convocation, sinon celle de
+    # l'expert-comptable ou du membre du service portant ce nom.
+    email: str | None = None
+    source: Literal["convocation", "expert", "membre"] | None = None
+
+
+class ConvocationEnvoi(DecimalBaseModel):
+    destinataires: list[ConvocationDestinataire] = Field(min_length=1, max_length=200)
+    message: str = Field(default="", max_length=4000)
+
+
+class ConvocationEchec(DecimalBaseModel):
+    email: str
+    raison: str
+
+
+class ConvocationResultat(DecimalBaseModel):
+    envoyes: int
+    echecs: list[ConvocationEchec]
+    contenu: dict
+
+
+class PiecesReunionAnnexer(DecimalBaseModel):
+    requisition_id: UUID

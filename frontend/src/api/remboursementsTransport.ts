@@ -46,6 +46,67 @@ export function deleteRemboursementTransportBrouillon(id: string) {
   return apiRequest('DELETE', `/remboursements-transport/brouillons/${id}`)
 }
 
+// Convocation de la réunion préparée dans le brouillon : e-mail + invitation .ics.
+export type ConvocationDestinataire = {
+  nom: string
+  titre_fonction?: string
+  email?: string | null
+  source?: 'convocation' | 'expert' | 'membre' | null
+}
+
+export type ConvocationResultat = {
+  envoyes: number
+  echecs: { email: string; raison: string }[]
+  contenu: Record<string, any>
+}
+
+export function listDestinatairesConvocation(brouillonId: string) {
+  return apiRequest<ConvocationDestinataire[]>(
+    'GET',
+    `/remboursements-transport/brouillons/${brouillonId}/destinataires`,
+  )
+}
+
+export function envoyerConvocation(brouillonId: string, destinataires: ConvocationDestinataire[], message: string) {
+  return apiRequest<ConvocationResultat>('POST', `/remboursements-transport/brouillons/${brouillonId}/convocation`, {
+    body: { destinataires, message },
+  })
+}
+
+// Pièces de la réunion, déposées sur le brouillon puis annexées à la
+// réquisition à la création du remboursement.
+export type PieceReunionKind = 'liste_presence' | 'pv'
+
+export type PieceReunion = {
+  file_path: string
+  filename: string
+  file_type: string
+  file_size: number
+  deposee_le: string
+  deposee_par?: string | null
+  annexee?: string
+}
+
+export function pieceReunionPath(brouillonId: string, kind: PieceReunionKind) {
+  return `/remboursements-transport/brouillons/${brouillonId}/pieces/${kind}`
+}
+
+export function deposerPieceReunion(brouillonId: string, kind: PieceReunionKind, file: Blob, filename: string) {
+  const form = new FormData()
+  form.append('file', file, filename)
+  return apiRequest<RemboursementTransportBrouillon>('POST', pieceReunionPath(brouillonId, kind), form)
+}
+
+export function retirerPieceReunion(brouillonId: string, kind: PieceReunionKind) {
+  return apiRequest<RemboursementTransportBrouillon>('DELETE', pieceReunionPath(brouillonId, kind))
+}
+
+export function annexerPiecesReunion(brouillonId: string, requisitionId: string) {
+  return apiRequest<unknown[]>('POST', `/remboursements-transport/brouillons/${brouillonId}/annexer`, {
+    body: { requisition_id: requisitionId },
+  })
+}
+
 // Remboursements de transport d'un dossier, avec leurs participants : de quoi
 // dresser l'état récapitulatif sans toucher aux états de frais sources.
 export async function loadDossierRemboursementsTransport(dossierId: string) {

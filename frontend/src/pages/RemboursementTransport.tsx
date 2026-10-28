@@ -6,13 +6,18 @@ import { usePermissions } from '../hooks/usePermissions'
 import { Requisition, Money, Service, CommissionMember } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import {
+  annexerPiecesReunion,
   deleteRemboursementTransportBrouillon,
   listRemboursementTransportBrouillons,
   loadDossierRemboursementsTransport,
   saveRemboursementTransportBrouillon,
   uploadRemboursementTransportPdf,
+  type PieceReunion,
+  type PieceReunionKind,
   type RemboursementTransportBrouillon,
 } from '../api/remboursementsTransport'
+import ConvocationReunionModal from '../components/ConvocationReunionModal'
+import ReunionPieces from '../components/ReunionPieces'
 import { getServiceMembers, getServices } from '../api/services'
 import { getPrintSettings, type PrintSettings } from '../api/settings'
 import { toNumber } from '../utils/amount'
@@ -41,7 +46,7 @@ import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { isAssistantMember, resolveMemberFunctionLabel, trierParHierarchie } from '../utils/serviceMemberFunctions'
-import { ArrowDown, ArrowUp, Paperclip, Printer, Search, SearchX, Users } from 'lucide-react'
+import { ArrowDown, ArrowUp, Mail, Paperclip, Printer, Search, SearchX, Users } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import BudgetPosteSelect from '../components/BudgetPosteSelect'
 import styles from './RemboursementTransport.module.css'
@@ -195,6 +200,10 @@ export default function RemboursementTransport() {
   const [draftId, setDraftId] = useState<string | null>(null)
   const [savingDraft, setSavingDraft] = useState(false)
   const [brouillons, setBrouillons] = useState<RemboursementTransportBrouillon[]>([])
+  // Ce que le serveur ajoute au brouillon (convocation, pièces déposées) :
+  // le formulaire ne le saisit pas, il l'affiche.
+  const [draftServeur, setDraftServeur] = useState<Record<string, any>>({})
+  const [convocationBrouillon, setConvocationBrouillon] = useState<RemboursementTransportBrouillon | null>(null)
   const [showExpertSearch, setShowExpertSearch] = useState<number | null>(null)
   const [showAssistantExpertSearch, setShowAssistantExpertSearch] = useState<number | null>(null)
 
@@ -465,6 +474,20 @@ export default function RemboursementTransport() {
         setSubmitting(false)
         return
       }
+      // Recommandée, pas exigée : on prévient, l'utilisateur décide.
+      if (!draftServeur?.pieces?.liste_presence) {
+        const continuer = await confirm({
+          title: 'Liste de présence signée absente',
+          description:
+            'Aucune liste de présence signée n\u2019est jointe. Elle justifie les présents auprès des validateurs. Créer quand même le remboursement ?',
+          confirmText: 'Créer sans la liste',
+          cancelText: 'Revenir pour la déposer',
+        })
+        if (!continuer) {
+          setSubmitting(false)
+          return
+        }
+      }
       const periodeReunion = getMeetingPeriodLabel(formData.heure_debut, formData.heure_fin)
       const objetRequisition = [
         'Remboursement des frais de transport des participants',
@@ -535,6 +558,22 @@ export default function RemboursementTransport() {
         })))
       }
 
+      // Les pièces déposées sur le brouillon deviennent annexes de la
+      // réquisition. En cas d'échec, le brouillon est gardé : ses pièces
+      // restent disponibles pour être jointes à la main.
+      let piecesJointes = true
+      if (draftId && Object.keys(draftServeur?.pieces || {}).length) {
+        try {
+          await annexerPiecesReunion(draftId, requisitionData.id)
+        } catch (annexeError) {
+          console.error('Pièces de réunion non annexées', annexeError)
+          piecesJointes = false
+        }
+      }
+      const finaliserBrouillon = async () => {
+        if (piecesJointes) await discardDraftAfterCreation()
+      }
+
       try {
         const selectedService = services.find((service) => String(service.id) === String(formData.service_id))
         const remboursementForPdf = {
@@ -562,7 +601,7 @@ export default function RemboursementTransport() {
           type: 'warning',
           message: `Remboursement ${remboursementData.numero_remboursement} créé, mais le PDF officiel n'a pas pu être généré automatiquement.`,
         })
-        await discardDraftAfterCreation()
+        await finaliserBrouillon()
         clearNewParam()
         setShowForm(false)
         resetForm()
@@ -570,12 +609,20 @@ export default function RemboursementTransport() {
         return
       }
 
-      await discardDraftAfterCreation()
-      setNotification({
-        show: true,
-        type: 'success',
-        message: `Remboursement ${remboursementData.numero_remboursement} créé avec succès. Il doit être signé puis soumis à l'examen.`
-      })
+      await finaliserBrouillon()
+      setNotification(
+        piecesJointes
+          ? {
+              show: true,
+              type: 'success',
+              message: `Remboursement ${remboursementData.numero_remboursement} créé avec succès. Il doit être signé puis soumis à l'examen.`,
+            }
+          : {
+              show: true,
+              type: 'warning',
+              message: `Remboursement ${remboursementData.numero_remboursement} créé, mais la liste de présence n'a pas pu être jointe. Le brouillon est conservé : joignez-la depuis le remboursement.`,
+            },
+      )
       clearNewParam()
       setShowForm(false)
       resetForm()
@@ -609,6 +656,7 @@ export default function RemboursementTransport() {
     setAssistants([])
     setShowAssistants(false)
     setDraftId(null)
+    setDraftServeur({})
   }
 
   // --- Brouillons -------------------------------------------------------
@@ -625,11 +673,13 @@ export default function RemboursementTransport() {
     loadBrouillons()
   }, [serviceContextId])
 
-  const saveDraft = async () => {
+  // Enregistre le formulaire dans le brouillon (le crée au besoin) et le
+  // renvoie ; null si le service manque ou si l'enregistrement échoue.
+  const persistDraft = async (): Promise<RemboursementTransportBrouillon | null> => {
     const serviceId = Number(formData.service_id)
     if (!formData.service_id || !Number.isFinite(serviceId)) {
       setNotification({ show: true, type: 'error', message: 'Choisissez la commission / le service avant d\u2019enregistrer le brouillon.' })
-      return
+      return null
     }
     setSavingDraft(true)
     try {
@@ -640,17 +690,31 @@ export default function RemboursementTransport() {
         showAssistants,
       })
       setDraftId(saved.id)
+      setDraftServeur(saved.contenu || {})
+      loadBrouillons()
+      return saved
+    } catch (error: any) {
+      setNotification({ show: true, type: 'error', message: error?.message || 'Enregistrement du brouillon impossible.' })
+      return null
+    } finally {
+      setSavingDraft(false)
+    }
+  }
+
+  const saveDraft = async () => {
+    if (await persistDraft()) {
       setNotification({
         show: true,
         type: 'success',
         message: 'Brouillon enregistré. Vous pourrez le reprendre après la réunion pour cocher les présents et saisir les montants.',
       })
-      loadBrouillons()
-    } catch (error: any) {
-      setNotification({ show: true, type: 'error', message: error?.message || 'Enregistrement du brouillon impossible.' })
-    } finally {
-      setSavingDraft(false)
     }
+  }
+
+  // La convocation part de ce qui est enregistré : on enregistre d'abord.
+  const convoquerDepuisFormulaire = async () => {
+    const saved = await persistDraft()
+    if (saved) setConvocationBrouillon(saved)
   }
 
   const openDraft = (brouillon: RemboursementTransportBrouillon) => {
@@ -678,6 +742,7 @@ export default function RemboursementTransport() {
     setAssistants(savedAssistants)
     setShowAssistants(Boolean(contenu.showAssistants) || savedAssistants.length > 0)
     setDraftId(brouillon.id)
+    setDraftServeur(contenu)
     setShowForm(true)
     const params = new URLSearchParams(location.search)
     params.set('new', '1')
@@ -695,7 +760,11 @@ export default function RemboursementTransport() {
     if (!ok) return
     try {
       await deleteRemboursementTransportBrouillon(brouillon.id)
-      if (draftId === brouillon.id) setDraftId(null)
+      if (draftId === brouillon.id) {
+        setDraftId(null)
+        setDraftServeur({})
+      }
+      if (convocationBrouillon?.id === brouillon.id) setConvocationBrouillon(null)
       loadBrouillons()
     } catch (error: any) {
       setNotification({ show: true, type: 'error', message: error?.message || 'Suppression du brouillon impossible.' })
@@ -1892,6 +1961,21 @@ export default function RemboursementTransport() {
                 )}
               </div>
 
+              <div className={styles.formSection}>
+                <h3>Après la réunion — pièces à joindre</h3>
+                <ReunionPieces
+                  brouillonId={draftId}
+                  pieces={(draftServeur?.pieces || {}) as Partial<Record<PieceReunionKind, PieceReunion>>}
+                  ensureBrouillon={async () => (await persistDraft())?.id ?? null}
+                  onDeposee={(b) => {
+                    setDraftServeur(b.contenu || {})
+                    loadBrouillons()
+                  }}
+                  onMessage={(type, message) => setNotification({ show: true, type, message })}
+                  disabled={submitting || savingDraft}
+                />
+              </div>
+
               <div className={styles.total}>
                 <strong>Total général</strong>
                 <strong className={styles.totalAmount}>{formatCurrency(calculateTotal())}</strong>
@@ -1918,6 +2002,19 @@ export default function RemboursementTransport() {
                   title="Liste à faire signer en séance, avec des lignes libres pour les présents non prévus"
                 >
                   <Printer size={15} aria-hidden="true" /> Liste de présence
+                </button>
+                <button
+                  type="button"
+                  onClick={convoquerDepuisFormulaire}
+                  className={styles.secondaryBtn}
+                  disabled={submitting || savingDraft}
+                  title={
+                    draftServeur?.convocation?.envoyee_le
+                      ? `Convocation envoyée le ${format(new Date(draftServeur.convocation.envoyee_le), 'dd/MM/yyyy HH:mm')}`
+                      : 'Envoyer la convocation par e-mail, avec l\u2019invitation agenda'
+                  }
+                >
+                  <Mail size={15} aria-hidden="true" /> {draftServeur?.convocation?.envoyee_le ? 'Reconvoquer' : 'Convoquer'}
                 </button>
                 <button
                   type="button"
@@ -2089,6 +2186,8 @@ export default function RemboursementTransport() {
                   <th>Date</th>
                   <th style={{ textAlign: 'center' }}>Prévus</th>
                   <th style={{ textAlign: 'center' }}>Présents</th>
+                  <th>Convocation</th>
+                  <th>Liste signée</th>
                   <th>Modifié</th>
                   <th>Actions</th>
                 </tr>
@@ -2111,6 +2210,25 @@ export default function RemboursementTransport() {
                       <td style={{ textAlign: 'center' }}>{people.length}</td>
                       <td style={{ textAlign: 'center' }}>{presents}</td>
                       <td style={{ fontSize: '12px' }}>
+                        {b.contenu?.convocation?.envoyee_le ? (
+                          <>
+                            {format(new Date(b.contenu.convocation.envoyee_le), 'dd/MM/yyyy')}
+                            <div style={{ color: '#6b7280' }}>
+                              {(b.contenu.convocation.destinataires || []).length} convoqué(s)
+                            </div>
+                          </>
+                        ) : (
+                          <span style={{ color: '#6b7280' }}>Non envoyée</span>
+                        )}
+                      </td>
+                      <td style={{ fontSize: '12px' }}>
+                        {b.contenu?.pieces?.liste_presence ? (
+                          <span style={{ color: '#166534', fontWeight: 600 }}>Déposée</span>
+                        ) : (
+                          <span style={{ color: '#92400e' }}>À déposer</span>
+                        )}
+                      </td>
+                      <td style={{ fontSize: '12px' }}>
                         {format(new Date(b.updated_at), 'dd/MM/yyyy HH:mm')}
                         {b.updated_by_nom ? <div style={{ color: '#6b7280' }}>{b.updated_by_nom}</div> : null}
                       </td>
@@ -2126,6 +2244,14 @@ export default function RemboursementTransport() {
                             title="Imprimer la liste de présence"
                           >
                             <Printer size={15} aria-hidden="true" /> Liste
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.secondaryBtn}
+                            onClick={() => setConvocationBrouillon(b)}
+                            title="Envoyer la convocation par e-mail"
+                          >
+                            <Mail size={15} aria-hidden="true" /> Convoquer
                           </button>
                           <button type="button" className={styles.secondaryBtn} onClick={() => removeDraft(b)}>
                             Supprimer
@@ -2492,6 +2618,18 @@ export default function RemboursementTransport() {
             ×
           </button>
         </div>
+      )}
+
+      {convocationBrouillon && (
+        <ConvocationReunionModal
+          brouillon={convocationBrouillon}
+          onClose={() => setConvocationBrouillon(null)}
+          onEnvoyee={(contenu, message, type) => {
+            if (convocationBrouillon.id === draftId) setDraftServeur(contenu)
+            setNotification({ show: true, type, message })
+            loadBrouillons()
+          }}
+        />
       )}
 
       {showDetailModal && selectedRemboursementDetails && (
