@@ -32,7 +32,7 @@ import { buildUploadUrl } from '../utils/uploads'
 import type { BudgetDecisionLine } from '../utils/budgetDecision'
 import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import { getStatusMeta } from '../utils/statusMapper'
-import { format } from 'date-fns'
+import { endOfMonth, format, startOfMonth, subMonths } from 'date-fns'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
 type PdfGeneratorRemboursementModule = typeof import('../utils/pdfGeneratorRemboursement')
 let _pdfGeneratorRemboursementModulePromise: Promise<PdfGeneratorRemboursementModule> | null = null
@@ -53,7 +53,7 @@ import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { isAssistantMember, resolveMemberFunctionLabel, trierParHierarchie } from '../utils/serviceMemberFunctions'
-import { ArrowDown, ArrowUp, CheckCircle2, Mail, Paperclip, Plus, Printer, Search, SearchX, Send, Trash2, Users } from 'lucide-react'
+import { ArrowDown, ArrowUp, CheckCircle2, Mail, Paperclip, Plus, Printer, RotateCcw, Search, SearchX, Send, Trash2, Users } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import BudgetPosteSelect from '../components/BudgetPosteSelect'
 import RowActionsMenu from '../components/RowActionsMenu'
@@ -63,6 +63,24 @@ const TODAY = format(new Date(), 'yyyy-MM-dd')
 // Ouverte depuis une unité organisationnelle, la liste couvre l'année en cours
 // (1er janvier → aujourd'hui) plutôt que la seule journée du jour.
 const START_OF_YEAR = `${TODAY.slice(0, 4)}-01-01`
+// Vue globale : le mois en cours (1er → aujourd'hui).
+const START_OF_MONTH = `${TODAY.slice(0, 7)}-01`
+const MOIS_PRECEDENT = subMonths(new Date(), 1)
+
+// Raccourcis de période, sur le modèle de la liste des réquisitions. Bornes
+// vides = toute la période.
+const PERIODES_RAPIDES: { cle: string; libelle: string; debut: string; fin: string }[] = [
+  { cle: 'jour', libelle: "Aujourd'hui", debut: TODAY, fin: TODAY },
+  { cle: 'mois', libelle: 'Ce mois', debut: START_OF_MONTH, fin: TODAY },
+  {
+    cle: 'mois-precedent',
+    libelle: 'Mois précédent',
+    debut: format(startOfMonth(MOIS_PRECEDENT), 'yyyy-MM-dd'),
+    fin: format(endOfMonth(MOIS_PRECEDENT), 'yyyy-MM-dd'),
+  },
+  { cle: 'annee', libelle: 'Cette année', debut: START_OF_YEAR, fin: TODAY },
+  { cle: 'tout', libelle: 'Tout', debut: '', fin: '' },
+]
 
 interface RemboursementTransport {
   id: string
@@ -231,7 +249,7 @@ export default function RemboursementTransport() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterServiceId, setFilterServiceId] = useState<string>(serviceContextId || '')
-  const defaultDateDebut = serviceContextId ? START_OF_YEAR : TODAY
+  const defaultDateDebut = serviceContextId ? START_OF_YEAR : START_OF_MONTH
   const [dateDebut, setDateDebut] = useState(defaultDateDebut)
   const [dateFin, setDateFin] = useState(TODAY)
   const remboursementsRequestRef = useRef(0)
@@ -2448,24 +2466,41 @@ export default function RemboursementTransport() {
               onChange={(e) => setDateFin(e.target.value)}
             />
           </div>
-          {/* Toujours rendu, désactivé au repos : apparaître/disparaître décalait
-              la grille sous le curseur au moment même de la saisie d'un filtre. */}
-          <div className={styles.filterActions}>
-            <button
-              type="button"
-              className={styles.resetBtn}
-              disabled={!hasActiveFilters}
-              onClick={() => {
-                setSearchQuery('')
-                setFilterStatut('')
-                setFilterServiceId(serviceContextId || '')
-                setDateDebut(defaultDateDebut)
-                setDateFin(TODAY)
-              }}
-            >
-              Réinitialiser
-            </button>
+        </div>
+        <div className={styles.filtersFooter}>
+          <div className={styles.periodQuick} role="group" aria-label="Raccourcis de période">
+            {PERIODES_RAPIDES.map((periode) => (
+              <button
+                key={periode.cle}
+                type="button"
+                className={styles.periodQuickBtn}
+                aria-pressed={dateDebut === periode.debut && dateFin === periode.fin}
+                onClick={() => {
+                  setDateDebut(periode.debut)
+                  setDateFin(periode.fin)
+                }}
+              >
+                {periode.libelle}
+              </button>
+            ))}
           </div>
+          {/* Toujours rendu, désactivé au repos : apparaître/disparaître décalait
+              la barre sous le curseur au moment même de la saisie d'un filtre. */}
+          <button
+            type="button"
+            className={styles.resetBtn}
+            disabled={!hasActiveFilters}
+            onClick={() => {
+              setSearchQuery('')
+              setFilterStatut('')
+              setFilterServiceId(serviceContextId || '')
+              setDateDebut(defaultDateDebut)
+              setDateFin(TODAY)
+            }}
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+            Réinitialiser
+          </button>
         </div>
       </div>
 
@@ -2584,7 +2619,7 @@ export default function RemboursementTransport() {
                         {remboursementsList.length} remboursement{remboursementsList.length > 1 ? 's' : ''} au total.
                       </div>
                       {/* Vide les bornes de date au lieu de les remettre par défaut :
-                          la vue s'ouvre sur la journée (ou l'année) en cours, remettre les
+                          la vue s'ouvre sur le mois (ou l'année) en cours, remettre les
                           valeurs par défaut aurait reconduit le filtre qui
                           masque tout. */}
                       <button
@@ -2643,7 +2678,7 @@ export default function RemboursementTransport() {
                         <button
                           type="button"
                           onClick={() => viewDetails(r)}
-                          className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.viewActionBtn}`}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.viewBtn}`}
                           title="Voir les détails du remboursement"
                           aria-label="Voir les détails du remboursement"
                         >

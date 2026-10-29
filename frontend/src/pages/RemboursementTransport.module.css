@@ -646,7 +646,7 @@
      les deux bornes de date recevaient 232px chacune et le bouton de remise
      à zéro s'étirait sur toute une piste. */
   grid-template-columns:
-    minmax(170px, 1.5fr) minmax(140px, 1fr) minmax(150px, 1.1fr) 150px 150px auto;
+    minmax(170px, 1.5fr) minmax(140px, 1fr) minmax(150px, 1.1fr) 150px 150px;
   gap: 12px;
   align-items: end;
 }
@@ -725,11 +725,59 @@
   outline: none;
   border-color: var(--tenant-primary, #0d9488);
 }
-.filterActions {
+.filtersFooter {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f1f5f9;
+}
+/* Raccourcis de période : même barre segmentée que la liste des réquisitions,
+   avec la période en cours marquée. */
+.periodQuick {
+  display: inline-flex;
+  align-items: stretch;
+  height: 36px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 6px;
+  background: #ffffff;
+  overflow: hidden;
+}
+.periodQuickBtn {
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid #eef2f7;
+  background: transparent;
+  color: #475569;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.periodQuickBtn:first-child {
+  border-left: 0;
+}
+.periodQuickBtn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.periodQuickBtn[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--tenant-primary, #0d9488) 12%, #ffffff);
+  color: var(--tenant-primary, #0d9488);
+}
+.periodQuickBtn:focus-visible {
+  outline: 2px solid var(--tenant-primary, #0d9488);
+  outline-offset: -2px;
 }
 .resetBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 36px;
   min-height: 36px;
   min-width: 0;
@@ -1149,15 +1197,21 @@
   flex-wrap: nowrap;
 }
 
-.viewActionBtn:hover:not(:disabled),
-.printActionBtn:hover:not(:disabled) {
-  color: var(--tenant-primary, #0d9488);
+/* « Voir » : l'action principale de la ligne, pleine comme la loupe des
+   réquisitions ; le menu « … » reste en retrait à côté. */
+.viewBtn {
   border-color: var(--tenant-primary, #0d9488);
+  background: var(--tenant-primary, #0d9488);
+  color: #ffffff;
 }
-
-.annexeActionBtn:hover:not(:disabled) {
-  color: #b45309;
-  border-color: #fcd34d;
+.viewBtn:hover:not(:disabled) {
+  border-color: var(--tenant-primary, #0d9488);
+  background: var(--tenant-primary, #0d9488);
+  filter: brightness(0.94);
+}
+.viewBtn:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--tenant-primary, #0d9488) 30%, transparent);
+  outline-offset: 2px;
 }
 
 .workflowBtn {
@@ -1562,6 +1616,23 @@
   }
 }
 
+@media (max-width: 640px) {
+  /* Cinq raccourcis ne tiennent pas sur une ligne de téléphone : la barre
+     défile plutôt que de pousser la page en largeur. */
+  .filtersFooter {
+    align-items: stretch;
+  }
+  .periodQuick {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .resetBtn {
+    justify-content: center;
+    width: 100%;
+  }
+}
+
 @media (max-width: 1024px) {
   .workspaceGrid {
     grid-template-columns: 1fr;
@@ -1573,6 +1644,7 @@
   .primaryBtn,
   .secondaryBtn,
   .resetBtn,
+  .periodQuick,
   .filterGroup select,
   .filterGroup input[type="date"],
   .filterGroup input[type="text"],
