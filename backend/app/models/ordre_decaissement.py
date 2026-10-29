@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -104,6 +104,10 @@ class OrdreDecaissement(BeneficiaireIdentifieMixin, Base):
             name="ck_ordres_decaissement_collation_complete",
         ),
         CheckConstraint(
+            "NOT a_valoir OR (instance_beneficiaire IS NOT NULL AND btrim(instance_beneficiaire) <> '')",
+            name="ck_ordres_decaissement_a_valoir_instance",
+        ),
+        CheckConstraint(
             "statut IN ('AUTORISE','PAYE','ANNULE')",
             name="ck_ordres_decaissement_statut",
         ),
@@ -191,6 +195,13 @@ class OrdreDecaissement(BeneficiaireIdentifieMixin, Base):
     project_activity_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("projets_activites.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    #: Avance « à valoir » sur une sortie directe : dépense faite pour une autre
+    #: instance, qui la rembourse. Mêmes champs que sur la réquisition ; un
+    #: ordre lié à une réquisition laisse ces champs vides, l'info vit alors
+    #: sur la réquisition.
+    a_valoir: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    instance_beneficiaire: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    notes_a_valoir: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="AUTORISE", index=True)
 

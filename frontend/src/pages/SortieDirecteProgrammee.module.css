@@ -362,6 +362,61 @@
   font-size: 12px;
 }
 
+.aValoirToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.aValoirToggle input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: #7f1d1d;
+}
+
+.aValoirToggle span {
+  display: grid;
+  gap: 2px;
+}
+
+.aValoirToggle strong {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.aValoirToggle small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.aValoirBadge {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fdf2f2;
+  color: #7f1d1d;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.aValoirFields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .aValoirFields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .currencyField select {
   font-weight: 700;
 }

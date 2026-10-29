@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.base import DecimalBaseModel
 from app.schemas.requisition import UserInfo
@@ -49,6 +49,19 @@ class OrdreDecaissementCreate(DecimalBaseModel):
     # mode, jamais reçu du client.
     mode_paiement: str | None = None
     compte_bancaire_id: int | None = None
+    #: Avance « à valoir » (sorties directes seulement) : dépense faite pour
+    #: une autre instance, qui la rembourse.
+    a_valoir: bool = False
+    instance_beneficiaire: str | None = Field(default=None, max_length=200)
+    notes_a_valoir: str | None = None
+
+    @model_validator(mode="after")
+    def validate_instance_beneficiaire(self):
+        # Même règle que la réquisition : sans instance qui rembourse, la
+        # créance est orpheline.
+        if self.a_valoir and not (self.instance_beneficiaire or "").strip():
+            raise ValueError("instance_beneficiaire est requis pour une sortie à valoir")
+        return self
 
     @field_validator("mode_paiement")
     @classmethod
@@ -86,6 +99,9 @@ class OrdreDecaissementOut(DecimalBaseModel):
     service_id: int | None = None
     lignes: list[dict[str, Any]] | None = None
     project_activity_id: int | None = None
+    a_valoir: bool = False
+    instance_beneficiaire: str | None = None
+    notes_a_valoir: str | None = None
     mode_paiement: str | None = None
     canal: str | None = None
     compte_bancaire_id: int | None = None

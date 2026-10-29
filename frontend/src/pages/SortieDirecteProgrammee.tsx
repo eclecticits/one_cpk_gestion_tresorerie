@@ -52,6 +52,8 @@ import PageHeader from '../components/PageHeader'
 import BackButton from '../components/BackButton'
 import ResponsiveModal from '../components/ResponsiveModal'
 import ProjetActiviteSelect from '../components/ProjetActiviteSelect'
+import OrganisationAutocomplete from '../components/OrganisationAutocomplete'
+import { listOrganisationOptions } from '../api/organisation'
 import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, saisieDepuis, type BeneficiaireSaisie } from '../components/BeneficiaireIdentification'
 import styles from './SortieDirecteProgrammee.module.css'
 
@@ -140,6 +142,11 @@ export default function SortieDirecteProgrammee() {
   const [motif, setMotif] = useState('')
   // Projet ou activité que la dépense finance : facultatif.
   const [projetActiviteId, setProjetActiviteId] = useState('')
+  // À valoir : dépense avancée pour une autre instance, qui la rembourse.
+  const [aValoir, setAValoir] = useState(false)
+  const [instanceBeneficiaire, setInstanceBeneficiaire] = useState('')
+  const [instanceBeneficiaireSelection, setInstanceBeneficiaireSelection] = useState<number | null>(null)
+  const [notesAValoir, setNotesAValoir] = useState('')
   const [lignes, setLignes] = useState<LigneForm[]>([emptyLigne()])
   const formRef = useRef<HTMLFormElement>(null)
 
@@ -322,6 +329,10 @@ export default function SortieDirecteProgrammee() {
     setBeneficiaireSaisie(BENEFICIAIRE_VIDE)
     setMotif('')
     setProjetActiviteId('')
+    setAValoir(false)
+    setInstanceBeneficiaire('')
+    setInstanceBeneficiaireSelection(null)
+    setNotesAValoir('')
     setDevise('USD')
     setLignes([emptyLigne()])
     setTypeSortie('SIMPLE')
@@ -349,6 +360,21 @@ export default function SortieDirecteProgrammee() {
     setBeneficiaireSaisie(saisieDepuis(brut, brut.beneficiaire))
     setMotif(brut.motif || '')
     setProjetActiviteId(brut.project_activity_id ? String(brut.project_activity_id) : '')
+    const instance = brut.a_valoir ? String(brut.instance_beneficiaire || '') : ''
+    setAValoir(Boolean(brut.a_valoir))
+    setInstanceBeneficiaire(instance)
+    setNotesAValoir(brut.a_valoir ? String(brut.notes_a_valoir || '') : '')
+    setInstanceBeneficiaireSelection(null)
+    // L'ordre ne garde que le nom de l'instance : on retrouve l'organisation
+    // pour que le champ la montre.
+    if (instance) {
+      listOrganisationOptions({ q: instance, limit: 20 })
+        .then((items) => {
+          const org = (items || []).find((o) => o.nom === instance)
+          if (org) setInstanceBeneficiaireSelection(org.id)
+        })
+        .catch(() => undefined)
+    }
     setDevise((brut.devise === 'CDF' ? 'CDF' : 'USD') as 'USD' | 'CDF')
     // La correction rejoue tous les contrôles : reprendre une collation sans
     // son type en ferait une sortie simple de 200 USD, aussitôt refusée.
@@ -479,6 +505,10 @@ export default function SortieDirecteProgrammee() {
       notifyWarning('Motif requis', 'Précisez le motif de cette dépense directe.')
       return
     }
+    if (aValoir && !instanceBeneficiaire.trim()) {
+      notifyWarning('Instance requise', "Désignez l'instance qui doit rembourser cette dépense à valoir.")
+      return
+    }
     if (estCollation) {
       if (!reunionIntitule.trim()) {
         notifyWarning('Motif requis', "Nommez la réunion : c'est elle qui justifie le nombre de têtes.")
@@ -564,6 +594,9 @@ export default function SortieDirecteProgrammee() {
         montant_par_personne: estCollation ? prixParTete : null,
         service_id: Number(serviceId),
         project_activity_id: projetActiviteId ? Number(projetActiviteId) : null,
+        a_valoir: aValoir,
+        instance_beneficiaire: aValoir ? instanceBeneficiaire.trim() : null,
+        notes_a_valoir: aValoir ? (notesAValoir.trim() || null) : null,
         lignes: lignesValides.map((l) => ({
           budget_poste_id: l.budget_poste_id,
           rubrique: l.budget_poste_id ? postesById.get(l.budget_poste_id)?.code || '' : '',
@@ -992,6 +1025,49 @@ export default function SortieDirecteProgrammee() {
             className={styles.field}
             hintClassName={styles.fieldHint}
           />
+
+          <label className={styles.aValoirToggle} htmlFor="direct-a-valoir">
+            <input
+              id="direct-a-valoir"
+              type="checkbox"
+              checked={aValoir}
+              onChange={(e) => setAValoir(e.target.checked)}
+            />
+            <span>
+              <strong>À valoir</strong>
+              <small>Dépense remboursée par une autre instance.</small>
+            </span>
+          </label>
+
+          {aValoir && (
+            <div className={styles.aValoirFields}>
+              <div className={styles.field}>
+                <label htmlFor="direct-instance-beneficiaire">Instance bénéficiaire (qui doit rembourser) <span aria-hidden="true">*</span></label>
+                <OrganisationAutocomplete
+                  inputId="direct-instance-beneficiaire"
+                  value={instanceBeneficiaireSelection}
+                  onChange={(value, organisation) => {
+                    setInstanceBeneficiaireSelection(typeof value === 'number' ? value : null)
+                    setInstanceBeneficiaire(organisation?.nom || '')
+                  }}
+                  placeholder="Sélectionnez l'instance"
+                />
+                {validationAttempted && !instanceBeneficiaire.trim() && (
+                  <small className={styles.fieldError}>Désignez l'instance qui rembourse.</small>
+                )}
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="direct-notes-a-valoir">Notes / Justification</label>
+                <textarea
+                  id="direct-notes-a-valoir"
+                  rows={2}
+                  value={notesAValoir}
+                  onChange={(e) => setNotesAValoir(e.target.value)}
+                  placeholder="Ex: Dépense effectuée pour le compte du Conseil National qui remboursera..."
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className={styles.formFooter}>
@@ -1177,6 +1253,11 @@ export default function SortieDirecteProgrammee() {
                     <td data-label="N° ordre"><strong className={styles.orderNumber}>{o.numero_ordre}</strong></td>
                     <td data-label="Bénéficiaire">
                       <strong className={styles.beneficiary}>{o.beneficiaire}</strong>
+                      {o.a_valoir && (
+                        <span className={styles.aValoirBadge} title={o.instance_beneficiaire ? `À rembourser par ${o.instance_beneficiaire}` : undefined}>
+                          À valoir{o.instance_beneficiaire ? ` — ${o.instance_beneficiaire}` : ''}
+                        </span>
+                      )}
                       {o.motif && <div className={styles.subtle}>{o.motif}</div>}
                     </td>
                     <td data-label="Programmé par">{personName(o.autorise_par_user)}</td>
@@ -1250,6 +1331,7 @@ export default function SortieDirecteProgrammee() {
           <dl className={styles.confirmList}>
             <div><dt>Service</dt><dd>{selectedService ? `${selectedService.code} — ${selectedService.libelle}` : '—'}</dd></div>
             <div><dt>Bénéficiaire</dt><dd>{beneficiaire || '—'}</dd></div>
+            {aValoir && <div><dt>À valoir</dt><dd>{instanceBeneficiaire || '—'}</dd></div>}
             <div><dt>Imputations</dt><dd>{lignes.length} ligne{lignes.length > 1 ? 's' : ''} budgétaire{lignes.length > 1 ? 's' : ''}</dd></div>
             <div className={styles.confirmTotal}><dt>Total à transmettre</dt><dd>{fmtMontant(total, devise)}</dd></div>
           </dl>

@@ -538,6 +538,9 @@ def _ordre_out(
         "service_id": ordre.service_id,
         "lignes": ordre.lignes,
         "project_activity_id": getattr(ordre, "project_activity_id", None),
+        "a_valoir": bool(getattr(ordre, "a_valoir", False)),
+        "instance_beneficiaire": getattr(ordre, "instance_beneficiaire", None),
+        "notes_a_valoir": getattr(ordre, "notes_a_valoir", None),
         "montant_usd_snapshot": getattr(ordre, "montant_usd_snapshot", None),
         "mode_paiement": ordre.mode_paiement,
         "canal": ordre.canal,
@@ -560,6 +563,14 @@ def _ordre_out(
         "requisition_montant_total": (requisition.montant_total or 0) if requisition else None,
         "requisition_status": requisition.status if requisition else None,
     }
+
+
+def _appliquer_a_valoir(ordre: OrdreDecaissement, payload: OrdreDecaissementCreate) -> None:
+    """Pose le volet « à valoir » d'une sortie directe, vidé quand la case est décochée."""
+    a_valoir = bool(payload.a_valoir)
+    ordre.a_valoir = a_valoir
+    ordre.instance_beneficiaire = ((payload.instance_beneficiaire or "").strip() or None) if a_valoir else None
+    ordre.notes_a_valoir = ((payload.notes_a_valoir or "").strip() or None) if a_valoir else None
 
 
 async def _montants_engages(db: AsyncSession, requisition_id: uuid.UUID) -> tuple[Decimal, Decimal]:
@@ -722,6 +733,7 @@ async def create_ordre_decaissement(
             created_at=_utcnow(),
             updated_at=_utcnow(),
         )
+        _appliquer_a_valoir(ordre, payload)
         # Sortie directe : c'est ici que le bénéficiaire est désigné.
         beneficiaires_service.appliquer(
             ordre,
@@ -750,6 +762,8 @@ async def create_ordre_decaissement(
                 "reunion_date": ordre.reunion_date.isoformat() if ordre.reunion_date else None,
                 "participants": ordre.participants,
                 "montant_par_personne": float(ordre.montant_par_personne or 0) or None,
+                "a_valoir": ordre.a_valoir,
+                "instance_beneficiaire": ordre.instance_beneficiaire,
             },
             ip_address=get_request_ip(request),
         )
@@ -1204,6 +1218,8 @@ async def update_ordre_decaissement(
         "project_activity_id": ordre.project_activity_id,
         "type_sortie": ordre.type_sortie,
         "participants": ordre.participants,
+        "a_valoir": ordre.a_valoir,
+        "instance_beneficiaire": ordre.instance_beneficiaire,
     }
 
     for champ, valeur in arrete.items():
@@ -1218,6 +1234,7 @@ async def update_ordre_decaissement(
     ordre.mode_paiement = mode_direct
     ordre.canal = canal_direct
     ordre.compte_bancaire_id = compte_direct
+    _appliquer_a_valoir(ordre, payload)
     beneficiaires_service.appliquer(
         ordre,
         await beneficiaires_service.identifier_payload(
@@ -1244,6 +1261,8 @@ async def update_ordre_decaissement(
             "service_id": ordre.service_id,
             "lignes": ordre.lignes,
             "project_activity_id": ordre.project_activity_id,
+            "a_valoir": ordre.a_valoir,
+            "instance_beneficiaire": ordre.instance_beneficiaire,
         },
         ip_address=get_request_ip(request),
     )

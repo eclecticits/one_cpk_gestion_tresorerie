@@ -61,6 +61,10 @@ export async function createOrdreDecaissement(input: {
   lignes?: Array<OrdreDirectLigne | OrdreRepartitionLigne> | null
   /** Projet ou activité financé par une sortie directe (facultatif). */
   project_activity_id?: number | null
+  /** Sortie directe « à valoir » : l'instance qui rembourse est alors requise. */
+  a_valoir?: boolean
+  instance_beneficiaire?: string | null
+  notes_a_valoir?: string | null
   /**
    * Volet réglé par la tranche. Obligatoire dès que la réquisition mêle
    * plusieurs modes : le mode saisi par le demandeur n'est qu'une proposition,
@@ -97,6 +101,9 @@ export async function updateOrdreDecaissement(
     service_id?: number | null
     lignes?: Array<OrdreDirectLigne | OrdreRepartitionLigne> | null
     project_activity_id?: number | null
+    a_valoir?: boolean
+    instance_beneficiaire?: string | null
+    notes_a_valoir?: string | null
     mode_paiement?: string | null
     compte_bancaire_id?: number | null
   }

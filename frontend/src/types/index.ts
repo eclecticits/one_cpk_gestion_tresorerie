@@ -270,6 +270,10 @@ export interface OrdreDecaissement {
   }> | null
   /** Projet ou activité financé (facultatif), repris par la sortie au paiement. */
   project_activity_id?: number | null
+  /** Sortie directe « à valoir » : avancée pour une autre instance, qui la rembourse. */
+  a_valoir?: boolean
+  instance_beneficiaire?: string | null
+  notes_a_valoir?: string | null
   /** Volet réglé par cet ordre : décision ferme, la caisse ne la rediscute pas. */
   mode_paiement?: ModePaiement | string | null
   canal?: 'CAISSE' | 'BANQUE' | string | null

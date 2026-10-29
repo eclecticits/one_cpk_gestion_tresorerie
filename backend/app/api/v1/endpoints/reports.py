@@ -27,6 +27,7 @@ from app.models.compte_bancaire import CompteBancaire
 from app.models.banque import Banque
 from app.models.transfert_interne import TransfertInterne
 from app.models.cloture_caisse import ClotureCaisse
+from app.models.ordre_decaissement import OrdreDecaissement
 from app.models.requisition import Requisition
 from app.models.retour_caisse import RetourCaisse
 from app.models.sortie_fonds import SortieFonds
@@ -2036,6 +2037,8 @@ async def journal_tresorerie(
         .group_by(RetourCaisse.sortie_fonds_id)
         .subquery()
     )
+    # Une avance à valoir naît d'une réquisition ou d'une sortie directe
+    # programmée : l'ordre direct qui a produit la sortie porte alors l'info.
     sortie_query = select(
         SortieFonds.id,
         paiement_ts,
@@ -2048,13 +2051,16 @@ async def journal_tresorerie(
         SortieFonds.bank_statement_ref,
         SortieFonds.beneficiaire,
         Requisition.numero_requisition,
-        Requisition.a_valoir,
-        Requisition.instance_beneficiaire,
-        Requisition.notes_a_valoir,
+        func.coalesce(Requisition.a_valoir, OrdreDecaissement.a_valoir, False),
+        func.coalesce(Requisition.instance_beneficiaire, OrdreDecaissement.instance_beneficiaire),
+        func.coalesce(Requisition.notes_a_valoir, OrdreDecaissement.notes_a_valoir),
         SortieFonds.justificatif_statut,
         SortieFonds.justificatif_echeance,
         func.coalesce(rendus.c.total, 0),
     ).outerjoin(Requisition, Requisition.id == SortieFonds.requisition_id).outerjoin(
+        OrdreDecaissement,
+        (OrdreDecaissement.sortie_fonds_id == SortieFonds.id) & OrdreDecaissement.requisition_id.is_(None),
+    ).outerjoin(
         rendus, rendus.c.sortie_fonds_id == SortieFonds.id
     ).where(
         (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
@@ -2127,11 +2133,15 @@ async def journal_tresorerie(
             SortieFonds.beneficiaire.label("sortie_beneficiaire"),
             SortieFonds.montant_paye.label("sortie_montant"),
             SortieFonds.justificatif_statut.label("sortie_justificatif"),
-            Requisition.a_valoir.label("sortie_a_valoir"),
+            func.coalesce(Requisition.a_valoir, OrdreDecaissement.a_valoir, False).label("sortie_a_valoir"),
             cumuls.c.cumul.label("rendu_cumule"),
         )
         .join(SortieFonds, SortieFonds.id == RetourCaisse.sortie_fonds_id)
         .outerjoin(Requisition, Requisition.id == SortieFonds.requisition_id)
+        .outerjoin(
+            OrdreDecaissement,
+            (OrdreDecaissement.sortie_fonds_id == SortieFonds.id) & OrdreDecaissement.requisition_id.is_(None),
+        )
         .outerjoin(cumuls, cumuls.c.retour_id == RetourCaisse.id)
     )
     if start_dt:
