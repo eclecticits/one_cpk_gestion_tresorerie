@@ -1,5 +1,22 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Banknote,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  History,
+  Landmark,
+  ListFilter,
+  Scale,
+  WalletCards,
+} from 'lucide-react'
 import {
   createCloture,
   getClotureBalance,
@@ -35,6 +52,7 @@ import ClotureFields, {
 } from '../components/Treasury/ClotureFields'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import EcartsCaisseEnAttente from '../components/Treasury/EcartsCaisseEnAttente'
+import PageHeader from '../components/PageHeader'
 import { listOuvertures, getCaisseStatus, type Ouverture } from '../api/caisse'
 
 const formatMoney = (value: number) =>
@@ -400,28 +418,60 @@ export default function ClotureCaisse() {
 
   return (
     <div className={styles.container}>
-      <header className={styles.header}>
-        <h1>Clôture de caisse</h1>
-        <p>Comptage journalier et comparaison avec le solde théorique.</p>
-      </header>
+      <PageHeader
+        title="Clôture de caisse"
+        subtitle="Comptez les espèces, rapprochez-les du solde théorique et archivez le procès-verbal de la journée."
+        actions={
+          <div className={styles.headerMeta}>
+            {balance && (
+              <span className={styles.periodBadge}>
+                <CalendarDays size={15} aria-hidden="true" />
+                {balance.date_debut
+                  ? `${new Date(balance.date_debut).toLocaleDateString('fr-FR')} – ${new Date(balance.date_fin).toLocaleDateString('fr-FR')}`
+                  : `Situation au ${new Date(balance.date_fin).toLocaleDateString('fr-FR')}`}
+              </span>
+            )}
+            <span
+              className={`${styles.cashStatus} ${
+                caisseOuverte === true
+                  ? styles.cashStatusOpen
+                  : caisseOuverte === false
+                    ? styles.cashStatusClosed
+                    : styles.cashStatusLoading
+              }`}
+            >
+              <span className={styles.statusDot} aria-hidden="true" />
+              {caisseOuverte === true ? 'Caisse ouverte' : caisseOuverte === false ? 'Caisse fermée' : 'Statut en cours…'}
+            </span>
+          </div>
+        }
+      />
 
       <CaisseSessionBanner onChanged={refreshCaisse} />
       <EcartsCaisseEnAttente onChanged={refreshCaisse} />
 
       {ouvertures.length > 0 && (
-        <section className={styles.history}>
-          <div className={styles.historyHeader}>
-            <h3>Ouvertures récentes</h3>
+        <section className={styles.panel}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionHeading}>
+              <span className={styles.sectionIcon}><Landmark size={18} aria-hidden="true" /></span>
+              <div>
+                <p className={styles.eyebrow}>Contexte de caisse</p>
+                <h2>Ouvertures récentes</h2>
+                <p>Contrôlez le fond de caisse avant de commencer le comptage de clôture.</p>
+              </div>
+            </div>
+            <span className={styles.countBadge}>{ouvertures.length} ouverture{ouvertures.length > 1 ? 's' : ''}</span>
           </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <div className={styles.tableScroll}>
+            <table className={styles.dataTable}>
               <thead>
-                <tr style={{ textAlign: 'left', background: '#f8fafc' }}>
-                  <th style={{ padding: 8 }}>Référence</th>
-                  <th style={{ padding: 8 }}>Date</th>
-                  <th style={{ padding: 8 }}>Fond compté</th>
-                  <th style={{ padding: 8 }}>Attendu</th>
-                  <th style={{ padding: 8 }}>Écart</th>
+                <tr>
+                  <th>Référence</th>
+                  <th>Date</th>
+                  <th className={styles.money}>Fond compté</th>
+                  <th className={styles.money}>Attendu</th>
+                  <th className={styles.money}>Écart</th>
                 </tr>
               </thead>
               <tbody>
@@ -430,13 +480,15 @@ export default function ClotureCaisse() {
                   const eCdf = Number(o.ecart_cdf || 0)
                   const hasEcart = Math.abs(eUsd) > 0.009 || Math.abs(eCdf) > 0.009
                   return (
-                    <tr key={o.id} style={{ borderTop: '1px solid #eef2f7' }}>
-                      <td style={{ padding: 8, fontWeight: 600 }}>{o.reference_numero}</td>
-                      <td style={{ padding: 8 }}>{new Date(o.date_ouverture).toLocaleString('fr-FR')}</td>
-                      <td style={{ padding: 8 }}>{Number(o.solde_ouverture_usd).toFixed(2)} $ / {Number(o.solde_ouverture_cdf).toFixed(2)} FC</td>
-                      <td style={{ padding: 8 }}>{Number(o.solde_attendu_usd).toFixed(2)} $ / {Number(o.solde_attendu_cdf).toFixed(2)} FC</td>
-                      <td style={{ padding: 8, color: hasEcart ? '#b45309' : '#16a34a', fontWeight: 600 }}>
-                        {hasEcart ? `${eUsd >= 0 ? '+' : ''}${eUsd.toFixed(2)} $ / ${eCdf >= 0 ? '+' : ''}${eCdf.toFixed(2)} FC` : 'Conforme'}
+                    <tr key={o.id}>
+                      <td className={styles.referenceCell}>{o.reference_numero}</td>
+                      <td>{new Date(o.date_ouverture).toLocaleString('fr-FR')}</td>
+                      <td className={styles.money}>{Number(o.solde_ouverture_usd).toFixed(2)} $ / {Number(o.solde_ouverture_cdf).toFixed(2)} FC</td>
+                      <td className={styles.money}>{Number(o.solde_attendu_usd).toFixed(2)} $ / {Number(o.solde_attendu_cdf).toFixed(2)} FC</td>
+                      <td className={`${styles.money} ${hasEcart ? styles.warnText : styles.okText}`}>
+                        {hasEcart
+                          ? `${eUsd >= 0 ? '+' : ''}${eUsd.toFixed(2)} $ / ${eCdf >= 0 ? '+' : ''}${eCdf.toFixed(2)} FC`
+                          : <span className={styles.conformBadge}><CheckCircle2 size={13} /> Conforme</span>}
                       </td>
                     </tr>
                   )
@@ -450,38 +502,69 @@ export default function ClotureCaisse() {
       {loading && <div className={styles.loading}>Chargement du solde théorique…</div>}
 
       {balance && (
-        <section className={styles.summary}>
-          <div>
-            <span>Taux de change</span>
-            <strong>{tauxChange.toFixed(2)}</strong>
+        <section className={`${styles.panel} ${styles.overviewPanel}`}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionHeading}>
+              <span className={styles.sectionIcon}><WalletCards size={18} aria-hidden="true" /></span>
+              <div>
+                <p className={styles.eyebrow}>Situation théorique</p>
+                <h2>Mouvements depuis la dernière clôture</h2>
+                <p>Les montants USD et CDF restent séparés pour un rapprochement sans conversion implicite.</p>
+              </div>
+            </div>
+            <span className={styles.rateBadge}>1 USD = {tauxChange.toLocaleString('fr-FR')} CDF</span>
           </div>
-          <div>
-            <span>Solde initial USD</span>
-            <strong>{formatMoney(toNumber(balance.solde_initial_usd))}</strong>
-          </div>
-          <div>
-            <span>Entrées USD</span>
-            <strong>{formatMoney(toNumber(balance.total_entrees_usd))}</strong>
-          </div>
-          <div>
-            <span>Sorties USD</span>
-            <strong>{formatMoney(toNumber(balance.total_sorties_usd))}</strong>
-          </div>
-          <div>
-            <span>Solde théorique USD</span>
-            <strong>{formatMoney(soldeTheoUsd)}</strong>
-          </div>
-          <div>
-            <span>Solde théorique CDF</span>
-            <strong>{formatMoneyCdf(soldeTheoCdf)}</strong>
+
+          <div className={styles.summary}>
+            <article className={styles.metricCard}>
+              <span className={`${styles.metricIcon} ${styles.metricIconNeutral}`}><Banknote size={19} /></span>
+              <div className={styles.metricContent}>
+                <span className={styles.metricLabel}>Solde initial</span>
+                <strong>{formatMoney(toNumber(balance.solde_initial_usd))}</strong>
+                <small>{formatMoneyCdf(toNumber(balance.solde_initial_cdf))}</small>
+              </div>
+            </article>
+            <article className={styles.metricCard}>
+              <span className={`${styles.metricIcon} ${styles.metricIconPositive}`}><ArrowDownToLine size={19} /></span>
+              <div className={styles.metricContent}>
+                <span className={styles.metricLabel}>Entrées</span>
+                <strong className={styles.positiveAmount}>{formatMoney(toNumber(balance.total_entrees_usd))}</strong>
+                <small>{formatMoneyCdf(toNumber(balance.total_entrees_cdf))}</small>
+              </div>
+            </article>
+            <article className={styles.metricCard}>
+              <span className={`${styles.metricIcon} ${styles.metricIconNegative}`}><ArrowUpFromLine size={19} /></span>
+              <div className={styles.metricContent}>
+                <span className={styles.metricLabel}>Sorties</span>
+                <strong className={styles.negativeAmount}>{formatMoney(toNumber(balance.total_sorties_usd))}</strong>
+                <small>{formatMoneyCdf(toNumber(balance.total_sorties_cdf))}</small>
+              </div>
+            </article>
+            <article className={`${styles.metricCard} ${styles.metricCardPrimary}`}>
+              <span className={`${styles.metricIcon} ${styles.metricIconPrimary}`}><Scale size={19} /></span>
+              <div className={styles.metricContent}>
+                <span className={styles.metricLabel}>Solde théorique</span>
+                <strong>{formatMoney(soldeTheoUsd)}</strong>
+                <small>{formatMoneyCdf(soldeTheoCdf)}</small>
+              </div>
+            </article>
           </div>
         </section>
       )}
 
       {balance && ventilationDisponible && (
-        <section className={styles.history}>
-          <div className={styles.historyHeader}>
-            <h3>D'où viennent les entrées</h3>
+        <section className={`${styles.panel} ${styles.detailPanel}`}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionHeading}>
+              <span className={`${styles.sectionIcon} ${styles.sectionIconPositive}`}>
+                <ArrowDownToLine size={18} aria-hidden="true" />
+              </span>
+              <div>
+                <p className={styles.eyebrow}>Rapprochement</p>
+                <h2>D'où viennent les entrées</h2>
+                <p>Ventilation des recettes, approvisionnements, transferts et retours reçus en caisse.</p>
+              </div>
+            </div>
             <button
               type="button"
               className={styles.ventilationToggle}
@@ -499,36 +582,38 @@ export default function ClotureCaisse() {
             </button>
           </div>
           {showVentilation && (
-            <>
+            <div id="ventilation-entrees" className={styles.panelBody}>
               <p className={styles.ventilationHint}>
                 Le total doit redonner la tuile « Entrées » ci-dessus.
               </p>
-              <table id="ventilation-entrees">
-                <thead>
-                  <tr>
-                    <th>Source</th>
-                    <th className={styles.money}>USD</th>
-                    <th className={styles.money}>CDF</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ventilationEntrees.map((ligne) => (
-                    <tr key={ligne.cle}>
-                      <td>
-                        <div>{ligne.label}</div>
-                        <div className={styles.ventilationHint}>{ligne.hint}</div>
-                      </td>
-                      <td className={styles.money}>{formatMoney(ligne.usd)}</td>
-                      <td className={styles.money}>{formatMoneyCdf(ligne.cdf)}</td>
+              <div className={styles.tableScroll}>
+                <table className={styles.dataTable}>
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th className={styles.money}>USD</th>
+                      <th className={styles.money}>CDF</th>
                     </tr>
-                  ))}
-                  <tr className={styles.totalRow}>
-                    <td>Total des entrées</td>
-                    <td className={styles.money}>{formatMoney(entreesUsd)}</td>
-                    <td className={styles.money}>{formatMoneyCdf(entreesCdf)}</td>
-                  </tr>
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {ventilationEntrees.map((ligne) => (
+                      <tr key={ligne.cle}>
+                        <td>
+                          <div className={styles.sourceLabel}>{ligne.label}</div>
+                          <div className={styles.ventilationHint}>{ligne.hint}</div>
+                        </td>
+                        <td className={styles.money}>{formatMoney(ligne.usd)}</td>
+                        <td className={styles.money}>{formatMoneyCdf(ligne.cdf)}</td>
+                      </tr>
+                    ))}
+                    <tr className={styles.totalRow}>
+                      <td>Total des entrées</td>
+                      <td className={styles.money}>{formatMoney(entreesUsd)}</td>
+                      <td className={styles.money}>{formatMoneyCdf(entreesCdf)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
               {ventilationIncomplete && (
                 <p className={styles.ventilationWarn}>
                   Le détail ne redonne pas le total des entrées
@@ -540,52 +625,58 @@ export default function ClotureCaisse() {
                   signale-le avant de clôturer.
                 </p>
               )}
-            </>
+            </div>
           )}
         </section>
       )}
 
       {balance && (approvisionnements.length > 0 || approUsd > 0 || approCdf > 0) && (
-        <section className={styles.history}>
-          <div className={styles.historyHeader}>
-            <h3>Entrées de caisse hors notes de débit</h3>
-            <span style={{ fontSize: 12, color: '#64748b' }}>
-              Approvisionnements banque → caisse : sortie côté banque, entrée côté caisse.
-              Déjà compris dans « Entrées ».
-            </span>
+        <section className={`${styles.panel} ${styles.detailPanel}`}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionHeading}>
+              <span className={`${styles.sectionIcon} ${styles.sectionIconPositive}`}>
+                <Landmark size={18} aria-hidden="true" />
+              </span>
+              <div>
+                <p className={styles.eyebrow}>Flux complémentaires</p>
+                <h2>Entrées hors notes de débit</h2>
+                <p>Les approvisionnements banque → caisse sont déjà compris dans le total des entrées.</p>
+              </div>
+            </div>
+            <span className={styles.amountBadge}>+ {formatMoney(approUsd)} · {formatMoneyCdf(approCdf)}</span>
           </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <div className={styles.tableScroll}>
+            <table className={styles.dataTable}>
               <thead>
-                <tr style={{ textAlign: 'left', background: '#f8fafc' }}>
-                  <th style={{ padding: 8 }}>Référence</th>
-                  <th style={{ padding: 8 }}>Date</th>
-                  <th style={{ padding: 8 }}>Banque source</th>
-                  <th style={{ padding: 8 }}>Libellé</th>
-                  <th style={{ padding: 8, textAlign: 'right' }}>Entrée</th>
+                <tr>
+                  <th>Référence</th>
+                  <th>Date</th>
+                  <th>Banque source</th>
+                  <th>Libellé</th>
+                  <th className={styles.money}>Entrée</th>
                 </tr>
               </thead>
               <tbody>
                 {approvisionnements.map((ligne) => (
-                  <tr key={ligne.id} style={{ borderTop: '1px solid #eef2f7' }}>
-                    <td style={{ padding: 8, fontWeight: 600 }}>{ligne.reference || '—'}</td>
-                    <td style={{ padding: 8 }}>
+                  <tr key={ligne.id}>
+                    <td className={styles.referenceCell}>{ligne.reference || '—'}</td>
+                    <td>
                       {ligne.date ? new Date(ligne.date).toLocaleString('fr-FR') : '—'}
                     </td>
-                    <td style={{ padding: 8 }}>{ligne.source}</td>
-                    <td style={{ padding: 8 }}>{ligne.libelle}</td>
-                    <td style={{ padding: 8, textAlign: 'right', color: '#16a34a', fontWeight: 600 }}>
+                    <td>{ligne.source}</td>
+                    <td>{ligne.libelle}</td>
+                    <td className={`${styles.money} ${styles.okText}`}>
                       + {ligne.devise === 'CDF'
                         ? formatMoneyCdf(toNumber(ligne.montant))
                         : formatMoney(toNumber(ligne.montant))}
                     </td>
                   </tr>
                 ))}
-                <tr style={{ borderTop: '2px solid #e2e8f0', background: '#f8fafc' }}>
-                  <td style={{ padding: 8, fontWeight: 700 }} colSpan={4}>
+                <tr className={styles.totalRow}>
+                  <td colSpan={4}>
                     Total approvisionnements
                   </td>
-                  <td style={{ padding: 8, textAlign: 'right', fontWeight: 700 }}>
+                  <td className={styles.money}>
                     {formatMoney(approUsd)} / {formatMoneyCdf(approCdf)}
                   </td>
                 </tr>
@@ -596,7 +687,18 @@ export default function ClotureCaisse() {
       )}
 
       {balance && (
-        <>
+        <section className={`${styles.panel} ${styles.workflowPanel}`}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionHeading}>
+              <span className={styles.stepNumber}>1</span>
+              <div>
+                <p className={styles.eyebrow}>Étape 1</p>
+                <h2>Compter les espèces</h2>
+                <p>Saisissez le nombre de billets par coupure ; les totaux physiques sont calculés automatiquement.</p>
+              </div>
+            </div>
+            <span className={styles.stepBadge}>Comptage physique</span>
+          </div>
           <ClotureFields
             soldeTheoriqueUsd={soldeTheoUsd}
             soldeTheoriqueCdf={soldeTheoCdf}
@@ -648,44 +750,62 @@ export default function ClotureCaisse() {
               </span>
             </label>
           </section>
-        </>
+        </section>
       )}
 
-      <section className={styles.verdict}>
-        <div>
-          <span>Solde physique USD</span>
-          <strong>{formatMoney(physiqueUsd)}</strong>
-        </div>
-        <div>
-          <span>Écart USD</span>
-          <strong className={ecartUsd === 0 ? styles.okText : ecartUsd < 0 ? styles.dangerText : styles.warnText}>
-            {formatMoney(ecartUsd)}
-          </strong>
-        </div>
-        <div>
-          <span>Solde physique CDF</span>
-          <strong>{formatMoneyCdf(physiqueCdf)}</strong>
-        </div>
-        <div>
-          <span>Écart CDF</span>
-          <strong className={ecartCdf === 0 ? styles.okText : ecartCdf < 0 ? styles.dangerText : styles.warnText}>
-            {formatMoneyCdf(ecartCdf)}
-          </strong>
-        </div>
-        <div className={`${styles.verdictBadge} ${verdict().tone}`}>{verdict().label}</div>
-      </section>
+      {balance && (
+        <section className={`${styles.panel} ${styles.reconciliationPanel}`}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionHeading}>
+              <span className={styles.stepNumber}>2</span>
+              <div>
+                <p className={styles.eyebrow}>Étape 2</p>
+                <h2>Rapprocher le physique et le théorique</h2>
+                <p>Un écart nul signifie que le contenu du tiroir correspond aux mouvements enregistrés.</p>
+              </div>
+            </div>
+            <div className={`${styles.verdictBadge} ${verdict().tone}`}>
+              {ecartUsd === 0 && ecartCdf === 0
+                ? <CheckCircle2 size={16} aria-hidden="true" />
+                : <AlertTriangle size={16} aria-hidden="true" />}
+              {verdict().label}
+            </div>
+          </div>
+          <div className={styles.verdict}>
+            <div className={styles.verdictMetric}>
+              <span>Solde physique USD</span>
+              <strong>{formatMoney(physiqueUsd)}</strong>
+              <small>Théorique : {formatMoney(soldeTheoUsd)}</small>
+            </div>
+            <div className={styles.verdictMetric}>
+              <span>Écart USD</span>
+              <strong className={ecartUsd === 0 ? styles.okText : ecartUsd < 0 ? styles.dangerText : styles.warnText}>
+                {formatMoney(ecartUsd)}
+              </strong>
+              <small>{ecartUsd === 0 ? 'Aucune différence' : ecartUsd < 0 ? 'Montant manquant' : 'Montant excédentaire'}</small>
+            </div>
+            <div className={styles.verdictMetric}>
+              <span>Solde physique CDF</span>
+              <strong>{formatMoneyCdf(physiqueCdf)}</strong>
+              <small>Théorique : {formatMoneyCdf(soldeTheoCdf)}</small>
+            </div>
+            <div className={styles.verdictMetric}>
+              <span>Écart CDF</span>
+              <strong className={ecartCdf === 0 ? styles.okText : ecartCdf < 0 ? styles.dangerText : styles.warnText}>
+                {formatMoneyCdf(ecartCdf)}
+              </strong>
+              <small>{ecartCdf === 0 ? 'Aucune différence' : ecartCdf < 0 ? 'Montant manquant' : 'Montant excédentaire'}</small>
+            </div>
+          </div>
+        </section>
+      )}
 
       {(ecartUsd !== 0 || ecartCdf !== 0) && (
-        <section
-          style={{
-            background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 12,
-            padding: '14px 16px', marginTop: 12, fontSize: 13.5, color: '#7c2d12',
-          }}
-        >
-          <strong style={{ display: 'block', marginBottom: 6 }}>
-            Écart constaté entre le comptage et le solde théorique
-          </strong>
-          <p style={{ margin: '0 0 10px', lineHeight: 1.5 }}>
+        <section className={styles.regularisationPanel}>
+          <div className={styles.regularisationIcon}><AlertTriangle size={19} aria-hidden="true" /></div>
+          <div className={styles.regularisationContent}>
+            <strong>Écart constaté entre le comptage et le solde théorique</strong>
+            <p>
             Le comptage physique ne remplace pas le solde du logiciel. Pour que les deux
             correspondent, l’écart doit donner lieu à une opération identifiable :{' '}
             <strong>
@@ -696,70 +816,110 @@ export default function ClotureCaisse() {
                   : 'une sortie de régularisation'}
             </strong>
             .
-          </p>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontWeight: 600, cursor: 'pointer' }}>
+            </p>
+            <label className={styles.regularisationChoice}>
             <input
               type="checkbox"
               checked={regulariser}
               onChange={(e) => setRegulariser(e.target.checked)}
-              style={{ marginTop: 3 }}
             />
             <span>
               Créer l’opération de régularisation
-              <span style={{ display: 'block', fontWeight: 400, marginTop: 2 }}>
+              <small>
                 Sans cela, la clôture est enregistrée, le solde reste au théorique et l’écart
                 reste à traiter.
-              </span>
+              </small>
             </span>
-          </label>
-          {regulariser && (
-            <input
-              value={motifRegul}
-              onChange={(e) => setMotifRegul(e.target.value)}
-              placeholder="Motif de la régularisation (obligatoire)"
-              style={{
-                width: '100%', marginTop: 10, padding: 10,
-                border: `1px solid ${motifRegul.trim() ? '#cbd5e1' : '#f59e0b'}`,
-                borderRadius: 10, fontSize: 13,
-              }}
-            />
-          )}
+            </label>
+            {regulariser && (
+              <input
+                className={`${styles.regularisationInput} ${motifRegul.trim() ? '' : styles.regularisationInputRequired}`}
+                value={motifRegul}
+                onChange={(e) => setMotifRegul(e.target.value)}
+                placeholder="Motif de la régularisation (obligatoire)"
+              />
+            )}
+          </div>
         </section>
       )}
 
-      <section className={styles.observation}>
-        <label>Observations</label>
-        <textarea
-          value={observation}
-          onChange={(e) => setObservation(e.target.value)}
-          placeholder="Notes ou explications (optionnel)."
-        />
-      </section>
+      {balance && (
+        <section className={`${styles.panel} ${styles.finalizationPanel}`}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionHeading}>
+              <span className={styles.stepNumber}>3</span>
+              <div>
+                <p className={styles.eyebrow}>Étape 3</p>
+                <h2>Finaliser la clôture</h2>
+                <p>Ajoutez une explication si nécessaire, puis enregistrez définitivement la situation de caisse.</p>
+              </div>
+            </div>
+            <span className={styles.stepBadge}>{comptageConfirme ? 'Prête à valider' : 'Confirmation requise'}</span>
+          </div>
 
-      <div className={styles.actions}>
-        {caisseOuverte === false ? (
-          <span style={{ color: '#92400e', fontWeight: 600, fontSize: 13, alignSelf: 'center' }}>
-            Caisse fermée — ouvrez-la (bandeau ci-dessus) pour pouvoir la clôturer.
-          </span>
-        ) : (
-          <button type="button" onClick={handleSubmit} disabled={saving || loading || !comptageConfirme}>
-            {saving ? 'Enregistrement...' : 'Valider la clôture'}
-          </button>
-        )}
-        <button type="button" className={styles.secondary} onClick={handlePrint} disabled={!lastCloture}>
-          Imprimer PV
-        </button>
-        <button type="button" className={styles.secondary} onClick={handleExportHistory} disabled={exporting}>
-          {exporting ? 'Export...' : 'Export historique'}
-        </button>
-      </div>
+          <div className={styles.observation}>
+            <label htmlFor="cloture-observation">
+              Observations
+              <small>Optionnel, sauf si la ligne « Autres » du billetage contient un montant.</small>
+            </label>
+            <textarea
+              id="cloture-observation"
+              value={observation}
+              onChange={(e) => setObservation(e.target.value)}
+              placeholder="Expliquez un écart, une coupure non listée ou tout élément utile au procès-verbal…"
+            />
+          </div>
 
-      <section className={styles.history}>
-        <div className={styles.historyHeader}>
-          <h3>Historique des clôtures</h3>
+          <div className={styles.actions}>
+            <div className={styles.primaryActionGroup}>
+              {caisseOuverte === false ? (
+                <span className={styles.closedMessage}>
+                  <AlertTriangle size={17} aria-hidden="true" />
+                  Caisse fermée — ouvrez-la avec le bandeau ci-dessus avant de la clôturer.
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.primaryButton}
+                  onClick={handleSubmit}
+                  disabled={saving || loading || !comptageConfirme}
+                >
+                  <CheckCircle2 size={17} aria-hidden="true" />
+                  {saving ? 'Enregistrement…' : 'Valider la clôture'}
+                </button>
+              )}
+              {!comptageConfirme && caisseOuverte !== false && (
+                <span className={styles.actionHint}>Confirmez d’abord le comptage physique à l’étape 1.</span>
+              )}
+            </div>
+            <div className={styles.secondaryActions}>
+              <button type="button" className={styles.secondaryButton} onClick={handlePrint} disabled={!lastCloture}>
+                <FileText size={16} aria-hidden="true" />
+                Générer le PV
+              </button>
+              <button type="button" className={styles.secondaryButton} onClick={handleExportHistory} disabled={exporting}>
+                <FileSpreadsheet size={16} aria-hidden="true" />
+                {exporting ? 'Export en cours…' : 'Exporter l’historique'}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section className={`${styles.panel} ${styles.history}`}>
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionHeading}>
+            <span className={styles.sectionIcon}><History size={18} aria-hidden="true" /></span>
+            <div>
+              <p className={styles.eyebrow}>Archives</p>
+              <h2>Historique des clôtures</h2>
+              <p>Consultez le billetage conservé, filtrez les opérations ou récupérez un procès-verbal.</p>
+            </div>
+          </div>
+          <span className={styles.countBadge}>{history.length} résultat{history.length > 1 ? 's' : ''}</span>
         </div>
-        <div className={styles.historySelector}>
-          <label>Consulter une clôture</label>
+        <label className={`${styles.filterField} ${styles.historySelector}`}>
+          <span>Consulter une clôture</span>
           <select value={selectedClotureId ?? ''} onChange={(e) => handleSelectCloture(e.target.value)}>
             <option value="">Sélectionner une date</option>
             {history.map((c) => (
@@ -768,7 +928,7 @@ export default function ClotureCaisse() {
               </option>
             ))}
           </select>
-        </div>
+        </label>
         {selectedCloture && (
           <div className={styles.archivedBilletage}>
             <strong>Billetage enregistré — {selectedCloture.reference_numero}</strong>
@@ -783,42 +943,53 @@ export default function ClotureCaisse() {
           </div>
         )}
         <div className={styles.historyFilters}>
-          <input
-            type="date"
-            value={historyFilters.date_debut}
-            onChange={(e) => setHistoryFilters((prev) => ({ ...prev, date_debut: e.target.value }))}
-          />
-          <input
-            type="date"
-            value={historyFilters.date_fin}
-            onChange={(e) => setHistoryFilters((prev) => ({ ...prev, date_fin: e.target.value }))}
-          />
-          <select
-            value={historyFilters.caissier_id}
-            onChange={(e) => setHistoryFilters((prev) => ({ ...prev, caissier_id: e.target.value }))}
-          >
-            <option value="">Tous les caissiers</option>
-            {caissiers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-          <button type="button" className={styles.secondary} onClick={applyHistoryFilters}>
-            Filtrer
+          <label className={styles.filterField}>
+            <span>Date de début</span>
+            <input
+              type="date"
+              value={historyFilters.date_debut}
+              onChange={(e) => setHistoryFilters((prev) => ({ ...prev, date_debut: e.target.value }))}
+            />
+          </label>
+          <label className={styles.filterField}>
+            <span>Date de fin</span>
+            <input
+              type="date"
+              value={historyFilters.date_fin}
+              onChange={(e) => setHistoryFilters((prev) => ({ ...prev, date_fin: e.target.value }))}
+            />
+          </label>
+          <label className={`${styles.filterField} ${styles.filterFieldGrow}`}>
+            <span>Caissier</span>
+            <select
+              value={historyFilters.caissier_id}
+              onChange={(e) => setHistoryFilters((prev) => ({ ...prev, caissier_id: e.target.value }))}
+            >
+              <option value="">Tous les caissiers</option>
+              {caissiers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className={styles.filterButton} onClick={applyHistoryFilters}>
+            <ListFilter size={16} aria-hidden="true" />
+            Appliquer
           </button>
         </div>
-        <table>
+        <div className={styles.tableScroll}>
+          <table className={`${styles.dataTable} ${styles.historyTable}`}>
           <thead>
             <tr>
               <th>Date</th>
               <th>Référence</th>
-              <th>Solde théorique USD</th>
-              <th>Solde physique USD</th>
-              <th>Écart USD</th>
-              <th>Solde théorique CDF</th>
-              <th>Solde physique CDF</th>
-              <th>Écart CDF</th>
+              <th className={styles.money}>Théorique USD</th>
+              <th className={styles.money}>Physique USD</th>
+              <th className={styles.money}>Écart USD</th>
+              <th className={styles.money}>Théorique CDF</th>
+              <th className={styles.money}>Physique CDF</th>
+              <th className={styles.money}>Écart CDF</th>
               <th>PV</th>
             </tr>
           </thead>
@@ -833,31 +1004,33 @@ export default function ClotureCaisse() {
             {history.map((c) => (
               <tr key={c.id}>
                 <td>{new Date(c.date_cloture).toLocaleString('fr-FR')}</td>
-                <td>{c.reference_numero}</td>
-                <td>{formatMoney(toNumber(c.solde_theorique_usd))}</td>
-                <td>{formatMoney(toNumber(c.solde_physique_usd))}</td>
-                <td className={toNumber(c.ecart_usd) === 0 ? styles.okText : toNumber(c.ecart_usd) < 0 ? styles.dangerText : styles.warnText}>
+                <td className={styles.referenceCell}>{c.reference_numero}</td>
+                <td className={styles.money}>{formatMoney(toNumber(c.solde_theorique_usd))}</td>
+                <td className={styles.money}>{formatMoney(toNumber(c.solde_physique_usd))}</td>
+                <td className={`${styles.money} ${toNumber(c.ecart_usd) === 0 ? styles.okText : toNumber(c.ecart_usd) < 0 ? styles.dangerText : styles.warnText}`}>
                   {formatMoney(toNumber(c.ecart_usd))}
                 </td>
-                <td>{formatMoneyCdf(toNumber(c.solde_theorique_cdf))}</td>
-                <td>{formatMoneyCdf(toNumber(c.solde_physique_cdf))}</td>
-                <td className={toNumber(c.ecart_cdf) === 0 ? styles.okText : toNumber(c.ecart_cdf) < 0 ? styles.dangerText : styles.warnText}>
+                <td className={styles.money}>{formatMoneyCdf(toNumber(c.solde_theorique_cdf))}</td>
+                <td className={styles.money}>{formatMoneyCdf(toNumber(c.solde_physique_cdf))}</td>
+                <td className={`${styles.money} ${toNumber(c.ecart_cdf) === 0 ? styles.okText : toNumber(c.ecart_cdf) < 0 ? styles.dangerText : styles.warnText}`}>
                   {formatMoneyCdf(toNumber(c.ecart_cdf))}
                 </td>
                 <td>
                   <button
                     type="button"
-                    className={styles.secondary}
+                    className={styles.tableAction}
                     onClick={() => downloadArchivedPdf(c)}
                     disabled={!c.pdf_path}
                   >
+                    <Download size={14} aria-hidden="true" />
                     Télécharger
                   </button>
                 </td>
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </section>
     </div>
   )

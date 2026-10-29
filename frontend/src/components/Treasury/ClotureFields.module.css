@@ -1,12 +1,8 @@
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 20px;
-  padding: 16px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
-  margin-bottom: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 18px 20px 16px;
 }
 
 .column {
@@ -14,6 +10,10 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  padding: 15px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
 }
 
 .currencyTitle {
@@ -43,8 +43,8 @@
 }
 
 .summaryCard {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: linear-gradient(135deg, #f8fafc, #fff);
+  border: 1px solid #dbe4ee;
   border-radius: 10px;
   padding: 12px;
 }
@@ -93,7 +93,7 @@
 .billetageBlock {
   overflow: hidden;
   border: 1px solid #dbe4ee;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #fff;
 }
 
@@ -187,9 +187,21 @@
   text-align: center;
 }
 
+.billetageTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.billetageTable tbody tr:hover td {
+  background: #fafcfe;
+}
+
+.billetageTable input:hover {
+  border-color: #94a3b8;
+}
+
 .billetageTable input:focus {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  border-color: var(--tenant-primary, #0f766e);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tenant-primary, #0f766e) 12%, transparent);
   outline: none;
 }
 
@@ -220,12 +232,12 @@
   justify-content: space-between;
   gap: 12px;
   padding: 13px 14px;
-  background: #eff6ff;
-  border-top: 1px solid #bfdbfe;
+  background: color-mix(in srgb, var(--tenant-primary, #0f766e) 7%, white);
+  border-top: 1px solid color-mix(in srgb, var(--tenant-primary, #0f766e) 20%, white);
 }
 
 .countedTotal span {
-  color: #1e3a8a;
+  color: #475569;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -233,7 +245,7 @@
 }
 
 .countedTotal strong {
-  color: #1d4ed8;
+  color: var(--tenant-primary, #0f766e);
   font-size: 20px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -252,6 +264,11 @@
 
 @media (max-width: 640px) {
   .grid {
+    grid-template-columns: 1fr;
+    padding: 15px;
+  }
+
+  .column {
     padding: 12px;
   }
 
