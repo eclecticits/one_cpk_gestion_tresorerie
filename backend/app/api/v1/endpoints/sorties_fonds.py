@@ -329,6 +329,33 @@ async def _user_has_permission(db: AsyncSession, user: User, permission_code: st
     return res.scalar_one_or_none() is not None
 
 
+#: Voir et exécuter les sorties qui débitent un compte bancaire. Le caissier ne
+#: la tient pas : la caisse ne voit que ce qui sort de la caisse — liste,
+#: totaux, justificatifs — et ne peut rien payer par banque. L'approvisionnement
+#: de la caisse (banque → caisse) débite la banque : il est donc de ce côté-là.
+PERMISSION_SORTIES_BANQUE = "sorties_fonds_banque"
+
+
+async def _voit_la_banque(db: AsyncSession, user: User) -> bool:
+    return await _user_has_permission(db, user, PERMISSION_SORTIES_BANQUE)
+
+
+def _refuser_banque() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Privilèges insuffisants ({PERMISSION_SORTIES_BANQUE}) : la caisse n'exécute pas de sortie par banque.",
+    )
+
+
+async def _exiger_visible(db: AsyncSession, user: User, sortie: SortieFonds) -> None:
+    """Une sortie par banque n'existe pas pour qui ne voit que la caisse.
+
+    404 plutôt que 403 : le refus ne doit pas confirmer qu'elle existe.
+    """
+    if (sortie.canal or "CAISSE").upper() == "BANQUE" and not await _voit_la_banque(db, user):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+
+
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
     if not value:
         return None
@@ -684,6 +711,12 @@ async def list_sorties_fonds(
             )
         conditions.append(SortieFonds.service_id.in_(service_ids))
     can_view_cancelled = await _user_has_permission(db, user, "view_cancelled_financial_operations")
+    # Sans la banque, le canal est forcé à CAISSE : il filtre alors d'un même
+    # geste la liste, les totaux, les transferts délégués et les retours.
+    if not await _voit_la_banque(db, user):
+        if isinstance(canal, str) and canal.strip() and canal.strip().upper() != "CAISSE":
+            _refuser_banque()
+        canal = "CAISSE"
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
@@ -1205,6 +1238,9 @@ async def _controler_brouillon(
     canal = (payload.canal or "CAISSE").upper()
     if canal not in CANAL_PAIEMENT:
         raise HTTPException(status_code=400, detail="canal invalide")
+    is_appro_caisse = (payload.type_sortie or "").lower() == "approvisionnement_caisse"
+    if (canal == "BANQUE" or is_appro_caisse) and not await _voit_la_banque(db, user):
+        _refuser_banque()
     devise = (payload.devise or "USD").upper()
     if devise not in {"USD", "CDF"}:
         raise HTTPException(status_code=400, detail="devise invalide")
@@ -2245,6 +2281,12 @@ async def create_sortie_fonds(
         # inconnue, et le lien reste vide plutôt que deviné.
         lignes_imputees = [None]
 
+    # --- Caisse et banque cloisonnées. Ici le canal est définitif : l'ordre de
+    # décaissement et la réquisition ont fini de l'imposer. Avant toute
+    # délégation, toute numérotation et toute écriture.
+    if (canal == "BANQUE" or is_appro_caisse) and not await _voit_la_banque(db, user):
+        _refuser_banque()
+
     # --- Bascule d'écriture : ce type, pour cette organisation, part au moteur
     # dédié. Placée ici, après toutes les validations de payload (compte actif,
     # de type BANK, devise concordante, montant strictement positif) et avant
@@ -2842,6 +2884,9 @@ async def upload_sortie_pdf(
     operation = sortie if sortie is not None else transfert
     if operation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+    canal_operation = sortie.canal if sortie is not None else transfert.source_type
+    if (canal_operation or "CAISSE").upper() == "BANQUE" and not await _voit_la_banque(db, user):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
 
     content_type = (file.content_type or "").lower()
     if content_type not in PDF_ALLOWED_TYPES:
@@ -3116,6 +3161,8 @@ async def update_sortie_statut(
             db, tenant_id=tenant_id, document_uuid=sortie_uid
         )
         if transfert is not None:
+            if (transfert.source_type or "").upper() == "BANQUE" and not await _voit_la_banque(db, user):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
             return await _annuler_transfert_delegue(
                 db,
                 transfert=transfert,
@@ -3125,6 +3172,7 @@ async def update_sortie_statut(
                 request=request,
             )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+    await _exiger_visible(db, user, sortie)
 
     previous_statut = (sortie.statut or "VALIDE").strip().upper()
     statut = (payload.statut or "").strip().upper()
@@ -3588,17 +3636,21 @@ async def _sortie_du_tenant(db: AsyncSession, sortie_id: str, tenant_id: int) ->
 @router.get("/justificatifs/en-attente", response_model=list[SortieFondsOut])
 async def lister_justificatifs_en_attente(
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[SortieFondsOut]:
     """Sorties dont le justificatif est attendu, les plus anciennes d'abord."""
+    conditions = [
+        SortieFonds.organisation_id == tenant_id,
+        SortieFonds.justificatif_statut == justificatifs.STATUT_ATTENDU,
+        SortieFonds.statut != "ANNULEE",
+    ]
+    if not await _voit_la_banque(db, user):
+        conditions.append(SortieFonds.canal == "CAISSE")
     rows = (
         await db.execute(
             select(SortieFonds)
-            .where(
-                SortieFonds.organisation_id == tenant_id,
-                SortieFonds.justificatif_statut == justificatifs.STATUT_ATTENDU,
-                SortieFonds.statut != "ANNULEE",
-            )
+            .where(*conditions)
             .order_by(SortieFonds.justificatif_echeance.asc().nulls_last())
         )
     ).scalars().all()
@@ -3648,6 +3700,7 @@ async def deposer_justificatif(
 ) -> SortieFondsOut:
     """Le caissier joint la pièce scannée à la ligne de sortie : elle est reçue."""
     sortie = await _sortie_du_tenant(db, sortie_id, tenant_id)
+    await _exiger_visible(db, user, sortie)
     if not fichiers:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucun fichier joint")
     safe_ref = _safe_ref(f"{sortie.reference_numero or sortie.reference or sortie.id}-justificatif")
@@ -3685,6 +3738,7 @@ async def relancer_justificatif(
 ) -> SortieFondsOut:
     """Le caissier relance le bénéficiaire, autorités en copie, quand il le juge utile."""
     sortie = await _sortie_du_tenant(db, sortie_id, tenant_id)
+    await _exiger_visible(db, user, sortie)
     if sortie.justificatif_statut != justificatifs.STATUT_ATTENDU:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucun justificatif n'est attendu pour cette sortie")
     sid = sortie.id
@@ -3721,6 +3775,7 @@ async def decider_justificatif(
 ) -> SortieFondsOut:
     """Exiger, ne plus exiger ou dispenser (motif obligatoire) le justificatif."""
     sortie = await _sortie_du_tenant(db, sortie_id, tenant_id)
+    await _exiger_visible(db, user, sortie)
     ancien_statut = sortie.justificatif_statut
     if ancien_statut == justificatifs.STATUT_RECU:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le justificatif a déjà été reçu")

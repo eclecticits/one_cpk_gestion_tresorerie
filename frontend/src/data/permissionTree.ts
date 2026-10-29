@@ -209,6 +209,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
           { code: 'treso.sorties_fonds.update', label: 'Modifier une sortie de fonds', kind: 'update', deferred: true },
           { code: 'treso.sorties_fonds.delete', label: 'Supprimer une sortie de fonds', kind: 'delete', deferred: true },
           { code: 'can_execute_payment', label: 'Exécuter la sortie de fonds', kind: 'validate' },
+          { code: 'sorties_fonds_banque', label: 'Voir et exécuter les sorties par banque', kind: 'validate' },
           { code: 'can_authorize_disbursement', label: 'Autoriser un ordre de décaissement', kind: 'validate' },
           { code: 'can_direct_disbursement', label: 'Programmer une sortie directe', kind: 'validate' },
           { code: 'cancel_sortie_fonds', label: 'Annuler une sortie de fonds', kind: 'cancel' },

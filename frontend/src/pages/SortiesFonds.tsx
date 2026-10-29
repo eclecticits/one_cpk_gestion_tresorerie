@@ -83,6 +83,10 @@ export default function SortiesFonds() {
   // réservé au super administrateur, le serveur applique la même règle.
   const peutAntidater = (user?.role || '').toLowerCase() === 'super_admin'
   const { hasPermission, loading: permissionsLoading } = usePermissions()
+  // La caisse ne voit que ce qui sort de la caisse : sans cette permission,
+  // aucune sortie par banque, ni approvisionnement (il débite la banque). Le
+  // serveur applique la même règle ; ici on n'offre pas ce qu'il refuserait.
+  const voitLaBanque = hasPermission('sorties_fonds_banque')
   const { notifyError, notifySuccess, notifyWarning, notifyInfo } = useToast()
   const confirm = useConfirm()
   const confirmWithInput = useConfirmWithInput()
@@ -604,8 +608,10 @@ export default function SortiesFonds() {
   }, [formData.type_sortie, formData.compte_bancaire_id, formData.devise, comptesBancaires])
 
   useEffect(() => {
-    // Les transferts caisse/banque restent en espèces : ne pas basculer.
+    // Les transferts caisse/banque restent en espèces : ne pas basculer. Sans
+    // la banque, rien vers quoi basculer : la caisse fermée bloque la sortie.
     if (
+      voitLaBanque &&
       isCashClosed &&
       formData.mode_paiement === 'cash' &&
       formData.type_sortie !== 'versement_banque' &&
@@ -613,7 +619,7 @@ export default function SortiesFonds() {
     ) {
       setFormData((prev) => ({ ...prev, mode_paiement: 'virement' }))
     }
-  }, [isCashClosed, formData.mode_paiement, formData.type_sortie])
+  }, [voitLaBanque, isCashClosed, formData.mode_paiement, formData.type_sortie])
 
   const loadBudgetLines = useCallback(async (serviceId: number | null) => {
     if (isServiceUser && !serviceId) {
@@ -671,7 +677,11 @@ export default function SortiesFonds() {
   }, [page, totalPages])
 
   const sortiesList = Array.isArray(sorties) ? sorties : []
-  const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
+  // Une réquisition réglée par banque n'est pas à la caisse. « Mixte » reste :
+  // ses ordres en espèces lui reviennent.
+  const requisitionsApprouveesList = (Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []).filter(
+    (req) => voitLaBanque || ['', 'cash', 'mixte'].includes(String(req?.mode_paiement || '').toLowerCase())
+  )
   const requisitionsBudgetaires = requisitionsApprouveesList.filter(
     (req) =>
       req?.type_requisition !== 'remboursement_transport' &&
@@ -822,6 +832,17 @@ export default function SortiesFonds() {
   const amountExceedsRemaining =
     Boolean(selectedRequisition && currentPaymentAmount > 0) &&
     currentPaymentAmount > remainingBeforePayment
+  // Même règle que pour la réquisition : un ordre payé par banque n'est pas à la caisse.
+  const ordresPayablesIci = useCallback(
+    (ordres: OrdreDecaissement[]) =>
+      voitLaBanque
+        ? ordres
+        : ordres.filter((o) => {
+            const mode = String(o.mode_paiement || '').toLowerCase()
+            return String(o.canal || (mode === 'cash' ? 'CAISSE' : 'BANQUE')).toUpperCase() === 'CAISSE'
+          }),
+    [voitLaBanque]
+  )
   const loadOrdresAutorises = useCallback(async (reqId: string) => {
     if (!reqId) {
       setOrdresAutorises([])
@@ -830,28 +851,28 @@ export default function SortiesFonds() {
     setLoadingOrdres(true)
     try {
       const res = await listOrdresDecaissement({ requisition_id: reqId, statut: 'AUTORISE', limit: 200 })
-      setOrdresAutorises(res.items || [])
+      setOrdresAutorises(ordresPayablesIci(res.items || []))
     } catch (err) {
       console.error('Error loading ordres de décaissement:', err)
       setOrdresAutorises([])
     } finally {
       setLoadingOrdres(false)
     }
-  }, [])
+  }, [ordresPayablesIci])
   const loadOrdresDirects = useCallback(async () => {
     setLoadingOrdresDirects(true)
     try {
       // Uniquement les vraies sorties directes (sans réquisition) : les tranches
       // de réquisitions progressives se paient par le chemin « réquisition ».
       const res = await listOrdresDecaissement({ sans_requisition: true, statut: 'AUTORISE', limit: 200 })
-      setOrdresDirects(res.items || [])
+      setOrdresDirects(ordresPayablesIci(res.items || []))
     } catch (err) {
       console.error('Error loading ordres de sortie directe:', err)
       setOrdresDirects([])
     } finally {
       setLoadingOrdresDirects(false)
     }
-  }, [])
+  }, [ordresPayablesIci])
   const isSortieDirecte = formData.type_sortie === 'sortie_directe'
   // Versement à la banque : simple transfert caisse -> banque, sans service,
   // sans bénéficiaire externe et sans imputation budgétaire.
@@ -2487,11 +2508,11 @@ export default function SortiesFonds() {
 
       <CaisseSessionBanner />
 
-      {!isCreatePage && canCreate && requisitionsApprouvees.length > 0 && (
+      {!isCreatePage && canCreate && requisitionsApprouveesList.length > 0 && (
         <div className={styles.infoBox}>
-          {requisitionsApprouvees.length > 0 && (
+          {requisitionsApprouveesList.length > 0 && (
             <p className={styles.infoBoxText}>
-              <strong>{requisitionsApprouvees.length}</strong> réquisition{requisitionsApprouvees.length > 1 ? 's' : ''} en attente{requisitionsApprouvees.length > 1 ? 's' : ''} de traitement
+              <strong>{requisitionsApprouveesList.length}</strong> réquisition{requisitionsApprouveesList.length > 1 ? 's' : ''} en attente{requisitionsApprouveesList.length > 1 ? 's' : ''} de traitement
             </p>
           )}
         </div>
@@ -2527,7 +2548,7 @@ export default function SortiesFonds() {
               <option value="requisition">Réquisition</option>
               <option value="remboursement">Remboursement transport</option>
               <option value="versement_banque">Versement banque</option>
-              <option value="approvisionnement_caisse">Approvisionnement caisse</option>
+              {voitLaBanque && <option value="approvisionnement_caisse">Approvisionnement caisse</option>}
               <option value="sortie_directe">Sortie directe / tranche programmée</option>
             </select>
           </div>
@@ -2843,7 +2864,7 @@ export default function SortiesFonds() {
                 >
                   {CATEGORIES_SORTIE.map((categorie) => (
                     <optgroup key={categorie.label} label={categorie.label}>
-                      {categorie.types.map((type) => (
+                      {categorie.types.filter((type) => voitLaBanque || type.value !== 'approvisionnement_caisse').map((type) => (
                         <option key={type.value} value={type.value}>
                           {type.label}
                         </option>
@@ -3541,7 +3562,7 @@ export default function SortiesFonds() {
                     required
                   >
                     <option value="CAISSE" disabled={isCashClosed}>Caisse</option>
-                    <option value="BANQUE">Banque</option>
+                    {voitLaBanque && <option value="BANQUE">Banque</option>}
                   </select>
                   {isCashClosed && (
                     <div className={styles.lockedHint}>
