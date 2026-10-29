@@ -924,7 +924,7 @@
 .listTable th:nth-child(6) { width: 110px; }
 .listTable th:nth-child(7) { width: 110px; }
 .listTable th:nth-child(8) { width: 150px; }
-.listTable th:nth-child(9) { width: 210px; }
+.listTable th:nth-child(9) { width: 96px; }
 
 /* Les colonnes chiffrées s'alignent à droite sur une chasse fixe. */
 .listTable th:nth-child(3),
@@ -943,6 +943,7 @@
 .listTable td:nth-child(9) {
   position: sticky;
   right: 0;
+  text-align: right;
   background: #ffffff;
   box-shadow: -6px 0 10px rgba(15, 23, 42, 0.06);
   z-index: 2;

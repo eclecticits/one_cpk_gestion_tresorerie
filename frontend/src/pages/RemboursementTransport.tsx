@@ -53,9 +53,10 @@ import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { isAssistantMember, resolveMemberFunctionLabel, trierParHierarchie } from '../utils/serviceMemberFunctions'
-import { ArrowDown, ArrowUp, Mail, Paperclip, Plus, Printer, Search, SearchX, Users } from 'lucide-react'
+import { ArrowDown, ArrowUp, CheckCircle2, Mail, Paperclip, Plus, Printer, Search, SearchX, Send, Trash2, Users } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import BudgetPosteSelect from '../components/BudgetPosteSelect'
+import RowActionsMenu from '../components/RowActionsMenu'
 import styles from './RemboursementTransport.module.css'
 
 const TODAY = format(new Date(), 'yyyy-MM-dd')
@@ -2648,64 +2649,57 @@ export default function RemboursementTransport() {
                         >
                           <Search size={16} />
                         </button>
-                        {requisition?.annexe?.id && (
-                          <button
-                            type="button"
-                            onClick={() => openRequisitionAnnexe(requisition.annexe)}
-                            className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.annexeActionBtn}`}
-                            title={requisition.annexe?.filename || 'Voir la pièce jointe'}
-                            aria-label="Voir la pièce jointe"
-                          >
-                            <Paperclip size={16} />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => printRemboursement(r)}
-                          className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.printActionBtn}`}
-                          title="Imprimer le remboursement"
-                          aria-label="Imprimer le remboursement"
-                        >
-                          <Printer size={16} />
-                        </button>
-                        {canSignRequisition(r) && (
-                          <button
-                            type="button"
-                            onClick={() => handleSignRequisition(r)}
-                            className={`${styles.actionBtn} ${styles.workflowBtn}`}
-                            disabled={signingId === String(requisition?.id || r.requisition_id)}
-                            title="Valider et signer le remboursement"
-                            aria-label="Valider et signer le remboursement"
-                          >
-                            {signingId === String(requisition?.id || r.requisition_id) ? 'Signature...' : 'Signer'}
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleSubmitExamen(r)}
-                          className={`${styles.actionBtn} ${styles.submitExamenBtn}`}
-                          disabled={
-                            !canSubmitToExamen(r) ||
-                            submittingExamenId === String(requisition?.id || r.requisition_id)
-                          }
-                          title={canSubmitToExamen(r) ? "Soumettre à l'examen" : getSubmitExamenLabel(r)}
-                          aria-label="Soumettre à l'examen"
-                        >
-                          {submittingExamenId === String(requisition?.id || r.requisition_id)
-                            ? 'Envoi...'
-                            : getSubmitExamenLabel(r)}
-                        </button>
-                        {canDeleteRemboursement(r) && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteRemboursement(r)}
-                            className={`${styles.actionBtn} ${styles.dangerActionBtn}`}
-                            title="Supprimer le remboursement"
-                            aria-label="Supprimer le remboursement"
-                          >
-                            Supprimer
-                          </button>
-                        )}
+                        <RowActionsMenu
+                          libelle={`Autres actions sur le remboursement ${r.numero_remboursement}`}
+                          items={[
+                            ...(requisition?.annexe?.id
+                              ? [{
+                                  cle: 'annexe',
+                                  libelle: 'Voir la pièce jointe',
+                                  icone: <Paperclip size={15} />,
+                                  onSelect: () => { void openRequisitionAnnexe(requisition.annexe) },
+                                }]
+                              : []),
+                            {
+                              cle: 'imprimer',
+                              libelle: 'Imprimer le remboursement',
+                              icone: <Printer size={15} />,
+                              onSelect: () => { void printRemboursement(r) },
+                            },
+                            ...(canSignRequisition(r)
+                              ? [{
+                                  cle: 'signer',
+                                  libelle: signingId === String(requisition?.id || r.requisition_id)
+                                    ? 'Signature en cours…'
+                                    : 'Valider et signer',
+                                  icone: <CheckCircle2 size={15} />,
+                                  disabled: signingId === String(requisition?.id || r.requisition_id),
+                                  onSelect: () => { void handleSignRequisition(r) },
+                                }]
+                              : []),
+                            {
+                              cle: 'examen',
+                              libelle: submittingExamenId === String(requisition?.id || r.requisition_id)
+                                ? 'Envoi en cours…'
+                                : "Soumettre à l'examen",
+                              icone: <Send size={15} />,
+                              disabled:
+                                !canSubmitToExamen(r) ||
+                                submittingExamenId === String(requisition?.id || r.requisition_id),
+                              description: !canSubmitToExamen(r) ? getSubmitExamenLabel(r) : undefined,
+                              onSelect: () => { void handleSubmitExamen(r) },
+                            },
+                            ...(canDeleteRemboursement(r)
+                              ? [{
+                                  cle: 'supprimer',
+                                  libelle: 'Supprimer le remboursement',
+                                  icone: <Trash2 size={15} />,
+                                  onSelect: () => { void handleDeleteRemboursement(r) },
+                                  destructive: true,
+                                }]
+                              : []),
+                          ]}
+                        />
                       </div>
                     </td>
                   </tr>
