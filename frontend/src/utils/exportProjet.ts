@@ -1,5 +1,5 @@
-import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import { jsPDF } from 'jspdf'
+import { autoTable } from 'jspdf-autotable'
 import { format } from 'date-fns'
 import type { MouvementsProjet, PeriodeProjet } from '../api/projetsActivites'
 import { formatAmount, toNumber } from './amount'
@@ -15,8 +15,14 @@ type Rgb = [number, number, number]
 type XlsxModule = typeof import('xlsx')
 
 const MARGE = 12
+const MARGE_HAUT_PAGE_SUIVANTE = 22
+const MARGE_BAS = 20
 const VERT: Rgb = [6, 95, 70]
+const VERT_PALE: Rgb = [236, 253, 245]
 const ROUGE: Rgb = [185, 28, 28]
+const ROUGE_PALE: Rgb = [254, 242, 242]
+const AMBRE: Rgb = [180, 83, 9]
+const AMBRE_PALE: Rgb = [255, 251, 235]
 const ENCRE: Rgb = [15, 23, 42]
 const GRIS: Rgb = [100, 116, 139]
 const BORDURE: Rgb = [226, 232, 240]
@@ -46,151 +52,376 @@ export const sortiesParDevise = (sorties: Record<string, string>) => {
 const finTableau = (doc: jsPDF, y: number): number => (doc as any).lastAutoTable?.finalY ?? y
 
 const place = (doc: jsPDF, y: number, besoin: number) => {
-  if (y + besoin <= doc.internal.pageSize.getHeight() - 20) return y
+  if (y + besoin <= doc.internal.pageSize.getHeight() - MARGE_BAS) return y
   doc.addPage()
-  return 20
+  return MARGE_HAUT_PAGE_SUIVANTE
 }
 
-const titreSection = (doc: jsPDF, y: number, titre: string, complement: string) => {
-  y = place(doc, y, 18)
+const titreSection = (doc: jsPDF, y: number, titre: string, complement: string, ton: 'vert' | 'rouge') => {
+  // Réserve le titre, l'en-tête du tableau et sa première ligne pour éviter un
+  // titre orphelin en bas de page.
+  y = place(doc, y, 28)
   const largeur = doc.internal.pageSize.getWidth() - MARGE * 2
-  doc.setFillColor(...VERT)
-  doc.roundedRect(MARGE, y - 3.2, 1.4, 4.2, 0.7, 0.7, 'F')
+  const accent = ton === 'rouge' ? ROUGE : VERT
+  const fond = ton === 'rouge' ? ROUGE_PALE : VERT_PALE
+  doc.setFillColor(...fond)
+  doc.roundedRect(MARGE, y, largeur, 9, 2, 2, 'F')
+  doc.setFillColor(...accent)
+  doc.roundedRect(MARGE, y, 2.2, 9, 1.1, 1.1, 'F')
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9.5)
-  doc.setTextColor(...ENCRE)
-  doc.text(titre, MARGE + 3.5, y)
+  doc.setFontSize(9.2)
+  doc.setTextColor(...accent)
+  doc.text(titre.toUpperCase(), MARGE + 5, y + 5.8)
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8)
+  doc.setFontSize(7.8)
   doc.setTextColor(...GRIS)
-  doc.text(complement, MARGE + largeur, y, { align: 'right' })
-  doc.setDrawColor(...BORDURE)
-  doc.setLineWidth(0.3)
-  doc.line(MARGE, y + 2.2, MARGE + largeur, y + 2.2)
-  return y + 6
+  doc.text(complement, MARGE + largeur - 4, y + 5.8, { align: 'right' })
+  return y + 13
 }
 
 const styleTableau = (entete: Rgb) => ({
-  theme: 'plain' as const,
-  margin: { left: MARGE, right: MARGE },
+  theme: 'grid' as const,
+  showHead: 'everyPage' as const,
+  showFoot: 'lastPage' as const,
+  rowPageBreak: 'avoid' as const,
+  margin: { left: MARGE, right: MARGE, top: MARGE_HAUT_PAGE_SUIVANTE, bottom: MARGE_BAS },
   styles: {
     font: 'helvetica',
-    fontSize: 8,
-    cellPadding: 2,
+    fontSize: 7.7,
+    cellPadding: { top: 2.3, right: 2.1, bottom: 2.3, left: 2.1 },
     textColor: ENCRE,
     valign: 'middle' as const,
     lineColor: BORDURE,
-    lineWidth: { bottom: 0.2 },
+    lineWidth: 0.12,
+    overflow: 'linebreak' as const,
+    minCellHeight: 7,
   },
-  headStyles: { fillColor: entete, textColor: [255, 255, 255] as Rgb, fontStyle: 'bold' as const, fontSize: 7.5 },
+  headStyles: {
+    fillColor: entete,
+    textColor: [255, 255, 255] as Rgb,
+    fontStyle: 'bold' as const,
+    fontSize: 7.8,
+    minCellHeight: 8,
+  },
   alternateRowStyles: { fillColor: FOND },
-  footStyles: { fillColor: [241, 245, 249] as Rgb, textColor: ENCRE, fontStyle: 'bold' as const },
+  footStyles: {
+    fillColor: [241, 245, 249] as Rgb,
+    textColor: ENCRE,
+    fontStyle: 'bold' as const,
+    fontSize: 8,
+    minCellHeight: 8,
+  },
 })
 
-export async function exporterProjetPDF(m: MouvementsProjet, periode: PeriodeProjet, emisPar?: string | null) {
-  const identity = await loadTenantIdentity()
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+const pluriel = (nombre: number, singulier: string, plurielValeur = `${singulier}s`) =>
+  `${nombre} ${nombre > 1 ? plurielValeur : singulier}`
+
+const lignesLimitees = (doc: jsPDF, texte: string, largeur: number, maximum: number): string[] => {
+  const lignes = doc.splitTextToSize(texte, largeur) as string[]
+  if (lignes.length <= maximum) return lignes
+  const resultat = lignes.slice(0, maximum)
+  let derniere = resultat[maximum - 1].replace(/\s+$/, '')
+  while (derniere && doc.getTextWidth(`${derniere}…`) > largeur) derniere = derniere.slice(0, -1)
+  resultat[maximum - 1] = `${derniere.replace(/[\s,;:.—-]+$/, '')}…`
+  return resultat
+}
+
+const drawCarteSynthese = (
+  doc: jsPDF,
+  x: number,
+  y: number,
+  largeur: number,
+  libelle: string,
+  valeur: string,
+  couleur: Rgb,
+  detail?: string,
+) => {
+  doc.setDrawColor(...BORDURE)
+  doc.setLineWidth(0.25)
+  doc.setFillColor(255, 255, 255)
+  doc.roundedRect(x, y, largeur, 22, 2, 2, 'FD')
+  doc.setFillColor(...couleur)
+  doc.roundedRect(x, y, 2.2, 22, 1.1, 1.1, 'F')
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7)
+  doc.setTextColor(...GRIS)
+  doc.text(libelle.toUpperCase(), x + 6, y + 6.2)
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(valeur.length > 22 ? 10 : 12.5)
+  doc.setTextColor(...couleur)
+  doc.text(valeur, x + 6, y + 14.2)
+
+  if (detail) {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(6.8)
+    doc.setTextColor(...GRIS)
+    doc.text(detail, x + 6, y + 19)
+  }
+}
+
+const drawEnteteSuite = (doc: jsPDF, m: MouvementsProjet, periode: PeriodeProjet) => {
+  const pageWidth = doc.internal.pageSize.getWidth()
+  doc.setFillColor(...FOND)
+  doc.rect(0, 0, pageWidth, 18, 'F')
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8)
+  doc.setTextColor(...VERT)
+  doc.text(`RAPPORT FINANCIER · ${m.projet.code}`, MARGE, 9)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(...GRIS)
+  const projet = lignesLimitees(doc, m.projet.libelle, pageWidth * 0.42, 1)[0] ?? m.projet.libelle
+  doc.text(projet, MARGE, 13.2)
+  doc.text(libellePeriode(periode), pageWidth - MARGE, 11, { align: 'right' })
+  doc.setDrawColor(...BORDURE)
+  doc.setLineWidth(0.3)
+  doc.line(MARGE, 17, pageWidth - MARGE, 17)
+}
+
+const drawEtatVide = (doc: jsPDF, y: number, message: string, detail: string): number => {
+  y = place(doc, y, 25)
+  const largeur = doc.internal.pageSize.getWidth() - MARGE * 2
+  doc.setFillColor(...FOND)
+  doc.setDrawColor(...BORDURE)
+  doc.setLineWidth(0.25)
+  doc.roundedRect(MARGE, y, largeur, 20, 2, 2, 'FD')
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(9)
+  doc.setTextColor(...ENCRE)
+  doc.text(message, MARGE + largeur / 2, y + 8, { align: 'center' })
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(...GRIS)
+  doc.text(detail, MARGE + largeur / 2, y + 13.7, { align: 'center' })
+  return y + 27
+}
+
+/** Construit le PDF sans le télécharger, afin que le rendu puisse être vérifié séparément. */
+export function construireRapportProjet(
+  m: MouvementsProjet,
+  periode: PeriodeProjet,
+  identity: Awaited<ReturnType<typeof loadTenantIdentity>>,
+  emisPar?: string | null,
+): jsPDF {
+  // Les deux journaux comportent des colonnes textuelles et monétaires : le
+  // paysage évite les césures agressives observées dans l'ancien portrait.
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   const largeur = doc.internal.pageSize.getWidth() - MARGE * 2
   const nature = m.projet.type === 'ACTIVITE' ? 'Activité' : 'Projet'
+  doc.setProperties({
+    title: `Rapport ${nature.toLowerCase()} ${m.projet.code}`,
+    subject: `Mouvements ${libellePeriode(periode)}`,
+    author: identity.orgName,
+    creator: 'ONEC Smart',
+    keywords: `projet, activité, encaissements, décaissements, ${m.projet.code}`,
+  })
 
   let y = drawTenantHeader(doc, identity, {
-    title: `Rapport ${nature.toLowerCase() === 'projet' ? 'du projet' : "de l'activité"}`,
-    subtitle: `${m.projet.code} — ${m.projet.libelle} · ${libellePeriode(periode)}`,
+    title: `Rapport financier ${nature === 'Projet' ? 'du projet' : "de l'activité"}`,
+    subtitle: `${nature} · code ${m.projet.code}`,
   })
 
-  // Trois tuiles : entrées, sorties, solde.
+  // Le libellé complet vit dans un cartouche borné : même un intitulé à la
+  // longueur maximale du formulaire ne déborde plus de la page.
+  const largeurProjet = largeur * 0.68
+  const lignesProjet = lignesLimitees(doc, m.projet.libelle, largeurProjet - 10, 3)
+  const hauteurCartouche = Math.max(22, 11 + lignesProjet.length * 4)
+  doc.setDrawColor(...BORDURE)
+  doc.setFillColor(...FOND)
+  doc.setLineWidth(0.25)
+  doc.roundedRect(MARGE, y, largeur, hauteurCartouche, 2, 2, 'FD')
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(6.8)
+  doc.setTextColor(...GRIS)
+  doc.text(nature.toUpperCase(), MARGE + 5, y + 5)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(9.2)
+  doc.setTextColor(...ENCRE)
+  doc.text(lignesProjet, MARGE + 5, y + 10)
+  const separateurX = MARGE + largeurProjet
+  doc.setDrawColor(...BORDURE)
+  doc.line(separateurX, y + 4, separateurX, y + hauteurCartouche - 4)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(6.8)
+  doc.setTextColor(...GRIS)
+  doc.text('PÉRIODE ANALYSÉE', separateurX + 5, y + 5)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8.8)
+  doc.setTextColor(...ENCRE)
+  doc.text(libellePeriode(periode), separateurX + 5, y + 10)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.4)
+  doc.setTextColor(...GRIS)
+  doc.text(
+    `${pluriel(m.entrees.length, 'encaissement')} · ${pluriel(m.sorties.length, 'décaissement')}`,
+    separateurX + 5,
+    y + 15.3,
+  )
+  y += hauteurCartouche + 6
+
+  // Synthèse de lecture : l'USD reste comparable, les autres devises sont
+  // présentées séparément et ne peuvent plus être tronquées dans une tuile.
   const solde = toNumber(m.totaux.solde_usd)
-  const tuiles: [string, string, Rgb][] = [
-    ['Entrées', `${formatAmount(m.totaux.entrees_usd)} USD`, VERT],
-    ['Sorties', sortiesParDevise(m.totaux.sorties), ROUGE],
-    ['Solde (USD)', `${formatAmount(solde)} USD`, solde < 0 ? ROUGE : ENCRE],
+  const sortiesUsd = Object.entries(m.totaux.sorties).reduce(
+    (total, [devise, montant]) => total + (devise.toUpperCase() === 'USD' ? toNumber(montant) : 0),
+    0,
+  )
+  const tuiles: [string, string, Rgb, string?][] = [
+    ['Entrées', `${formatAmount(m.totaux.entrees_usd)} USD`, VERT, pluriel(m.entrees.length, 'opération')],
+    ['Sorties', `${formatAmount(sortiesUsd)} USD`, ROUGE, pluriel(m.sorties.filter((s) => s.devise.toUpperCase() === 'USD').length, 'opération')],
+    ['Solde', `${formatAmount(solde)} USD`, solde < 0 ? ROUGE : solde > 0 ? VERT : ENCRE, 'Entrées moins sorties en USD'],
+    ['Mouvements', String(m.entrees.length + m.sorties.length), ENCRE, `${m.entrees.length} entrée${m.entrees.length > 1 ? 's' : ''} · ${m.sorties.length} sortie${m.sorties.length > 1 ? 's' : ''}`],
   ]
-  const lTuile = (largeur - 8) / 3
-  tuiles.forEach(([libelle, valeur, couleur], i) => {
-    const x = MARGE + i * (lTuile + 4)
-    doc.setDrawColor(...BORDURE)
-    doc.setLineWidth(0.3)
-    doc.setFillColor(255, 255, 255)
-    doc.roundedRect(x, y, lTuile, 19, 1.8, 1.8, 'FD')
-    doc.setFillColor(...couleur)
-    doc.rect(x, y + 3, 1.2, 13, 'F')
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(7)
-    doc.setTextColor(...GRIS)
-    doc.text(libelle.toUpperCase(), x + 5, y + 6.5)
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(valeur.length > 22 ? 9 : 12)
-    doc.setTextColor(...couleur)
-    doc.text(doc.splitTextToSize(valeur, lTuile - 8)[0] ?? '', x + 5, y + 14.5)
+  const lTuile = (largeur - 12) / 4
+  tuiles.forEach(([libelle, valeur, couleur, detail], i) => {
+    drawCarteSynthese(doc, MARGE + i * (lTuile + 4), y, lTuile, libelle, valeur, couleur, detail)
   })
-  y += 25
+  y += 28
 
-  if (Object.keys(m.totaux.sorties).some((d) => d !== 'USD')) {
-    doc.setFont('helvetica', 'italic')
-    doc.setFontSize(7.5)
+  const autresDevises = Object.keys(m.totaux.sorties)
+    .filter((devise) => devise.toUpperCase() !== 'USD')
+    .sort((a, b) => a.localeCompare(b))
+  if (autresDevises.length > 0) {
+    const texteDevises = autresDevises.map((devise) => `${formatAmount(m.totaux.sorties[devise])} ${devise}`).join('   ·   ')
+    const lignesDevises = doc.splitTextToSize(texteDevises, largeur * 0.52) as string[]
+    const note = 'Ces montants ne sont pas convertis et ne sont donc pas intégrés au solde en USD.'
+    const lignesNote = doc.splitTextToSize(note, largeur * 0.38) as string[]
+    const hauteurBande = Math.max(13, 7 + Math.max(lignesDevises.length, lignesNote.length) * 3.6)
+    doc.setFillColor(...AMBRE_PALE)
+    doc.setDrawColor(253, 230, 138)
+    doc.roundedRect(MARGE, y, largeur, hauteurBande, 2, 2, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    doc.setTextColor(...AMBRE)
+    doc.text('SORTIES DANS LES AUTRES DEVISES', MARGE + 5, y + 4.5)
+    doc.setFontSize(8.8)
+    doc.text(lignesDevises, MARGE + 5, y + 9)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7.2)
     doc.setTextColor(...GRIS)
-    doc.text('Le solde ne tient compte que des sorties en USD ; les sorties en CDF sont présentées à part.', MARGE, y)
-    y += 6
+    doc.text(lignesNote, MARGE + largeur - 5, y + 6, { align: 'right' })
+    y += hauteurBande + 6
   }
 
-  y = titreSection(doc, y + 2, 'Entrées', `${m.entrees.length} encaissement${m.entrees.length > 1 ? 's' : ''}`)
-  autoTable(doc, {
-    ...styleTableau(VERT),
-    startY: y,
-    head: [['Date', 'Reçu', 'Payeur', 'Canal', 'Perçu', 'Montant (USD)']],
-    body: m.entrees.length
-      ? m.entrees.map((e) => [
-          dateCourte(e.date),
-          e.numero || '—',
-          e.tiers || '—',
-          MODES[e.canal] || e.canal,
-          `${formatAmount(e.montant_percu)} ${e.devise_perception}`,
-          formatAmount(e.montant_usd),
-        ])
-      : [[{ content: 'Aucune entrée sur la période.', colSpan: 6, styles: { halign: 'center', textColor: GRIS } }]],
-    foot: m.entrees.length
-      ? [[{ content: 'Total des entrées', colSpan: 5, styles: { halign: 'right' } }, { content: formatAmount(m.totaux.entrees_usd), styles: { halign: 'right' } }]]
-      : undefined,
-    columnStyles: { 0: { cellWidth: 20 }, 1: { cellWidth: 26 }, 3: { cellWidth: 18 }, 4: { cellWidth: 30, halign: 'right' }, 5: { cellWidth: 28, halign: 'right', fontStyle: 'bold' } },
-    didParseCell: (data) => {
-      if (data.section === 'head' && data.column.index >= 4) data.cell.styles.halign = 'right'
-    },
-  })
-  y = finTableau(doc, y) + 9
+  if (m.entrees.length === 0 && m.sorties.length === 0) {
+    drawEtatVide(
+      doc,
+      y + 2,
+      'Aucun mouvement enregistré pour cette période',
+      `${m.projet.code} · ${libellePeriode(periode)}`,
+    )
+    drawTenantFooter(doc, identity, { pageNumber: 1, pageCount: 1, generatedBy: emisPar })
+    return doc
+  }
 
-  y = titreSection(doc, y, 'Sorties', `${m.sorties.length} décaissement${m.sorties.length > 1 ? 's' : ''}`)
-  autoTable(doc, {
-    ...styleTableau([153, 27, 27]),
-    startY: y,
-    head: [['Date', 'Bon', 'Bénéficiaire · motif', 'Réquisition', 'Canal', 'Montant']],
-    body: m.sorties.length
-      ? m.sorties.map((s) => [
-          dateCourte(s.date),
-          s.numero || '—',
-          [s.beneficiaire, s.motif].filter(Boolean).join('\n') || '—',
-          s.requisition || 'Sortie directe',
-          MODES[s.canal] || s.canal,
-          `${formatAmount(s.montant)} ${s.devise}`,
-        ])
-      : [[{ content: 'Aucune sortie sur la période.', colSpan: 6, styles: { halign: 'center', textColor: GRIS } }]],
-    foot: m.sorties.length
-      ? [[
-          { content: 'Total des sorties', colSpan: 5, styles: { halign: 'right' } },
-          // Une ligne par devise : un total ne se coupe jamais au milieu d'un montant.
-          { content: sortiesParDevise(m.totaux.sorties).split(' · ').join('\n'), styles: { halign: 'right' } },
-        ]]
-      : undefined,
-    columnStyles: { 0: { cellWidth: 20 }, 1: { cellWidth: 26 }, 3: { cellWidth: 38 }, 4: { cellWidth: 16 }, 5: { cellWidth: 34, halign: 'right', fontStyle: 'bold' } },
-    didParseCell: (data) => {
-      if (data.section === 'head' && data.column.index === 5) data.cell.styles.halign = 'right'
-    },
-  })
+  y = titreSection(
+    doc,
+    y + 1,
+    'Journal des entrées',
+    `${pluriel(m.entrees.length, 'encaissement')} · ${formatAmount(m.totaux.entrees_usd)} USD`,
+    'vert',
+  )
+  if (m.entrees.length === 0) {
+    y = drawEtatVide(doc, y, 'Aucune entrée sur la période', 'Aucun encaissement n’est rattaché à ce projet.')
+  } else {
+    autoTable(doc, {
+      ...styleTableau(VERT),
+      startY: y,
+      head: [['N°', 'Date', 'Reçu', 'Payeur', 'Canal', 'Montant perçu', 'Équivalent USD']],
+      body: m.entrees.map((e, index) => [
+        index + 1,
+        dateCourte(e.date),
+        e.numero || '—',
+        e.tiers || '—',
+        MODES[e.canal] || e.canal,
+        `${formatAmount(e.montant_percu)} ${e.devise_perception}`,
+        `${formatAmount(e.montant_usd)} USD`,
+      ]),
+      foot: [[
+        { content: 'TOTAL DES ENTRÉES', colSpan: 6, styles: { halign: 'right' } },
+        {
+          content: `${formatAmount(m.totaux.entrees_usd)} USD`,
+          styles: { halign: 'right', textColor: VERT },
+        },
+      ]],
+      columnStyles: {
+        0: { cellWidth: 9, halign: 'center', textColor: GRIS },
+        1: { cellWidth: 20 },
+        2: { cellWidth: 30 },
+        4: { cellWidth: 22 },
+        5: { cellWidth: 38, halign: 'right' },
+        6: { cellWidth: 36, halign: 'right', fontStyle: 'bold', textColor: VERT },
+      },
+      didParseCell: (data) => {
+        if (data.section === 'head' && [5, 6].includes(data.column.index)) data.cell.styles.halign = 'right'
+        if (data.section === 'head' && data.column.index === 0) data.cell.styles.halign = 'center'
+      },
+    })
+    y = finTableau(doc, y) + 8
+  }
+
+  y = titreSection(
+    doc,
+    y,
+    'Journal des sorties',
+    pluriel(m.sorties.length, 'décaissement'),
+    'rouge',
+  )
+  if (m.sorties.length === 0) {
+    drawEtatVide(doc, y, 'Aucune sortie sur la période', 'Aucun décaissement n’est rattaché à ce projet.')
+  } else {
+    autoTable(doc, {
+      // L'en-tête reste institutionnel ; le rouge est réservé aux flux sortants.
+      ...styleTableau(VERT),
+      startY: y,
+      head: [['N°', 'Date', 'Bon', 'Bénéficiaire', 'Motif / objet', 'Réquisition', 'Canal', 'Montant']],
+      body: m.sorties.map((s, index) => [
+        index + 1,
+        dateCourte(s.date),
+        s.numero || '—',
+        s.beneficiaire || '—',
+        s.motif || '—',
+        s.requisition || 'Sortie directe',
+        MODES[s.canal] || s.canal,
+        `${formatAmount(s.montant)} ${s.devise}`,
+      ]),
+      foot: [[
+        { content: 'TOTAL DES SORTIES', colSpan: 7, styles: { halign: 'right' } },
+        {
+          content: sortiesParDevise(m.totaux.sorties).split(' · ').join('\n'),
+          styles: { halign: 'right', textColor: ROUGE },
+        },
+      ]],
+      columnStyles: {
+        0: { cellWidth: 9, halign: 'center', textColor: GRIS },
+        1: { cellWidth: 20 },
+        2: { cellWidth: 29 },
+        3: { cellWidth: 42 },
+        5: { cellWidth: 35 },
+        6: { cellWidth: 22 },
+        7: { cellWidth: 38, halign: 'right', fontStyle: 'bold', textColor: ROUGE },
+      },
+      didParseCell: (data) => {
+        if (data.section === 'head' && data.column.index === 7) data.cell.styles.halign = 'right'
+        if (data.section === 'head' && data.column.index === 0) data.cell.styles.halign = 'center'
+      },
+    })
+  }
 
   const pages = doc.getNumberOfPages()
   for (let page = 1; page <= pages; page += 1) {
     doc.setPage(page)
+    if (page > 1) drawEnteteSuite(doc, m, periode)
     drawTenantFooter(doc, identity, { pageNumber: page, pageCount: pages, generatedBy: emisPar })
   }
+  return doc
+}
+
+export async function exporterProjetPDF(m: MouvementsProjet, periode: PeriodeProjet, emisPar?: string | null) {
+  const identity = await loadTenantIdentity()
+  const doc = construireRapportProjet(m, periode, identity, emisPar)
   doc.save(nomFichier(m, 'pdf'))
 }
 
