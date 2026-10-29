@@ -98,7 +98,7 @@ const TREASURY_NAV: NavItem[] = [
     icon: <Receipt size={18} />,
     subItems: [
       { path: '/requisitions', label: 'Réquisitions classiques', permission: 'requisitions', icon: <Receipt size={16} /> },
-      { path: '/requisitions/sortie-directe', label: 'Sortie directe programmée', permission: 'sorties_fonds', icon: <Wallet size={16} /> },
+      { path: '/requisitions/sortie-directe', label: 'Sortie directe programmée', permission: ['sorties_fonds', 'can_direct_disbursement'], icon: <Wallet size={16} /> },
       { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'remboursement_transport', icon: <Wallet size={16} /> },
       { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions_ocr', icon: <FileText size={16} /> },
     ],

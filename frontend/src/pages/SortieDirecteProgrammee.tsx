@@ -21,11 +21,11 @@ import {
   XCircle,
 } from 'lucide-react'
 import { getServices } from '../api/services'
-import { getBudgetPostes } from '../api/budget'
 import { getPrintSettings, type PrintSettings } from '../api/settings'
 import PosteBudgetairePicker, { PosteBudgetaireResume } from '../components/PosteBudgetairePicker'
 import {
   listOrdresDecaissement,
+  listPostesDepenseSortieDirecte,
   createOrdreDecaissement,
   updateOrdreDecaissement,
   annulerOrdreDecaissement,
@@ -271,7 +271,7 @@ export default function SortieDirecteProgrammee() {
     try {
       const [srv, bud, reglages] = await Promise.all([
         getServices({ active: true }),
-        getBudgetPostes({ type: 'DEPENSE', active: true }),
+        listPostesDepenseSortieDirecte(),
         // Facultatif : sans eux, la situation du poste s'affiche sans seuil ni conversion.
         getPrintSettings().catch(() => null),
       ])

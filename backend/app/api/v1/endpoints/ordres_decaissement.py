@@ -14,6 +14,7 @@ from app.api.deps import (
     get_current_tenant_id,
     get_current_user,
 )
+from app.api.v1.endpoints.budget import list_budget_postes
 from app.db.session import get_db
 from app.models.ligne_requisition import LigneRequisition
 from app.models.ordre_decaissement import (
@@ -27,6 +28,7 @@ from app.models.rbac import Permission, role_permissions
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
+from app.schemas.budget import BudgetPostesResponse
 from app.schemas.ordre_decaissement import (
     OrdreDecaissementCancel,
     OrdreDecaissementCreate,
@@ -1011,6 +1013,24 @@ async def create_ordre_decaissement(
     await db.commit()
     await db.refresh(ordre)
     return _ordre_out(ordre, requisition=req, users_map={user.id: user})
+
+
+@router.get("/postes-depense", response_model=BudgetPostesResponse)
+async def list_postes_depense(
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetPostesResponse:
+    """Postes de dépense actifs, pour imputer une sortie directe.
+
+    `/budget/postes` exige le module Budget : sans lui, un rôle habilité à
+    programmer une sortie directe ne pouvait choisir aucun poste. Lecture
+    seule, sous la garde du routeur des ordres.
+    """
+    return await list_budget_postes(
+        annee=None, type="DEPENSE", active=True, service_id=None,
+        date_debut=None, date_fin=None, user=user, tenant_id=tenant_id, db=db,
+    )
 
 
 @router.get("", response_model=OrdreDecaissementListResponse)

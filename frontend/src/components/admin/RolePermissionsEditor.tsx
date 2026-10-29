@@ -457,7 +457,7 @@ export default function RolePermissionsEditor({
     applyChange((draft) => {
       if (next) {
         draft.add(task.code)
-        const gate = autoGateOf(menu)
+        const gate = task.standalone ? undefined : autoGateOf(menu)
         if (gate && gate !== task.code && !draft.has(gate)) {
           draft.add(gate)
           if (allTasks.some((t) => t.code === gate)) {

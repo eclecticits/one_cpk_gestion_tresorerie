@@ -56,6 +56,12 @@ export interface PermissionTask {
    * Doit refléter `PERMISSIONS_EXPLICITES` côté serveur (app/core/permissions.py).
    */
   explicit?: boolean
+  /**
+   * true = la tâche ouvre sa propre page : la cocher n'accorde pas l'accès au
+   * menu du module. « Programmer une sortie directe » ne doit pas livrer toute
+   * la liste des sorties de fonds.
+   */
+  standalone?: boolean
 }
 
 export interface PermissionMenu {
@@ -211,7 +217,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
           { code: 'can_execute_payment', label: 'Exécuter la sortie de fonds', kind: 'validate' },
           { code: 'sorties_fonds_banque', label: 'Voir et exécuter les sorties par banque', kind: 'validate' },
           { code: 'can_authorize_disbursement', label: 'Autoriser un ordre de décaissement', kind: 'validate' },
-          { code: 'can_direct_disbursement', label: 'Programmer une sortie directe', kind: 'validate' },
+          { code: 'can_direct_disbursement', label: 'Programmer une sortie directe', kind: 'validate', standalone: true },
           { code: 'cancel_sortie_fonds', label: 'Annuler une sortie de fonds', kind: 'cancel' },
           { code: 'treso.sorties_fonds.export', label: 'Exporter les sorties de fonds', kind: 'export' },
         ],

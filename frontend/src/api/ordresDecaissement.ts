@@ -1,5 +1,6 @@
 import { apiRequest } from '../lib/apiClient'
 import type { OrdreDecaissement } from '../types'
+import type { BudgetPostesResponse } from '../types/budget'
 
 export interface OrdresDecaissementListResponse {
   items: OrdreDecaissement[]
@@ -8,6 +9,14 @@ export interface OrdresDecaissementListResponse {
   total_paye: number | string
   total_autorise_non_paye: number | string
   reliquat?: number | string | null
+}
+
+/**
+ * Postes de dépense actifs pour imputer une sortie directe. Ne demande pas le
+ * module Budget : programmer une sortie directe suffit.
+ */
+export async function listPostesDepenseSortieDirecte(): Promise<BudgetPostesResponse> {
+  return apiRequest<BudgetPostesResponse>('GET', '/ordres-decaissement/postes-depense')
 }
 
 export async function listOrdresDecaissement(params: {
