@@ -3883,6 +3883,8 @@ async def construire_classeur_experts(
     *,
     q: str | None = None,
     statut_professionnel: str | None = None,
+    province_attache: str | None = None,
+    category: str | None = None,
     include_inactive: bool = False,
     active: bool | None = True,
     order: str | None = None,
@@ -3895,22 +3897,20 @@ async def construire_classeur_experts(
     cette meme fonction : c'est ce qui rend leur divergence impossible
     plutot qu'improbable.
     """
+    # Import local : le module experts n'a pas à être chargé pour les autres exports.
+    from app.api.v1.endpoints.experts import _category_conditions, _search_conditions
+
     query = select(ExpertComptable)
 
-    if q:
-        q_value = f"%{q.strip()}%"
-        query = query.where(
-            or_(
-                ExpertComptable.numero_ordre.ilike(q_value),
-                ExpertComptable.nom_denomination.ilike(q_value),
-                ExpertComptable.email.ilike(q_value),
-                ExpertComptable.cabinet_attache.ilike(q_value),
-            )
-        )
+    # Mêmes filtres que la page : l'export rend ce que l'utilisateur a sous les yeux.
+    for condition in _search_conditions(q) + _category_conditions(category):
+        query = query.where(condition)
     if statut_professionnel:
         variants = _statut_professionnel_variants(statut_professionnel)
         if variants:
             query = query.where(func.trim(ExpertComptable.statut_professionnel).in_(variants))
+    if province_attache:
+        query = query.where(func.trim(ExpertComptable.province_attache) == province_attache.strip())
     if not include_inactive and active is not None:
         query = query.where(ExpertComptable.active == active)
 
@@ -3948,7 +3948,12 @@ async def construire_classeur_experts(
             "Type",
             "Catégorie Personne",
             "Statut Professionnel",
+            "Province d'attache",
             "Cabinet Attache",
+            "NIF",
+            "Nom de l'employeur",
+            "Raison sociale",
+            "Associé gérant",
             "Email",
             "Téléphone",
             "État",
@@ -3960,7 +3965,12 @@ async def construire_classeur_experts(
                 expert.type_ec,
                 expert.categorie_personne or "",
                 expert.statut_professionnel or "",
+                expert.province_attache or "",
                 expert.cabinet_attache or "",
+                expert.nif or "",
+                expert.nom_employeur or "",
+                expert.raison_sociale or "",
+                expert.associe_gerant or "",
                 expert.email or "",
                 expert.telephone or "",
                 "Actif" if expert.active else "Archivé",
@@ -3986,6 +3996,8 @@ async def construire_classeur_experts(
 async def export_experts(
     q: str | None = Query(default=None),
     statut_professionnel: str | None = Query(default=None),
+    province_attache: str | None = Query(default=None),
+    category: str | None = Query(default=None),
     include_inactive: bool = Query(default=False),
     active: bool | None = Query(default=True),
     order: str | None = Query(default=None),
@@ -4002,6 +4014,8 @@ async def export_experts(
     params = {
             "q": q,
             "statut_professionnel": statut_professionnel,
+            "province_attache": province_attache,
+            "category": category,
             "include_inactive": include_inactive,
             "active": active,
             "order": order,
@@ -4012,6 +4026,8 @@ async def export_experts(
             user.organisation_id,
             q=q,
             statut_professionnel=statut_professionnel,
+            province_attache=province_attache,
+            category=category,
             include_inactive=include_inactive,
             active=active,
             order=order,

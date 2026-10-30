@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { findExpertByNumeroOrdre, changeCategory, CategoryType, ExpertComptable } from '../api/experts'
 import styles from './CategoryChange.module.css'
 
@@ -63,6 +63,11 @@ export default function CategoryChange({ onClose, onSuccess, initialNumeroOrdre 
       setLoading(false)
     }
   }
+
+  // Ouvert depuis une fiche, le numéro est déjà connu : pas de recherche à relancer.
+  useEffect(() => {
+    if (initialNumeroOrdre) searchExpert()
+  }, [])
 
   const confirmChange = () => {
     if (!newCategory) {
@@ -178,7 +183,7 @@ export default function CategoryChange({ onClose, onSuccess, initialNumeroOrdre 
               <h3>Expert-comptable trouvé</h3>
               <p><strong>N° d'ordre :</strong> {expert.numero_ordre}</p>
               <p><strong>Nom :</strong> {expert.nom_denomination}</p>
-              <p><strong>Catégorie actuelle :</strong> {categoryLabels[getCurrentCategory(expert)!]}</p>
+              <p><strong>Catégorie actuelle :</strong> {getCurrentCategory(expert) ? categoryLabels[getCurrentCategory(expert)!] : 'Non classé'}</p>
             </div>
 
             <label>Nouvelle catégorie</label>

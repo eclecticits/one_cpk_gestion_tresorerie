@@ -30,6 +30,7 @@ export interface ExpertSearchParams {
   nom?: string
   type_ec?: string
   active?: boolean
+  include_inactive?: boolean
   limit?: number
   offset?: number
 }
@@ -107,6 +108,7 @@ async function searchExperts(params: ExpertSearchParams = {}): Promise<ExpertCom
   if (params.nom) queryParams.append('nom', params.nom)
   if (params.type_ec) queryParams.append('type_ec', params.type_ec)
   if (params.active !== undefined) queryParams.append('active', String(params.active))
+  if (params.include_inactive) queryParams.append('include_inactive', 'true')
   if (params.limit) queryParams.append('limit', String(params.limit))
   if (params.offset) queryParams.append('offset', String(params.offset))
 
@@ -116,7 +118,8 @@ async function searchExperts(params: ExpertSearchParams = {}): Promise<ExpertCom
 
 // Recherche par numéro d'ordre (retourne un seul expert ou null)
 export async function findExpertByNumeroOrdre(numeroOrdre: string): Promise<ExpertComptable | null> {
-  const results = await searchExperts({ numero_ordre: numeroOrdre, limit: 1 })
+  // Un expert inactif reste un expert : le chercher par son numéro doit le trouver.
+  const results = await searchExperts({ numero_ordre: numeroOrdre, include_inactive: true, limit: 1 })
   return results.length > 0 ? results[0] : null
 }
 

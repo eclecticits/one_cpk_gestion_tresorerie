@@ -358,6 +358,75 @@ def _category_conditions(category: str | None) -> list[Any]:
     return []
 
 
+def _search_conditions(q: str | None) -> list[Any]:
+    """Recherche globale de la page : partagée par la liste, ses compteurs et l'export."""
+    if not q or not q.strip():
+        return []
+    q_value = f"%{q.strip()}%"
+    return [
+        or_(
+            ExpertComptable.numero_ordre.ilike(q_value),
+            ExpertComptable.nom_denomination.ilike(q_value),
+            ExpertComptable.email.ilike(q_value),
+            ExpertComptable.cabinet_attache.ilike(q_value),
+            ExpertComptable.province_attache.ilike(q_value),
+            ExpertComptable.nif.ilike(q_value),
+            ExpertComptable.nom_employeur.ilike(q_value),
+            ExpertComptable.raison_sociale.ilike(q_value),
+            ExpertComptable.associe_gerant.ilike(q_value),
+        )
+    ]
+
+
+_CHAMPS_TEXTE_LIBRE = (
+    "sexe",
+    "province_attache",
+    "nif",
+    "cabinet_attache",
+    "nom_employeur",
+    "raison_sociale",
+    "associe_gerant",
+)
+
+
+def _clean_saisie(data: dict[str, Any], existing: ExpertComptable | None = None) -> dict[str, Any]:
+    """Applique à la saisie manuelle les règles de l'import Excel.
+
+    Une valeur déjà en base et inchangée passe sans contrôle : des contacts
+    anciens sont invalides, ils ne doivent pas bloquer la correction d'un autre
+    champ de la fiche.
+    """
+    cleaned = dict(data)
+    for key in _CHAMPS_TEXTE_LIBRE:
+        if isinstance(cleaned.get(key), str):
+            cleaned[key] = cleaned[key].strip() or None
+
+    if "telephone" in cleaned:
+        telephone = (cleaned["telephone"] or "").strip()
+        if not telephone or (existing is not None and telephone == existing.telephone):
+            cleaned["telephone"] = telephone or None
+        else:
+            cleaned["telephone"] = _normalize_phone(telephone)
+            if not cleaned["telephone"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Téléphone invalide : saisissez par exemple +243 812 345 678.",
+                )
+
+    if "email" in cleaned:
+        email = (cleaned["email"] or "").strip()
+        if not email or (existing is not None and email == existing.email):
+            cleaned["email"] = email or None
+        else:
+            cleaned["email"] = _normalize_email(email)
+            if not _is_valid_email(cleaned["email"]):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Adresse e-mail invalide.",
+                )
+    return cleaned
+
+
 def _expert_to_response(expert: ExpertComptable) -> dict[str, Any]:
     """Convertit un modèle Expert en dict pour la réponse."""
     return {
@@ -426,17 +495,7 @@ async def list_experts(
         conditions.append(ExpertComptable.numero_ordre == numero_ordre.strip())
     if nom:
         conditions.append(ExpertComptable.nom_denomination.ilike(f"%{nom}%"))
-    if q:
-        q_value = f"%{q.strip()}%"
-        conditions.append(
-            or_(
-                ExpertComptable.numero_ordre.ilike(q_value),
-                ExpertComptable.nom_denomination.ilike(q_value),
-                ExpertComptable.email.ilike(q_value),
-                ExpertComptable.cabinet_attache.ilike(q_value),
-                ExpertComptable.province_attache.ilike(q_value),
-            )
-        )
+    conditions.extend(_search_conditions(q))
     if type_ec:
         conditions.append(ExpertComptable.type_ec == type_ec)
     if statut_professionnel:
@@ -467,17 +526,7 @@ async def list_experts(
         base_summary_conditions.append(ExpertComptable.numero_ordre == numero_ordre.strip())
     if nom:
         base_summary_conditions.append(ExpertComptable.nom_denomination.ilike(f"%{nom}%"))
-    if q:
-        q_value = f"%{q.strip()}%"
-        base_summary_conditions.append(
-            or_(
-                ExpertComptable.numero_ordre.ilike(q_value),
-                ExpertComptable.nom_denomination.ilike(q_value),
-                ExpertComptable.email.ilike(q_value),
-                ExpertComptable.cabinet_attache.ilike(q_value),
-                ExpertComptable.province_attache.ilike(q_value),
-            )
-        )
+    base_summary_conditions.extend(_search_conditions(q))
     if province_attache:
         base_summary_conditions.append(func.trim(ExpertComptable.province_attache) == province_attache.strip())
 
@@ -486,14 +535,17 @@ async def list_experts(
         count_query = count_query.where(*conditions)
     total_count = int((await db.execute(count_query)).scalar_one() or 0)
 
+    # Le chiffre d'une catégorie est celui de la liste obtenue en cliquant dessus :
+    # il suit donc le filtre d'état, contrairement aux compteurs Actifs / Inactifs.
+    state_conditions = [] if include_inactive or active is None else [ExpertComptable.active == active]
     summary_query = select(
         func.count().label("total"),
         func.count().filter(ExpertComptable.active == True).label("active"),  # noqa: E712
         func.count().filter(ExpertComptable.active == False).label("inactive"),  # noqa: E712
-        func.count().filter(ExpertComptable.type_ec == "SEC").label("sec"),
-        func.count().filter(and_(*_category_conditions("En Cabinet"))).label("cabinet"),
-        func.count().filter(and_(*_category_conditions("Indépendant"))).label("independant"),
-        func.count().filter(and_(*_category_conditions("Salarié"))).label("salarie"),
+        func.count().filter(and_(*_category_conditions("SEC"), *state_conditions)).label("sec"),
+        func.count().filter(and_(*_category_conditions("En Cabinet"), *state_conditions)).label("cabinet"),
+        func.count().filter(and_(*_category_conditions("Indépendant"), *state_conditions)).label("independant"),
+        func.count().filter(and_(*_category_conditions("Salarié"), *state_conditions)).label("salarie"),
     ).select_from(ExpertComptable)
     if base_summary_conditions:
         summary_query = summary_query.where(*base_summary_conditions)
@@ -529,21 +581,22 @@ async def create_expert(
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="numero_ordre déjà existant")
 
+    saisie = _clean_saisie(payload.model_dump())
     expert = ExpertComptable(
         numero_ordre=numero_ordre,
         nom_denomination=payload.nom_denomination.strip(),
         type_ec=payload.type_ec or "EC",
         categorie_personne=payload.categorie_personne,
         statut_professionnel=payload.statut_professionnel,
-        sexe=payload.sexe,
-        telephone=payload.telephone,
-        email=payload.email,
-        province_attache=payload.province_attache,
-        nif=payload.nif,
-        cabinet_attache=payload.cabinet_attache,
-        nom_employeur=payload.nom_employeur,
-        raison_sociale=payload.raison_sociale,
-        associe_gerant=payload.associe_gerant,
+        sexe=saisie["sexe"],
+        telephone=saisie["telephone"],
+        email=saisie["email"],
+        province_attache=saisie["province_attache"],
+        nif=saisie["nif"],
+        cabinet_attache=saisie["cabinet_attache"],
+        nom_employeur=saisie["nom_employeur"],
+        raison_sociale=saisie["raison_sociale"],
+        associe_gerant=saisie["associe_gerant"],
         active=True,
     )
     db.add(expert)
@@ -556,6 +609,19 @@ async def create_expert(
     await db.refresh(expert)
 
     return _expert_to_response(expert)
+
+
+@router.get("/provinces", response_model=list[str])
+async def list_provinces(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[str]:
+    """Provinces présentes au référentiel, toutes pages confondues (filtre de la page)."""
+    province = func.trim(ExpertComptable.province_attache)
+    result = await db.execute(
+        select(province).where(province != "").distinct().order_by(province)
+    )
+    return [value for value in result.scalars().all() if value]
 
 
 @router.get("/{expert_id}", response_model=ExpertComptableResponse)
@@ -599,7 +665,7 @@ async def update_expert(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expert non trouvé")
 
     # Mise à jour partielle
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = _clean_saisie(payload.model_dump(exclude_unset=True), expert)
     if update_data:
         for key, value in update_data.items():
             setattr(expert, key, value)
@@ -628,7 +694,7 @@ async def replace_expert(
     if not expert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expert non trouvé")
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = _clean_saisie(payload.model_dump(exclude_unset=True), expert)
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune donnée à mettre à jour")
 
@@ -948,12 +1014,7 @@ async def change_category(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Change la catégorie d'un expert comptable avec historisation."""
-    try:
-        expert_uid = uuid.UUID(payload.expert_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid expert_id UUID")
-
-    result = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
+    result = await db.execute(select(ExpertComptable).where(ExpertComptable.id == payload.expert_id))
     expert = result.scalar_one_or_none()
 
     if not expert:
