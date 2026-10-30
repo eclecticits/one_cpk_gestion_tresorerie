@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { lazyWithRetry } from '../utils/lazyWithRetry'
-import { CheckCircle2, Circle } from 'lucide-react'
+import { CheckCircle2, Circle, FileSpreadsheet, FileText, List, Send } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Navigate, NavLink, useParams } from 'react-router-dom'
 import { format } from 'date-fns'
@@ -56,6 +56,7 @@ const generateJournalPDF: PdfJournalGeneratorModule['generateJournalPDF'] = asyn
 // annuelle" affiche effectivement le graphique.
 const AnnualBarChart = lazyWithRetry(() => import('../components/rapports/AnnualBarChart'))
 const RapportProjets = lazyWithRetry(() => import('../components/rapports/RapportProjets'))
+const EnvoiRapportDialog = lazyWithRetry(() => import('../components/rapports/EnvoiRapportDialog'))
 import { useAnnualReport } from '../hooks/useAnnualReport'
 import TopExpenses from '../components/TopExpenses'
 import AccessDeniedState from '../components/AccessDeniedState'
@@ -114,6 +115,7 @@ const SECTIONS = [
   { key: 'projets', label: 'Projets & activités', description: 'Entrées et sorties rattachées à chaque projet ou activité.' },
 ] as const
 type SectionKey = (typeof SECTIONS)[number]['key']
+const jourFr = (iso: string) => (iso ? format(new Date(`${iso}T00:00:00`), 'dd/MM/yyyy') : '')
 const SECTIONS_DETAIL: SectionKey[] = ['encaissements', 'sorties', 'requisitions']
 
 export default function Rapports() {
@@ -134,6 +136,12 @@ export default function Rapports() {
   // est pire qu'une vue mono-devise, la table par devise restant là pour
   // signaler ce qui se passe dans l'autre.
   const [reportDevise, setReportDevise] = useState<'USD' | 'CDF' | 'ALL'>('USD')
+  // Rapport à transmettre au Bureau : renseigné à l'ouverture de la fenêtre d'envoi.
+  const [envoiBureau, setEnvoiBureau] = useState<{
+    titre: string
+    resume: string[]
+    genererPdf: () => Promise<{ blob: Blob; nom: string }>
+  } | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [emptyMessage, setEmptyMessage] = useState<string | null>(null)
   const [sortiesWarning, setSortiesWarning] = useState<string | null>(null)
@@ -277,6 +285,42 @@ export default function Rapports() {
     }
   }
 
+  // Le journal tel que le PDF le présente : partagé par le téléchargement et
+  // par l'envoi au Bureau, pour que les deux disent la même chose.
+  const construireJournalPdf = async (telecharger: boolean) => {
+    const params: Record<string, any> = {
+      canal: journalCanal,
+      devise: journalDeviseEffective,
+      date_debut: dateDebut,
+      date_fin: dateFin,
+    }
+    if (journalCompteId) {
+      params.compte_bancaire_id = journalCompteId
+    }
+    const data = await apiRequest<ReportJournalResponse>('GET', '/reports/journal-tresorerie', { params })
+    const nomCompte =
+      journalCanal === 'CAISSE' && selectedCompte
+        ? `${selectedCompte.intitule || 'Caisse'} (${journalDeviseEffective})`
+        : journalCanal === 'CAISSE'
+          ? `Caisse ${journalDeviseEffective}`
+        : selectedCompte
+          ? `${selectedCompte.banque?.nom || 'Banque'} - ${selectedCompte.intitule}`
+          : 'Compte bancaire'
+    const userName = user ? `${user.prenom} ${user.nom}`.trim() : ''
+    const pdf = await generateJournalPDF(data.lignes || [], {
+      nom_compte: nomCompte,
+      date_debut: dateDebut,
+      date_fin: dateFin,
+      devise: journalDeviseEffective,
+      solde_initial: data.solde_initial,
+      total_entrees: data.total_entrees,
+      total_sorties: data.total_sorties,
+      solde_final: data.solde_final,
+      user_name: userName,
+    }, { telecharger })
+    return { data, nomCompte, pdf }
+  }
+
   const handleJournalPDF = async () => {
     // La caisse est unique par tenant (table caisse_centrale) : elle n'a pas de
     // ligne dans comptes_bancaires, donc aucun compte à choisir. Le backend
@@ -287,39 +331,42 @@ export default function Rapports() {
     }
     setJournalLoading(true)
     try {
-      const params: Record<string, any> = {
-        canal: journalCanal,
-        devise: journalDeviseEffective,
-        date_debut: dateDebut,
-        date_fin: dateFin,
-      }
-      if (journalCompteId) {
-        params.compte_bancaire_id = journalCompteId
-      }
-      const data = await apiRequest<ReportJournalResponse>('GET', '/reports/journal-tresorerie', { params })
-      const nomCompte =
-        journalCanal === 'CAISSE' && selectedCompte
-          ? `${selectedCompte.intitule || 'Caisse'} (${journalDeviseEffective})`
-          : journalCanal === 'CAISSE'
-            ? `Caisse ${journalDeviseEffective}`
-          : selectedCompte
-            ? `${selectedCompte.banque?.nom || 'Banque'} - ${selectedCompte.intitule}`
-            : 'Compte bancaire'
-      const userName = user ? `${user.prenom} ${user.nom}`.trim() : ''
-      await generateJournalPDF(data.lignes || [], {
-        nom_compte: nomCompte,
-        date_debut: dateDebut,
-        date_fin: dateFin,
-        devise: journalDeviseEffective,
-        solde_initial: data.solde_initial,
-        total_entrees: data.total_entrees,
-        total_sorties: data.total_sorties,
-        solde_final: data.solde_final,
-        user_name: userName,
-      })
+      await construireJournalPdf(true)
       notifySuccess('Journal', 'PDF généré avec succès.')
     } catch (error: any) {
       notifyError('Journal', error?.payload?.detail || error?.message || 'Impossible de générer le journal.')
+    } finally {
+      setJournalLoading(false)
+    }
+  }
+
+  // Envoi au Bureau du journal : les chiffres sont lus avant d'ouvrir la
+  // fenêtre, le PDF n'est rendu qu'au moment d'envoyer.
+  const ouvrirEnvoiJournal = async () => {
+    if (journalCanal === 'BANQUE' && !journalCompteId) {
+      notifyError('Journal', 'Veuillez sélectionner un compte bancaire.')
+      return
+    }
+    setJournalLoading(true)
+    try {
+      const { data, nomCompte } = await construireJournalPdf(false)
+      const d = journalDeviseEffective
+      const montant = (v: Money | null | undefined) => `${formatMoneyDevise(v ?? 0, d)}`
+      setEnvoiBureau({
+        titre: `Journal de trésorerie - ${nomCompte}`,
+        resume: [
+          `Solde au ${jourFr(dateDebut)} : ${montant(data.solde_initial)}`,
+          `Entrées : ${montant(data.total_entrees)}`,
+          `Sorties : ${montant(data.total_sorties)}`,
+          `Solde au ${jourFr(dateFin)} : ${montant(data.solde_final)}`,
+        ],
+        genererPdf: async () => {
+          const { pdf } = await construireJournalPdf(false)
+          return { blob: pdf.blob as Blob, nom: pdf.nom }
+        },
+      })
+    } catch (error: any) {
+      notifyError('Journal', error?.payload?.detail || error?.message || 'Impossible de préparer le journal.')
     } finally {
       setJournalLoading(false)
     }
@@ -1732,11 +1779,9 @@ export default function Rapports() {
     }
   }
 
-  const exportToPDF = async () => {
-    if (!rapport) {
-      notifyError("Filtre requis", "Cliquez d'abord sur Générer rapport pour la période sélectionnée.")
-      return
-    }
+  // Le PDF du rapport, téléchargé ou rendu pour l'envoi au Bureau.
+  const construirePdfRapport = async (telecharger: boolean) => {
+    if (!rapport) return null
     // `loadDetails` n'a pas forcément été déclenché : sans ce chargement le PDF
     // perdrait les transferts reçus, et son résumé étiquetterait « USD » des
     // totaux dont il ne connaît pas les devises (cf. pdfGenerator).
@@ -1751,7 +1796,7 @@ export default function Rapports() {
         ? Promise.resolve(rapport.retours)
         : fetchRetoursDetails(),
     ])
-    await generateGlobalReportPDF(
+    return generateGlobalReportPDF(
       {
         ...rapport,
         encaissements: enc,
@@ -1762,9 +1807,44 @@ export default function Rapports() {
         devise: reportDevise,
       },
       dateDebut,
-      dateFin
+      dateFin,
+      { telecharger },
     )
   }
+
+  const exportToPDF = async () => {
+    if (!rapport) {
+      notifyError("Filtre requis", "Cliquez d'abord sur Générer rapport pour la période sélectionnée.")
+      return
+    }
+    await construirePdfRapport(true)
+  }
+
+  const ouvrirEnvoiRapport = () => {
+    if (!rapport) return
+    const filtres = [
+      reportCanal === 'ALL' ? null : reportCanal === 'BANQUE' ? 'Banque' : 'Caisse',
+      reportDevise === 'ALL' ? 'toutes devises cumulées' : reportDevise,
+    ].filter(Boolean).join(', ')
+    const montant = (v: Money | null | undefined) => formatCurrency(v ?? 0) + (reportDevise === 'ALL' ? '' : '')
+    const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? 's' : ''}`
+    setEnvoiBureau({
+      titre: `Rapport de trésorerie (${filtres})`,
+      resume: [
+        `Encaissements : ${montant(rapport.totalEncaissements)} (${pluriel(rapport.nombreEncaissements || 0, 'opération')})`,
+        `Sorties : ${montant(rapport.totalSorties)} (${pluriel(rapport.nombreSorties || 0, 'paiement')})`,
+        `Solde final : ${montant(rapport.soldeFinal ?? rapport.solde)}`,
+        `Réquisitions : ${rapport.nombreRequisitions || 0}`,
+      ],
+      genererPdf: async () => {
+        const pdf = await construirePdfRapport(false)
+        if (!pdf?.blob) throw new Error('Le rapport doit être généré avant l’envoi.')
+        return { blob: pdf.blob, nom: pdf.nom }
+      },
+    })
+  }
+
+
 
   if (checkingAccess || permissionsLoading) {
     return (
@@ -1864,10 +1944,13 @@ export default function Rapports() {
         {rapport && (
           <>
             <button onClick={exportToExcel} className={styles.exportBtn}>
-              📊 Excel
+              <FileSpreadsheet size={16} aria-hidden="true" /> Excel
             </button>
             <button onClick={exportToPDF} className={styles.exportBtn}>
-              📄 PDF
+              <FileText size={16} aria-hidden="true" /> PDF
+            </button>
+            <button onClick={ouvrirEnvoiRapport} className={`${styles.exportBtn} ${styles.sendBtn}`}>
+              <Send size={16} aria-hidden="true" /> Envoyer au Bureau
             </button>
             {section === 'synthese' && (
               <button
@@ -1875,6 +1958,7 @@ export default function Rapports() {
                 className={styles.exportBtn}
                 disabled={detailsLoading || detailsLoaded}
               >
+                <List size={16} aria-hidden="true" />
                 {detailsLoading ? 'Chargement...' : detailsLoaded ? 'Détails chargés' : 'Charger détails'}
               </button>
             )}
@@ -2082,13 +2166,22 @@ export default function Rapports() {
             className={styles.primaryBtn}
             disabled={journalLoading || (journalCanal === 'BANQUE' && !journalCompteId)}
           >
+            <FileText size={16} aria-hidden="true" />
             {journalLoading ? 'Génération...' : 'Générer le journal PDF'}
+          </button>
+          <button
+            onClick={() => void ouvrirEnvoiJournal()}
+            className={`${styles.exportBtn} ${styles.sendBtn}`}
+            disabled={journalLoading || (journalCanal === 'BANQUE' && !journalCompteId)}
+          >
+            <Send size={16} aria-hidden="true" /> Envoyer au Bureau
           </button>
           <button
             onClick={handleJournalTable}
             className={styles.exportBtn}
             disabled={journalTableLoading || (journalCanal === 'BANQUE' && !journalCompteId)}
           >
+            <List size={16} aria-hidden="true" />
             {journalTableLoading ? 'Chargement...' : 'Afficher le journal'}
           </button>
         </div>
@@ -2142,7 +2235,7 @@ export default function Rapports() {
                   : `Clôturer le rapprochement${pendingReconcileItems.length ? ` (${pendingReconcileItems.length})` : ''}`}
               </button>
               <button className={styles.exportBtn} onClick={exportJournalToExcel}>
-                📊 Excel
+                <FileSpreadsheet size={16} aria-hidden="true" /> Excel
               </button>
               <button className={styles.secondaryBtn} onClick={() => setJournalData(null)}>
                 Fermer
@@ -2791,6 +2884,17 @@ export default function Rapports() {
           </div>
           )}
         </>
+      )}
+      {envoiBureau && (
+        <Suspense fallback={null}>
+          <EnvoiRapportDialog
+            titre={envoiBureau.titre}
+            periode={`du ${jourFr(dateDebut)} au ${jourFr(dateFin)}`}
+            resume={envoiBureau.resume}
+            genererPdf={envoiBureau.genererPdf}
+            onClose={() => setEnvoiBureau(null)}
+          />
+        </Suspense>
       )}
     </div>
   )

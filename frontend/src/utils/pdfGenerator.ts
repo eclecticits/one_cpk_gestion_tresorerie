@@ -1101,8 +1101,11 @@ const formatPdfDate = (value: any) => {
 export const generateGlobalReportPDF = async (
   rapport: any,
   dateDebut: string,
-  dateFin: string
-) => {
+  dateFin: string,
+  // `telecharger: false` : le PDF est rendu sans être téléchargé, pour partir
+  // en pièce jointe (envoi au Bureau).
+  options: { telecharger?: boolean } = {}
+): Promise<{ blob: Blob | null; nom: string }> => {
   const settings = await getPrintSettingsData()
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
@@ -1427,7 +1430,10 @@ export const generateGlobalReportPDF = async (
     }
   }
 
-  doc.save(`rapport_tresorerie_${formatPdfDate(dateDebut).split('/').join('-')}.pdf`)
+  const nom = `rapport_tresorerie_${formatPdfDate(dateDebut).split('/').join('-')}.pdf`
+  if (options.telecharger === false) return { blob: doc.output('blob'), nom }
+  doc.save(nom)
+  return { blob: null, nom }
 }
 
 /** Bloc « Commentaire général » posé sous le tableau d'un document budgétaire.

@@ -795,6 +795,10 @@
 }
 
 .primaryBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   padding: 12px 24px;
   background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
   color: white;
@@ -844,6 +848,24 @@
   background: #f8fafc;
   transform: translateY(-1px);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.exportBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+  box-shadow: none;
+}
+
+.sendBtn {
+  border-color: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 34%, #cbd5e1);
+  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 7%, #ffffff);
+  color: var(--tenant-primary, #1f6b5c);
+}
+
+.sendBtn:hover:not(:disabled) {
+  border-color: var(--tenant-primary, #1f6b5c);
+  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 12%, #ffffff);
 }
 
 .statsGrid {

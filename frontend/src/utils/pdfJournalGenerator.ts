@@ -150,7 +150,12 @@ const drawSignatures = (doc: jsPDF, y: number, userName?: string | null): void =
   })
 }
 
-export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFilter) => {
+export const generateJournalPDF = async (
+  data: JournalLine[],
+  filtre: JournalFilter,
+  // `telecharger: false` : rendu sans téléchargement, pour l'envoi au Bureau.
+  options: { telecharger?: boolean } = {},
+): Promise<{ blob: Blob | null; nom: string }> => {
   // Identité de l'organisation émettrice : chargée AVANT le tracé, car aucun
   // document ne doit sortir sans elle.
   const identity: TenantIdentity = await loadTenantIdentity()
@@ -332,5 +337,8 @@ export const generateJournalPDF = async (data: JournalLine[], filtre: JournalFil
 
   const safeName = String(filtre.nom_compte || 'caisse').replace(/[^\w\-]+/g, '_')
   const safeOrg = String(identity.orgName || 'organisation').replace(/[^\w\-]+/g, '_')
-  doc.save(`Journal_${safeOrg}_${safeName}_${endLabel.replace(/\//g, '-')}.pdf`)
+  const nom = `Journal_${safeOrg}_${safeName}_${endLabel.replace(/\//g, '-')}.pdf`
+  if (options.telecharger === false) return { blob: doc.output('blob'), nom }
+  doc.save(nom)
+  return { blob: null, nom }
 }
