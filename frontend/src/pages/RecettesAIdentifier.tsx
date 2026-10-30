@@ -441,7 +441,7 @@ function SaisieVersement({ onClose, onSuccess }: { onClose: () => void; onSucces
             {comptes.length === 0 && <option value="">Aucun compte bancaire actif</option>}
             {comptes.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.intitule} — {c.numero_compte} ({c.devise})
+                {[c.banque?.nom, c.intitule, c.numero_compte].filter(Boolean).join(' — ')} ({c.devise})
               </option>
             ))}
           </select>

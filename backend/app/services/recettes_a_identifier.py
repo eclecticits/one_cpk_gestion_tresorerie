@@ -25,6 +25,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.compte_bancaire import CompteBancaire
 from app.models.encaissement import Encaissement
@@ -576,8 +577,17 @@ async def lister_recettes_a_identifier(
     comptes = {}
     compte_ids = {r.compte_bancaire_id for r in recettes if r.compte_bancaire_id}
     if compte_ids:
-        rows = await db.execute(select(CompteBancaire).where(CompteBancaire.id.in_(compte_ids)))
-        comptes = {c.id: f"{c.intitule} — {c.numero_compte}" for c in rows.scalars().all()}
+        rows = await db.execute(
+            select(CompteBancaire)
+            .options(selectinload(CompteBancaire.banque))
+            .where(CompteBancaire.id.in_(compte_ids))
+        )
+        comptes = {
+            c.id: " — ".join(
+                p for p in (c.banque.nom if c.banque else None, c.intitule, c.numero_compte) if p
+            )
+            for c in rows.scalars().all()
+        }
 
     items: list[dict[str, Any]] = []
     totaux: dict[str, dict[str, Decimal]] = {}

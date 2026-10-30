@@ -1018,26 +1018,31 @@ export default function SortieDirecteProgrammee() {
           </div>
           )}
 
-          <ProjetActiviteSelect
-            id="direct-projet"
-            value={projetActiviteId}
-            onChange={setProjetActiviteId}
-            className={styles.field}
-            hintClassName={styles.fieldHint}
-          />
-
-          <label className={styles.aValoirToggle} htmlFor="direct-a-valoir">
-            <input
-              id="direct-a-valoir"
-              type="checkbox"
-              checked={aValoir}
-              onChange={(e) => setAValoir(e.target.checked)}
+          <div className={styles.complementaryOptions}>
+            <ProjetActiviteSelect
+              id="direct-projet"
+              value={projetActiviteId}
+              onChange={setProjetActiviteId}
+              className={`${styles.field} ${styles.projectField}`}
+              hintClassName={styles.fieldHint}
             />
-            <span>
-              <strong>À valoir</strong>
-              <small>Dépense remboursée par une autre instance.</small>
-            </span>
-          </label>
+
+            <label
+              className={`${styles.aValoirToggle} ${aValoir ? styles.aValoirToggleActive : ''}`}
+              htmlFor="direct-a-valoir"
+            >
+              <input
+                id="direct-a-valoir"
+                type="checkbox"
+                checked={aValoir}
+                onChange={(e) => setAValoir(e.target.checked)}
+              />
+              <span>
+                <strong>À valoir</strong>
+                <small>Dépense remboursée par une autre instance.</small>
+              </span>
+            </label>
+          </div>
 
           {aValoir && (
             <div className={styles.aValoirFields}>
