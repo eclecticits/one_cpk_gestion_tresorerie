@@ -1,3 +1,4 @@
+import { AlertTriangle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { getCaisseStatus, openCaisse, type CaisseStatus } from '../api/caisse'
@@ -157,7 +158,7 @@ export default function CaisseSessionBanner({ onChanged }: Props) {
                   {hasEcart && (
                     <>
                       <div style={{ marginTop: 4, fontWeight: 600 }}>
-                        ⚠ Écart : {ecartUsd >= 0 ? '+' : ''}{ecartUsd.toFixed(2)} USD, {ecartCdf >= 0 ? '+' : ''}{ecartCdf.toFixed(2)} CDF
+                        <AlertTriangle size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" /> Écart : {ecartUsd >= 0 ? '+' : ''}{ecartUsd.toFixed(2)} USD, {ecartCdf >= 0 ? '+' : ''}{ecartCdf.toFixed(2)} CDF
                       </div>
                       <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10, fontWeight: 600, cursor: 'pointer' }}>
                         <input

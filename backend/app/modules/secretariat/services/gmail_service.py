@@ -11,6 +11,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
+from app.services.notifications.templates import strip_emoji
 from app.modules.secretariat.services.oauth_service import (
     GMAIL_COMPOSE_SCOPE,
     GMAIL_READONLY_SCOPE,
@@ -163,13 +164,13 @@ def _encode_mime_message(
 ) -> str:
     message = EmailMessage()
     message["To"] = to
-    message["Subject"] = subject
+    message["Subject"] = strip_emoji(subject)
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid()
     if in_reply_to_message_id:
         message["In-Reply-To"] = in_reply_to_message_id
         message["References"] = in_reply_to_message_id
-    message.set_content(body)
+    message.set_content(strip_emoji(body))
     return base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8").rstrip("=")
 
 

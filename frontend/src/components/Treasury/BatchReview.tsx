@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { confirmTreasuryClassification } from '../../api/treasury'
 import styles from './BatchReview.module.css'
@@ -112,7 +113,7 @@ export default function BatchReview({ results, onConfirmAll }: BatchReviewProps)
                 disabled={confirming[idx] || confirmed[idx] || !tx.ai_classification?.compte}
                 title={confirmed[idx] ? 'Déjà confirmé' : 'Confirmer'}
               >
-                {confirmed[idx] ? '✓' : confirming[idx] ? '…' : '✓'}
+                {confirming[idx] && !confirmed[idx] ? '…' : <Check size="1em" aria-hidden="true" />}
               </button>
             </div>
           </div>

@@ -1,3 +1,4 @@
+import { sansEmoji } from '../../utils/sansEmoji'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, Mail, MessageCircle, Send, X } from 'lucide-react'
 import {
@@ -14,8 +15,6 @@ import styles from './EnvoiRapportDialog.module.css'
 // Pas d'emoji dans les messages, ni par e-mail ni par WhatsApp : ils sont
 // retirés dès la saisie, pour que l'expéditeur voie ce qui partira vraiment
 // (le serveur les retire aussi).
-const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{20E3}]/gu
-const sansEmoji = (texte: string) => texte.replace(EMOJI, '')
 
 const CANAUX: { key: CanalEnvoi; label: string; aide: string; icone: JSX.Element }[] = [
   { key: 'email', label: 'E-mail', aide: 'Au Bureau, le PDF en pièce jointe', icone: <Mail size={15} /> },

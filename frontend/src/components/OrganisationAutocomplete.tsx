@@ -1,3 +1,4 @@
+import { sansEmoji } from '../utils/sansEmoji'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Search } from 'lucide-react'
 import { listOrganisationOptions, type OrganisationOption } from '../api/organisation'
@@ -237,7 +238,7 @@ export default function OrganisationAutocomplete({
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => select(entry)}
                 >
-                  <span className={styles.icon}>{isOther ? '+' : entry.org.icon || 'ORG'}</span>
+                  <span className={styles.icon}>{isOther ? '+' : sansEmoji(entry.org.icon || '') || 'ORG'}</span>
                   <span>
                     <strong>{isOther ? otherLabel : entry.org.nom}</strong>
                     <small>{isOther ? 'Tiers externe' : entry.org.slug}</small>

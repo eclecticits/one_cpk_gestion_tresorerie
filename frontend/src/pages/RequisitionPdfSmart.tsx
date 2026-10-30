@@ -19,9 +19,9 @@ const emptyResult: PdfRequisitionParseResponse = {
 }
 
 const statusLabel = (value: string) => {
-  if (value === 'found') return 'Enregistré ✅'
+  if (value === 'found') return 'Enregistré'
   if (value === 'missing') return 'Manquant'
-  if (value === 'conflict') return 'Conflit ⚠️'
+  if (value === 'conflict') return 'Conflit'
   return 'Non détecté'
 }
 

@@ -55,9 +55,10 @@ def _send_alert_email_sync(subject: str, body: str) -> None:
     msg["To"] = smtp_user
     msg.set_content(body)
     # Import local : app.core ne dépend pas des services au chargement.
-    from app.services.mailer import mark_as_automatic_message
+    from app.services.mailer import mark_as_automatic_message, retirer_emoji_du_message
 
     mark_as_automatic_message(msg)
+    retirer_emoji_du_message(msg)
 
     try:
         port = int(smtp_port)
@@ -87,7 +88,9 @@ async def _send_telegram_alert(subject: str, body: str) -> None:
         return
 
     # Tronquer pour respecter la limite Telegram (4096 caractères)
-    text = f"🚨 *ONEC-CPK — {subject}*\n\n{body}"
+    from app.services.notifications.templates import strip_emoji
+
+    text = strip_emoji(f"*ONEC-CPK — {subject}*\n\n{body}")
     if len(text) > 4000:
         text = text[:3990] + "\n...[tronqué]"
 

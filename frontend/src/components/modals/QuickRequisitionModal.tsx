@@ -207,7 +207,7 @@ export default function QuickRequisitionModal({ isOpen, onClose, rubriques, serv
               </div>
               {soldeApres < 0 && (
                 <div className={styles.balanceHint}>
-                  ⚠️ Dépassement de {Math.abs(soldeApres).toLocaleString()} USD.
+                  <AlertTriangle size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" /> Dépassement de {Math.abs(soldeApres).toLocaleString()} USD.
                 </div>
               )}
             </div>

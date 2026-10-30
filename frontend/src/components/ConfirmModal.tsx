@@ -1,3 +1,4 @@
+import { AlertTriangle, Info } from 'lucide-react'
 import styles from './ConfirmModal.module.css'
 
 interface ConfirmModalProps {
@@ -34,13 +35,13 @@ export default function ConfirmModal({
   const getIcon = () => {
     switch (type) {
       case 'danger':
-        return '⚠️'
+        return <AlertTriangle size="1em" aria-hidden="true" />
       case 'warning':
-        return '⚠️'
+        return <AlertTriangle size="1em" aria-hidden="true" />
       case 'info':
-        return 'ℹ️'
+        return <Info size="1em" aria-hidden="true" />
       default:
-        return '⚠️'
+        return <AlertTriangle size="1em" aria-hidden="true" />
     }
   }
 

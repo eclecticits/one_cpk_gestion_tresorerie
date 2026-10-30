@@ -1,3 +1,4 @@
+import { AlertTriangle, Check, Info, X } from 'lucide-react'
 import styles from './DeactivateExpertModal.module.css'
 import { ExpertComptable } from '../types'
 
@@ -23,7 +24,7 @@ export default function DeactivateExpertModal({
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div className={styles.iconWrapper}>
           <span className={isReactivate ? styles.iconSuccess : styles.iconDanger}>
-            {isReactivate ? '✓' : '⚠'}
+            {isReactivate ? <Check size="1em" aria-hidden="true" /> : <AlertTriangle size="1em" aria-hidden="true" />}
           </span>
         </div>
 
@@ -45,7 +46,7 @@ export default function DeactivateExpertModal({
           {isReactivate ? (
             <div className={styles.section}>
               <div className={styles.sectionHeader}>
-                <span className={styles.checkIcon}>✓</span>
+                <span className={styles.checkIcon}><Check size="1em" aria-hidden="true" /></span>
                 <h3>Effets de la réactivation</h3>
               </div>
               <ul className={styles.list}>
@@ -59,7 +60,7 @@ export default function DeactivateExpertModal({
             <>
               <div className={styles.section}>
                 <div className={styles.sectionHeader}>
-                  <span className={styles.crossIcon}>✕</span>
+                  <span className={styles.crossIcon}><X size="1em" aria-hidden="true" /></span>
                   <h3>Effets immédiats</h3>
                 </div>
                 <p className={styles.sectionSubtitle}>Ne pourra plus être sélectionné pour :</p>
@@ -72,7 +73,7 @@ export default function DeactivateExpertModal({
 
               <div className={styles.section}>
                 <div className={styles.sectionHeader}>
-                  <span className={styles.checkIcon}>✓</span>
+                  <span className={styles.checkIcon}><Check size="1em" aria-hidden="true" /></span>
                   <h3>Données conservées</h3>
                 </div>
                 <ul className={styles.list}>
@@ -83,7 +84,7 @@ export default function DeactivateExpertModal({
               </div>
 
               <div className={styles.note}>
-                <span className={styles.infoIcon}>ℹ</span>
+                <span className={styles.infoIcon}><Info size="1em" aria-hidden="true" /></span>
                 <span>Cette action est réversible à tout moment.</span>
               </div>
             </>

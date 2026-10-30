@@ -19,7 +19,7 @@ import anyio
 
 from app.core.config import settings
 # Même mention pour l'e-mail et WhatsApp : une seule source.
-from app.services.notifications.templates import AUTOMATIC_MESSAGE_NOTICE
+from app.services.notifications.templates import AUTOMATIC_MESSAGE_NOTICE, strip_emoji
 
 
 logger = logging.getLogger("onec_cpk_api.mailer")
@@ -430,6 +430,22 @@ def mark_as_automatic_message(msg: EmailMessage) -> None:
         part.set_content(content, subtype=subtype, charset="utf-8")
 
 
+def retirer_emoji_du_message(msg: EmailMessage) -> None:
+    """Retire les emoji de l'objet et du corps, quel que soit le gabarit d'origine.
+
+    Les pièces jointes ne sont pas touchées : un fichier part tel qu'il a été produit.
+    """
+    if msg["Subject"]:
+        msg.replace_header("Subject", strip_emoji(str(msg["Subject"])))
+    for part in msg.walk():
+        if part.get_content_maintype() != "text" or part.is_attachment():
+            continue
+        contenu = part.get_content()
+        propre = strip_emoji(contenu)
+        if propre != contenu:
+            part.set_content(propre, subtype=part.get_content_subtype())
+
+
 def _send_email_message(
     *,
     smtp_host: str,
@@ -439,6 +455,7 @@ def _send_email_message(
     msg: EmailMessage,
 ) -> None:
     mark_as_automatic_message(msg)
+    retirer_emoji_du_message(msg)
     port = int(smtp_port)
     timeout = int(settings.smtp_timeout_seconds or 120)
     require_tls = bool(getattr(settings, "smtp_require_tls", True))

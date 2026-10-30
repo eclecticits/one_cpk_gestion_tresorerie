@@ -1,3 +1,4 @@
+import { Check, Printer } from 'lucide-react'
 import { format } from 'date-fns'
 import type { Money } from '../types'
 import { toNumber } from '../utils/amount'
@@ -66,7 +67,7 @@ export default function SortieFondsNotification({
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div className={styles.header}>
           <div className={styles.iconContainer}>
-            <div className={styles.icon}>✓</div>
+            <div className={styles.icon}><Check size="1em" aria-hidden="true" /></div>
           </div>
           <div className={styles.headerContent}>
             <h2>Sortie de fonds validée</h2>
@@ -124,7 +125,7 @@ export default function SortieFondsNotification({
             )}
             {onPrintReceipt && (
               <button onClick={onPrintReceipt} className={`${styles.actionBtn} ${styles.secondary}`}>
-                🖨️ Imprimer le bon de sortie
+                <Printer size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" /> Imprimer le bon de sortie
               </button>
             )}
             <button onClick={onClose} className={`${styles.actionBtn} ${styles.primary}`}>

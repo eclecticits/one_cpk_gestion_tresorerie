@@ -1,3 +1,4 @@
+import { AlertTriangle, Check, KeyRound, Pencil, Trash2, X } from 'lucide-react'
 import React, { useCallback, useEffect, useState } from 'react'
 import {
   AIProviderConfig,
@@ -307,7 +308,7 @@ export default function AIProvidersPage() {
       {error && (
         <div className={styles.errorBanner}>
           {error}
-          <button onClick={() => setError(null)}>✕</button>
+          <button onClick={() => setError(null)} aria-label="Fermer"><X size="1em" aria-hidden="true" /></button>
         </div>
       )}
 
@@ -429,7 +430,7 @@ export default function AIProvidersPage() {
           <div className={styles.modal} onClick={e => e.stopPropagation()}>
             <div className={styles.modalHeader}>
               <h2>{form.mode === 'create' ? 'Nouveau fournisseur IA' : 'Modifier le fournisseur'}</h2>
-              <button className={styles.closeBtn} onClick={closeForm}>✕</button>
+              <button className={styles.closeBtn} onClick={closeForm} aria-label="Fermer"><X size="1em" aria-hidden="true" /></button>
             </div>
 
             <form onSubmit={handleSave} className={styles.modalForm}>
@@ -527,7 +528,7 @@ export default function AIProvidersPage() {
 
               {testResult && (
                 <div className={testResult.ok ? styles.testOk : styles.testFail}>
-                  {testResult.ok ? '✓' : '✗'} {testResult.message}
+                  {testResult.ok ? <Check size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" /> : <X size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" />} {testResult.message}
                 </div>
               )}
 
@@ -595,8 +596,8 @@ function ProviderCard({
           {!p.is_active && <span className={styles.badgeInactive}>Inactif</span>}
         </div>
         <div className={styles.cardMenu}>
-          <button className={styles.iconBtn} title="Modifier" onClick={onEdit}>✏️</button>
-          <button className={styles.iconBtn} title="Supprimer" onClick={onDelete}>🗑️</button>
+          <button className={styles.iconBtn} title="Modifier" onClick={onEdit}><Pencil size="1em" aria-hidden="true" /></button>
+          <button className={styles.iconBtn} title="Supprimer" onClick={onDelete}><Trash2 size="1em" aria-hidden="true" /></button>
         </div>
       </div>
 
@@ -612,7 +613,7 @@ function ProviderCard({
 
       <div className={styles.cardFooter}>
         <span className={p.has_api_key ? styles.keyOk : styles.keyMissing}>
-          {p.has_api_key ? '🔑 Clé configurée' : '⚠️ Aucune clé API'}
+          {p.has_api_key ? <KeyRound size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" /> : <AlertTriangle size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" />} {p.has_api_key ? 'Clé configurée' : 'Aucune clé API'}
         </span>
         <div className={styles.cardActions}>
           {!p.is_default && p.is_active && (

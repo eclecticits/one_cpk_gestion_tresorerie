@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format } from 'date-fns'
-import { AlertTriangle, Lock, Unlock } from 'lucide-react'
+import { AlertTriangle, Lock, Unlock, Check } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, NatureMouvement, TypeClient, Service } from '../types'
@@ -1627,7 +1627,7 @@ export default function EncaissementForm({
                   placeholder={estSec ? "Rechercher par numéro d'ordre ou dénomination" : "Rechercher par numéro d'ordre ou nom"}
                   style={{ borderColor: formData.expert_comptable_id ? '#10b981' : undefined }}
                 />
-                {formData.expert_comptable_id && <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#10b981', fontWeight: 'bold' }}>✓</span>}
+                {formData.expert_comptable_id && <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#10b981', fontWeight: 'bold' }}><Check size="1em" aria-hidden="true" /></span>}
               </div>
               {filteredExperts.length > 0 && (
                 <div className={styles.dropdown}>
@@ -1680,7 +1680,7 @@ export default function EncaissementForm({
                     required
                   />
                   {clientId && (
-                    <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#10b981', fontWeight: 'bold' }}>✓</span>
+                    <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#10b981', fontWeight: 'bold' }}><Check size="1em" aria-hidden="true" /></span>
                   )}
                 </div>
                 {showClientDropdown && clientSuggestions.length > 0 && (
@@ -1732,7 +1732,7 @@ export default function EncaissementForm({
                 {isSearchingClients && <small>Recherche de clients…</small>}
                 {clientId ? (
                   <small style={{ color: '#059669' }}>
-                    ✓ Client existant sélectionné — ses informations seront réutilisées (pas de doublon).
+                    <Check size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" /> Client existant sélectionné — ses informations seront réutilisées (pas de doublon).
                   </small>
                 ) : formData.client_nom.trim().length >= 2 && !isSearchingClients && clientSuggestions.length === 0 ? (
                   <small style={{ color: '#92400e' }}>

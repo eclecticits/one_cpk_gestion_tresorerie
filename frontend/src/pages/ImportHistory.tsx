@@ -1,3 +1,4 @@
+import { Download, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { ApiError, apiRequest } from '../lib/apiClient'
@@ -169,7 +170,7 @@ export default function ImportHistory() {
                         className={styles.btnDownload}
                         title="Télécharger le fichier original"
                       >
-                        📥 Original
+                        <Download size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" /> Original
                       </button>
                       <button
                         onClick={() =>
@@ -184,7 +185,7 @@ export default function ImportHistory() {
                         className={styles.btnDelete}
                         title="Supprimer l'historique"
                       >
-                        🗑️ Supprimer
+                        <Trash2 size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" /> Supprimer
                       </button>
                     </div>
                   </td>

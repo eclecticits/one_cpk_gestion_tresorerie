@@ -1,3 +1,4 @@
+import { sansEmoji } from '../utils/sansEmoji'
 import {
   useEffect,
   useMemo,
@@ -6,7 +7,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Eraser, Mic, Send, Sparkles, Volume2, VolumeX, X } from 'lucide-react'
+import { Eraser, Mic, Send, Sparkles, Volume2, VolumeX, X, Circle } from 'lucide-react'
 import { chatWithMind } from '../api/ai'
 import AiContentBanner from './AiContentBanner'
 import { useAuth } from '../contexts/AuthContext'
@@ -454,7 +455,7 @@ export default function OnecMind() {
                   <Sparkles size={22} />
                 </span>
                 <div className={styles.emptyTitle}>
-                  {prenom ? `Bonjour ${prenom}` : 'Bonjour'} 👋
+                  {prenom ? `Bonjour ${prenom}` : 'Bonjour'}
                 </div>
                 <div className={styles.emptySub}>
                   Posez une question sur vos données, ou partez d'une suggestion.
@@ -468,14 +469,14 @@ export default function OnecMind() {
                 key={msg.id}
                 className={`${styles.message} ${msg.role === 'user' ? styles.messageUser : styles.messageMind}`}
               >
-                <div className={styles.bubble}>{msg.content}</div>
+                <div className={styles.bubble}>{sansEmoji(msg.content)}</div>
                 {msg.widget && (
                   <details className={`${styles.widget} ${styles[`widget${msg.widget.tone || 'ok'}`]}`}>
                     <summary className={styles.widgetSummary}>
                       <span>{msg.widget.label}</span>
                       <span className={styles.widgetRight}>
                         <span className={styles.statusBadge}>
-                          {msg.widget.tone === 'critical' ? '🔴' : msg.widget.tone === 'warn' ? '🟠' : '🟢'}
+                          <Circle size={10} aria-hidden="true" stroke="none" fill={msg.widget.tone === 'critical' ? '#dc2626' : msg.widget.tone === 'warn' ? '#ea580c' : '#16a34a'} />
                         </span>
                         <strong>{msg.widget.value}</strong>
                       </span>

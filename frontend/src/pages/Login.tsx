@@ -328,7 +328,7 @@ export default function Login() {
                   className="site-item"
                   onClick={() => handleSelectTenant(site.slug)}
                 >
-                  <span className="site-icon">🏢</span>
+                  <span className="site-icon"><Building2 size="1em" aria-hidden="true" /></span>
                   <span className="site-name">{site.nom}</span>
                   <span className="site-badge">{site.slug}</span>
                 </button>

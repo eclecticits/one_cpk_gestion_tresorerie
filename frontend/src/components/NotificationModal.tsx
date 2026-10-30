@@ -1,3 +1,4 @@
+import { AlertTriangle, Check, Info, X } from 'lucide-react'
 import { useEffect } from 'react'
 import styles from './NotificationModal.module.css'
 
@@ -32,13 +33,13 @@ export default function NotificationModal({
   const getIcon = () => {
     switch (type) {
       case 'success':
-        return '✓'
+        return <Check size="1em" aria-hidden="true" />
       case 'error':
-        return '✕'
+        return <X size="1em" aria-hidden="true" />
       case 'warning':
-        return '⚠'
+        return <AlertTriangle size="1em" aria-hidden="true" />
       case 'info':
-        return 'ℹ'
+        return <Info size="1em" aria-hidden="true" />
     }
   }
 

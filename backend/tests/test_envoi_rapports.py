@@ -184,3 +184,23 @@ async def test_envoi_email_un_seul_message_president_a_bureau_cc(app_client, adm
     corps = msg.get_body(preferencelist=("plain",)).get_content()
     assert "Pour la réunion de jeudi" in corps and "🙏" not in corps
     assert "Solde : 900,00 USD" in corps
+
+
+def test_un_mail_part_sans_emoji_et_ses_pieces_jointes_restent_intactes():
+    from email.message import EmailMessage
+
+    from app.services.mailer import retirer_emoji_du_message
+
+    msg = EmailMessage()
+    msg["Subject"] = "\U0001F4CA Rapport du jour"
+    msg.set_content("Bonjour \U0001F44B\n▸ Solde : 10 USD")
+    msg.add_alternative("<p>\u2705 Validé</p>", subtype="html")
+    msg.add_attachment("brut \U0001F4CE".encode(), maintype="text", subtype="plain", filename="brut.txt")
+
+    retirer_emoji_du_message(msg)
+
+    assert msg["Subject"] == "Rapport du jour"
+    assert msg.get_body(("plain",)).get_content().rstrip() == "Bonjour \n▸ Solde : 10 USD"
+    assert msg.get_body(("html",)).get_content().rstrip() == "<p>Validé</p>"
+    piece = next(msg.iter_attachments())
+    assert piece.get_payload(decode=True) == "brut \U0001F4CE".encode()

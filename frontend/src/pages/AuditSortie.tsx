@@ -1,3 +1,4 @@
+import { AlertTriangle, Ban, CheckCircle2, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { format } from 'date-fns'
@@ -85,7 +86,7 @@ export default function AuditSortie() {
                 : styles.statusIconInvalid
             }`}
           >
-            {loading ? '⏳' : isValid ? '✅' : isCancelled ? '⛔' : '⚠️'}
+            {loading ? <Loader2 size="1em" aria-hidden="true" /> : isValid ? <CheckCircle2 size="1em" aria-hidden="true" /> : isCancelled ? <Ban size="1em" aria-hidden="true" /> : <AlertTriangle size="1em" aria-hidden="true" />}
           </div>
           <div>
             <h1 className={styles.title}>

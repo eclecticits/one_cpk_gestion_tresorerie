@@ -2926,7 +2926,7 @@ export default function RemboursementTransport() {
                         className={styles.actionBtn}
                         onClick={() => openRequisitionAnnexe((selectedRemboursementDetails as any).requisition?.annexe)}
                       >
-                        📎 Voir la pièce jointe
+                        <Paperclip size="1em" style={{ verticalAlign: '-0.125em' }} aria-hidden="true" /> Voir la pièce jointe
                       </button>
                     </div>
                   )}                </div>

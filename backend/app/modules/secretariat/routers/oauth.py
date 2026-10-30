@@ -53,7 +53,7 @@ def _google_callback_html(
 <html lang="fr">
   <head><meta charset="utf-8"><title>Connexion Google</title></head>
   <body style="font-family:Arial,sans-serif;padding:32px;text-align:center">
-    <p style="font-size:18px">{"✅ " if success else "❌ "}{message}</p>
+    <p style="font-size:18px">{message}</p>
     <p style="color:#6b7280;font-size:14px">Cette fenêtre va se fermer automatiquement…</p>
     <script>
       (function() {{

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
+import { Eye, EyeOff, X } from 'lucide-react'
 import { requestPasswordChange, confirmPasswordChange } from '../api/auth'
 import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
@@ -99,7 +99,7 @@ export default function ChangePasswordModal({ onClose }: ChangePasswordModalProp
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div className={styles.header}>
           <h2>{step === 'input' ? 'Changer mon mot de passe' : 'Vérification de sécurité'}</h2>
-          <button className={styles.closeBtn} onClick={onClose}>✕</button>
+          <button className={styles.closeBtn} onClick={onClose} aria-label="Fermer"><X size="1em" aria-hidden="true" /></button>
         </div>
 
         {step === 'input' ? (

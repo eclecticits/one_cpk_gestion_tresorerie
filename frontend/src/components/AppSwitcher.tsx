@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LayoutGrid, Landmark, UsersRound, BookOpen, Calculator, Table2 } from 'lucide-react'
+import { LayoutGrid, Landmark, UsersRound, BookOpen, Calculator, Table2, Check } from 'lucide-react'
 import { useApp, AppId, AppDefinition } from '../contexts/AppContext'
 import styles from './AppSwitcher.module.css'
 
@@ -26,7 +26,7 @@ function AppTile({ app, isActive, onSelect }: { app: AppDefinition; isActive: bo
         {APP_ICONS[app.id]}
       </span>
       <span className={styles.tileLabel}>{app.label}</span>
-      {isActive && <span className={styles.tileCheck} aria-hidden="true">✓</span>}
+      {isActive && <span className={styles.tileCheck} aria-hidden="true"><Check size="1em" aria-hidden="true" /></span>}
     </button>
   )
 }

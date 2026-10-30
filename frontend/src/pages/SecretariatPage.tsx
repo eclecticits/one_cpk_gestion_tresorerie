@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Bot, CalendarDays, CheckCircle2, ClipboardList, FileText, Mail, MessageSquare, Paperclip, RefreshCw, Settings2, ShieldCheck, UsersRound } from 'lucide-react'
+import { Bot, CalendarDays, CheckCircle2, ClipboardList, FileText, Mail, MessageSquare, Paperclip, RefreshCw, Settings2, ShieldCheck, UsersRound, AlertTriangle, Check, X } from 'lucide-react'
 import SecretariatAgentChat from '../components/SecretariatAgentChat'
 import AiContentBanner from '../components/AiContentBanner'
 import BackButton from '../components/BackButton'
@@ -2012,10 +2012,10 @@ export default function SecretariatPage({ kind }: { kind: SecretariatPageKind })
             {googleCallbackMsg && (
               <div className={googleCallbackMsg.type === 'success' ? styles.successBox : styles.errorBox}
                 style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
-                <span style={{ fontSize: 16 }}>{googleCallbackMsg.type === 'success' ? '✓' : '⚠'}</span>
+                <span style={{ fontSize: 16 }}>{googleCallbackMsg.type === 'success' ? <Check size="1em" aria-hidden="true" /> : <AlertTriangle size="1em" aria-hidden="true" />}</span>
                 <span>{googleCallbackMsg.text}</span>
                 <button onClick={() => setGoogleCallbackMsg(null)}
-                  style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'inherit' }}>✕</button>
+                  style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'inherit' }} aria-label="Fermer"><X size="1em" aria-hidden="true" /></button>
               </div>
             )}
             {mailError && <div className={styles.errorBox}>{mailError}</div>}

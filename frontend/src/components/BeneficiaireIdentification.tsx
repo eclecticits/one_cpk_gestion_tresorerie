@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import {
@@ -220,7 +221,7 @@ export default function BeneficiaireIdentification({
           aria-autocomplete="list"
           aria-expanded={suggestions.length > 0}
         />
-        {value.refId && <span className={styles.coche} aria-hidden="true">✓</span>}
+        {value.refId && <span className={styles.coche} aria-hidden="true"><Check size="1em" aria-hidden="true" /></span>}
         {ouvert && suggestions.length > 0 && (
           <ul className={styles.dropdown} role="listbox" aria-label="Fiches correspondantes">
             {suggestions.map((s) => (
