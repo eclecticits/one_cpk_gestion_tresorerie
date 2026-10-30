@@ -131,12 +131,35 @@ class ClotureOut(DecimalBaseModel):
 
 
 class CloturePdfDetail(BaseModel):
+    date: datetime | None = None
     reference_numero: str | None = None
     beneficiaire: str | None = None
     motif: str | None = None
     montant_paye: Decimal | None = None
+    devise: str = "USD"
+
+
+class CloturePdfEntree(BaseModel):
+    date: datetime | None = None
+    reference_numero: str | None = None
+    nature: str
+    tiers: str | None = None
+    motif: str | None = None
+    montant: Decimal = Decimal("0")
+    devise: str = "USD"
+
+
+class CloturePdfRegularisation(BaseModel):
+    devise: str
+    sens: str
+    montant: Decimal
+    motif: str | None = None
 
 
 class CloturePdfData(DecimalBaseModel):
     cloture: ClotureOut
+    caissier_nom: str | None = None
+    entrees: list[CloturePdfEntree] = []
+    # Les sorties de la période : le nom du champ reste celui du contrat existant.
     details: list[CloturePdfDetail]
+    regularisations: list[CloturePdfRegularisation] = []

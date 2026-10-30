@@ -737,7 +737,16 @@ export default function Dashboard() {
       setClotureLoading(true)
       setClotureError(null)
       const report = await getRapportCloture({ date_jour: clotureDate })
-      generateCloturePDF(report)
+      if (!report.pv) {
+        const jour = clotureDate.split('-').reverse().join('/')
+        setClotureError(`Aucune clôture de caisse enregistrée le ${jour}. Clôturez d'abord la caisse pour obtenir le PV à signer.`)
+        return
+      }
+      const { clotureDataToReport } = await loadPdfClotureGeneratorModule()
+      await generateCloturePDF(clotureDataToReport(report.pv))
+      if (report.nombre_clotures > 1) {
+        setClotureError(`${report.nombre_clotures} clôtures ce jour-là : PV de la dernière. Les autres sont dans Clôture de caisse.`)
+      }
     } catch (error: any) {
       console.error('Erreur lors de la génération du rapport de clôture', error)
       setClotureError(

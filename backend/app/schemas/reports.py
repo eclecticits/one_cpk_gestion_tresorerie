@@ -6,8 +6,8 @@ from uuid import UUID
 
 from pydantic import Field
 
+from app.schemas.cloture import CloturePdfData
 from app.schemas.base import DecimalBaseModel
-from app.schemas.sortie_fonds import SortieFondsOut
 
 
 class PeriodInfo(DecimalBaseModel):
@@ -141,9 +141,9 @@ class ReportSummaryResponse(DecimalBaseModel):
 
 class ReportClotureResponse(DecimalBaseModel):
     date: date
-    total: Decimal = Decimal("0")
-    nombre_transactions: int = 0
-    details: list[SortieFondsOut] = []
+    # Dernière clôture du jour ; absente si la caisse n'a pas été clôturée ce jour-là.
+    pv: CloturePdfData | None = None
+    nombre_clotures: int = 0
 
 
 class ReportJournalLine(DecimalBaseModel):

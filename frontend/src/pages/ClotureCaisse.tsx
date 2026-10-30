@@ -43,7 +43,6 @@ const generateCloturePDF: PdfClotureGeneratorModule['generateCloturePDF'] = asyn
 }
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import styles from './ClotureCaisse.module.css'
-import { useAuth } from '../contexts/AuthContext'
 import ClotureFields, {
   montantAutres,
   serialiserBilletage,
@@ -80,7 +79,6 @@ const formatBilletageResume = (
 }
 
 export default function ClotureCaisse() {
-  const { user } = useAuth()
   const { notifyError, notifySuccess } = useToast()
   const [balance, setBalance] = useState<ClotureBalance | null>(null)
   const [loading, setLoading] = useState(false)
@@ -305,22 +303,14 @@ export default function ClotureCaisse() {
     const run = async () => {
       if (!lastCloture) return
       const data = await getCloturePdfData(lastCloture.id)
-      const blob = await generateCloturePDF({
-        date: data.cloture.date_cloture,
-        reference_numero: data.cloture.reference_numero,
-        caissier_nom: [user?.prenom, user?.nom].filter(Boolean).join(' ') || user?.email,
-        solde_theorique_usd: data.cloture.solde_theorique_usd,
-        solde_physique_usd: data.cloture.solde_physique_usd,
-        ecart_usd: data.cloture.ecart_usd,
-        solde_theorique_cdf: data.cloture.solde_theorique_cdf,
-        solde_physique_cdf: data.cloture.solde_physique_cdf,
-        ecart_cdf: data.cloture.ecart_cdf,
-        billetage_usd: data.cloture.billetage_usd,
-        billetage_cdf: data.cloture.billetage_cdf,
-        observation: data.cloture.observation,
-      }, { returnBlob: true })
+      const { clotureDataToReport } = await loadPdfClotureGeneratorModule()
+      const blob = await generateCloturePDF(clotureDataToReport(data), { returnBlob: true })
       if (blob) {
-        await uploadCloturePdf(lastCloture.id, blob)
+        const archive = await uploadCloturePdf(lastCloture.id, blob)
+        // Sans cela, « Télécharger » restait grisé jusqu'au rechargement de la page.
+        const avecPdf = (c: ClotureOut) => (c.id === lastCloture.id ? { ...c, pdf_path: archive.pdf_path } : c)
+        setHistory((prev) => prev.map(avecPdf))
+        setLastCloture((current) => (current ? avecPdf(current) : current))
       }
     }
     run().catch((error) => {

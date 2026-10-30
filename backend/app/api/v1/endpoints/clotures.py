@@ -21,6 +21,8 @@ from app.utils.excel_io import save_workbook
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.denomination import Denomination
+from app.models.encaissement import Encaissement
+from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
 from app.models.ouverture_caisse import OuvertureCaisse
 from app.models.print_settings import PrintSettings
@@ -37,12 +39,23 @@ from app.services.regularisation_caisse import (
     RegularisationImpossible,
     regulariser_ecart,
 )
-from app.schemas.cloture import ClotureBalanceResponse, ClotureCreateRequest, ClotureOut, CloturePdfData, CloturePdfDetail, EcartRegularisationRequest, OuvertureCreateRequest, OuvertureOut
+from app.schemas.cloture import (
+    ClotureBalanceResponse,
+    ClotureCreateRequest,
+    ClotureOut,
+    CloturePdfData,
+    CloturePdfDetail,
+    CloturePdfEntree,
+    CloturePdfRegularisation,
+    EcartRegularisationRequest,
+    OuvertureCreateRequest,
+    OuvertureOut,
+)
 from app.schemas.denomination import DenominationOut
 from app.core.config import settings
 from app.services.audit_service import get_request_ip, log_action
 from app.services.document_sequences import generate_document_number
-from app.services.entrees_caisse import list_entrees_internes_caisse
+from app.services.entrees_caisse import _libelle_transfert, list_entrees_internes_caisse
 from app.services.tenant_identity import tenant_display_name
 
 router = APIRouter()
@@ -496,6 +509,160 @@ def _cloture_out(c: ClotureCaisse) -> ClotureOut:
         observation=c.observation,
         pdf_path=c.pdf_path,
         statut=c.statut,
+    )
+
+
+async def construire_pv_cloture(db: AsyncSession, cloture: ClotureCaisse) -> CloturePdfData:
+    """Le contenu du PV : la clôture et les opérations qui justifient ses totaux.
+
+    Mêmes sources et mêmes bornes que `_compute_balance` (début strict, fin
+    incluse) : le détail imprimé doit additionner les totaux figés à la clôture,
+    sur un document que le caissier signe.
+    """
+    tenant_id = cloture.organisation_id
+    debut, fin = cloture.date_debut, cloture.date_cloture
+
+    def _bornes(colonne) -> list:
+        conditions = [colonne <= fin]
+        if debut:
+            conditions.append(colonne > debut)
+        return conditions
+
+    flux = flux_encaissements(tenant_id)
+    encaissements = await db.execute(
+        select(
+            flux.c.date_flux,
+            flux.c.devise,
+            flux.c.montant,
+            Encaissement.numero_recu,
+            Encaissement.libelle,
+            func.coalesce(ExpertComptable.nom_denomination, Encaissement.client_nom).label("tiers"),
+        )
+        .join(Encaissement, Encaissement.id == flux.c.encaissement_id)
+        .outerjoin(ExpertComptable, ExpertComptable.id == Encaissement.expert_comptable_id)
+        .where(flux.c.canal == "CAISSE", *_bornes(flux.c.date_flux))
+    )
+    entrees = [
+        CloturePdfEntree(
+            date=row.date_flux,
+            reference_numero=row.numero_recu,
+            nature="Encaissement",
+            tiers=row.tiers,
+            motif=row.libelle,
+            montant=row.montant,
+            devise=row.devise,
+        )
+        for row in encaissements.all()
+    ]
+
+    internes = await list_entrees_internes_caisse(
+        db, tenant_id=tenant_id, date_debut=debut, date_fin=fin, strict_debut=True
+    )
+    entrees.extend(
+        CloturePdfEntree(
+            date=ligne["date"],
+            reference_numero=ligne["reference"],
+            nature="Approvisionnement" if ligne["type_operation"] == "APPROVISIONNEMENT" else "Transfert interne",
+            tiers=ligne.get("provenance"),
+            motif=ligne["libelle"],
+            montant=ligne["montant"],
+            devise=ligne["devise"],
+        )
+        for ligne in internes
+    )
+
+    retours = await db.execute(
+        select(RetourCaisse).where(
+            RetourCaisse.organisation_id == tenant_id,
+            RetourCaisse.statut == "VALIDE",
+            RetourCaisse.canal == "CAISSE",
+            *_bornes(RetourCaisse.date_retour),
+        )
+    )
+    entrees.extend(
+        CloturePdfEntree(
+            date=retour.date_retour,
+            reference_numero=retour.reference_numero or retour.reference,
+            nature="Retour en caisse",
+            motif=retour.motif,
+            montant=retour.montant,
+            devise=retour.devise,
+        )
+        for retour in retours.scalars().all()
+    )
+
+    paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
+    sorties = await db.execute(
+        select(SortieFonds, paiement_ts.label("date_sortie")).where(
+            SortieFonds.organisation_id == tenant_id,
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+            SortieFonds.canal == "CAISSE",
+            *_bornes(paiement_ts),
+        )
+    )
+    details = [
+        CloturePdfDetail(
+            date=row.date_sortie,
+            reference_numero=row.SortieFonds.reference_numero or row.SortieFonds.reference,
+            beneficiaire=row.SortieFonds.beneficiaire,
+            motif=row.SortieFonds.motif,
+            montant_paye=row.SortieFonds.montant_paye,
+            devise=(row.SortieFonds.devise or "USD").upper(),
+        )
+        for row in sorties.all()
+    ]
+
+    # Sans statut, comme dans `_transf_sum` : la correction d'un transfert est additive.
+    transferts = await db.execute(
+        select(TransfertInterne).where(
+            TransfertInterne.organisation_id == tenant_id,
+            TransfertInterne.source_type == "CAISSE",
+            *_bornes(TransfertInterne.date_transfert),
+        )
+    )
+    details.extend(
+        CloturePdfDetail(
+            date=transfert.date_transfert,
+            reference_numero=transfert.reference,
+            beneficiaire="Banque",
+            motif=_libelle_transfert(transfert),
+            montant_paye=transfert.montant,
+            devise=(transfert.devise or "USD").upper(),
+        )
+        for transfert in transferts.scalars().all()
+    )
+
+    def _date_tri(ligne) -> datetime:
+        return ligne.date or fin
+
+    entrees.sort(key=_date_tri)
+    details.sort(key=_date_tri)
+
+    regularisations = await db.execute(
+        select(RegularisationCaisse)
+        .where(
+            RegularisationCaisse.organisation_id == tenant_id,
+            RegularisationCaisse.source_type == SOURCE_CLOTURE,
+            RegularisationCaisse.source_id == cloture.id,
+        )
+        .order_by(RegularisationCaisse.devise.asc())
+    )
+
+    caissier_nom = None
+    if cloture.caissier_id:
+        caissier = await db.get(User, cloture.caissier_id)
+        if caissier:
+            caissier_nom = " ".join(filter(None, [caissier.prenom, caissier.nom])) or caissier.email
+
+    return CloturePdfData(
+        cloture=_cloture_out(cloture),
+        caissier_nom=caissier_nom,
+        entrees=entrees,
+        details=details,
+        regularisations=[
+            CloturePdfRegularisation(devise=r.devise, sens=r.sens, montant=r.montant, motif=r.motif)
+            for r in regularisations.scalars().all()
+        ],
     )
 
 
@@ -1314,26 +1481,4 @@ async def get_cloture_pdf_data(
     if cloture is None:
         raise HTTPException(status_code=404, detail="Clôture introuvable")
 
-    start_dt = cloture.date_debut
-    end_dt = cloture.date_cloture
-    paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
-    query = select(SortieFonds).where(
-        (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
-        SortieFonds.canal == "CAISSE",
-    )
-    if start_dt:
-        query = query.where(paiement_ts >= start_dt)
-    query = query.where(paiement_ts <= end_dt).order_by(paiement_ts.asc())
-    sort_res = await db.execute(query)
-    sorties = sort_res.scalars().all()
-
-    details = [
-        CloturePdfDetail(
-            reference_numero=s.reference_numero or s.reference,
-            beneficiaire=s.beneficiaire,
-            motif=s.motif,
-            montant_paye=s.montant_paye,
-        )
-        for s in sorties
-    ]
-    return CloturePdfData(cloture=_cloture_out(cloture), details=details)
+    return await construire_pv_cloture(db, cloture)

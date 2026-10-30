@@ -132,15 +132,37 @@ export async function createCloture(payload: ClotureCreate): Promise<ClotureOut>
 }
 
 export type CloturePdfDetail = {
+  date?: string | null
   reference_numero?: string | null
   beneficiaire?: string | null
   motif?: string | null
   montant_paye?: string | number | null
+  devise?: string
+}
+
+export type CloturePdfEntree = {
+  date?: string | null
+  reference_numero?: string | null
+  nature: string
+  tiers?: string | null
+  motif?: string | null
+  montant: string | number
+  devise?: string
+}
+
+export type CloturePdfRegularisation = {
+  devise: string
+  sens: string
+  montant: string | number
+  motif?: string | null
 }
 
 export type CloturePdfData = {
   cloture: ClotureOut
+  caissier_nom?: string | null
+  entrees: CloturePdfEntree[]
   details: CloturePdfDetail[]
+  regularisations: CloturePdfRegularisation[]
 }
 
 export async function getCloturePdfData(id: number): Promise<CloturePdfData> {

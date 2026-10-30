@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 from app.models.encaissement import Encaissement
+from app.models.cloture_caisse import ClotureCaisse
 from app.models.expert_comptable import ExpertComptable
 from app.models.compte_bancaire import CompteBancaire
 from app.models.banque import Banque
@@ -54,7 +55,6 @@ from app.schemas.reports import (
     ReportRetourLine,
     ReportVersementLine,
 )
-from app.schemas.sortie_fonds import SortieFondsOut
 from app.api.v1.endpoints.exports import _nature_budgetaire_label
 from app.utils.formatters import calculer_journal_avec_solde
 
@@ -101,37 +101,6 @@ def _end_exclusive(day: date | None) -> date | None:
     if not day:
         return None
     return day + timedelta(days=1)
-
-
-def _sortie_out(sortie: SortieFonds) -> SortieFondsOut:
-    return SortieFondsOut(
-        id=str(sortie.id),
-        type_sortie=sortie.type_sortie,
-        requisition_id=str(sortie.requisition_id) if sortie.requisition_id else None,
-        rubrique_code=sortie.rubrique_code,
-        budget_poste_id=sortie.budget_poste_id,
-        budget_poste_code=sortie.budget_poste_code,
-        budget_poste_libelle=sortie.budget_poste_libelle,
-        service_id=sortie.service_id,
-        montant_paye=sortie.montant_paye or 0,
-        date_paiement=sortie.date_paiement,
-        mode_paiement=sortie.mode_paiement,
-        reference=sortie.reference,
-        reference_numero=sortie.reference_numero,
-        pdf_path=sortie.pdf_path,
-        statut=sortie.statut or "VALIDE",
-        motif_annulation=sortie.motif_annulation,
-        annulee_le=sortie.annulee_le,
-        exchange_rate_snapshot=sortie.exchange_rate_snapshot,
-        motif=sortie.motif,
-        beneficiaire=sortie.beneficiaire,
-        piece_justificative=sortie.piece_justificative,
-        commentaire=sortie.commentaire,
-        annexes=sortie.annexes,
-        created_by=str(sortie.created_by) if sortie.created_by else None,
-        created_at=sortie.created_at,
-        requisition=None,
-    )
 
 
 def _parse_datetime_value(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -1142,28 +1111,36 @@ async def rapport_cloture(
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> ReportClotureResponse:
-    parsed_date = _parse_date_value(date_jour)
-    target_date = parsed_date or datetime.now(timezone.utc).date()
-    start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
+    """PV de la dernière clôture de caisse du jour demandé.
+
+    Un PV constate un comptage : un jour sans clôture n'en a pas, et la réponse
+    le dit (`pv` vide) au lieu de présenter une liste de sorties à signer.
+    """
+    # Imports locaux : ces deux modules de routes ne se chargent pas l'un l'autre.
+    from app.api.v1.endpoints.clotures import construire_pv_cloture
+    from app.api.v1.endpoints.exports import _fuseau_documents
+
+    # Le jour choisi est celui du caissier, pas le jour UTC.
+    fuseau = _fuseau_documents()
+    target_date = _parse_date_value(date_jour) or datetime.now(fuseau).date()
+    start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=fuseau)
     end_dt = start_dt + timedelta(days=1)
 
-    paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
     res = await db.execute(
-        select(SortieFonds)
-        .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
-        .where(SortieFonds.organisation_id == tenant_id)
-        .where(paiement_ts >= start_dt)
-        .where(paiement_ts < end_dt)
-        .order_by(paiement_ts.asc())
+        select(ClotureCaisse)
+        .where(
+            ClotureCaisse.organisation_id == tenant_id,
+            ClotureCaisse.date_cloture >= start_dt,
+            ClotureCaisse.date_cloture < end_dt,
+        )
+        .order_by(ClotureCaisse.date_cloture.desc())
     )
-    sorties = res.scalars().all()
-    total_decaisse = sum((s.montant_paye or 0) for s in sorties)
+    clotures = res.scalars().all()
 
     return ReportClotureResponse(
         date=target_date,
-        total=total_decaisse,
-        nombre_transactions=len(sorties),
-        details=[_sortie_out(s) for s in sorties],
+        pv=await construire_pv_cloture(db, clotures[0]) if clotures else None,
+        nombre_clotures=len(clotures),
     )
 
 
