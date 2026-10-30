@@ -30,7 +30,12 @@ export function updateProjetActivite(id: number, payload: Partial<Omit<ProjetAct
 
 // ── Entrées et sorties d'un projet ───────────────────────────────────────
 
-export type PeriodeProjet = { date_debut?: string; date_fin?: string }
+export type PeriodeProjet = {
+  date_debut?: string
+  date_fin?: string
+  /** Libellé filtré à l'écran : repris dans les exports, jamais envoyé à l'API. */
+  filtre?: string
+}
 
 /** Totaux par projet. Les sorties sont gardées par devise (USD, CDF). */
 export interface SyntheseProjet {
@@ -73,7 +78,7 @@ export interface MouvementsProjet {
   sorties: SortieProjet[]
 }
 
-const nettoyer = (periode: PeriodeProjet) =>
+const nettoyer = ({ filtre: _filtre, ...periode }: PeriodeProjet) =>
   Object.fromEntries(Object.entries(periode).filter(([, v]) => Boolean(v)))
 
 export function getSyntheseProjets(periode: PeriodeProjet = {}): Promise<SyntheseProjet[]> {

@@ -33,12 +33,17 @@ const MODES: Record<string, string> = { CAISSE: 'Caisse', BANQUE: 'Banque' }
 const dateCourte = (valeur: string | null) => (valeur ? format(new Date(valeur), 'dd/MM/yyyy') : '—')
 const jourFr = (iso?: string) => (iso ? format(new Date(`${iso}T00:00:00`), 'dd/MM/yyyy') : '')
 
-export const libellePeriode = (periode: PeriodeProjet) => {
+const libelleDates = (periode: PeriodeProjet) => {
   if (periode.date_debut && periode.date_fin) return `du ${jourFr(periode.date_debut)} au ${jourFr(periode.date_fin)}`
   if (periode.date_debut) return `depuis le ${jourFr(periode.date_debut)}`
   if (periode.date_fin) return `jusqu'au ${jourFr(periode.date_fin)}`
   return 'toutes périodes'
 }
+
+/** « du 01/01/2026 au 29/10/2026 », suivi du filtre s'il y en a un : un
+ * export filtré doit le dire, sinon ses totaux passent pour ceux du projet. */
+export const libellePeriode = (periode: PeriodeProjet) =>
+  periode.filtre?.trim() ? `${libelleDates(periode)} · filtre « ${periode.filtre.trim()} »` : libelleDates(periode)
 
 const nomFichier = (m: MouvementsProjet, extension: string) =>
   `projet_${m.projet.code.replace(/[^\w-]+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.${extension}`
@@ -423,6 +428,13 @@ export async function exporterProjetPDF(m: MouvementsProjet, periode: PeriodePro
   const identity = await loadTenantIdentity()
   const doc = construireRapportProjet(m, periode, identity, emisPar)
   doc.save(nomFichier(m, 'pdf'))
+}
+
+/** Le même PDF, en mémoire : c'est lui qui part en pièce jointe au Bureau. */
+export async function genererProjetPDF(m: MouvementsProjet, periode: PeriodeProjet, emisPar?: string | null) {
+  const identity = await loadTenantIdentity()
+  const doc = construireRapportProjet(m, periode, identity, emisPar)
+  return { blob: doc.output('blob'), nom: nomFichier(m, 'pdf') }
 }
 
 async function chargerXlsx(): Promise<XlsxModule> {

@@ -73,6 +73,38 @@
   border-radius: 10px;
 }
 
+.reportToolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 170px max-content minmax(300px, auto);
+  align-items: start;
+  justify-content: stretch;
+}
+
+.toolbarField {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.toolbarField > label {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.reportToolbar .searchField {
+  width: 100%;
+  max-width: none;
+}
+
+.reportToolbar > .checkbox {
+  align-self: start;
+  margin-top: 21px;
+  white-space: nowrap;
+}
+
 .searchField {
   display: flex;
   align-items: center;
@@ -127,6 +159,96 @@
   background: #ffffff;
   color: #94a3b8;
   font-size: 12px;
+}
+
+.raccourcis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.raccourcis button {
+  min-height: 0;
+  padding: 3px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.raccourcis button:hover {
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.raccourcis .raccourciActif {
+  border-color: var(--tenant-primary, #065f46);
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+/* Dans la fenêtre du détail : la recherche prend la place, la période suit. */
+.toolbarDetail .searchField {
+  max-width: none;
+}
+
+.filtreSelect {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.toolbar .checkbox {
+  min-height: 36px;
+  color: #334155;
+}
+
+.toolbar .checkbox:has(input:disabled) {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.inlineState {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inlineStateError {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b42318;
+}
+
+.inlineState button {
+  min-height: 28px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: #ffffff;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+a.secondaryButton {
+  text-decoration: none;
 }
 
 /* ── Chiffres clés ─────────────────────────────────────────────────── */
@@ -286,6 +408,12 @@
   cursor: pointer;
 }
 
+.nomProjet {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .projetLink:hover .libelle {
   color: var(--tenant-primary, #065f46);
   text-decoration: underline;
@@ -370,6 +498,7 @@
 }
 
 .actions button,
+.actions a,
 .iconButton {
   display: inline-flex;
   align-items: center;
@@ -387,11 +516,13 @@
 }
 
 .actions button svg,
+.actions a svg,
 .iconButton svg {
   flex-shrink: 0;
 }
 
 .actions button:hover,
+.actions a:hover,
 .iconButton:hover {
   background: #f1f5f9;
   color: #0f172a;
@@ -422,6 +553,16 @@
   color: #0f172a;
 }
 
+.emptyStateError {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+
+.emptyStateError > span {
+  max-width: 560px;
+  color: #b42318;
+}
+
 /* ── Fenêtres : formulaire et rapport ──────────────────────────────── */
 .overlay {
   position: fixed;
@@ -450,6 +591,7 @@
 }
 
 .dialogHeader {
+  position: relative;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -606,6 +748,16 @@
   }
 }
 
+@media (max-width: 1100px) and (min-width: 769px) {
+  .reportToolbar {
+    grid-template-columns: minmax(220px, 1fr) 170px max-content;
+  }
+
+  .reportPeriod {
+    grid-column: 1 / -1;
+  }
+}
+
 /* ── Téléphone : lignes en fiches, fenêtres plein écran ────────────── */
 @media (max-width: 768px) {
   .header {
@@ -615,6 +767,18 @@
 
   .searchField {
     max-width: none;
+  }
+
+  .reportToolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .reportToolbar > .checkbox {
+    margin-top: 0;
+  }
+
+  .reportPeriod {
+    grid-column: auto;
   }
 
   .periode,
@@ -696,7 +860,8 @@
     border-top: 1px dashed #e2e8f0;
   }
 
-  .actions button {
+  .actions button,
+  .actions a {
     width: 44px;
     height: 44px;
   }
@@ -713,7 +878,39 @@
   }
 
   .dialogHeader {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    padding-right: 56px;
+  }
+
+  .dialogActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .dialogActions > button:not(.iconButton) {
+    justify-content: center;
+  }
+
+  .sendButton {
+    grid-column: 1 / -1;
+  }
+
+  .dialogActions .iconButton {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .dialogHeader > .iconButton {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 40px;
+    height: 40px;
   }
 
   .formGrid {

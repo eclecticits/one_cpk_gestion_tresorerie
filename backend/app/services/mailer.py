@@ -1419,3 +1419,68 @@ def send_beneficiaire_sortie_email(
         logger.info("Beneficiary email sent for sortie %s", reference)
     except Exception:
         logger.exception("Failed to send beneficiary email for sortie %s", reference)
+
+
+def bureau_email_recipients(president_email: str | None, cc_emails: str | None) -> tuple[list[str], list[str]]:
+    """Destinataires des e-mails au Bureau, comme pour les réquisitions.
+
+    Le Président en destinataire, le Bureau en copie, d'après les réglages de
+    notification ; le Président n'est pas recopié en copie. Sans Président, la
+    copie passe en destinataire principal.
+    """
+    president = (president_email or "").strip()
+    to = [president] if president else []
+    vus = {a.lower() for a in to}
+    cc: list[str] = []
+    for email in _split_emails(cc_emails):
+        if email.lower() not in vus:
+            vus.add(email.lower())
+            cc.append(email)
+    if not to:
+        to, cc = cc[:1], cc[1:]
+    return to, cc
+
+
+def send_rapport_bureau_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    to_emails: list[str],
+    cc_emails: list[str],
+    subject: str,
+    titre: str,
+    sous_titre: str,
+    texte: str,
+    brand_label: str,
+    pdf: bytes | None,
+    pdf_filename: str,
+) -> None:
+    """Rapport transmis au Bureau : un seul message, Président en « À », Bureau en « Cc ».
+
+    Même envoi que la notification de réquisition. L'erreur SMTP remonte à
+    l'appelant : l'écran doit dire si le rapport est parti.
+    """
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(to_emails)
+    if cc_emails:
+        msg["Cc"] = ", ".join(cc_emails)
+    msg.set_content(texte)
+    msg.add_alternative(
+        _texte_en_html_simple(titre=titre, sous_titre=sous_titre, texte=texte, brand_label=brand_label),
+        subtype="html",
+    )
+    if pdf:
+        msg.add_attachment(pdf, maintype="application", subtype="pdf", filename=pdf_filename)
+    _send_email_message(
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        smtp_user=smtp_user,
+        smtp_password=smtp_password,
+        msg=msg,
+    )
+    logger.info("Rapport email sent to=%s cc=%s", ", ".join(to_emails), ", ".join(cc_emails))

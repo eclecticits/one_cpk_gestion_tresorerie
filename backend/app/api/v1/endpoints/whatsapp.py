@@ -85,6 +85,7 @@ from app.services.notifications import (
     PAYMENT_PROFORMA_CONVERTED,
     PAYMENT_RECEIVED,
     PAYMENT_REMINDER,
+    REPORT_SENT,
     REQUISITION_APPROVED,
     TEST_MESSAGE,
     Recipient,
@@ -115,7 +116,7 @@ PERM_UPDATE = "treso.notifications.update"
 PERM_HISTORY = "treso.notifications.history"
 PERM_TEST = "treso.notifications.test"
 
-#: Ordre d'affichage des événements : paiements, sorties, puis le test.
+#: Ordre d'affichage des événements : paiements, sorties, rapports, puis le test.
 #: Construit depuis `ALL_EVENTS` pour qu'un événement ajouté au vocabulaire
 #: apparaisse sans qu'on ait à revenir ici.
 _PREFERRED_EVENT_ORDER = (
@@ -127,6 +128,7 @@ _PREFERRED_EVENT_ORDER = (
     JUSTIFICATIF_RELANCE,
     FUND_OUTFLOW,
     REQUISITION_APPROVED,
+    REPORT_SENT,
     TEST_MESSAGE,
 )
 

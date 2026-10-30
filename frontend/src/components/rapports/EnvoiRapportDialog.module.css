@@ -1,0 +1,419 @@
+/* Au-dessus de la fenêtre du rapport, qui l'ouvre. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10010;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.header p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.body {
+  display: grid;
+  gap: 16px;
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+}
+
+.iconButton:disabled {
+  cursor: wait;
+}
+
+.primaryButton,
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primaryButton {
+  background: var(--tenant-primary, #065f46);
+  border-color: var(--tenant-primary, #065f46);
+  color: #ffffff;
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Canaux ─────────────────────────────────────────────────────────── */
+.canaux {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.canaux legend,
+.sectionHeader > span {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.canal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #475569;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.canal:hover {
+  border-color: color-mix(in srgb, var(--tenant-primary, #065f46) 42%, #cbd5e1);
+}
+
+.canal input,
+.personne input,
+.inline input {
+  min-height: 0;
+}
+
+.canal span {
+  display: grid;
+}
+
+.canal strong {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.canal small {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.canalActif {
+  border-color: var(--tenant-primary, #065f46);
+  background: color-mix(in srgb, var(--tenant-primary, #065f46) 7%, #ffffff);
+  box-shadow: inset 3px 0 0 var(--tenant-primary, #065f46);
+}
+
+/* ── Destinataires ──────────────────────────────────────────────────── */
+.section {
+  display: grid;
+  gap: 6px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sectionHeader small {
+  margin-left: 6px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #94a3b8;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.liste {
+  display: grid;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.liste li + li {
+  border-top: 1px solid #f1f5f9;
+}
+
+.personne {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.personne:has(input:checked) {
+  background: color-mix(in srgb, var(--tenant-primary, #065f46) 5%, #ffffff);
+}
+
+.personne:hover {
+  background: #f8fafc;
+}
+
+.identite {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.identite strong {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.identite small {
+  overflow: hidden;
+  font-size: 11px;
+  color: #64748b;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adresses {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+}
+
+.adresses dt {
+  font-weight: 700;
+  color: #475569;
+}
+
+.adresses dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #0f172a;
+}
+
+.oui,
+.non {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 5px;
+}
+
+.oui {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.non {
+  background: #f1f5f9;
+  color: #cbd5e1;
+}
+
+.avertissement {
+  margin: 0;
+  font-size: 12px;
+  color: #b45309;
+}
+
+.section textarea {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.aide {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.aideRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.compteur {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vide {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+/* ── Bilan ──────────────────────────────────────────────────────────── */
+.bilan {
+  display: grid;
+  gap: 6px;
+}
+
+.bilan p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.bilanSucces {
+  color: #047857;
+}
+
+.bilanEchec {
+  color: #b42318;
+}
+
+.echecs {
+  padding: 10px 12px;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fffbeb;
+  font-size: 12px;
+  color: #92400e;
+}
+
+.echecs ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.echecs li span {
+  font-weight: 600;
+}
+
+.spin {
+  animation: envoiSpin 0.8s linear infinite;
+}
+
+@keyframes envoiSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 560px) {
+  .overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .dialog {
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .canaux {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .header,
+  .body,
+  .footer {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .footer > button {
+    flex: 1 1 0;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .iconButton {
+    width: 40px;
+    height: 40px;
+  }
+}

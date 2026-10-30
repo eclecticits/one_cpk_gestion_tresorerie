@@ -20,6 +20,13 @@ import re
 from . import events
 
 _PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+#: Emoji et pictogrammes, retirés de tout message : les e-mails n'en portent
+#: pas, WhatsApp non plus — y compris dans un gabarit personnalisé par un tenant
+#: ou dans le mot saisi par un utilisateur. Les filets (━) et puces (▸, •) de
+#: mise en forme sont hors de ces plages et restent.
+_EMOJI = re.compile(
+    "[\U0001F000-\U0001FAFF\U0001FC00-\U0001FFFF\u2600-\u27BF\u2B00-\u2BFF\u2300-\u23FF\uFE0E\uFE0F\u200D\u20E3]+ ?"
+)
 #: Marques de mise en forme WhatsApp et puces, ignorées pour juger d'une ligne vide.
 _FORMATTING = re.compile(r"[*_~`▸•]")
 
@@ -46,6 +53,10 @@ TEMPLATE_VARIABLES: dict[str, str] = {
     "total": "Montant total de la pièce",
     "echeance": "Date limite de dépôt du justificatif",
     "consigne_justificatif": "Phrase demandant le justificatif sous 48 h, vide si aucun n'est attendu",
+    "periode": "Période couverte par un rapport transmis",
+    "resume": "Chiffres clés d'un rapport transmis, une ligne par chiffre",
+    "message": "Mot d'accompagnement saisi par l'expéditeur",
+    "piece_jointe": "Phrase annonçant le PDF envoyé par e-mail, vide s'il n'est pas parti",
 }
 
 
@@ -66,7 +77,7 @@ def _rows(*rows: tuple[str, str]) -> str:
 
 DEFAULT_TEMPLATES: dict[str, str] = {
     events.FUND_OUTFLOW_BENEFICIARY: (
-        _header("💸 FONDS REMIS")
+        _header("FONDS REMIS")
         + "{{salutation}}\n"
         "La somme ci-dessous vous a été remise le {{date}}.\n"
         "\n"
@@ -82,7 +93,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "{{consigne_justificatif}}"
     ),
     events.JUSTIFICATIF_RELANCE: (
-        _header("⚠️ JUSTIFICATIF NON REÇU")
+        _header("JUSTIFICATIF NON REÇU")
         + "{{salutation}}\n"
         "La pièce justificative des fonds qui vous ont été remis le {{date}} "
         "n'a toujours pas été déposée à la caisse.\n"
@@ -100,7 +111,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "reçoivent ce message en copie."
     ),
     events.FUND_OUTFLOW: (
-        _header("💸 SORTIE DE FONDS")
+        _header("SORTIE DE FONDS")
         + "Une nouvelle sortie de fonds vient d'être enregistrée.\n"
         "\n"
         "Montant : *{{montant}} {{devise}}*\n"
@@ -117,7 +128,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "_Enregistrée par : {{auteur}}_"
     ),
     events.REQUISITION_APPROVED: (
-        _header("✅ RÉQUISITION APPROUVÉE")
+        _header("RÉQUISITION APPROUVÉE")
         + "Une réquisition vient de recevoir son visa final. "
         "Elle est en attente de paiement — aucun fonds n'a encore été décaissé.\n"
         "\n"
@@ -131,7 +142,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         )
     ),
     events.PAYMENT_RECEIVED: (
-        _header("🧾 PAIEMENT REÇU")
+        _header("PAIEMENT REÇU")
         + "{{salutation}}\n"
         "Nous accusons réception de votre paiement.\n"
         "\n"
@@ -145,7 +156,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "Merci de votre confiance."
     ),
     events.PAYMENT_PROFORMA_CONVERTED: (
-        _header("🧾 PRO FORMA CONVERTIE")
+        _header("PRO FORMA CONVERTIE")
         + "{{salutation}}\n"
         "Votre pro forma a été convertie en note de débit après paiement.\n"
         "\n"
@@ -159,7 +170,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "Merci de votre confiance."
     ),
     events.PAYMENT_COMPLEMENT: (
-        _header("🧾 PAIEMENT COMPLÉMENTAIRE")
+        _header("PAIEMENT COMPLÉMENTAIRE")
         + "{{salutation}}\n"
         "Nous accusons réception de votre paiement complémentaire.\n"
         "\n"
@@ -174,7 +185,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "Merci de votre confiance."
     ),
     events.PAYMENT_REMINDER: (
-        _header("🔔 RAPPEL DE RÈGLEMENT")
+        _header("RAPPEL DE RÈGLEMENT")
         + "{{salutation}}\n"
         "Nous vous rappelons qu'un règlement reste attendu.\n"
         "\n"
@@ -184,10 +195,22 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         + "\n"
         "_Si le règlement a déjà été effectué, merci d'ignorer ce message._"
     ),
+    events.REPORT_SENT: (
+        _header("RAPPORT TRANSMIS")
+        + "{{salutation}}\n"
+        "{{message}}\n"
+        "\n"
+        "*Période :* {{periode}}\n"
+        "{{resume}}\n"
+        "\n"
+        "{{piece_jointe}}\n"
+        "\n"
+        "_Transmis par : {{auteur}}_"
+    ),
     events.TEST_MESSAGE: (
         "*{{organisation}}* · ONEC Smart\n"
         f"{_RULE}\n"
-        "*🧪 MESSAGE DE TEST*\n"
+        "*MESSAGE DE TEST*\n"
         "\n"
         "Ceci est un message de vérification envoyé depuis ONEC Smart.\n"
         "Si vous le recevez, la configuration WhatsApp est opérationnelle.\n"
@@ -210,7 +233,12 @@ def render(template: str, variables: dict[str, object] | None = None) -> str:
         return values.get(match.group(1), "")
 
     rendered = _PLACEHOLDER.sub(_substitute, template or "")
-    return _strip_empty_fields(rendered)
+    return _strip_empty_fields(strip_emoji(rendered))
+
+
+def strip_emoji(text: str) -> str:
+    """Retire les emoji avec l'espace qui les suit : « *🧪 TEST* » devient « *TEST* »."""
+    return _EMOJI.sub("", text or "")
 
 
 #: Mention ajoutée sous TOUT message WhatsApp, au rendu et non dans les gabarits :

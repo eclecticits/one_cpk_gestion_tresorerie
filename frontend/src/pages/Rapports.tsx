@@ -55,6 +55,7 @@ const generateJournalPDF: PdfJournalGeneratorModule['generateJournalPDF'] = asyn
 // recharts est lourd : chargé dynamiquement, seulement quand l'onglet "Synthèse
 // annuelle" affiche effectivement le graphique.
 const AnnualBarChart = lazyWithRetry(() => import('../components/rapports/AnnualBarChart'))
+const RapportProjets = lazyWithRetry(() => import('../components/rapports/RapportProjets'))
 import { useAnnualReport } from '../hooks/useAnnualReport'
 import TopExpenses from '../components/TopExpenses'
 import AccessDeniedState from '../components/AccessDeniedState'
@@ -110,6 +111,7 @@ const SECTIONS = [
   { key: 'sorties', label: 'Sorties de fonds', description: 'Détail des sorties et des retours en trésorerie de la période.' },
   { key: 'requisitions', label: 'Réquisitions', description: 'Réquisitions créées sur la période.' },
   { key: 'annuel', label: 'Synthèse annuelle', description: 'Comparaison mensuelle des flux de trésorerie.' },
+  { key: 'projets', label: 'Projets & activités', description: 'Entrées et sorties rattachées à chaque projet ou activité.' },
 ] as const
 type SectionKey = (typeof SECTIONS)[number]['key']
 const SECTIONS_DETAIL: SectionKey[] = ['encaissements', 'sorties', 'requisitions']
@@ -118,7 +120,7 @@ export default function Rapports() {
   const { section: sectionParam } = useParams<{ section: string }>()
   const sectionCourante = SECTIONS.find((s) => s.key === sectionParam)
   const section: SectionKey = sectionCourante?.key ?? 'synthese'
-  const estSectionRapport = section !== 'journal' && section !== 'annuel'
+  const estSectionRapport = section !== 'journal' && section !== 'annuel' && section !== 'projets'
   const { notifyError, notifySuccess } = useToast()
   const { user } = useAuth()
   const queryClient = useQueryClient()
@@ -1807,7 +1809,9 @@ export default function Rapports() {
       {/* La période est commune à tous les onglets sauf la synthèse annuelle,
           qui raisonne par exercice. Le journal n'en garde que les dates : canal
           et devise s'y choisissent compte par compte. */}
-      {section !== 'annuel' && (
+      {/* Les projets gardent leur propre période (l'exercice en cours) et
+          leurs propres filtres : voir RapportProjets. */}
+      {section !== 'annuel' && section !== 'projets' && (
       <div className={styles.filters}>
         <div className={styles.field}>
           <label>Date début</label>
@@ -1879,6 +1883,12 @@ export default function Rapports() {
         </>
         )}
       </div>
+      )}
+
+      {section === 'projets' && (
+        <Suspense fallback={<div>Chargement…</div>}>
+          <RapportProjets />
+        </Suspense>
       )}
 
       {section === 'annuel' && (

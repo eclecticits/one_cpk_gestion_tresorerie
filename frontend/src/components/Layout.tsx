@@ -38,6 +38,7 @@ import {
   FileBarChart2,
   FileQuestion,
   FileText,
+  FolderKanban,
   FolderOpen,
   Inbox,
   GitCompare,
@@ -133,6 +134,7 @@ const TREASURY_NAV: NavItem[] = [
       { path: '/rapports/sorties', label: 'Sorties de fonds', permission: 'rapports', icon: <Wallet size={16} /> },
       { path: '/rapports/requisitions', label: 'Réquisitions', permission: 'rapports', icon: <Receipt size={16} /> },
       { path: '/rapports/annuel', label: 'Synthèse annuelle', permission: 'rapports', icon: <CalendarDays size={16} /> },
+      { path: '/rapports/projets', label: 'Projets & activités', permission: 'rapports', icon: <FolderKanban size={16} /> },
     ],
   },
   {

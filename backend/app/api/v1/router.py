@@ -45,6 +45,7 @@ from app.api.v1.endpoints import (
     retours_caisse,
     remboursements_transport,
     reports,
+    envoi_rapports,
     reconciliation,
     services,
     settings,
@@ -167,6 +168,7 @@ api_router.include_router(requisition_approvers.router, prefix="/requisition-app
 api_router.include_router(remboursements_transport.router, prefix="/remboursements-transport", tags=["remboursements-transport"], dependencies=[Depends(has_any_permission(["remboursement_transport", "services"]))])
 api_router.include_router(participants_transport.router, prefix="/participants-transport", tags=["participants-transport"], dependencies=[Depends(has_any_permission(["remboursement_transport", "services"]))])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"], dependencies=[Depends(has_permission("rapports"))])
+api_router.include_router(envoi_rapports.router, prefix="/rapports-envoi", tags=["reports"], dependencies=[Depends(has_permission("rapports"))])
 api_router.include_router(reconciliation.router, prefix="/reconciliation", tags=["reconciliation"], dependencies=[Depends(has_any_permission(["encaissements", "sorties_fonds"]))])
 api_router.include_router(treasury.router, prefix="/tresorerie", tags=["tresorerie"])
 api_router.include_router(denominations.router, prefix="/denominations", tags=["denominations"], dependencies=[Depends(has_permission("denominations"))])

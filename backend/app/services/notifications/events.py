@@ -56,6 +56,16 @@ Conservé parce qu'il existait déjà, mais requalifié : le message dit désorm
 « en attente de paiement » pour qu'on ne le confonde pas avec une sortie.
 """
 
+# ── Rapports ─────────────────────────────────────────────────────────────────
+
+REPORT_SENT = "REPORT_SENT"
+"""Rapport transmis à des membres du Bureau depuis l'écran des rapports.
+
+Envoi manuel, choisi destinataire par destinataire : comme le test, il ne
+dépend que de l'activation générale du canal, pas d'une famille d'événements.
+Le PDF part par e-mail ; WhatsApp porte le mot d'accompagnement et les chiffres.
+"""
+
 # ── Service ──────────────────────────────────────────────────────────────────
 
 TEST_MESSAGE = "TEST_MESSAGE"
@@ -70,7 +80,7 @@ OUTFLOW_EVENTS: frozenset[str] = frozenset(
     {FUND_OUTFLOW, FUND_OUTFLOW_BENEFICIARY, JUSTIFICATIF_RELANCE, REQUISITION_APPROVED}
 )
 
-ALL_EVENTS: frozenset[str] = PAYMENT_EVENTS | OUTFLOW_EVENTS | {TEST_MESSAGE}
+ALL_EVENTS: frozenset[str] = PAYMENT_EVENTS | OUTFLOW_EVENTS | {REPORT_SENT, TEST_MESSAGE}
 
 #: Libellés pour l'écran d'historique.
 EVENT_LABELS: dict[str, str] = {
@@ -82,6 +92,7 @@ EVENT_LABELS: dict[str, str] = {
     FUND_OUTFLOW_BENEFICIARY: "Fonds remis au bénéficiaire",
     JUSTIFICATIF_RELANCE: "Relance de justificatif",
     REQUISITION_APPROVED: "Réquisition approuvée",
+    REPORT_SENT: "Rapport transmis au Bureau",
     TEST_MESSAGE: "Message de test",
 }
 
