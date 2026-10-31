@@ -212,6 +212,10 @@ export default function EncaissementForm({
   const [isSearchingExperts, setIsSearchingExperts] = useState(false)
   const [retourRechercheEC, setRetourRechercheEC] = useState<'court' | 'aucun' | 'erreur' | 'trop' | null>(null)
   const [activeExpertIndex, setActiveExpertIndex] = useState(-1)
+  // Distinct des résultats : fermer la liste ne les oublie pas, et une réponse
+  // reçue après la sortie du champ attend le retour de l'agent pour s'afficher.
+  const [listeExpertsOuverte, setListeExpertsOuverte] = useState(false)
+  const listeExpertsVisible = listeExpertsOuverte && filteredExperts.length > 0
   const expertSearchId = useId()
   const expertListboxId = `${expertSearchId}-listbox`
   const expertSearchHelpId = `${expertSearchId}-help`
@@ -671,7 +675,14 @@ export default function EncaissementForm({
     setFilteredExperts([])
     setRetourRechercheEC(null)
     setActiveExpertIndex(-1)
+    setListeExpertsOuverte(true)
     setSearchEC(prochaineValeur)
+  }
+
+  // Au clavier, l'option active reste dans la partie visible de la liste.
+  const activerOptionExpert = (index: number) => {
+    setActiveExpertIndex(index)
+    document.getElementById(`${expertListboxId}-option-${index}`)?.scrollIntoView({ block: 'nearest' })
   }
 
   const selectExpert = (expert: ExpertComptable) => {
@@ -681,6 +692,7 @@ export default function EncaissementForm({
     setFilteredExperts([])
     setRetourRechercheEC(null)
     setActiveExpertIndex(-1)
+    setListeExpertsOuverte(false)
     setCreanceExpert(null)
     // Sa dette doit être sous les yeux pendant qu'on saisit le montant : c'est
     // là que se décide « encaisser ici » ou « compléter sa note ».
@@ -1676,57 +1688,66 @@ export default function EncaissementForm({
 
           {estTypeClientExpert(formData.type_client) ? (
             <div className={`${styles.field} ${styles.col4}`}>
-              <label>{estSec ? "Société d'expertise comptable *" : 'Expert-Comptable *'}</label>
+              <label htmlFor={expertSearchId}>{estSec ? "Société d'expertise comptable *" : 'Expert-Comptable *'}</label>
               <div className={styles.expertSearchControl} data-selected={Boolean(formData.expert_comptable_id)}>
                 <input
                   id={expertSearchId}
                   type="text"
                   role="combobox"
                   aria-autocomplete="list"
-                  aria-controls={expertListboxId}
-                  aria-expanded={filteredExperts.length > 0}
-                  aria-activedescendant={activeExpertIndex >= 0 ? `${expertListboxId}-option-${activeExpertIndex}` : undefined}
+                  aria-controls={listeExpertsVisible ? expertListboxId : undefined}
+                  aria-expanded={listeExpertsVisible}
+                  aria-activedescendant={listeExpertsVisible && activeExpertIndex >= 0 ? `${expertListboxId}-option-${activeExpertIndex}` : undefined}
                   aria-describedby={expertSearchHelpId}
                   autoComplete="off"
                   value={searchEC}
                   onChange={(e) => saisirRechercheEC(e.target.value)}
-                  onBlur={() => {
-                    // Tab ou clic ailleurs ferme la liste ; un clic sur une option
-                    // conserve le focus grâce à son onMouseDown preventDefault.
-                    window.setTimeout(() => {
-                      setFilteredExperts([])
-                      setActiveExpertIndex(-1)
-                    }, 120)
-                  }}
+                  onFocus={() => setListeExpertsOuverte(true)}
+                  onClick={() => setListeExpertsOuverte(true)}
+                  // Un clic dans la liste garde le focus ici : voir son onMouseDown.
+                  onBlur={() => setListeExpertsOuverte(false)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Escape' && filteredExperts.length > 0) {
-                      e.preventDefault()
-                      setFilteredExperts([])
-                      setActiveExpertIndex(-1)
+                    if (e.key === 'Enter') {
+                      if (listeExpertsVisible && activeExpertIndex >= 0) {
+                        e.preventDefault()
+                        selectExpert(filteredExperts[activeExpertIndex])
+                      } else if (searchEC.trim() && !formData.expert_comptable_id) {
+                        // Une recherche en cours n'est pas une demande d'enregistrer.
+                        e.preventDefault()
+                        setListeExpertsOuverte(true)
+                      }
                       return
                     }
                     if (filteredExperts.length === 0) return
-                    if (e.key === 'ArrowDown') {
+                    if (!listeExpertsOuverte) {
+                      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                        e.preventDefault()
+                        setListeExpertsOuverte(true)
+                      }
+                      return
+                    }
+                    if (e.key === 'Escape') {
                       e.preventDefault()
-                      setActiveExpertIndex((index) => (index + 1) % filteredExperts.length)
+                      setListeExpertsOuverte(false)
+                    } else if (e.key === 'ArrowDown') {
+                      e.preventDefault()
+                      activerOptionExpert((activeExpertIndex + 1) % filteredExperts.length)
                     } else if (e.key === 'ArrowUp') {
                       e.preventDefault()
-                      setActiveExpertIndex((index) => index <= 0 ? filteredExperts.length - 1 : index - 1)
-                    } else if (e.key === 'Enter' && activeExpertIndex >= 0) {
-                      e.preventDefault()
-                      selectExpert(filteredExperts[activeExpertIndex])
+                      activerOptionExpert(activeExpertIndex <= 0 ? filteredExperts.length - 1 : activeExpertIndex - 1)
                     }
                   }}
                   placeholder={estSec ? "Rechercher par numéro d'ordre ou dénomination" : "Rechercher par numéro d'ordre ou nom"}
                 />
                 {formData.expert_comptable_id && <span className={styles.expertSearchCheck}><Check size="1em" aria-hidden="true" /></span>}
               </div>
-              {filteredExperts.length > 0 && (
+              {listeExpertsVisible && (
                 <div
                   className={`${styles.dropdown} ${styles.expertDropdown}`}
                   id={expertListboxId}
                   role="listbox"
                   aria-label={estSec ? 'SEC trouvées' : 'Experts-comptables trouvés'}
+                  onMouseDown={(e) => e.preventDefault()}
                 >
                   {filteredExperts.map((expert, index) => (
                     <button
@@ -1736,7 +1757,6 @@ export default function EncaissementForm({
                       role="option"
                       tabIndex={-1}
                       aria-selected={activeExpertIndex === index}
-                      onMouseDown={(e) => e.preventDefault()}
                       onMouseEnter={() => setActiveExpertIndex(index)}
                       onClick={() => selectExpert(expert)}
                       className={`${styles.dropdownItem} ${styles.expertDropdownItem} ${activeExpertIndex === index ? styles.expertDropdownItemActive : ''}`}

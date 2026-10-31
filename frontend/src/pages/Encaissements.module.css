@@ -604,6 +604,11 @@
   padding-right: 34px;
 }
 
+.expertSearchControl input:focus {
+  border-color: var(--tenant-primary, #1f6b5c);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 18%, transparent);
+}
+
 .expertSearchControl[data-selected="true"] input {
   border-color: var(--color-success-text, #166534);
   background: color-mix(in srgb, var(--color-success-bg, #e9f9ee) 45%, #ffffff);
