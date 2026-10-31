@@ -166,3 +166,88 @@ async def test_export_applique_les_filtres_de_la_page_et_porte_le_nif(client_adm
     assert gardé["nif"] in cellules
     assert autre_province["numero_ordre"] not in cellules
     assert autre_categorie["numero_ordre"] not in cellules
+
+
+async def _trouves(client: AsyncClient, identite: str, **params) -> list[str]:
+    resp = await client.get(BASE, params={"identite": identite, "include_inactive": True, **params})
+    assert resp.status_code == 200, resp.text
+    return [e["numero_ordre"] for e in resp.json()]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "nom,saisie",
+    [
+        ("{m} KALALA Marie", "Marie {m} KALALA"),
+        ("{m} ANDRÉ Éloïse", "{m} andre eloise"),
+        ("{m} Jean-Pierre", "{m} jean pierre"),
+        ("{m} N'GOY Esther", "{m} ngoy"),
+        ("{m}  MBUYI   Paul", "{m} mbuyi paul"),
+    ],
+)
+async def test_recherche_d_identite_tolere_ordre_accents_et_separateurs(
+    client_admin: AsyncClient, nom: str, saisie: str
+) -> None:
+    marque = f"z{uuid.uuid4().hex[:8]}"
+    payload = _independant(nom_denomination=nom.format(m=marque))
+    assert (await client_admin.post(BASE, json=payload)).status_code == 201
+    assert await _trouves(client_admin, saisie.format(m=marque)) == [payload["numero_ordre"]]
+
+
+@pytest.mark.asyncio
+async def test_recherche_d_identite_par_numero_sans_separateur(client_admin: AsyncClient) -> None:
+    numero = f"Z-{uuid.uuid4().hex[:8]}"
+    assert (await client_admin.post(BASE, json=_independant(numero_ordre=numero))).status_code == 201
+    assert await _trouves(client_admin, numero.replace("-", "")) == [numero]
+
+
+@pytest.mark.asyncio
+async def test_recherche_d_identite_ignore_email_et_province(client_admin: AsyncClient) -> None:
+    """Sinon « mai » ramène tous les « gmail », et la limite écarte la personne cherchée."""
+    marque = f"z{uuid.uuid4().hex[:8]}"
+    payload = _independant(email=f"{marque}@example.cd", province_attache=marque)
+    assert (await client_admin.post(BASE, json=payload)).status_code == 201
+    assert await _trouves(client_admin, marque) == []
+
+
+@pytest.mark.asyncio
+async def test_recherche_d_identite_met_le_debut_de_nom_en_premier(client_admin: AsyncClient) -> None:
+    marque = f"z{uuid.uuid4().hex[:8]}"
+    dedans = _independant(nom_denomination=f"AAA x{marque}", numero_ordre=f"A{uuid.uuid4().hex[:8]}")
+    second_mot = _independant(nom_denomination=f"AAB {marque}", numero_ordre=f"B{uuid.uuid4().hex[:8]}")
+    debut = _independant(nom_denomination=f"{marque} ZZZ", numero_ordre=f"C{uuid.uuid4().hex[:8]}")
+    for payload in (dedans, second_mot, debut):
+        assert (await client_admin.post(BASE, json=payload)).status_code == 201
+    assert await _trouves(client_admin, marque) == [
+        debut["numero_ordre"], second_mot["numero_ordre"], dedans["numero_ordre"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_recherche_d_identite_respecte_le_type(client_admin: AsyncClient) -> None:
+    marque = f"z{uuid.uuid4().hex[:8]}"
+    sec = {
+        "numero_ordre": _numero(), "nom_denomination": f"CABINET {marque}", "type_ec": "SEC",
+        "categorie_personne": "Personne Morale", "associe_gerant": f"Gerant {marque}",
+    }
+    assert (await client_admin.post(BASE, json=sec)).status_code == 201
+    assert await _trouves(client_admin, marque, type_ec="EC") == []
+    assert await _trouves(client_admin, marque, type_ec="SEC") == [sec["numero_ordre"]]
+
+
+@pytest.mark.asyncio
+async def test_recherche_d_identite_aligne_liste_total_et_compteurs(client_admin: AsyncClient) -> None:
+    marque = f"z{uuid.uuid4().hex[:8]}"
+    payload = _independant(nom_denomination=f"KALALA {marque}")
+    assert (await client_admin.post(BASE, json=payload)).status_code == 201
+
+    resp = await client_admin.get(
+        BASE,
+        params={"identite": marque, "include_inactive": True, "include_summary": True},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [expert["numero_ordre"] for expert in body["items"]] == [payload["numero_ordre"]]
+    assert body["total"] == 1
+    assert body["summary"]["total"] == 1
+    assert body["summary"]["active"] == 1

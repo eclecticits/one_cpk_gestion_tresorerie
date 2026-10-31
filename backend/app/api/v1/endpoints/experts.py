@@ -10,7 +10,7 @@ from typing import Any
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, case, false, func, or_, select, update
 from sqlalchemy.exc import DataError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 from io import BytesIO
@@ -378,6 +378,63 @@ def _search_conditions(q: str | None) -> list[Any]:
     ]
 
 
+# Accents et séparateurs retirés côté base, sans dépendre de l'extension unaccent.
+_LETTRES_ACCENTUEES = "àáâãäåçèéêëìíîïñòóôõöùúûüýÿÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝ"
+_LETTRES_SIMPLES = "aaaaaaceeeeiiiinooooouuuuyyAAAAAACEEEEIIIINOOOOOUUUUY"
+_SEPARATEURS = " -'’./_,"
+
+
+def _sans_accents_sql(colonne: Any) -> Any:
+    return func.lower(func.translate(colonne, _LETTRES_ACCENTUEES, _LETTRES_SIMPLES))
+
+
+def _compact_sql(colonne: Any) -> Any:
+    # Un caractère sans correspondant dans le 3e argument de translate est supprimé.
+    return func.translate(_sans_accents_sql(colonne), _SEPARATEURS, "")
+
+
+def _mots_recherches(q: str | None) -> list[str]:
+    return re.findall(r"[a-z0-9]+", _strip_accents(q or "").lower())
+
+
+def _identite_conditions(q: str | None) -> list[Any]:
+    """Recherche d'une personne : numéro, nom ou associé gérant, chaque mot dans n'importe quel ordre.
+
+    « Marie Kalala » trouve « KALALA Marie », « Andre » trouve « André »,
+    « Ngoy » trouve « N'GOY » et « EC012 » trouve « EC-012 ». L'e-mail et la
+    province n'y sont pas : « mai » ramènerait tous les « gmail », et la limite
+    de résultats écarterait la personne cherchée.
+    """
+    mots = _mots_recherches(q)
+    if q and q.strip() and not mots:
+        return [false()]
+    return [
+        or_(
+            _compact_sql(ExpertComptable.numero_ordre).like(f"%{mot}%"),
+            _compact_sql(ExpertComptable.nom_denomination).like(f"%{mot}%"),
+            _compact_sql(ExpertComptable.associe_gerant).like(f"%{mot}%"),
+        )
+        for mot in mots
+    ]
+
+
+def _identite_ordre(q: str | None) -> list[Any]:
+    """Le plus proche d'abord : le numéro exact, puis ceux dont le nom commence par le mot."""
+    mots = _mots_recherches(q)
+    if not mots:
+        return []
+    numero = _compact_sql(ExpertComptable.numero_ordre)
+    nom = _sans_accents_sql(ExpertComptable.nom_denomination)
+    rang = case(
+        (numero == "".join(mots), 0),
+        (numero.like(f"{mots[0]}%"), 1),
+        (nom.like(f"{mots[0]}%"), 2),
+        (nom.like(f"% {mots[0]}%"), 3),
+        else_=4,
+    )
+    return [rang, ExpertComptable.nom_denomination.asc()]
+
+
 _CHAMPS_TEXTE_LIBRE = (
     "sexe",
     "province_attache",
@@ -474,6 +531,7 @@ async def list_experts(
     numero_ordre: str | None = Query(default=None, description="Recherche exacte par numéro d'ordre"),
     nom: str | None = Query(default=None, description="Recherche partielle par nom"),
     q: str | None = Query(default=None, description="Recherche globale (nom, numéro, email, cabinet)"),
+    identite: str | None = Query(default=None, description="Recherche d'une personne : numéro, nom ou associé gérant"),
     type_ec: str | None = Query(default=None, description="Filtrer par type (EC ou SEC)"),
     active: bool | None = Query(default=True, description="Filtrer par statut actif"),
     include_inactive: bool = Query(default=False, description="Inclure les experts inactifs"),
@@ -496,6 +554,7 @@ async def list_experts(
     if nom:
         conditions.append(ExpertComptable.nom_denomination.ilike(f"%{nom}%"))
     conditions.extend(_search_conditions(q))
+    conditions.extend(_identite_conditions(identite))
     if type_ec:
         conditions.append(ExpertComptable.type_ec == type_ec)
     if statut_professionnel:
@@ -511,7 +570,8 @@ async def list_experts(
     if conditions:
         query = query.where(*conditions)
 
-    query = query.order_by(_parse_order(order)).offset(offset).limit(limit)
+    tri = _identite_ordre(identite) if not order else []
+    query = query.order_by(*(tri or [_parse_order(order)])).offset(offset).limit(limit)
 
     result = await db.execute(query)
     experts = result.scalars().all()
@@ -527,6 +587,7 @@ async def list_experts(
     if nom:
         base_summary_conditions.append(ExpertComptable.nom_denomination.ilike(f"%{nom}%"))
     base_summary_conditions.extend(_search_conditions(q))
+    base_summary_conditions.extend(_identite_conditions(identite))
     if province_attache:
         base_summary_conditions.append(func.trim(ExpertComptable.province_attache) == province_attache.strip())
 

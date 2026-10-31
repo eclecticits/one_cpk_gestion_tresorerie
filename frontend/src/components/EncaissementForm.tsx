@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useId, useRef } from 'react'
 import { format } from 'date-fns'
-import { AlertTriangle, Lock, Unlock, Check } from 'lucide-react'
+import { AlertTriangle, Lock, Unlock, Check, ListFilter, Loader2, Search, SearchX } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, NatureMouvement, TypeClient, Service } from '../types'
@@ -41,6 +41,9 @@ interface EncaissementFormProps {
   variant?: 'modal' | 'page'
   formId?: string
 }
+
+const LIMITE_RECHERCHE_EC = 20
+const MIN_RECHERCHE_EC = 2
 
 const SEXES = [
   { value: 'M', libelle: 'Masculin' },
@@ -207,6 +210,11 @@ export default function EncaissementForm({
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
   const [isSearchingExperts, setIsSearchingExperts] = useState(false)
+  const [retourRechercheEC, setRetourRechercheEC] = useState<'court' | 'aucun' | 'erreur' | 'trop' | null>(null)
+  const [activeExpertIndex, setActiveExpertIndex] = useState(-1)
+  const expertSearchId = useId()
+  const expertListboxId = `${expertSearchId}-listbox`
+  const expertSearchHelpId = `${expertSearchId}-help`
   const [ftTiersLabel, setFtTiersLabel] = useState('')
   // Référentiel clients (anti-doublons) : suggestions pendant la saisie du nom.
   const [clientId, setClientId] = useState('')
@@ -590,39 +598,89 @@ export default function EncaissementForm({
   }, [formData.service_id, loadBudgetLines])
 
   useEffect(() => {
-    if (!searchEC) {
+    // Une fiche choisie n'est plus à chercher : son libellé reste dans le champ.
+    if (!searchEC.trim() || formData.expert_comptable_id) {
       setFilteredExperts([])
+      setRetourRechercheEC(null)
+      setActiveExpertIndex(-1)
+      setIsSearchingExperts(false)
       return
     }
+    if (searchEC.trim().length < MIN_RECHERCHE_EC) {
+      setFilteredExperts([])
+      setRetourRechercheEC('court')
+      setActiveExpertIndex(-1)
+      setIsSearchingExperts(false)
+      return
+    }
+    // Une réponse lente ne doit pas remplacer celle d'une saisie plus récente.
+    let actif = true
+    // Ne jamais laisser une ancienne liste cliquable pendant le délai de frappe.
+    setFilteredExperts([])
+    setRetourRechercheEC(null)
+    setActiveExpertIndex(-1)
+    setIsSearchingExperts(true)
     // Chaque type ne cherche que ses fiches : une SEC (type_ec 'SEC') n'est
     // proposée qu'en « SEC », un expert-comptable qu'en « Expert-comptable ».
     const typeEc = formData.type_client === 'sec' ? 'SEC' : 'EC'
     const timer = window.setTimeout(async () => {
       try {
-        setIsSearchingExperts(true)
         // Inactifs compris : la liste nationale crée ses experts inactifs tant
         // que leur situation n'est pas vérifiée, et ils doivent pouvoir payer.
         // Le badge « Inactif » de la liste signale le cas à la sélection.
+        // Une fiche de plus que la liste n'en montre : c'est ce qui dit qu'il en reste.
         const res = await apiRequest<ExpertComptable[]>(
           'GET',
-          `/experts-comptables?q=${encodeURIComponent(searchEC.trim())}&type_ec=${typeEc}&include_inactive=true&limit=20`,
+          `/experts-comptables?identite=${encodeURIComponent(searchEC.trim())}&type_ec=${typeEc}&include_inactive=true&limit=${LIMITE_RECHERCHE_EC + 1}`,
         )
-        setFilteredExperts(Array.isArray(res) ? res : [])
+        if (!actif) return
+        const fiches = Array.isArray(res) ? res : []
+        setFilteredExperts(fiches.slice(0, LIMITE_RECHERCHE_EC))
+        setActiveExpertIndex(fiches.length > 0 ? 0 : -1)
+        setRetourRechercheEC(
+          fiches.length === 0 ? 'aucun' : fiches.length > LIMITE_RECHERCHE_EC ? 'trop' : null,
+        )
       } catch (error) {
         console.error('Error searching experts:', error)
+        if (!actif) return
         setFilteredExperts([])
+        setRetourRechercheEC('erreur')
       } finally {
-        setIsSearchingExperts(false)
+        if (actif) setIsSearchingExperts(false)
       }
     }, 300)
-    return () => window.clearTimeout(timer)
-  }, [searchEC, formData.type_client])
+    return () => {
+      actif = false
+      window.clearTimeout(timer)
+    }
+  }, [searchEC, formData.type_client, formData.expert_comptable_id])
+
+  // Modifier le champ annule la fiche choisie : le texte affiché et l'expert
+  // imputé ne doivent jamais diverger. Effacer repart de zéro, et une frappe à la
+  // suite du libellé commence une nouvelle recherche.
+  const saisirRechercheEC = (valeur: string) => {
+    let prochaineValeur = valeur
+    if (formData.expert_comptable_id) {
+      setFormData((prev) => ({ ...prev, expert_comptable_id: '' }))
+      setSelectedExpert(null)
+      setCreanceExpert(null)
+      prochaineValeur = valeur.length < searchEC.length
+        ? ''
+        : valeur.startsWith(searchEC) ? valeur.slice(searchEC.length) : valeur
+    }
+    setFilteredExperts([])
+    setRetourRechercheEC(null)
+    setActiveExpertIndex(-1)
+    setSearchEC(prochaineValeur)
+  }
 
   const selectExpert = (expert: ExpertComptable) => {
     setFormData((prev) => ({ ...prev, expert_comptable_id: expert.id, client_nom: '' }))
     setSearchEC(`${expert.numero_ordre} - ${expert.nom_denomination}`)
     setSelectedExpert(expert)
     setFilteredExperts([])
+    setRetourRechercheEC(null)
+    setActiveExpertIndex(-1)
     setCreanceExpert(null)
     // Sa dette doit être sous les yeux pendant qu'on saisit le montant : c'est
     // là que se décide « encaisser ici » ou « compléter sa note ».
@@ -1619,34 +1677,87 @@ export default function EncaissementForm({
           {estTypeClientExpert(formData.type_client) ? (
             <div className={`${styles.field} ${styles.col4}`}>
               <label>{estSec ? "Société d'expertise comptable *" : 'Expert-Comptable *'}</label>
-              <div style={{ position: 'relative' }}>
+              <div className={styles.expertSearchControl} data-selected={Boolean(formData.expert_comptable_id)}>
                 <input
+                  id={expertSearchId}
                   type="text"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-controls={expertListboxId}
+                  aria-expanded={filteredExperts.length > 0}
+                  aria-activedescendant={activeExpertIndex >= 0 ? `${expertListboxId}-option-${activeExpertIndex}` : undefined}
+                  aria-describedby={expertSearchHelpId}
+                  autoComplete="off"
                   value={searchEC}
-                  onChange={(e) => setSearchEC(e.target.value)}
+                  onChange={(e) => saisirRechercheEC(e.target.value)}
+                  onBlur={() => {
+                    // Tab ou clic ailleurs ferme la liste ; un clic sur une option
+                    // conserve le focus grâce à son onMouseDown preventDefault.
+                    window.setTimeout(() => {
+                      setFilteredExperts([])
+                      setActiveExpertIndex(-1)
+                    }, 120)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape' && filteredExperts.length > 0) {
+                      e.preventDefault()
+                      setFilteredExperts([])
+                      setActiveExpertIndex(-1)
+                      return
+                    }
+                    if (filteredExperts.length === 0) return
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault()
+                      setActiveExpertIndex((index) => (index + 1) % filteredExperts.length)
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault()
+                      setActiveExpertIndex((index) => index <= 0 ? filteredExperts.length - 1 : index - 1)
+                    } else if (e.key === 'Enter' && activeExpertIndex >= 0) {
+                      e.preventDefault()
+                      selectExpert(filteredExperts[activeExpertIndex])
+                    }
+                  }}
                   placeholder={estSec ? "Rechercher par numéro d'ordre ou dénomination" : "Rechercher par numéro d'ordre ou nom"}
-                  style={{ borderColor: formData.expert_comptable_id ? '#10b981' : undefined }}
                 />
-                {formData.expert_comptable_id && <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#10b981', fontWeight: 'bold' }}><Check size="1em" aria-hidden="true" /></span>}
+                {formData.expert_comptable_id && <span className={styles.expertSearchCheck}><Check size="1em" aria-hidden="true" /></span>}
               </div>
               {filteredExperts.length > 0 && (
-                <div className={styles.dropdown}>
-                  {filteredExperts.map(expert => (
-                    <div key={expert.id} onClick={() => selectExpert(expert)} className={styles.dropdownItem}>
-                      <strong>{expert.numero_ordre}</strong> - {expert.nom_denomination}
-                      {!estSec && expert.statut_professionnel && (
-                        <span className={styles.parentBadge}>{expert.statut_professionnel}</span>
-                      )}
-                      {expert.active === false && <span className={styles.inactiveBadge}>Inactif</span>}
+                <div
+                  className={`${styles.dropdown} ${styles.expertDropdown}`}
+                  id={expertListboxId}
+                  role="listbox"
+                  aria-label={estSec ? 'SEC trouvées' : 'Experts-comptables trouvés'}
+                >
+                  {filteredExperts.map((expert, index) => (
+                    <button
+                      id={`${expertListboxId}-option-${index}`}
+                      key={expert.id}
+                      type="button"
+                      role="option"
+                      tabIndex={-1}
+                      aria-selected={activeExpertIndex === index}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onMouseEnter={() => setActiveExpertIndex(index)}
+                      onClick={() => selectExpert(expert)}
+                      className={`${styles.dropdownItem} ${styles.expertDropdownItem} ${activeExpertIndex === index ? styles.expertDropdownItemActive : ''}`}
+                    >
+                      <span className={styles.expertOptionMain}>
+                        <strong>{expert.numero_ordre}</strong>
+                        <span>{expert.nom_denomination}</span>
+                        {!estSec && expert.statut_professionnel && (
+                          <span className={styles.parentBadge}>{expert.statut_professionnel}</span>
+                        )}
+                        {expert.active === false && <span className={styles.inactiveBadge}>Inactif</span>}
+                      </span>
                       {estSec && expert.associe_gerant && (
                         <small className={styles.dropdownDetail}>Associé gérant : {expert.associe_gerant}</small>
                       )}
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
               {selectedExpert?.active === false && (
-                <small>Expert inactif : non publié au Tableau.</small>
+                <small className={styles.expertSearchWarning}>Expert inactif : non publié au Tableau.</small>
               )}
               {banniereCreance(
                 creanceExpert,
@@ -1654,7 +1765,39 @@ export default function EncaissementForm({
                 { expert_comptable_id: formData.expert_comptable_id },
                 selectedExpert?.nom_denomination || 'cet expert-comptable',
               )}
-              {isSearchingExperts && <small>Recherche en cours…</small>}
+              <div id={expertSearchHelpId} aria-live="polite">
+                {isSearchingExperts && (
+                  <small className={styles.expertSearchFeedback} data-tone="loading">
+                    <Loader2 size={13} className={styles.expertSearchSpinner} aria-hidden="true" />
+                    Recherche en cours…
+                  </small>
+                )}
+                {!isSearchingExperts && retourRechercheEC === 'court' && (
+                  <small className={styles.expertSearchFeedback} data-tone="hint">
+                    <Search size={13} aria-hidden="true" />
+                    Saisissez au moins {MIN_RECHERCHE_EC} caractères.
+                  </small>
+                )}
+                {!isSearchingExperts && retourRechercheEC === 'aucun' && (
+                  <small className={styles.expertSearchFeedback} data-tone="empty">
+                    <SearchX size={13} aria-hidden="true" />
+                    {estSec ? 'Aucune SEC trouvée' : 'Aucun expert-comptable trouvé'} pour « {searchEC.trim()} ».
+                    Vérifiez le type de client.
+                  </small>
+                )}
+                {!isSearchingExperts && retourRechercheEC === 'erreur' && (
+                  <small className={styles.expertSearchFeedback} data-tone="error" role="alert">
+                    <AlertTriangle size={13} aria-hidden="true" />
+                    Recherche impossible pour le moment. Vérifiez la connexion et réessayez.
+                  </small>
+                )}
+                {!isSearchingExperts && retourRechercheEC === 'trop' && (
+                  <small className={styles.expertSearchFeedback} data-tone="more">
+                    <ListFilter size={13} aria-hidden="true" />
+                    Seuls les {LIMITE_RECHERCHE_EC} premiers résultats sont affichés : précisez la recherche.
+                  </small>
+                )}
+              </div>
             </div>
           ) : (
             <>

@@ -587,13 +587,44 @@
   left: 0;
   right: 0;
   background: white;
-  border: 2px solid #3b82f6;
+  border: 2px solid var(--tenant-primary, #1f6b5c);
   border-top: none;
   border-radius: 0 0 8px 8px;
   max-height: 240px;
   overflow-y: auto;
   z-index: 10;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.expertSearchControl {
+  position: relative;
+}
+
+.expertSearchControl input {
+  padding-right: 34px;
+}
+
+.expertSearchControl[data-selected="true"] input {
+  border-color: var(--color-success-text, #166534);
+  background: color-mix(in srgb, var(--color-success-bg, #e9f9ee) 45%, #ffffff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-success-text, #166534) 12%, transparent);
+}
+
+.expertSearchCheck {
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  display: inline-flex;
+  color: var(--color-success-text, #166534);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.expertDropdown {
+  border-top: 1px solid color-mix(in srgb, var(--tenant-primary, #1f6b5c) 28%, #dbe3ee);
+  border-radius: 9px;
+  box-shadow: 0 14px 34px -14px rgba(15, 23, 42, 0.34);
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 /* Bloc d'enfants révélé au clic sur une ligne parent. L'apparition est animée
@@ -615,7 +646,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .treeBranch {
+  .treeBranch,
+  .expertSearchSpinner {
     animation: none;
   }
 }
@@ -634,6 +666,62 @@
 
 .dropdownItem:hover {
   background: #f1f5f9;
+}
+
+.expertDropdownItem {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #eef2f7;
+  border-radius: 0;
+  background: #ffffff;
+  color: #334155;
+  font: inherit;
+  text-align: left;
+}
+
+.expertDropdownItem:last-child {
+  border-bottom: 0;
+}
+
+.expertDropdownItem:hover,
+.expertDropdownItemActive,
+.expertDropdownItem[aria-selected="true"] {
+  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 8%, #ffffff);
+}
+
+.expertDropdownItemActive {
+  box-shadow: inset 3px 0 0 var(--tenant-primary, #1f6b5c);
+}
+
+.expertDropdownItem:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--tenant-primary, #1f6b5c);
+  outline-offset: -2px;
+}
+
+.expertOptionMain {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  min-width: 0;
+}
+
+.expertOptionMain > strong {
+  color: var(--tenant-primary, #1f6b5c);
+  font-size: 12px;
+}
+
+.expertOptionMain > span:not(.parentBadge):not(.inactiveBadge) {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dropdownDetail {
@@ -682,6 +770,61 @@
   color: #92400e;
   font-size: 0.7rem;
   font-weight: 600;
+}
+
+.expertSearchFeedback,
+.expertSearchWarning {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 3px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.expertSearchFeedback svg,
+.expertSearchWarning svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.expertSearchFeedback[data-tone="loading"],
+.expertSearchFeedback[data-tone="hint"] {
+  border-color: #dbe3ee;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.expertSearchFeedback[data-tone="empty"] {
+  border-color: #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.expertSearchFeedback[data-tone="more"],
+.expertSearchWarning {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.expertSearchFeedback[data-tone="error"] {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b42318;
+}
+
+.expertSearchSpinner {
+  animation: expertSearchSpin 0.75s linear infinite;
+}
+
+@keyframes expertSearchSpin {
+  to { transform: rotate(360deg); }
 }
 
 .formActions {
