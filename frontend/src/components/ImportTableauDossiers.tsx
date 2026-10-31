@@ -28,7 +28,7 @@ const SOURCES: Record<SourceType, {
     required: ["N° d'ordre", 'Nom, post-noms et prénoms (Dénomination pour une société)'],
     optional: [
       'Sexe', 'N° téléphone', 'E-mail', 'Date naissance', 'Ancienneté', "Cabinet d'attache", 'Employeur',
-      'Associé gérant', 'NIF', 'Cotisation', 'Assurance', "Chiffre d'affaires", 'Heures formation (NHV)',
+      'Associé gérant', 'NIF', 'Cotisation', 'Assurance', "Chiffre d'affaires", 'NHV',
     ],
   },
   personnes_physiques: {
@@ -74,8 +74,8 @@ const SOURCES: Record<SourceType, {
 const CATEGORIES = ['Société', 'EC Cabinet', 'EC Indépendant', 'EC Salarié', 'Stagiaire']
 
 // Une feuille par section, aux libellés de l'export du Tableau (`exporter.py`).
-// Seul « NHV » alimente les heures au parseur : « Heures formation » seul y est
-// lu comme un OUI/NON et perdrait le nombre. Âge et Conclusion n'y sont pas :
+// Seul « NHV » (nombre d'heures validées) alimente les heures au parseur : un
+// « Heures formation » y est lu comme un OUI/NON. Âge et Conclusion n'y sont pas :
 // l'application les calcule.
 const IDENTITE_EC = ['N°', "N° d'ordre", 'Nom, post-noms et prénoms', 'Sexe', 'N° téléphone', 'E-mail', 'Date naissance', 'Ancienneté']
 const IDENTITE_EC_EXEMPLE = ['M', '(+243)810000000', 'exemple@onec.cd', '15/06/1980', 'Ancien']
@@ -90,19 +90,19 @@ const FEUILLES_MODELE_TABLEAU: { nom: string; section: string; colonnes: string[
   {
     nom: 'EC EN CABINET',
     section: 'SECTION A1 : EXPERTS-COMPTABLES EN CABINET',
-    colonnes: [...IDENTITE_EC, "Cabinet d'attache", 'Cotisation', 'Heures formation (NHV)'],
+    colonnes: [...IDENTITE_EC, "Cabinet d'attache", 'Cotisation', 'NHV'],
     exemple: [1, 'EC/16.99001', 'EXEMPLE EN CABINET Jean', ...IDENTITE_EC_EXEMPLE, 'EXEMPLE CABINET SARL', 'OUI', 120],
   },
   {
     nom: 'EC INDEPENDANTS',
     section: 'SECTION A2 : EXPERTS-COMPTABLES INDEPENDANTS',
-    colonnes: [...IDENTITE_EC, 'NIF', 'Cotisation', 'Assurance valide', "Chiffre d'affaires", 'Heures formation (NHV)'],
+    colonnes: [...IDENTITE_EC, 'NIF', 'Cotisation', 'Assurance valide', "Chiffre d'affaires", 'NHV'],
     exemple: [1, 'EC/17.99002', 'EXEMPLE INDEPENDANT Marie', ...IDENTITE_EC_EXEMPLE, 'A0000000X', 'OUI', 'OUI', 'OUI', 120],
   },
   {
     nom: 'EC SALARIES',
     section: 'SECTION B : EXPERTS-COMPTABLES SALARIES',
-    colonnes: [...IDENTITE_EC, 'Employeur', 'Cotisation', 'Heures formation (NHV)'],
+    colonnes: [...IDENTITE_EC, 'Employeur', 'Cotisation', 'NHV'],
     exemple: [1, 'EC/16.99003', 'EXEMPLE SALARIE Paul', ...IDENTITE_EC_EXEMPLE, 'EXEMPLE EMPLOYEUR SA', 'OUI', 120],
   },
   {
@@ -121,7 +121,7 @@ const CONSIGNES_MODELE_TABLEAU = [
   "2. Ne renommez ni les feuilles, ni les colonnes : le nom de la feuille donne la catégorie du membre. Une section sans membre peut rester vide.",
   "3. N° d'ordre : il relie le membre à ses situations précédentes. Sans lui, la ligne est importée mais non rattachée.",
   '4. Cotisation, Assurance, Chiffre d\'affaires : OUI ou NON.',
-  '5. Heures formation (NHV) : un nombre, par exemple 120.',
+  "5. NHV : nombre d'heures validées, par exemple 120.",
   '6. Date naissance : JJ/MM/AAAA. Elle sert à calculer l\'âge.',
   '7. Ancienneté : Ancien ou Nouveau.',
   "8. Une cellule vide n'efface pas ce qui était déjà connu du membre.",
@@ -462,7 +462,7 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
           {sourceType === 'tableau' && (
             <>
               <span>Feuille à plat : colonne categorie ∈ {CATEGORIES.join(' / ')}.</span>
-              <span>Cotisation / Assurance / Chiffre d'affaires = OUI ou NON · Heures formation (NHV) = nombre.</span>
+              <span>Cotisation / Assurance / Chiffre d'affaires = OUI ou NON · NHV = nombre d'heures validées.</span>
             </>
           )}
           <span>Un fichier déjà importé pour la même date de situation est reconnu et n'est pas rechargé.</span>

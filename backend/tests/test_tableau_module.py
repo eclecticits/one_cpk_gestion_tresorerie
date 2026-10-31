@@ -276,7 +276,7 @@ class TestExcelImport:
         assert r0["cabinet"] == "FICADEX"
 
     def test_en_tetes_du_modele_telechargeable(self):
-        """Miroir de FEUILLES_MODELE_TABLEAU : « Heures formation » sans NHV perdrait le nombre."""
+        """Miroir de FEUILLES_MODELE_TABLEAU : NHV, le nombre d'heures validées, alimente les heures."""
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Lisez-moi"
@@ -286,7 +286,7 @@ class TestExcelImport:
         cabinet.append(["SECTION A1 : EXPERTS-COMPTABLES EN CABINET"])
         cabinet.append([])
         cabinet.append(["N°", "N° d'ordre", "Nom, post-noms et prénoms", "Sexe", "N° téléphone", "E-mail",
-                        "Date naissance", "Ancienneté", "Cabinet d'attache", "Cotisation", "Heures formation (NHV)"])
+                        "Date naissance", "Ancienneté", "Cabinet d'attache", "Cotisation", "NHV"])
         cabinet.append([1, "EC/16.99001", "EXEMPLE Jean", "M", "(+243)810000000", "e@x.cd",
                         "15/06/1980", "Ancien", "EXEMPLE SARL", "OUI", 120])
         societes = wb.create_sheet("SOCIETES")
