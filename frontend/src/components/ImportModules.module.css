@@ -841,6 +841,27 @@
   gap: 6px;
 }
 
+.tableauErrorList {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.errorList.tableauErrorList span {
+  background: #fee2e2;
+  border-left: 3px solid #dc2626;
+}
+
+.reportActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reportLignesSignalees {
+  color: #991b1b;
+  font-weight: 600;
+}
+
 .errorList span {
   min-width: 0;
   padding: 8px 10px;

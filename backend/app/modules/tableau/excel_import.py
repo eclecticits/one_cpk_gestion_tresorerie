@@ -237,13 +237,16 @@ def parse_excel_bytes(content: bytes, exercice: str) -> tuple[list[dict], list[s
 
         cat_sheet = _categorie_from_sheet(ws.title)
 
-        for row in all_rows[header_idx + 1:]:
+        for ligne, row in enumerate(all_rows[header_idx + 1:], start=header_idx + 2):
             def get(field: str, _row=row) -> Any:
                 idx = col_map.get(field)
                 return _row[idx] if idx is not None and idx < len(_row) else None
 
-            nom = _text(get("nom"))
-            if not nom:
+            # Un membre sans nom reste un membre dès lors qu'il a un N° d'ordre : la
+            # ligne est gardée et signalée. Sans l'un ni l'autre, ce n'en est pas un
+            # (ligne vide numérotée, total, intitulé de section).
+            nom = _text(get("nom")) or ""
+            if not nom and not _text(get("numero_ordre")):
                 continue
 
             categorie = cat_sheet or _categorie_from_statut(get("statut"))
@@ -255,6 +258,7 @@ def parse_excel_bytes(content: bytes, exercice: str) -> tuple[list[dict], list[s
             # Champs conservés dans raw_data (non promus en colonnes)
             raw_extra = {
                 "sheet": ws.title,
+                "ligne": ligne,
                 "hformation": _parse_bool(get("hformation")),
                 "raison_sociale": _text(get("raison_sociale")),
                 "gerant": _text(get("gerant")),

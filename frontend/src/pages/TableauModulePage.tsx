@@ -31,6 +31,7 @@ import {
   runTableauAnalyse,
   updateTableauReglages,
   downloadTableauExport,
+  downloadTableauImportAnnote,
   type TableauAuditEntry,
   type TableauReglages,
   type TableauAnalyse,
@@ -117,6 +118,19 @@ function resumerAudit(entree: TableauAuditEntry): string {
   return morceaux.join(' · ') || '—'
 }
 
+// Couleur du NHV d'après le réglage « Heures de formation min » : bleu à partir du
+// minimum, rouge sous 60 % de ce minimum, sans couleur entre les deux.
+const PART_NHV_ROUGE = 0.6
+const COULEUR_NHV_ATTEINT = '#1d4ed8'
+const COULEUR_NHV_FAIBLE = '#b91c1c'
+
+function styleNhv(valeur: number | null | undefined, minimum: number): React.CSSProperties {
+  if (valeur == null) return {}
+  if (valeur >= minimum) return { color: COULEUR_NHV_ATTEINT, fontWeight: 600 }
+  if (valeur < minimum * PART_NHV_ROUGE) return { color: COULEUR_NHV_FAIBLE, fontWeight: 600 }
+  return {}
+}
+
 function booleanStatus(value: boolean | null) {
   if (value === true) return <span style={{ color: '#166534', fontWeight: 600 }}>Oui</span>
   if (value === false) return <span style={{ color: '#991b1b', fontWeight: 600 }}>Non</span>
@@ -194,6 +208,10 @@ export default function TableauModulePage() {
   const [baseExercice, setBaseExercice] = useState('')
   const [baseSearch, setBaseSearch] = useState('')
   const [baseCategorie, setBaseCategorie] = useState('')
+  const [basePersonne, setBasePersonne] = useState('')
+  const [baseProvince, setBaseProvince] = useState('')
+  const [baseSexe, setBaseSexe] = useState('')
+  const [baseAnciennete, setBaseAnciennete] = useState('')
   const [baseOrganisationId, setBaseOrganisationId] = useState('')
   const [basePage, setBasePage] = useState(1)
   const [basePageSize, setBasePageSize] = useState(50)
@@ -482,6 +500,10 @@ export default function TableauModulePage() {
       q: baseSearchDiffere || undefined,
       categorie: baseCategorie || undefined,
       organisationId: baseOrganisationId ? Number(baseOrganisationId) : undefined,
+      personne: basePersonne || undefined,
+      province: baseProvince || undefined,
+      sexe: baseSexe || undefined,
+      anciennete: baseAnciennete || undefined,
       limit: basePageSize,
       offset: (basePage - 1) * basePageSize,
     })
@@ -498,11 +520,11 @@ export default function TableauModulePage() {
       })
       .finally(() => { if (!annule) setBaseLoading(false) })
     return () => { annule = true }
-  }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePage, basePageSize, baseRefresh])
+  }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, basePage, basePageSize, baseRefresh])
 
   useEffect(() => {
     setBasePage(1)
-  }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePageSize])
+  }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, basePageSize])
 
   const handleBaseAnalyse = async () => {
     if (!base?.exercice) return
@@ -604,6 +626,7 @@ export default function TableauModulePage() {
   const relancerAnalyse = canAnalyze && selectedImport
     ? () => void (analysisScope === 'base' ? handleBaseAnalyse() : handleAnalyse())
     : undefined
+  const nhvMinimum = reglages.heures_formation_min ?? 120
   const baseTotalPages = Math.max(1, Math.ceil((base?.total_membres || 0) / basePageSize))
   const baseImport = imports.find(item => item.id === base?.analysis_import_id) || null
   const dossierTotalPages = Math.max(1, Math.ceil(dossiers.length / dossierPageSize))
@@ -747,7 +770,7 @@ export default function TableauModulePage() {
                   <button
                     type="button"
                     className={styles.secondaryButton}
-                    disabled={baseLoading || actionLoading === 'analyse-base' || !base || base.total_membres === 0}
+                    disabled={baseLoading || actionLoading === 'analyse-base' || !base || base.total_dossiers === 0}
                     onClick={() => void handleBaseAnalyse()}
                     style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
                   >
@@ -755,7 +778,7 @@ export default function TableauModulePage() {
                     {actionLoading === 'analyse-base' ? 'Analyse...' : 'Analyser la base'}
                   </button>
                 )}
-                {canExport && !baseNational && baseImport && (
+                {canExport && !baseNational && baseImport && !!base?.total_dossiers && (
                   <button
                     type="button"
                     className={styles.secondaryButton}
@@ -812,10 +835,57 @@ export default function TableauModulePage() {
                 />
               </label>
               <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                Personne
+                <select
+                  value={basePersonne}
+                  onChange={event => {
+                    const personne = event.target.value
+                    setBasePersonne(personne)
+                    // Une catégorie ou un sexe sans rapport viderait la liste sans dire pourquoi.
+                    if (personne === 'morale') {
+                      setBaseSexe('')
+                      if (baseCategorie !== 'Société') setBaseCategorie('')
+                    } else if (personne === 'physique' && baseCategorie === 'Société') {
+                      setBaseCategorie('')
+                    }
+                  }}
+                  style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}
+                >
+                  <option value="">Toutes</option>
+                  <option value="morale">Personne morale</option>
+                  <option value="physique">Personne physique</option>
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
                 Catégorie
                 <select value={baseCategorie} onChange={event => setBaseCategorie(event.target.value)} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
                   <option value="">Toutes</option>
-                  {TABLEAU_CATEGORIES.map(item => <option key={item} value={item}>{item}</option>)}
+                  {TABLEAU_CATEGORIES
+                    .filter(item => !basePersonne || (basePersonne === 'morale') === (item === 'Société'))
+                    .map(item => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                Province
+                <select value={baseProvince} onChange={event => setBaseProvince(event.target.value)} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                  <option value="">Toutes</option>
+                  {(base?.province_options || []).map(item => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                Sexe
+                <select value={baseSexe} onChange={event => setBaseSexe(event.target.value)} disabled={basePersonne === 'morale'} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                  <option value="">Tous</option>
+                  <option value="M">M</option>
+                  <option value="F">F</option>
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                Ancienneté
+                <select value={baseAnciennete} onChange={event => setBaseAnciennete(event.target.value)} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                  <option value="">Toutes</option>
+                  <option value="Ancien">Ancien</option>
+                  <option value="Nouveau">Nouveau</option>
                 </select>
               </label>
               {baseNational && (
@@ -839,9 +909,11 @@ export default function TableauModulePage() {
               <div className={styles.emptyBox}>{baseError}</div>
             ) : baseLoading ? (
               <div className={styles.emptyBox}>Chargement de la base...</div>
-            ) : !base || base.dossiers.length === 0 ? (
+            ) : !base || base.total_membres === 0 ? (
               <div className={styles.emptyBox}>
-                Aucun import pour l'instant. Chargez un fichier depuis l'onglet « Import Excel ».
+                {baseSearch || baseCategorie || basePersonne || baseProvince || baseSexe || baseAnciennete
+                  ? 'Aucun membre ne correspond à ces filtres.'
+                  : "Aucun import pour l'instant. Chargez un fichier depuis l'onglet « Import Excel »."}
               </div>
             ) : (
               <>
@@ -849,11 +921,27 @@ export default function TableauModulePage() {
                   <StatCard value={base.total_membres} label={`Membres - exercice ${base.exercice}`} icon={<Table2 size={18} />} />
                   <StatCard value={base.imports_couverts.length} label="Imports consolidés" icon={<Layers size={18} />} />
                   <StatCard value={base.membres_sans_numero} label="Sans n° d'ordre" icon={<AlertTriangle size={18} />} />
+                  {base.total_a_completer > 0 && (
+                    <StatCard value={base.total_a_completer} label="À compléter" icon={<AlertTriangle size={18} />} />
+                  )}
                   {base.national && (
                     <StatCard value={base.organisations.length} label="Conseils" icon={<BarChart2 size={18} />} />
                   )}
                 </div>
 
+                {base.total_a_completer > 0 && (
+                  <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '6px', color: '#92400e', fontSize: '13px', lineHeight: 1.4, marginBottom: '16px', padding: '10px 14px' }}>
+                    {base.total_a_completer} membre(s) viennent des fichiers personnes physiques ou morales. Ces fichiers
+                    ne portent ni la cotisation, ni le chiffre d'affaires : ces membres n'ont pas de
+                    conclusion et « Analyser la base » ne les prend pas en compte. Importer le classeur Tableau complète
+                    leur situation.
+                  </div>
+                )}
+
+                <p style={{ color: '#6b7280', fontSize: '12px', margin: '0 0 8px' }}>
+                  NHV : <strong style={{ color: COULEUR_NHV_ATTEINT }}>bleu</strong> à partir de {nhvMinimum},{' '}
+                  <strong style={{ color: COULEUR_NHV_FAIBLE }}>rouge</strong> sous {nhvMinimum * PART_NHV_ROUGE} (60 % du minimum), N/A pour les nouveaux et les sociétés.
+                </p>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={baseTableStyle}>
                     <thead>
@@ -862,8 +950,11 @@ export default function TableauModulePage() {
                         <th style={baseThStyle}>Nom</th>
                         {base.national && <th style={baseThStyle}>Conseil</th>}
                         <th style={baseThStyle}>Catégorie</th>
+                        <th style={baseThStyle}>Province</th>
+                        <th style={baseThStyle}>Sexe</th>
+                        <th style={baseThStyle}>Actif</th>
                         <th style={baseThStyle}>Ancienneté</th>
-                        <th style={baseThStyle}>Heures</th>
+                        <th style={baseThStyle} title="Nombre d'heures validées">NHV</th>
                         <th style={baseThStyle}>Cotisation</th>
                         <th style={baseThStyle}>Assurance</th>
                         <th style={baseThStyle}>Conclusion</th>
@@ -880,10 +971,18 @@ export default function TableauModulePage() {
                           <td style={baseTdStyle}>{dossier.nom}</td>
                           {base.national && <td style={baseTdStyle}>{dossier.organisation_nom || `#${dossier.organisation_id}`}</td>}
                           <td style={baseTdStyle}>{dossier.categorie || '—'}</td>
+                          <td style={baseTdStyle}>{dossier.province || '—'}</td>
+                          <td style={baseTdStyle}>{dossier.sexe || '—'}</td>
+                          <td style={baseTdStyle}>{booleanStatus(dossier.actif ?? null)}</td>
                           <td style={baseTdStyle}>
-                            {dossier.anciennete_annees != null ? `${dossier.anciennete_annees} an(s)` : '—'}
+                            {dossier.anciennete_libelle || '—'}
+                            {dossier.annee_inscription != null && dossier.anciennete_libelle !== 'À vérifier' && (
+                              <div style={{ color: '#6b7280', fontSize: '12px' }}>inscrit en {dossier.annee_inscription}</div>
+                            )}
                           </td>
-                          <td style={baseTdStyle}>{dossier.heures_forco ?? '—'}</td>
+                          {dossier.anciennete_libelle === 'Nouveau' || dossier.categorie === 'Société' || dossier.categorie === 'SEC'
+                            ? <td style={{ ...baseTdStyle, color: '#9ca3af' }} title="NHV non applicable">N/A</td>
+                            : <td style={{ ...baseTdStyle, ...styleNhv(dossier.heures_forco, nhvMinimum) }}>{dossier.heures_forco ?? '—'}</td>}
                           <td style={baseTdStyle}>{booleanStatus(dossier.cotisation_payee)}</td>
                           <td style={baseTdStyle}>{booleanStatus(dossier.assurance)}</td>
                           <td style={baseTdStyle}>{dossier.conclusion || 'À analyser'}</td>
@@ -899,6 +998,49 @@ export default function TableauModulePage() {
                           )}
                         </tr>
                       ))}
+                      {base.membres_a_completer.map(membre => {
+                        const signale = membre.signalements.length > 0
+                        return (
+                          <tr
+                            key={membre.id}
+                            style={signale ? { background: '#fee2e2' } : undefined}
+                            title={signale ? membre.signalements.join(' ; ') : undefined}
+                          >
+                            <td style={baseTdStyle}>
+                              {membre.numero_ordre || <span style={{ color: '#b91c1c' }}>à compléter</span>}
+                            </td>
+                            <td style={baseTdStyle}>
+                              {membre.nom || <span style={{ color: '#b91c1c' }}>à compléter</span>}
+                              {signale && (
+                                <div style={{ color: '#991b1b', fontSize: '12px' }}>{membre.signalements.join(' ; ')}</div>
+                              )}
+                            </td>
+                            {base.national && <td style={baseTdStyle}>{membre.organisation_nom || `#${membre.organisation_id}`}</td>}
+                            <td style={baseTdStyle}>{membre.categorie}</td>
+                            <td style={baseTdStyle}>{membre.province || '—'}</td>
+                            <td style={baseTdStyle}>{membre.sexe || '—'}</td>
+                            <td style={baseTdStyle}>{booleanStatus(membre.actif)}</td>
+                            <td style={baseTdStyle}>
+                              {membre.anciennete_libelle || '—'}
+                              {membre.annee_inscription != null && membre.anciennete_libelle !== 'À vérifier' && (
+                                <div style={{ color: '#6b7280', fontSize: '12px' }}>inscrit en {membre.annee_inscription}</div>
+                              )}
+                            </td>
+                            {membre.anciennete_libelle === 'Nouveau' || membre.categorie === 'Société' || membre.categorie === 'SEC'
+                              ? <td style={{ ...baseTdStyle, color: '#9ca3af' }} title="NHV non applicable">N/A</td>
+                              : <td style={{ ...baseTdStyle, ...styleNhv(membre.nhv, nhvMinimum) }}>{membre.nhv ?? '—'}</td>}
+                            <td style={baseTdStyle}>—</td>
+                            <td style={baseTdStyle}>{booleanStatus(membre.assurance)}</td>
+                            <td style={baseTdStyle}>
+                              <span style={{ color: '#92400e', fontWeight: 600 }}>À compléter</span>
+                            </td>
+                            <td style={{ ...baseTdStyle, whiteSpace: 'nowrap' }} title={membre.source_file_name || undefined}>
+                              {membre.date_situation ? new Date(`${membre.date_situation}T00:00:00`).toLocaleDateString('fr-FR') : '—'}
+                            </td>
+                            {canCorrect && !baseNational && <td style={baseTdStyle} />}
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -974,12 +1116,28 @@ export default function TableauModulePage() {
                           <div style={{ fontSize: '12px', color: '#dc2626', marginTop: '2px' }}>{imp.error_message}</div>
                         )}
                       </div>
-                      <span className={styles.pill} style={{
-                        background: imp.status === 'completed' ? '#d1fae5' : imp.status === 'error' ? '#fee2e2' : '#fef3c7',
-                        color: imp.status === 'completed' ? '#065f46' : imp.status === 'error' ? '#991b1b' : '#92400e',
-                      }}>
-                        {imp.status}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                        {(canImport || canExport) && imp.imported_rows > 0 && (
+                          <button
+                            type="button"
+                            className={styles.secondaryButton}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              downloadTableauImportAnnote(imp.id, imp.file_name).catch((err: unknown) => {
+                                setError(err instanceof Error ? err.message : 'Téléchargement du fichier annoté impossible.')
+                              })
+                            }}
+                          >
+                            Fichier annoté
+                          </button>
+                        )}
+                        <span className={styles.pill} style={{
+                          background: imp.status === 'completed' ? '#d1fae5' : imp.status === 'error' ? '#fee2e2' : '#fef3c7',
+                          color: imp.status === 'completed' ? '#065f46' : imp.status === 'error' ? '#991b1b' : '#92400e',
+                        }}>
+                          {imp.status}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1037,8 +1195,8 @@ export default function TableauModulePage() {
                           <td style={{ padding: '7px 10px' }}>
                             {d.cotisation_payee === true ? <CheckCircle2 size={13} color="#16a34a" /> : d.cotisation_payee === false ? <XCircle size={13} color="#dc2626" /> : '—'}
                           </td>
-                          <td style={{ padding: '7px 10px', color: isSociete ? '#9ca3af' : 'inherit' }}>
-                            {isSociete ? 'N/A' : (d.heures_forco !== null ? d.heures_forco : '—')}
+                          <td style={{ padding: '7px 10px', ...(isSociete || d.anciennete === 'Nouveau' ? { color: '#9ca3af' } : styleNhv(d.heures_forco, nhvMinimum)) }}>
+                            {isSociete || d.anciennete === 'Nouveau' ? 'N/A' : (d.heures_forco !== null ? d.heures_forco : '—')}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             {d.assurance === true ? <CheckCircle2 size={13} color="#16a34a" /> : d.assurance === false ? <XCircle size={13} color="#dc2626" /> : '—'}

@@ -82,6 +82,9 @@ export interface TableauDossier {
   date_situation?: string | null
   source_file_name?: string | null
   organisation_nom?: string | null
+  province?: string | null
+  actif?: boolean | null
+  anciennete_libelle?: string | null
 }
 
 export interface TableauAnalyse {
@@ -188,7 +191,7 @@ export interface TableauImportResult {
   reprises?: number
   decisions_reportees?: number
   nouveaux_membres?: number
-  errors: Array<{ ligne?: number; champ?: string; message?: string }>
+  errors: Array<{ feuille?: string; ligne?: number; champ?: string; message?: string }>
   message: string
 }
 
@@ -217,11 +220,40 @@ export const runTableauAnalyseBase = (exercice: string, national = false) => {
   return apiRequest<TableauBaseAnalyseResult>('POST', `${BASE}/analyses/base?${qs}`)
 }
 
+/** Membre d'un fichier personnes physiques ou morales, encore sans dossier ni conclusion. */
+export interface TableauMembreACompleter {
+  id: string
+  import_id: number
+  organisation_id: number
+  organisation_nom: string | null
+  numero_ordre: string | null
+  nom: string
+  categorie: string
+  nif: string | null
+  cabinet: string | null
+  email: string | null
+  telephone: string | null
+  assurance: boolean | null
+  sexe: string | null
+  nhv: number | null
+  actif: boolean | null
+  province: string | null
+  annee_inscription: number | null
+  anciennete_libelle: string | null
+  date_situation: string | null
+  source_file_name: string | null
+  signalements: string[]
+}
+
 export interface TableauBase {
   exercice: string
   national: boolean
   organisations: number[]
   total_membres: number
+  total_dossiers: number
+  total_a_completer: number
+  membres_a_completer: TableauMembreACompleter[]
+  province_options: string[]
   membres_sans_numero: number
   imports_couverts: number[]
   analysis_import_id: number | null
@@ -239,6 +271,10 @@ export const getTableauBase = (params?: {
   q?: string
   categorie?: string
   organisationId?: number
+  personne?: string
+  province?: string
+  sexe?: string
+  anciennete?: string
   limit?: number
   offset?: number
 }) => {
@@ -249,6 +285,10 @@ export const getTableauBase = (params?: {
   if (params?.q) qs.set('q', params.q)
   if (params?.categorie) qs.set('categorie', params.categorie)
   if (params?.organisationId) qs.set('organisation_id', String(params.organisationId))
+  if (params?.personne) qs.set('personne', params.personne)
+  if (params?.province) qs.set('province', params.province)
+  if (params?.sexe) qs.set('sexe', params.sexe)
+  if (params?.anciennete) qs.set('anciennete', params.anciennete)
   if (params?.limit) qs.set('limit', String(params.limit))
   if (params?.offset) qs.set('offset', String(params.offset))
   const suffix = qs.toString() ? `?${qs}` : ''
@@ -278,7 +318,7 @@ export const listTableauDossiers = (params: {
 }
 
 /** Catégories que le barème de délibération sait juger (miroir de CATEGORIE_CRITERES). */
-export const TABLEAU_CATEGORIES = ['Société', 'SEC', 'EC Cabinet', 'EC Indépendant', 'EC Salarié', 'Stagiaire'] as const
+export const TABLEAU_CATEGORIES = ['Société', 'EC Cabinet', 'EC Indépendant', 'EC Salarié', 'Stagiaire'] as const
 
 /** Analyse enregistrée pour un import et un périmètre — null si aucune. */
 export const getTableauAnalyse = (import_id: number, scope: 'import' | 'base' = 'import') =>
@@ -339,6 +379,26 @@ export const downloadTableauExport = async (import_id: number, scope: 'import' |
   const a = document.createElement('a')
   a.href = url
   a.download = `Tableau_${scope === 'base' ? 'base_' : ''}${import_id}.xlsx`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/** Télécharge le fichier importé, lignes à compléter en rouge. */
+export const downloadTableauImportAnnote = async (import_id: number, file_name?: string | null): Promise<void> => {
+  const path = `${BASE}/imports/${import_id}/fichier-annote`
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'GET',
+    headers: getAuthHeaders(path),
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(`Téléchargement échoué (${res.status})`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${(file_name || `import_${import_id}`).replace(/\.xlsx?$/i, '')}_annote.xlsx`
   document.body.appendChild(a)
   a.click()
   a.remove()

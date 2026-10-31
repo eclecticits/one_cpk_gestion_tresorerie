@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { uploadTableauExcel, type TableauImportResult } from '../api/tableau'
+import { downloadTableauImportAnnote, uploadTableauExcel, type TableauImportResult } from '../api/tableau'
 import styles from './ImportModules.module.css'
 
 interface ImportTableauDossiersProps {
@@ -123,7 +123,7 @@ const CONSIGNES_MODELE_TABLEAU = [
   '4. Cotisation, Assurance, Chiffre d\'affaires : OUI ou NON.',
   "5. NHV : nombre d'heures validées, par exemple 120.",
   '6. Date naissance : JJ/MM/AAAA. Elle sert à calculer l\'âge.',
-  '7. Ancienneté : Ancien ou Nouveau.',
+  "7. Ancienneté : déduite de l'année du N° d'ordre et de l'exercice (inscrit l'année de l'exercice : Nouveau ; avant : Ancien). La colonne ne sert que si le N° d'ordre est illisible.",
   "8. Une cellule vide n'efface pas ce qui était déjà connu du membre.",
   "9. La conclusion (INSCRIT / NON INSCRIT / À DÉLIBÉRER) est calculée à l'analyse : ne la saisissez pas.",
 ]
@@ -150,6 +150,7 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
   const [feuilles, setFeuilles] = useState<FeuilleApercu[]>([])
   const [lectureErreur, setLectureErreur] = useState<string | null>(null)
   const [showGuide, setShowGuide] = useState(false)
+  const [annoteErreur, setAnnoteErreur] = useState<string | null>(null)
   const [result, setResult] = useState<(Partial<TableauImportResult> & {
     success: boolean
     message: string
@@ -282,6 +283,7 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
     const file = e.target.files?.[0]
     if (!file) return
     setResult(null)
+    setAnnoteErreur(null)
     setFichier(file)
     setFeuilles([])
     setLectureErreur(null)
@@ -309,6 +311,7 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
 
     setImporting(true)
     setResult(null)
+    setAnnoteErreur(null)
     try {
       const res = await uploadTableauExcel(exercice.trim(), fichier, dateSituation, sourceType)
       setResult({ ...res, errors: res.errors || [] })
@@ -328,8 +331,8 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
     if (!result?.errors.length) return
     const echapper = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
     const lignes = [
-      ['Ligne', 'Colonne', 'Message'].join(';'),
-      ...result.errors.map((err) => [err.ligne, err.champ, err.message].map(echapper).join(';')),
+      ['Feuille', 'Ligne', 'Colonne', 'Message'].join(';'),
+      ...result.errors.map((err) => [err.feuille, err.ligne, err.champ, err.message].map(echapper).join(';')),
     ]
     const blob = new Blob([`﻿${lignes.join('\n')}`], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -339,6 +342,22 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
     a.click()
     URL.revokeObjectURL(url)
   }
+
+  const downloadAnnote = async () => {
+    if (!result?.import_id) return
+    setAnnoteErreur(null)
+    try {
+      await downloadTableauImportAnnote(result.import_id, result.file_name)
+    } catch (error: any) {
+      setAnnoteErreur(String(error?.message || 'Téléchargement du fichier annoté impossible.'))
+    }
+  }
+
+  // Une ligne peut porter plusieurs signalements : on compte les lignes, pas les messages.
+  const lignesSignalees = new Set(
+    (result?.errors ?? []).filter((err) => err.champ !== 'headers').map((err) => `${err.feuille ?? ''}|${err.ligne}`),
+  ).size
+  const plusieursFeuilles = new Set((result?.errors ?? []).map((err) => err.feuille ?? '')).size > 1
 
   return (
     <div className={`${styles.expertImportShell} ${styles.tableauImportShell}`}>
@@ -473,20 +492,34 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
         <section className={`${styles.importReport} ${result.success ? styles.reportSuccess : styles.reportError}`}>
           <div className={styles.reportHeader}>
             <h3>{result.success ? (result.duplicate_detected ? 'Fichier déjà importé' : "Rapport d'import") : 'Import échoué'}</h3>
-            {result.errors.length > 0 && (
-              <button type="button" className={styles.errorDownloadBtn} onClick={downloadErrorsCsv}>
-                Télécharger CSV
-              </button>
-            )}
+            <div className={styles.reportActions}>
+              {result.success && !!result.import_id && (lignesSignalees > 0 || result.duplicate_detected) && (
+                <button type="button" className={styles.errorDownloadBtn} onClick={() => void downloadAnnote()}>
+                  Télécharger le fichier annoté
+                </button>
+              )}
+              {result.errors.length > 0 && (
+                <button type="button" className={styles.errorDownloadBtn} onClick={downloadErrorsCsv}>
+                  Télécharger CSV
+                </button>
+              )}
+            </div>
           </div>
           <p>{result.message}</p>
+          {result.success && lignesSignalees > 0 && (
+            <p className={styles.reportLignesSignalees}>
+              {lignesSignalees} ligne(s) à compléter : elles sont bien importées. Le fichier annoté les affiche en
+              rouge, avec ce qui manque ; une fois complété, il se réimporte tel quel.
+            </p>
+          )}
+          {annoteErreur && <p className={styles.reportLignesSignalees}>{annoteErreur}</p>}
           {result.success && (
             <div className={styles.importStats}>
               <span>Lignes: {result.total_lignes ?? 0}</span>
               <span>Importés: {result.imported ?? 0}</span>
               <span>Mis à jour: {result.updated ?? 0}</span>
               <span>Ignorés: {result.skipped ?? 0}</span>
-              {result.rejected_rows != null && <span>Rejetées: {result.rejected_rows}</span>}
+              {!!result.rejected_rows && <span>Rejetées: {result.rejected_rows}</span>}
               <span>Avertissements: {result.errors.length}</span>
             </div>
           )}
@@ -506,13 +539,13 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
             </p>
           )}
           {result.errors.length > 0 && (
-            <div className={styles.errorList}>
-              {result.errors.slice(0, 5).map((err, index) => (
+            <div className={`${styles.errorList} ${styles.tableauErrorList}`}>
+              {result.errors.map((err, index) => (
                 <span key={`${err.ligne ?? index}-${index}`}>
+                  {plusieursFeuilles && err.feuille ? `${err.feuille} · ` : ''}
                   Ligne {err.ligne ?? '—'} · {err.champ ?? '—'}: {err.message ?? '—'}
                 </span>
               ))}
-              {result.errors.length > 5 && <span>{result.errors.length - 5} avertissement(s) supplémentaire(s).</span>}
             </div>
           )}
         </section>

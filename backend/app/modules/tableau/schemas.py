@@ -60,6 +60,9 @@ class TableauDossierOut(BaseModel):
     date_situation: date | None = None
     source_file_name: str | None = None
     organisation_nom: str | None = None
+    province: str | None = None
+    actif: bool | None = None
+    anciennete_libelle: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -244,12 +247,41 @@ class TableauPVCreate(BaseModel):
     instructions: str | None = None
 
 
+class TableauMembreACompleterOut(BaseModel):
+    """Membre connu par un fichier personnes physiques ou morales, encore sans dossier."""
+    id: str
+    import_id: int
+    organisation_id: int
+    organisation_nom: str | None = None
+    numero_ordre: str | None = None
+    nom: str
+    categorie: str
+    nif: str | None = None
+    cabinet: str | None = None
+    email: str | None = None
+    telephone: str | None = None
+    assurance: bool | None = None
+    sexe: str | None = None
+    nhv: float | None = None
+    actif: bool | None = None
+    province: str | None = None
+    annee_inscription: int | None = None
+    anciennete_libelle: str | None = None
+    date_situation: date | None = None
+    source_file_name: str | None = None
+    signalements: list[str] = Field(default_factory=list)
+
+
 class TableauBaseOut(BaseModel):
     """Base du Tableau : une situation par membre, tous imports de l'exercice confondus."""
     exercice: str
     national: bool = False
     organisations: list[int] = Field(default_factory=list)
     total_membres: int = 0
+    total_dossiers: int = 0
+    total_a_completer: int = 0
+    membres_a_completer: list[TableauMembreACompleterOut] = Field(default_factory=list)
+    province_options: list[str] = Field(default_factory=list)
     membres_sans_numero: int = 0
     imports_couverts: list[int] = Field(default_factory=list)
     analysis_import_id: int | None = None

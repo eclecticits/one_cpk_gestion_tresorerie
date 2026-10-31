@@ -49,6 +49,7 @@ from .service import (
     create_pv,
     create_report,
     corriger_dossier,
+    export_import_annote,
     export_tableau,
     get_base_tableau,
     import_source_snapshot,
@@ -138,6 +139,24 @@ async def upload_excel(
     )
 
 
+@router.get(
+    "/imports/{import_id}/fichier-annote",
+    summary="Fichier importé, lignes à compléter en rouge",
+    dependencies=[Depends(has_any_permission(["tableau.import", "tableau.export"]))],
+)
+async def download_import_annote(
+    import_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> StreamingResponse:
+    content, fname = await export_import_annote(db, tenant_id, import_id)
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 async def _est_conseil_national(db: AsyncSession, user: User) -> bool:
     """Le Conseil National (et le super-admin) peut consolider tous les conseils."""
     if (user.role or "").lower() == "super_admin":
@@ -161,6 +180,10 @@ async def get_base(
     q: str | None = Query(default=None, max_length=120),
     categorie: str | None = Query(default=None, max_length=50),
     organisation_id: int | None = Query(default=None, ge=1),
+    personne: Literal["morale", "physique"] | None = Query(default=None),
+    province: str | None = Query(default=None, max_length=100),
+    sexe: Literal["M", "F"] | None = Query(default=None),
+    anciennete: Literal["Ancien", "Nouveau"] | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -191,6 +214,10 @@ async def get_base(
         recherche=q,
         categorie=categorie,
         organisation_id=organisation_id,
+        personne=personne,
+        province=province,
+        sexe=sexe,
+        anciennete=anciennete,
         limit=limit,
         offset=offset,
     )

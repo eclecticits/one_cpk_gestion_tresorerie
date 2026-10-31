@@ -830,3 +830,515 @@ def test_multisource_pipeline_has_no_official_or_legacy_import_side_effects():
     assert "CategoryChangesHistory" not in source
     assert "ImportsHistory" not in source
     assert "TableauDossier(" not in source
+
+
+def _fills_rouges(sheet, ligne: int) -> set[str]:
+    return {cell.fill.fgColor.rgb[-6:] for cell in sheet[ligne] if cell.fill.fill_type == "solid"}
+
+
+@pytest.mark.asyncio
+async def test_aucune_information_manquante_n_ecarte_une_ligne_pp(db_session, test_admin_user):
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id, "pp-incomplet.xlsx",
+        _xlsx(
+            ["N°Ordrre", "Nom", "Statut", "N° impôt"],
+            [
+                ["EC/16.99201", "COMPLET Jean", "indépendant", "A1234567X"],
+                ["EC/16.99202", "SANS NIF Marie", "indépendant", None],
+                [None, "SANS NUMERO Paul", "indépendant", "A7654321X"],
+                ["EC/16.99204", None, "indépendant", "A1111111X"],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+    assert outcome.imp.rejected_rows == 0
+    assert outcome.imported == 4
+    snapshots = (await db_session.execute(
+        select(TableauPersonnePhysiqueSnapshot).where(TableauPersonnePhysiqueSnapshot.source_import_id == outcome.imp.id)
+    )).scalars().all()
+    assert len(snapshots) == 4
+    sans_numero = next(s for s in snapshots if s.nom == "SANS NUMERO Paul")
+    assert sans_numero.identity_id is None and sans_numero.numero_ordre == ""
+    assert {(e["ligne"], e["champ"]) for e in outcome.errors} == {(3, "nif"), (4, "numero_ordre"), (5, "nom")}
+
+
+@pytest.mark.asyncio
+async def test_une_collision_pp_pm_garde_la_ligne_sans_la_rattacher(db_session, test_admin_user):
+    organisation_id = test_admin_user.organisation_id
+    await import_source_snapshot(
+        db_session, test_admin_user, organisation_id, "pp-collision.xlsx",
+        _xlsx(["N° Ordre", "Nom"], [["EC/16.99301", "PERSONNE Jean"]]),
+        "personnes_physiques", "2026", date(2026, 10, 30),
+    )
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, organisation_id, "pm-collision.xlsx",
+        _xlsx(["N° Ordre", "Société", "Numéro impôt"], [["EC/16.99301", "SOCIETE SA", "A1X"]]),
+        "personnes_morales", "2026", date(2026, 10, 31),
+    )
+    snapshot = (await db_session.execute(
+        select(TableauPersonneMoraleSnapshot).where(TableauPersonneMoraleSnapshot.source_import_id == outcome.imp.id)
+    )).scalar_one()
+    assert snapshot.identity_id is None
+    assert any(e["message"] == "Collision de classification PP/PM" for e in outcome.errors)
+
+
+@pytest.mark.asyncio
+async def test_le_fichier_annote_met_la_ligne_en_rouge_et_se_reimporte(db_session, test_admin_user):
+    organisation_id = test_admin_user.organisation_id
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, organisation_id, "Membres PP CP.xlsx",
+        _xlsx(
+            ["N°Ordrre", "Nom", "Date naissance", "Statut", "N° impôt"],
+            [
+                ["EC/16.99401", "COMPLET Jean", datetime(1980, 6, 15), "indépendant", "A1234567X"],
+                ["EC/16.99402", "SANS NIF Marie", "01/01/1975", "indépendant", None],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+    content, nom = await tableau_service.export_import_annote(db_session, organisation_id, outcome.imp.id)
+    assert nom == "Membres_PP_CP_annote.xlsx"
+
+    wb = openpyxl.load_workbook(io.BytesIO(content))
+    sheet = wb["Sheet"]
+    entetes = [cell.value for cell in sheet[1]]
+    # L'ordre du fichier d'origine, et le numéro de ligne annoncé par le rapport.
+    assert entetes == ["N°Ordrre", "Nom", "Date naissance", "Statut", "N° impôt", "Signalement"]
+    assert sheet.cell(2, 3).value == "15/06/1980"
+    assert sheet.cell(3, 2).value == "SANS NIF Marie"
+    assert sheet.cell(3, 6).value == "Indépendant sans NIF"
+    assert _fills_rouges(sheet, 2) == set()
+    assert _fills_rouges(sheet, 3) == {"FFC7CE", "FF7C80"}
+    assert sheet.cell(3, 5).fill.fgColor.rgb[-6:] == "FF7C80"
+    assert [c.value for c in wb["Signalements"][2]] == ["Sheet", 3, "nif", "Indépendant sans NIF"]
+
+    # Le fichier annoté, une fois complété, repasse par l'import.
+    sheet.cell(3, 5).value = "A7654321X"
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    reprise = await import_source_snapshot(
+        db_session, test_admin_user, organisation_id, nom, buffer.getvalue(),
+        "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+    assert reprise.imported == 2
+    assert reprise.errors == []
+
+    # Un second cycle ne cumule pas les colonnes techniques d'annotation.
+    content_repris, _ = await tableau_service.export_import_annote(db_session, organisation_id, reprise.imp.id)
+    wb_repris = openpyxl.load_workbook(io.BytesIO(content_repris))
+    assert [cell.value for cell in wb_repris["Sheet"][1]].count("Signalement") == 1
+
+
+@pytest.mark.asyncio
+async def test_fichier_annote_d_un_autre_conseil_introuvable(db_session, test_admin_user):
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id, "pp.xlsx",
+        _xlsx(["N° Ordre", "Nom"], [["EC/16.99501", "CLOISON Jean"]]),
+        "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+    with pytest.raises(Exception) as excinfo:
+        await tableau_service.export_import_annote(db_session, test_admin_user.organisation_id + 999, outcome.imp.id)
+    assert getattr(excinfo.value, "status_code", None) == 404
+
+
+@pytest.mark.asyncio
+async def test_classeur_complet_signale_a_la_bonne_ligne_et_garde_le_membre_sans_nom(db_session, test_admin_user):
+    wb = openpyxl.Workbook()
+    wb.active.title = "EC EN CABINET"
+    cabinet = wb.active
+    cabinet.append(["SECTION A1"])
+    cabinet.append(["N°", "N° d'ordre", "Nom, post-noms et prénoms", "Cabinet d'attache", "Cotisation"])
+    cabinet.append([1, "EC/16.99601", "COMPLET Jean", "CABINET X", "OUI"])
+    independants = wb.create_sheet("EC INDEPENDANTS")
+    independants.append(["SECTION A2"])
+    independants.append(["N°", "N° d'ordre", "Nom, post-noms et prénoms", "NIF", "Cotisation"])
+    independants.append([1, "EC/16.99602", "AVEC NIF Marie", "A1X", "OUI"])
+    independants.append([2, "EC/16.99603", "SANS NIF Paul", None, "OUI"])
+    independants.append([3, "EC/16.99604", None, "A2X", "OUI"])
+    independants.append([4, None, None, None, None])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+
+    outcome = await tableau_service.import_excel(
+        db_session, test_admin_user, test_admin_user.organisation_id, "tableau.xlsx", buffer.getvalue(),
+        "2026", date_situation=date(2026, 10, 31),
+    )
+    # La ligne numérotée mais vide n'est pas un membre ; le membre sans nom en est un.
+    assert outcome.imported == 4
+    assert {(e["feuille"], e["ligne"], e["champ"]) for e in outcome.errors} == {
+        ("EC INDEPENDANTS", 4, "nif"),
+        ("EC INDEPENDANTS", 5, "nom"),
+    }
+
+    content, _nom = await tableau_service.export_import_annote(db_session, test_admin_user.organisation_id, outcome.imp.id)
+    annote = openpyxl.load_workbook(io.BytesIO(content))
+    assert _fills_rouges(annote["EC EN CABINET"], 3) == set()
+    feuille = annote["EC INDEPENDANTS"]
+    assert feuille.cell(4, 3).value == "SANS NIF Paul"
+    assert "FFC7CE" in _fills_rouges(feuille, 4)
+    assert _fills_rouges(feuille, 3) == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_type", "headers", "complete", "incomplete", "signales"),
+    [
+        (
+            "personnes_morales",
+            ["N° Ordre", "Société", "Numéro impôt"],
+            ["SEC/18.99701", "COMPLETE SA", "A1X"],
+            ["SEC/18.99702", "SANS NIF SA", None],
+            {"numero_impot": "Société sans NIF"},
+        ),
+        (
+            "chiffres_affaires",
+            ["N° d'ordre", "Membre", "AN.", "Dev", "CA facturé", "CA collecté"],
+            ["EC/17.99703", "MEMBRE", 2025, "USD", 100, 90],
+            ["EC/17.99704", None, None, None, None, None],
+            {
+                "membre": "Membre manquant", "annee": "Année manquante", "devise": "Devise manquante",
+                "ca_facture": "CA facturé manquant", "ca_collecte": "CA collecté manquant",
+            },
+        ),
+        (
+            "assurances",
+            ["Membre", "Déclaré", "Souscrit", "Fin couverture", "Année de souscription", "Assureur"],
+            ["EC/17.99705 COMPLET", "09/08/2024", "29/05/2024", "21/05/2025", 2024, "ASSUREUR X"],
+            ["EC/17.99706 INCOMPLET", None, "29/05/2024", None, None, None],
+            {
+                "declare": "Déclaré manquant", "fin_couverture": "Fin de couverture manquante",
+                "annee_souscription": "Année de souscription manquante", "assureur": "Souscrit sans assureur",
+            },
+        ),
+    ],
+)
+async def test_chaque_source_garde_signale_et_annote_la_ligne_incomplete(
+    db_session, test_admin_user, source_type, headers, complete, incomplete, signales,
+):
+    organisation_id = test_admin_user.organisation_id
+    # Le membre existe : le rapprochement n'ajoute pas son propre signalement.
+    for numero in (str(complete[0]).split()[0], str(incomplete[0]).split()[0]):
+        if source_type != "personnes_morales":
+            await import_source_snapshot(
+                db_session, test_admin_user, organisation_id, f"pp-{numero[-5:]}.xlsx",
+                _xlsx(["N° Ordre", "Nom"], [[numero, "MEMBRE"]]),
+                "personnes_physiques", "2026", date(2026, 10, 1),
+            )
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, organisation_id, f"{source_type}.xlsx",
+        _xlsx(headers, [complete, incomplete]), source_type, "2026", date(2026, 10, 31),
+    )
+    assert outcome.imported == 2
+    assert outcome.imp.rejected_rows == 0
+    assert {e["champ"]: e["message"] for e in outcome.errors} == signales
+    assert {e["ligne"] for e in outcome.errors} == {3}
+
+    content, nom = await tableau_service.export_import_annote(db_session, organisation_id, outcome.imp.id)
+    wb = openpyxl.load_workbook(io.BytesIO(content))
+    sheet = wb["Sheet"]
+    assert [cell.value for cell in sheet[1]] == [*headers, "Signalement"]
+    assert _fills_rouges(sheet, 2) == set()
+    assert "FFC7CE" in _fills_rouges(sheet, 3) or "FF7C80" in _fills_rouges(sheet, 3)
+    assert sheet.cell(3, 1).value == incomplete[0]
+    for message in signales.values():
+        assert message in sheet.cell(3, len(headers) + 1).value
+
+    # Le fichier annoté repasse par l'import du même type.
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    reprise = await import_source_snapshot(
+        db_session, test_admin_user, organisation_id, nom, buffer.getvalue(), source_type, "2026", date(2026, 11, 1),
+    )
+    assert reprise.imported == 2
+
+
+async def _pp(db_session, user, nom_fichier, lignes, situation=date(2026, 10, 31)):
+    return await import_source_snapshot(
+        db_session, user, user.organisation_id, nom_fichier,
+        _xlsx(["N° Ordre", "Nom", "Statut", "N° impôt"], lignes), "personnes_physiques", "2026", situation,
+    )
+
+
+async def _base(db_session, user, **kwargs):
+    return await tableau_service.get_base_tableau(db_session, [user.organisation_id], exercice="2026", limit=50, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_la_base_montre_les_membres_importes_sans_conclusion(db_session, admin_isole):
+    await _pp(db_session, admin_isole, "pp-base.xlsx", [
+        ["EC/16.99801", "BASE Jean", "indépendant", "A1X"],
+        ["EC/16.99802", "BASE Marie", "indépendant", None],
+    ])
+    await import_source_snapshot(
+        db_session, admin_isole, admin_isole.organisation_id, "pm-base.xlsx",
+        _xlsx(["N° Ordre", "Société", "Numéro impôt"], [["SEC/18.99803", "BASE SA", "A2X"]]),
+        "personnes_morales", "2026", date(2026, 10, 31),
+    )
+    base = await _base(db_session, admin_isole)
+
+    assert base["dossiers"] == []
+    assert base["total_dossiers"] == 0
+    assert base["total_membres"] == base["total_a_completer"] == 3
+    par_numero = {m["numero_ordre"]: m for m in base["membres_a_completer"]}
+    assert par_numero["EC/16.99801"]["categorie"] == "EC Indépendant"
+    assert par_numero["EC/16.99801"]["signalements"] == []
+    assert par_numero["EC/16.99802"]["signalements"] == ["Indépendant sans NIF"]
+    assert par_numero["SEC/18.99803"]["categorie"] == "Société"
+    assert "conclusion" not in par_numero["EC/16.99801"]
+    # Aucun dossier n'a été créé : l'analyse n'a rien à juger.
+    assert (await db_session.execute(select(TableauDossier).where(TableauDossier.organisation_id == admin_isole.organisation_id))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_le_dossier_du_classeur_prime_sur_la_ligne_a_completer(db_session, admin_isole):
+    await _pp(db_session, admin_isole, "pp-prime.xlsx", [
+        ["EC/16.99811", "AVEC DOSSIER Jean", "en cabinet", None],
+        ["EC/16.99812", "SANS DOSSIER Marie", "en cabinet", None],
+    ])
+    wb = openpyxl.Workbook()
+    wb.active.title = "EC EN CABINET"
+    wb.active.append(["N°", "N° d'ordre", "Nom, post-noms et prénoms", "Cabinet d'attache", "Cotisation"])
+    wb.active.append([1, "EC/16.99811", "AVEC DOSSIER Jean", "CABINET X", "OUI"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    await tableau_service.import_excel(
+        db_session, admin_isole, admin_isole.organisation_id, "classeur.xlsx", buffer.getvalue(),
+        "2026", date_situation=date(2026, 10, 31),
+    )
+    base = await _base(db_session, admin_isole)
+    assert [d.numero_ordre for d in base["dossiers"]] == ["EC/16.99811"]
+    assert [m["numero_ordre"] for m in base["membres_a_completer"]] == ["EC/16.99812"]
+    assert base["total_membres"] == 2
+
+
+@pytest.mark.asyncio
+async def test_un_reimport_ne_duplique_pas_les_membres_a_completer(db_session, admin_isole):
+    await _pp(db_session, admin_isole, "pp-v1.xlsx", [
+        ["EC/16.99821", "ANCIEN NOM", "salarié", None],
+        [None, "SANS NUMERO", "salarié", None],
+    ], date(2026, 10, 1))
+    await _pp(db_session, admin_isole, "pp-v2.xlsx", [
+        ["EC/16.99821", "NOUVEAU NOM", "salarié", None],
+        [None, "SANS NUMERO", "salarié", None],
+    ], date(2026, 10, 31))
+    base = await _base(db_session, admin_isole)
+    assert sorted(m["nom"] for m in base["membres_a_completer"]) == ["NOUVEAU NOM", "SANS NUMERO"]
+    assert base["membres_sans_numero"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pagination_et_filtres_des_membres_a_completer(db_session, admin_isole):
+    await _pp(db_session, admin_isole, "pp-pages.xlsx", [
+        [f"EC/16.9983{i}", f"PAGE {i}", "en cabinet" if i < 2 else "salarié", None] for i in range(4)
+    ])
+    page = await tableau_service.get_base_tableau(
+        db_session, [admin_isole.organisation_id], exercice="2026", limit=3, offset=3,
+    )
+    assert [m["nom"] for m in page["membres_a_completer"]] == ["PAGE 3"]
+    assert page["total_membres"] == 4
+    assert (await _base(db_session, admin_isole, categorie="EC Salarié"))["total_a_completer"] == 2
+    assert [m["nom"] for m in (await _base(db_session, admin_isole, recherche="page 1"))["membres_a_completer"]] == ["PAGE 1"]
+    assert (await _base(db_session, admin_isole, anomalie_only=True))["total_a_completer"] == 0
+    autre = await tableau_service.get_base_tableau(db_session, [admin_isole.organisation_id + 999], exercice="2026", limit=50)
+    assert autre["total_a_completer"] == 0
+
+
+@pytest.mark.asyncio
+async def test_le_filtre_societe_retrouve_aussi_les_anciens_dossiers_sec(db_session, admin_isole):
+    wb = openpyxl.Workbook()
+    wb.active.title = "SOCIETES"
+    wb.active.append(["N°", "N° d'ordre", "Dénomination", "NIF", "Cotisation"])
+    wb.active.append([1, "SEC/18.99841", "ANCIENNE SEC SA", "A1X", "OUI"])
+    wb.active.append([2, "SEC/18.99842", "NOUVELLE SOCIETE SA", "A2X", "OUI"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    outcome = await tableau_service.import_excel(
+        db_session, admin_isole, admin_isole.organisation_id, "societes.xlsx", buffer.getvalue(),
+        "2026", date_situation=date(2026, 10, 31),
+    )
+    ancien = (await db_session.execute(
+        select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id, TableauDossier.numero_ordre == "SEC/18.99841")
+    )).scalar_one()
+    ancien.categorie = "SEC"
+    await db_session.commit()
+
+    base = await _base(db_session, admin_isole, categorie="Société")
+    assert sorted(d.numero_ordre for d in base["dossiers"]) == ["SEC/18.99841", "SEC/18.99842"]
+
+
+async def _membres_filtres(db_session, admin_isole):
+    org = admin_isole.organisation_id
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pp-filtres.xlsx",
+        _xlsx(
+            ["N° Ordre", "Nom", "Sexe", "Province", "Statut"],
+            [
+                ["EC/17.99851", "ANCIEN Jean", "M", "KINSHASA", "en cabinet"],
+                ["EC/25.99852", "ANCIENNE Marie", "F", "kinshasa ", "salarié"],
+                ["EC/26.99853", "NOUVEAU Paul", "Masculin", "HAUT-KATANGA", "indépendant"],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pm-filtres.xlsx",
+        _xlsx(["N° Ordre", "Société", "Province", "Numéro impôt"], [["SEC/18.99854", "CABINET SA", "KINSHASA", "A1X"]]),
+        "personnes_morales", "2026", date(2026, 10, 31),
+    )
+
+
+@pytest.mark.asyncio
+async def test_filtres_personne_province_sexe_et_anciennete(db_session, admin_isole):
+    await _membres_filtres(db_session, admin_isole)
+
+    async def noms(**filtres):
+        base = await _base(db_session, admin_isole, **filtres)
+        return sorted(m["nom"] for m in base["membres_a_completer"])
+
+    assert await noms(personne="morale") == ["CABINET SA"]
+    assert await noms(personne="physique") == ["ANCIEN Jean", "ANCIENNE Marie", "NOUVEAU Paul"]
+    assert await noms(province="kinshasa") == ["ANCIEN Jean", "ANCIENNE Marie", "CABINET SA"]
+    assert await noms(sexe="F") == ["ANCIENNE Marie"]
+    assert await noms(sexe="M") == ["ANCIEN Jean", "NOUVEAU Paul"]
+    assert await noms(anciennete="Nouveau") == ["NOUVEAU Paul"]
+    assert await noms(personne="physique", province="KINSHASA", anciennete="Ancien") == ["ANCIEN Jean", "ANCIENNE Marie"]
+    base = await _base(db_session, admin_isole)
+    assert base["province_options"] == ["HAUT-KATANGA", "KINSHASA"]
+
+
+@pytest.mark.asyncio
+async def test_l_anciennete_suit_l_exercice_sans_annee_figee(db_session, admin_isole):
+    await _membres_filtres(db_session, admin_isole)
+    base = await _base(db_session, admin_isole)
+    libelles = {m["numero_ordre"]: (m["anciennete_libelle"], m["annee_inscription"]) for m in base["membres_a_completer"]}
+    assert libelles["EC/17.99851"] == ("Ancien", 2017)
+    assert libelles["EC/25.99852"] == ("Ancien", 2025)
+    assert libelles["EC/26.99853"] == ("Nouveau", 2026)
+
+    # L'exercice suivant : les inscrits de 2026 deviennent des anciens, et ceux de 2027 les nouveaux.
+    assert tableau_service.verdict_engine.libelle_anciennete("EC/26.99853", 2027) == "Ancien"
+    assert tableau_service.verdict_engine.libelle_anciennete("EC/27.00001", 2027) == "Nouveau"
+    assert tableau_service.verdict_engine.libelle_anciennete("ANCIEN-FORMAT", 2027) is None
+
+
+@pytest.mark.asyncio
+async def test_le_numero_d_ordre_prime_sur_l_anciennete_du_fichier_et_les_filtres_valent_pour_les_dossiers(db_session, admin_isole):
+    org = admin_isole.organisation_id
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pp-province.xlsx",
+        _xlsx(["N° Ordre", "Nom", "Province", "Statut"], [["EC/17.99861", "DOSSIER Jean", "KINSHASA", "en cabinet"]]),
+        "personnes_physiques", "2026", date(2026, 10, 30),
+    )
+    wb = openpyxl.Workbook()
+    wb.active.title = "EC EN CABINET"
+    wb.active.append(["N°", "N° d'ordre", "Nom, post-noms et prénoms", "Sexe", "Ancienneté", "Cabinet d'attache"])
+    wb.active.append([1, "EC/17.99861", "DOSSIER Jean", "M", "Nouveau", "CABINET X"])
+    wb.active.append([2, "EC/26.99862", "RECENT Anne", "F", "Ancien", "CABINET X"])
+    wb.active.append([3, "ECS-ILLISIBLE", "LIBRE Paul", "M", "Nouveau", "CABINET X"])
+    societes = wb.create_sheet("SOCIETES")
+    societes.append(["N°", "N° d'ordre", "Dénomination", "NIF"])
+    societes.append([1, "SEC/18.99863", "SOCIETE SA", "A1X"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    await tableau_service.import_excel(
+        db_session, admin_isole, org, "classeur-filtres.xlsx", buffer.getvalue(), "2026", date_situation=date(2026, 10, 31),
+    )
+
+    base = await _base(db_session, admin_isole)
+    par_numero = {d.numero_ordre: d for d in base["dossiers"]}
+    assert par_numero["EC/17.99861"].anciennete == "Ancien"
+    assert par_numero["EC/17.99861"].raw_data["anciennete_source"] == "Nouveau"
+    assert par_numero["EC/17.99861"].province == "KINSHASA"
+    assert par_numero["EC/26.99862"].anciennete == "Nouveau"
+    assert par_numero["ECS-ILLISIBLE"].anciennete == "Nouveau"
+
+    async def numeros(**filtres):
+        return sorted(d.numero_ordre for d in (await _base(db_session, admin_isole, **filtres))["dossiers"])
+
+    assert await numeros(personne="morale") == ["SEC/18.99863"]
+    assert "SEC/18.99863" not in await numeros(personne="physique")
+    assert await numeros(sexe="F") == ["EC/26.99862"]
+    assert await numeros(province="KINSHASA") == ["EC/17.99861"]
+    assert await numeros(anciennete="Nouveau") == ["EC/26.99862", "ECS-ILLISIBLE"]
+    assert (await _base(db_session, admin_isole, sexe="F"))["total_membres"] == 1
+
+
+@pytest.mark.asyncio
+async def test_un_numero_posterieur_a_l_exercice_est_a_verifier(db_session, admin_isole):
+    moteur = tableau_service.verdict_engine
+    assert moteur.libelle_anciennete("SEC/99.99999", 2026) == moteur.ANCIENNETE_A_VERIFIER
+    assert moteur.est_nouveau({"numero_ordre": "EC/99.99999"}, 2026) is False
+    # Le réglage d'exemption reste, lui, inchangé : 2024 à 2026 pour trois ans.
+    assert moteur.est_nouveau({"numero_ordre": "EC/24.00001"}, 2026) is True
+    assert moteur.est_nouveau({"numero_ordre": "EC/23.00001"}, 2026) is False
+
+    outcome = await import_source_snapshot(
+        db_session, admin_isole, admin_isole.organisation_id, "pm-provisoire.xlsx",
+        _xlsx(["N° Ordre", "Société", "Numéro impôt"], [["SEC/99.99999", "PROVISOIRE SA", "A1X"]]),
+        "personnes_morales", "2026", date(2026, 10, 31),
+    )
+    assert [e["message"] for e in outcome.errors] == ["Année du N° d'ordre postérieure à l'exercice"]
+    base = await _base(db_session, admin_isole)
+    assert base["membres_a_completer"][0]["anciennete_libelle"] == "À vérifier"
+    assert (await _base(db_session, admin_isole, anciennete="Nouveau"))["total_a_completer"] == 0
+    assert (await _base(db_session, admin_isole, anciennete="Ancien"))["total_a_completer"] == 0
+
+
+@pytest.mark.asyncio
+async def test_le_nhv_de_la_base_reprend_la_colonne_120_for(db_session, admin_isole):
+    org = admin_isole.organisation_id
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pp-nhv.xlsx",
+        _xlsx(
+            ["N°Ordrre", "Nom", "Statut", "% 120 FOR", "%80 FOR"],
+            [
+                ["EC/19.99871", "AVEC NHV", "en cabinet", 82, 123],
+                ["EC/19.99872", "NHV ZERO", "en cabinet", 0, 0],
+                ["EC/19.99873", "SANS NHV", "en cabinet", None, None],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pm-nhv.xlsx",
+        _xlsx(["N° Ordre", "Société", "Numéro impôt"], [["SEC/18.99874", "SOCIETE NHV", "A1X"]]),
+        "personnes_morales", "2026", date(2026, 10, 31),
+    )
+    base = await _base(db_session, admin_isole)
+    nhv = {m["nom"]: m["nhv"] for m in base["membres_a_completer"]}
+    assert nhv == {"AVEC NHV": 82.0, "NHV ZERO": 0.0, "SANS NHV": None, "SOCIETE NHV": None}
+
+
+@pytest.mark.asyncio
+async def test_la_base_montre_le_statut_actif(db_session, admin_isole):
+    org = admin_isole.organisation_id
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pp-actif.xlsx",
+        _xlsx(
+            ["N° Ordre", "Nom", "Actif", "Statut"],
+            [
+                ["EC/19.99881", "ACTIF Jean", "oui", "en cabinet"],
+                ["EC/19.99882", "INACTIF Marie", "non", "en cabinet"],
+                ["EC/19.99883", "DOSSIER Paul", "non", "en cabinet"],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 30),
+    )
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pm-actif.xlsx",
+        _xlsx(["N° Ordre", "Société", "Numéro impôt"], [["SEC/18.99884", "SOCIETE SA", "A1X"]]),
+        "personnes_morales", "2026", date(2026, 10, 30),
+    )
+    wb = openpyxl.Workbook()
+    wb.active.title = "EC EN CABINET"
+    wb.active.append(["N°", "N° d'ordre", "Nom, post-noms et prénoms", "Cabinet d'attache"])
+    wb.active.append([1, "EC/19.99883", "DOSSIER Paul", "CABINET X"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    await tableau_service.import_excel(
+        db_session, admin_isole, org, "classeur-actif.xlsx", buffer.getvalue(), "2026", date_situation=date(2026, 10, 31),
+    )
+    base = await _base(db_session, admin_isole)
+    actifs = {m["nom"]: m["actif"] for m in base["membres_a_completer"]}
+    assert actifs == {"ACTIF Jean": True, "INACTIF Marie": False, "SOCIETE SA": None}
+    assert [d.actif for d in base["dossiers"]] == [False]

@@ -47,6 +47,9 @@ from .repository import (
     get_import,
     get_stats,
     list_anomalies,
+    actifs_par_membre,
+    list_membres_a_completer,
+    provinces_par_membre,
     list_base_tableau,
     list_dossiers,
     list_imports,
@@ -644,15 +647,59 @@ def _valider_lignes(rows: list[dict]) -> list[dict]:
     """Contrôles non bloquants ligne par ligne -> [{ligne, champ, message}]."""
     errors: list[dict] = []
     for idx, row in enumerate(rows):
-        ligne = idx + 2  # +1 en-tête, +1 base 1
-        nom = row.get("nom") or "?"
+        origine = row.get("raw_data") or {}
+        # La ligne du classeur : un rang dans la liste ne dit rien dès qu'il y a
+        # plusieurs feuilles ou des lignes de titre.
+        ligne = origine.get("ligne") or idx + 2
+        nom = row.get("nom") or row.get("numero_ordre") or "?"
+        categorie = row.get("categorie")
+
+        def signaler(champ: str, message: str) -> None:
+            erreur = {"ligne": ligne, "champ": champ, "message": message}
+            if origine.get("sheet"):
+                erreur["feuille"] = origine["sheet"]
+            errors.append(erreur)
+
+        if not row.get("nom"):
+            signaler("nom", f"Nom manquant ({nom})")
         if not row.get("numero_ordre"):
-            errors.append({"ligne": ligne, "champ": "numero_ordre",
-                           "message": f"N° d'ordre manquant ({nom})"})
-        if row.get("categorie") in (None, "", "Inconnu"):
-            errors.append({"ligne": ligne, "champ": "categorie",
-                           "message": f"Catégorie non reconnue ({nom})"})
+            signaler("numero_ordre", f"N° d'ordre manquant ({nom})")
+        if categorie in (None, "", "Inconnu"):
+            signaler("categorie", f"Catégorie non reconnue ({nom})")
+        if verdict_engine.libelle_anciennete(row.get("numero_ordre"), _exercice_annee(row.get("exercice"))) == verdict_engine.ANCIENNETE_A_VERIFIER:
+            signaler("numero_ordre", f"Année du N° d'ordre postérieure à l'exercice ({nom})")
+        if categorie in ("EC Indépendant", "Société") and not row.get("nif"):
+            signaler("nif", f"{'Indépendant' if categorie == 'EC Indépendant' else 'Société'} sans NIF ({nom})")
+        if "cabinet" in row and not row["cabinet"]:
+            if categorie == "EC Cabinet":
+                signaler("cabinet", f"Cabinet d'attache manquant ({nom})")
+            elif categorie == "EC Salarié":
+                signaler("employeur", f"Employeur manquant ({nom})")
     return errors
+
+
+def _colonnes_source(parsed_rows: list[Any]) -> dict[str, dict[str, list[str]]]:
+    """Ordre des colonnes par feuille : `raw_data` (JSONB) ne le conserve pas."""
+    colonnes: dict[str, list[str]] = {}
+    for parsed in parsed_rows:
+        colonnes.setdefault(parsed.feuille, list(parsed.raw_data))
+    return {"colonnes_source": colonnes}
+
+
+async def export_import_annote(db: AsyncSession, organisation_id: int, import_id: int) -> tuple[bytes, str]:
+    """Le fichier importé, lignes signalées en rouge. Renvoie (octets, nom_fichier)."""
+    from .import_report import build_import_report, nom_fichier_annote
+
+    imp = await get_import(db, organisation_id, import_id)
+    if imp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
+    rows = (await db.execute(
+        select(TableauSourceRow)
+        .where(TableauSourceRow.import_id == imp.id, TableauSourceRow.organisation_id == organisation_id)
+        .order_by(TableauSourceRow.id.asc())
+    )).scalars().all()
+    colonnes = (imp.metadata_json or {}).get("colonnes_source") or {}
+    return build_import_report(rows, colonnes), nom_fichier_annote(imp.file_name)
 
 
 async def import_excel(
@@ -759,6 +806,12 @@ async def import_excel(
                 nouveaux_vus.add(numero)
         cle_decision = _cle_decision(row.get("numero_ordre"), row.get("nom"), row.get("prenom"))
         prises = decisions.get(cle_decision) if cle_decision and cle_decision not in homonymes_import else None
+        # Le n° d'ordre fait foi. Le libellé du fichier ne sert que s'il est illisible.
+        libelle = verdict_engine.libelle_anciennete(row.get("numero_ordre"), _exercice_annee(exercice))
+        if libelle:
+            if row.get("anciennete") and row["anciennete"] != libelle:
+                raw["anciennete_source"] = row["anciennete"]
+            row["anciennete"] = libelle
         if prises:
             # La commission a déjà statué sur ce membre : la nouvelle situation en
             # porte la mémoire, pour qu'aucun import ne l'efface en silence.
@@ -796,7 +849,13 @@ async def import_excel(
     # parseur générique ne reconnaît pas une feuille, le flux historique reste
     # prioritaire et l'import métier n'est pas bloqué.
     raw_snapshot = parse_source_excel(content, "tableau")
+    # Les signalements suivent la ligne brute : le fichier annoté en a besoin.
+    signalements: dict[tuple[str, int], list[dict]] = {}
+    for erreur in row_errors:
+        signalements.setdefault((str(erreur.get("feuille") or ""), erreur["ligne"]), []).append(erreur)
     for parsed in raw_snapshot.rows:
+        signales = signalements.pop((parsed.feuille, parsed.line_number), [])
+        erreurs_ligne = [*parsed.errors, *signales]
         db.add(TableauSourceRow(
             organisation_id=organisation_id,
             import_id=imp.id,
@@ -804,10 +863,26 @@ async def import_excel(
             line_number=parsed.line_number,
             raw_data=parsed.raw_data,
             row_hash=row_sha256(parsed.raw_data),
-            normalization_status="error" if parsed.errors else "accepted",
-            normalization_errors=parsed.errors or None,
+            # Ces contrôles sont non bloquants : la ligne figure bien dans le dossier.
+            normalization_status="warning" if erreurs_ligne else "accepted",
+            normalization_errors=erreurs_ligne or None,
             business_key_candidate=parsed.business_key_candidate,
         ))
+    # Une feuille lue par le parseur historique mais pas par le générique : sa ligne
+    # signalée doit rester visible dans le fichier annoté.
+    for (feuille, ligne), signales in signalements.items():
+        raw_data = {"Message": " ; ".join(str(s.get("message") or "") for s in signales)}
+        db.add(TableauSourceRow(
+            organisation_id=organisation_id,
+            import_id=imp.id,
+            feuille=feuille,
+            line_number=ligne,
+            raw_data=raw_data,
+            row_hash=row_sha256(raw_data),
+            normalization_status="warning",
+            normalization_errors=signales,
+        ))
+    imp.metadata_json = {**(imp.metadata_json or {}), **_colonnes_source(raw_snapshot.rows)}
     await db.commit()
 
     return ImportOutcome(
@@ -919,6 +994,7 @@ async def import_source_snapshot(
         imp.imported_rows = accepted
         imp.status = "error" if not parsed.rows else ("partial" if rejected or parsed.errors else "completed")
         imp.error_count = len(parsed.errors) + rejected
+        imp.metadata_json = {**(imp.metadata_json or {}), **_colonnes_source(parsed.rows)}
         await db.commit()
     except Exception:
         await db.rollback()
@@ -930,8 +1006,11 @@ async def import_source_snapshot(
         total=len(parsed.rows),
         # Les anomalies relevées à la matérialisation comptent aussi : sans elles,
         # le rapport annonce zéro avertissement sur des lignes marquées « warning ».
-        errors=parsed.errors + [
-            error for _parsed, source_row in source_row_objects for error in (source_row.normalization_errors or [])
+        # Celles d'une ligne y figurent déjà : seules s'y ajoutent celles du fichier.
+        errors=[error for error in parsed.errors if error.get("champ") != "numero_ordre"] + [
+            {**error, "feuille": source_row.feuille}
+            for _parsed, source_row in source_row_objects
+            for error in (source_row.normalization_errors or [])
         ],
         duplicate_detected=False,
         source_type=source_type,
@@ -972,11 +1051,19 @@ async def _materialize_insurance_declaration(db: AsyncSession, *, imp: TableauIm
     year, year_bad = _normaliser_annee_assurance(data.get("annee_souscription"))
     if declared_bad:
         _ajouter_anomalie(errors, ligne=line, champ="declare", message="Déclaré ambigu", severity="WARNING")
+    elif _colonne_vide(data, "declare"):
+        _ajouter_anomalie(errors, ligne=line, champ="declare", message="Déclaré manquant", severity="WARNING")
     if subscribed_bad:
         _ajouter_anomalie(errors, ligne=line, champ="souscrit", message="Souscrit ambigu", severity="WARNING")
+    elif _colonne_vide(data, "souscrit"):
+        _ajouter_anomalie(errors, ligne=line, champ="souscrit", message="Souscrit manquant", severity="WARNING")
     if end_bad:
         _ajouter_anomalie(errors, ligne=line, champ="fin_couverture", message="Fin de couverture invalide", severity="WARNING")
-    if year_bad:
+    elif subscribed is True and _colonne_vide(data, "fin_couverture"):
+        _ajouter_anomalie(errors, ligne=line, champ="fin_couverture", message="Fin de couverture manquante", severity="WARNING")
+    if _colonne_vide(data, "annee_souscription"):
+        _ajouter_anomalie(errors, ligne=line, champ="annee_souscription", message="Année de souscription manquante", severity="WARNING")
+    elif year_bad and "annee_souscription" in data:
         _ajouter_anomalie(errors, ligne=line, champ="annee_souscription", message="Année de souscription invalide", severity="WARNING")
     insurer_source = data.get("assureur")
     insurer_normalized = " ".join(str(insurer_source).strip().split()).casefold() if insurer_source not in (None, "") else None
@@ -1170,12 +1257,21 @@ async def _materialize_ca_declaration(db: AsyncSession, *, imp: TableauImport, p
     collecte, collecte_bad = _normaliser_ca_decimal(data.get("ca_collecte"))
     date_maj, date_bad = _normaliser_date_source(data.get("date_mise_a_jour"))
     actif, actif_bad = _normaliser_bool_source(data.get("actif"))
+    if _colonne_vide(data, "membre"):
+        _ajouter_anomalie(errors, ligne=line, champ="membre", message="Membre manquant", severity="WARNING")
+    # Dire ce qui manque plutôt qu'une « valeur invalide » sur une cellule vide.
+    for champ, libelle, severity in (
+        ("annee", "Année manquante", "ERROR"), ("devise", "Devise manquante", "WARNING"),
+        ("ca_facture", "CA facturé manquant", "WARNING"), ("ca_collecte", "CA collecté manquant", "WARNING"),
+    ):
+        if _colonne_vide(data, champ):
+            _ajouter_anomalie(errors, ligne=line, champ=champ, message=libelle, severity=severity)
     for champ, bad, severity in (
         ("annee", annee_bad, "ERROR"), ("devise", devise_bad, "WARNING"),
         ("ca_facture", facture_bad, "ERROR"), ("ca_collecte", collecte_bad, "ERROR"),
         ("date_mise_a_jour", date_bad, "WARNING"), ("actif", actif_bad, "WARNING"),
     ):
-        if bad:
+        if bad and not _colonne_vide(data, champ) and champ in data:
             _ajouter_anomalie(errors, ligne=line, champ=champ, message="Valeur invalide ou inconnue", severity=severity)
     if facture is not None and collecte is not None and collecte > facture:
         _ajouter_anomalie(errors, ligne=line, champ="ca_collecte", message="CA collecté supérieur au CA facturé", severity="WARNING")
@@ -1252,6 +1348,11 @@ async def ca_present_at_date(
     return any(row.ca_present for row in declarations)
 
 
+def _colonne_vide(data: dict[str, Any], champ: str) -> bool:
+    """La colonne existe et la cellule est vide. L'absence de la colonne ne dit rien du membre."""
+    return champ in data and (data[champ] is None or not str(data[champ]).strip())
+
+
 def _ajouter_anomalie(errors: list[dict[str, Any]], *, ligne: int, champ: str, message: str, severity: str) -> None:
     errors.append({"ligne": ligne, "champ": champ, "message": message, "severity": severity})
 
@@ -1273,8 +1374,10 @@ async def _materialize_member_snapshot(
     numero = _norm_numero_ordre(raw_numero)
     member_kind, _expected_person_kind = _classification_from_order(numero)
 
+    # Aucune information manquante n'écarte une ligne : elle est conservée, signalée
+    # et, sans numéro exploitable, simplement non rattachée à un membre.
     if not numero:
-        _ajouter_anomalie(errors, ligne=line, champ="numero_ordre", message="N° d'ordre absent ou invalide", severity="BLOCKING")
+        _ajouter_anomalie(errors, ligne=line, champ="numero_ordre", message="N° d'ordre absent ou invalide", severity="WARNING")
     expected_kind = "EC" if source_type == "personnes_physiques" else "SEC"
     expected_person = "PHYSIQUE" if source_type == "personnes_physiques" else "MORALE"
     if member_kind and member_kind != expected_kind:
@@ -1285,6 +1388,8 @@ async def _materialize_member_snapshot(
             message=f"Préfixe {member_kind} incompatible avec la source {source_type}",
             severity="WARNING",
         )
+    if verdict_engine.libelle_anciennete(numero, _exercice_annee(imp.exercice)) == verdict_engine.ANCIENNETE_A_VERIFIER:
+        _ajouter_anomalie(errors, ligne=line, champ="numero_ordre", message="Année du N° d'ordre postérieure à l'exercice", severity="WARNING")
     if numero and member_kind is None:
         _ajouter_anomalie(
             errors,
@@ -1294,10 +1399,10 @@ async def _materialize_member_snapshot(
             severity="WARNING",
         )
     if not data.get("membre") or not str(data.get("membre")).strip():
-        _ajouter_anomalie(errors, ligne=line, champ="nom" if expected_person == "PHYSIQUE" else "societe", message="Identité absente", severity="BLOCKING")
+        _ajouter_anomalie(errors, ligne=line, champ="nom" if expected_person == "PHYSIQUE" else "societe", message="Identité absente", severity="WARNING")
 
     identity: TableauMemberIdentity | None = None
-    if numero and not any(e.get("severity") == "BLOCKING" for e in errors):
+    if numero:
         exact_matches = [row for row in official_rows if row.numero_ordre_normalise == numero]
         reference_status = "UNRESOLVED"
         reference_match_method = None
@@ -1366,7 +1471,7 @@ async def _materialize_member_snapshot(
             await db.flush()
         else:
             if identity.member_kind != (member_kind or expected_kind) or identity.person_kind != expected_person:
-                _ajouter_anomalie(errors, ligne=line, champ="numero_ordre", message="Collision de classification PP/PM", severity="BLOCKING")
+                _ajouter_anomalie(errors, ligne=line, champ="numero_ordre", message="Collision de classification PP/PM", severity="WARNING")
                 identity = None
             else:
                 if (
@@ -1404,13 +1509,12 @@ async def _materialize_member_snapshot(
     source_row.business_key_candidate = numero or parsed_row.business_key_candidate
     if errors:
         source_row.normalization_errors = errors
-    blocking = any(e.get("severity") == "BLOCKING" for e in errors)
     error = any(e.get("severity") == "ERROR" for e in errors)
     warning = any(e.get("severity") == "WARNING" for e in errors)
-    source_row.normalization_status = "blocking" if blocking else ("error" if error else ("warning" if warning else "accepted"))
+    source_row.normalization_status = "error" if error else ("warning" if warning else "accepted")
 
-    if blocking or identity is None:
-        return
+    identity_id = identity.id if identity is not None else None
+    nom_source = str(data.get("membre") or "").strip()
 
     if source_type == "personnes_physiques":
         actif, actif_bad = _normaliser_bool_source(data.get("actif"))
@@ -1457,10 +1561,10 @@ async def _materialize_member_snapshot(
             organisation_id=imp.organisation_id,
             source_import_id=imp.id,
             source_row_id=source_row.id,
-            identity_id=identity.id,
+            identity_id=identity_id,
             date_situation=imp.date_situation,
-            numero_ordre=numero,
-            nom=str(data.get("membre")).strip(),
+            numero_ordre=numero or "",
+            nom=nom_source,
             sexe=str(data.get("sexe")).strip() if data.get("sexe") is not None else None,
             actif=actif,
             date_naissance=naissance,
@@ -1508,14 +1612,17 @@ async def _materialize_member_snapshot(
                 return None
             return int(value) if value is not None else None
 
+        if data.get("numero_impot") in (None, "") and data.get("nif") in (None, ""):
+            _ajouter_anomalie(errors, ligne=line, champ="numero_impot", message="Société sans NIF", severity="WARNING")
+
         snapshot = TableauPersonneMoraleSnapshot(
             organisation_id=imp.organisation_id,
             source_import_id=imp.id,
             source_row_id=source_row.id,
-            identity_id=identity.id,
+            identity_id=identity_id,
             date_situation=imp.date_situation,
-            numero_ordre=numero,
-            societe=str(data.get("membre")).strip(),
+            numero_ordre=numero or "",
+            societe=nom_source,
             associe_gerant=str(data.get("associe_gerant")).strip() if data.get("associe_gerant") is not None else None,
             sigle=str(data.get("sigle")).strip() if data.get("sigle") is not None else None,
             raison_sociale=str(data.get("raison_sociale")).strip() if data.get("raison_sociale") is not None else None,
@@ -1541,7 +1648,9 @@ async def _materialize_member_snapshot(
 
     if errors:
         source_row.normalization_errors = errors
-        source_row.normalization_status = "warning" if not blocking else "blocking"
+        source_row.normalization_status = (
+            "error" if any(error.get("severity") == "ERROR" for error in errors) else "warning"
+        )
     db.add(snapshot)
 
 
@@ -1594,6 +1703,10 @@ async def get_base_tableau(
     organisation_id: int | None = None,
     limit: int | None = None,
     offset: int = 0,
+    personne: str | None = None,
+    province: str | None = None,
+    sexe: str | None = None,
+    anciennete: str | None = None,
 ) -> dict[str, Any]:
     """Base consolidée du Tableau pour un exercice.
 
@@ -1607,6 +1720,10 @@ async def get_base_tableau(
             "national": national,
             "organisations": organisation_ids,
             "total_membres": 0,
+            "total_dossiers": 0,
+            "total_a_completer": 0,
+            "membres_a_completer": [],
+            "province_options": [],
             "membres_sans_numero": 0,
             "imports_couverts": [],
             "analysis_import_id": None,
@@ -1643,6 +1760,10 @@ async def get_base_tableau(
         organisation_id=organisation_id,
         limit=limit,
         offset=offset,
+        personne=personne,
+        province=province,
+        sexe=sexe,
+        anciennete=anciennete,
     )
     resume = await get_base_summary(
         db,
@@ -1652,7 +1773,31 @@ async def get_base_tableau(
         recherche=recherche,
         categorie=categorie,
         organisation_id=organisation_id,
+        personne=personne,
+        province=province,
+        sexe=sexe,
+        anciennete=anciennete,
     )
+    # Après les dossiers, dans la même pagination. Le filtre « anomalies » ne les
+    # concerne pas : elles naissent de l'analyse, qui ne lit que les dossiers.
+    lignes_a_completer: list[Any] = []
+    resume_a_completer = {"total": 0, "sans_numero": 0, "imports": [], "organisations": []}
+    if not anomalie_only:
+        reste = None if limit is None else max(limit - len(dossiers), 0)
+        lignes_a_completer, resume_a_completer = await list_membres_a_completer(
+            db,
+            organisation_ids,
+            exercice,
+            recherche=recherche,
+            categorie=categorie,
+            organisation_id=organisation_id,
+            limit=reste,
+            offset=max(offset - resume["total"], 0),
+            personne=personne,
+            province=province,
+            sexe=sexe,
+            anciennete=anciennete,
+        )
     org_rows = await db.execute(
         select(Organisation.id, Organisation.nom)
         .where(Organisation.id.in_(organisation_ids))
@@ -1660,20 +1805,61 @@ async def get_base_tableau(
     )
     organisations = [{"id": org_id, "nom": nom} for org_id, nom in org_rows.all()]
     noms_organisations = {item["id"]: item["nom"] for item in organisations}
+    provinces = await provinces_par_membre(db, organisation_ids, exercice)
+    actifs = await actifs_par_membre(db, organisation_ids, exercice)
+    annee_exercice = _exercice_annee(exercice)
     for dossier in dossiers:
+        dossier.province = provinces.get((dossier.organisation_id, dossier.numero_ordre))
+        dossier.actif = actifs.get((dossier.organisation_id, dossier.numero_ordre))
+        dossier.anciennete_libelle = (
+            verdict_engine.libelle_anciennete(dossier.numero_ordre, annee_exercice) or dossier.anciennete
+        )
         dossier.date_situation = dossier.import_ref.date_situation if dossier.import_ref else None
         dossier.source_file_name = dossier.import_ref.file_name if dossier.import_ref else None
         dossier.organisation_nom = noms_organisations.get(dossier.organisation_id)
+    membres_a_completer = [
+        {
+            "id": f"{ligne.genre}-{ligne.id}",
+            "import_id": ligne.import_id,
+            "organisation_id": ligne.organisation_id,
+            "organisation_nom": noms_organisations.get(ligne.organisation_id),
+            "numero_ordre": ligne.numero_ordre or None,
+            "nom": ligne.nom,
+            "categorie": ligne.categorie,
+            "nif": ligne.nif,
+            "cabinet": ligne.cabinet,
+            "email": ligne.email,
+            "telephone": ligne.telephone,
+            "assurance": ligne.assurance,
+            "sexe": ligne.sexe,
+            "nhv": float(ligne.nhv) if ligne.nhv is not None else None,
+            "actif": ligne.actif,
+            "province": ligne.province,
+            "annee_inscription": verdict_engine.annee_ordre(ligne.numero_ordre),
+            "anciennete_libelle": verdict_engine.libelle_anciennete(ligne.numero_ordre, annee_exercice),
+            "date_situation": ligne.date_situation,
+            "source_file_name": ligne.source_file_name,
+            "signalements": list(dict.fromkeys(
+                str(erreur.get("message")) for erreur in (ligne.erreurs or []) if erreur.get("message")
+            )),
+        }
+        for ligne in lignes_a_completer
+    ]
+    total_membres = resume["total"] + resume_a_completer["total"]
     return {
         "exercice": exercice,
         "national": national,
-        "organisations": resume["organisations"] or organisation_ids,
-        "total_membres": resume["total"],
-        "membres_sans_numero": resume["sans_numero"],
-        "imports_couverts": resume["imports"],
+        "organisations": sorted({*resume["organisations"], *resume_a_completer["organisations"]}) or organisation_ids,
+        "total_membres": total_membres,
+        "total_dossiers": resume["total"],
+        "total_a_completer": resume_a_completer["total"],
+        "membres_a_completer": membres_a_completer,
+        "province_options": sorted(set(provinces.values())),
+        "membres_sans_numero": resume["sans_numero"] + resume_a_completer["sans_numero"],
+        "imports_couverts": sorted({*resume["imports"], *resume_a_completer["imports"]}),
         "analysis_import_id": analysis_import_id,
         "organisation_options": organisations,
-        "limit": limit or max(1, resume["total"]),
+        "limit": limit or max(1, total_membres),
         "offset": offset,
         "dossiers": dossiers,
     }
@@ -2059,6 +2245,10 @@ async def corriger_dossier(
     dossier.annee_inscription, dossier.anciennete_annees = _anciennete_annees(
         dossier.numero_ordre,
         dossier.exercice,
+    )
+    dossier.anciennete = (
+        verdict_engine.libelle_anciennete(dossier.numero_ordre, _exercice_annee(dossier.exercice))
+        or dossier.anciennete
     )
     if "date_naissance" in payload.changes or "date_naissance" in payload.clear_fields:
         naissance = dossier.date_naissance

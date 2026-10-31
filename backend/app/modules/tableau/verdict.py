@@ -88,6 +88,26 @@ def annee_ordre(numero_ordre: str | None) -> int | None:
     return None
 
 
+ANCIENNETE_A_VERIFIER = "À vérifier"
+
+
+def libelle_anciennete(numero_ordre: str | None, exercice_annee: int | None) -> str | None:
+    """« Nouveau » si inscrit l'année de l'exercice traité, « Ancien » si avant.
+
+    L'année de référence est celle de l'exercice, jamais une date figée : à
+    l'exercice suivant, les inscrits de cette année deviennent des anciens. Ne pas
+    confondre avec `est_nouveau`, qui décide de l'exemption de formation selon le
+    réglage `nouveau_anciennete_ans`.
+    """
+    annee = annee_ordre(numero_ordre)
+    if annee is None or exercice_annee is None:
+        return None
+    if annee > exercice_annee:
+        # Personne n'est inscrit après l'exercice traité : numéro provisoire ou erroné.
+        return ANCIENNETE_A_VERIFIER
+    return "Nouveau" if annee == exercice_annee else "Ancien"
+
+
 def est_nouveau(dossier: dict[str, Any], exercice_annee: int | None,
                 reglages: "TableauReglages | None" = None) -> bool:
     reglages = reglages or TableauReglages()
@@ -98,7 +118,7 @@ def est_nouveau(dossier: dict[str, Any], exercice_annee: int | None,
         return True
     if exercice_annee is not None:
         an = annee_ordre(dossier.get("numero_ordre"))
-        if an is not None and an >= exercice_annee - (reglages.nouveau_anciennete_ans - 1):
+        if an is not None and exercice_annee - (reglages.nouveau_anciennete_ans - 1) <= an <= exercice_annee:
             return True
     return False
 

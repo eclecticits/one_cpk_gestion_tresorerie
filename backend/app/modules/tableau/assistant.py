@@ -128,6 +128,19 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+NOTE_A_COMPLETER = (
+    "Membres connus par les fichiers personnes physiques ou morales : ni cotisation, ni CA, "
+    "donc aucune conclusion. Ne jamais les présenter comme inscrits ou non inscrits."
+)
+
+
+def _membre_a_completer_resume(membre: dict[str, Any]) -> dict[str, Any]:
+    return {
+        cle: membre[cle]
+        for cle in ("numero_ordre", "nom", "categorie", "nif", "cabinet", "assurance", "nhv", "signalements")
+    }
+
+
 def _dossier_resume(dossier: TableauDossier) -> dict[str, Any]:
     return {
         "numero_ordre": dossier.numero_ordre,
@@ -181,6 +194,9 @@ async def _executer_outil(
             "membres_sans_numero": base["membres_sans_numero"],
             "imports_couverts": base["imports_couverts"],
             "extrait": [_dossier_resume(d) for d in base["dossiers"]],
+            "total_a_completer": base["total_a_completer"],
+            "note_a_completer": NOTE_A_COMPLETER if base["total_a_completer"] else None,
+            "extrait_a_completer": [_membre_a_completer_resume(m) for m in base["membres_a_completer"]],
         }
 
     if nom == "situation_membre":
@@ -192,9 +208,16 @@ async def _executer_outil(
             limit=5,
         )
         dossiers = base["dossiers"]
-        if not dossiers:
+        a_completer = base["membres_a_completer"]
+        if not dossiers and not a_completer:
             return {"trouve": False, "message": "Aucun membre ne correspond à cette recherche."}
-        return {"trouve": True, "exercice": base["exercice"], "membres": [_dossier_resume(d) for d in dossiers]}
+        return {
+            "trouve": True,
+            "exercice": base["exercice"],
+            "membres": [_dossier_resume(d) for d in dossiers],
+            "membres_a_completer": [_membre_a_completer_resume(m) for m in a_completer],
+            "note_a_completer": NOTE_A_COMPLETER if a_completer else None,
+        }
 
     if nom == "lister_anomalies":
         scope = arguments.get("scope") or "base"
