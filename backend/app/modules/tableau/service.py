@@ -151,6 +151,9 @@ def _normaliser_bool_source(value: Any) -> tuple[bool | None, bool]:
     if value is None or str(value).strip() == "":
         return None, False
     token = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode().strip().lower()
+    # « N/A » est une réponse du portail (Assuré et AMLCO d'un salarié), pas une erreur.
+    if token in {"n/a", "na"}:
+        return None, False
     if token in {"oui", "o", "yes", "y", "1", "true", "vrai", "x"}:
         return True, False
     if token in {"non", "n", "no", "0", "false", "faux"}:
@@ -210,6 +213,9 @@ def _normaliser_date_source(value: Any) -> tuple[date | None, bool]:
         return value.date(), False
     if isinstance(value, date):
         return value, False
+    # La date nulle du portail s'exporte « 30/11/-0001 » : elle veut dire « non renseignée ».
+    if str(value).strip() in {"30/11/-0001", "0000-00-00"}:
+        return None, False
     try:
         return datetime.fromisoformat(str(value).strip()).date(), False
     except ValueError:
@@ -220,6 +226,17 @@ def _normaliser_date_source(value: Any) -> tuple[date | None, bool]:
         except ValueError:
             continue
     return None, True
+
+
+def _normaliser_presence_assurance(value: Any) -> tuple[bool | None, date | None, bool]:
+    """Accepte les anciens Oui/Non et les dates du modèle Assurance CP."""
+    presence, bool_bad = _normaliser_bool_source(value)
+    if not bool_bad:
+        return presence, None, False
+    parsed_date, date_bad = _normaliser_date_source(value)
+    if not date_bad and parsed_date is not None:
+        return True, parsed_date, False
+    return None, None, True
 
 
 def _normaliser_statut(value: Any) -> str | None:
@@ -911,7 +928,11 @@ async def import_source_snapshot(
         imported=accepted,
         skipped=rejected,
         total=len(parsed.rows),
-        errors=parsed.errors + [error for row in parsed.rows for error in row.errors],
+        # Les anomalies relevées à la matérialisation comptent aussi : sans elles,
+        # le rapport annonce zéro avertissement sur des lignes marquées « warning ».
+        errors=parsed.errors + [
+            error for _parsed, source_row in source_row_objects for error in (source_row.normalization_errors or [])
+        ],
         duplicate_detected=False,
         source_type=source_type,
     )
@@ -945,8 +966,8 @@ async def _materialize_insurance_declaration(db: AsyncSession, *, imp: TableauIm
         ).limit(1))).scalars().first()
         if identity is None:
             _ajouter_anomalie(errors, ligne=line, champ="membre", message="Membre non rapproché", severity="WARNING")
-    declared, declared_bad = _normaliser_bool_source(data.get("declare"))
-    subscribed, subscribed_bad = _normaliser_bool_source(data.get("souscrit"))
+    declared, declaration_date, declared_bad = _normaliser_presence_assurance(data.get("declare"))
+    subscribed, subscription_date, subscribed_bad = _normaliser_presence_assurance(data.get("souscrit"))
     end_date, end_bad = _normaliser_date_source(data.get("fin_couverture"))
     year, year_bad = _normaliser_annee_assurance(data.get("annee_souscription"))
     if declared_bad:
@@ -984,8 +1005,10 @@ async def _materialize_insurance_declaration(db: AsyncSession, *, imp: TableauIm
         organisation_id=imp.organisation_id, source_import_id=imp.id, source_row_id=source_row.id,
         member_identity_id=identity.id if identity else None, membre_source=str(membre) if membre is not None else None,
         numero_ordre_source=str(membre) if membre is not None else None, numero_ordre_normalise=numero,
-        declare_source=str(data.get("declare")) if data.get("declare") is not None else None, declare_normalise=declared,
-        souscrit_source=str(data.get("souscrit")) if data.get("souscrit") is not None else None, souscrit_normalise=subscribed,
+        declare_source=str(data.get("declare")) if data.get("declare") is not None else None,
+        declare_normalise=declared, date_declaration=declaration_date,
+        souscrit_source=str(data.get("souscrit")) if data.get("souscrit") is not None else None,
+        souscrit_normalise=subscribed, date_souscription=subscription_date,
         fin_couverture_source=str(data.get("fin_couverture")) if data.get("fin_couverture") is not None else None,
         fin_couverture=end_date, annee_souscription_source=str(data.get("annee_souscription")) if data.get("annee_souscription") is not None else None,
         annee_souscription=year, assureur_source=str(insurer_source) if insurer_source is not None else None,
@@ -1403,13 +1426,17 @@ async def _materialize_member_snapshot(
         statut_normalise = _normaliser_statut(data.get("statut"))
         if statut_source and statut_normalise is None:
             _ajouter_anomalie(errors, ligne=line, champ="statut", message="Statut professionnel inconnu", severity="WARNING")
-        contextual_value = data.get("cabinet_attache") or data.get("nom_employeur") or data.get("nif")
+        numero_impot = str(data.get("numero_impot")).strip() if data.get("numero_impot") not in (None, "") else None
         cabinet_attache = nif = nom_employeur = None
         if statut_normalise == "EN_CABINET":
+            contextual_value = data.get("cabinet_attache")
             cabinet_attache = str(contextual_value).strip() if contextual_value not in (None, "") else None
-            if not cabinet_attache:
+            # Le modèle PP CP n'a pas cette colonne : son absence ne dit rien du membre.
+            if not cabinet_attache and "cabinet_attache" in data:
                 _ajouter_anomalie(errors, ligne=line, champ="cabinet_attache", message="EN_CABINET sans cabinet d'attache", severity="WARNING")
         elif statut_normalise == "INDEPENDANT":
+            # Dans le modèle PP CP, le NIF est intitulé « N° impôt ».
+            contextual_value = data.get("nif") or numero_impot
             if contextual_value not in (None, "") and _looks_like_sec(contextual_value):
                 _ajouter_anomalie(errors, ligne=line, champ="nif", message="Référence SEC dans un champ NIF d'indépendant", severity="WARNING")
             else:
@@ -1417,11 +1444,12 @@ async def _materialize_member_snapshot(
             if not nif:
                 _ajouter_anomalie(errors, ligne=line, champ="nif", message="Indépendant sans NIF", severity="WARNING")
         elif statut_normalise == "SALARIE":
+            contextual_value = data.get("nom_employeur")
             if contextual_value not in (None, "") and _looks_like_nif(contextual_value):
                 _ajouter_anomalie(errors, ligne=line, champ="nom_employeur", message="Valeur ressemblant à un NIF chez un salarié", severity="WARNING")
             else:
                 nom_employeur = str(contextual_value).strip() if contextual_value not in (None, "") else None
-            if not nom_employeur:
+            if not nom_employeur and "nom_employeur" in data:
                 _ajouter_anomalie(errors, ligne=line, champ="nom_employeur", message="SALARIE sans employeur", severity="WARNING")
         elif statut_source:
             _ajouter_anomalie(errors, ligne=line, champ="statut", message="Statut inconnu : valeur contextuelle non interprétée", severity="WARNING")
@@ -1438,12 +1466,13 @@ async def _materialize_member_snapshot(
             date_naissance=naissance,
             telephone=str(data.get("telephone")).strip() if data.get("telephone") is not None else None,
             email=str(data.get("email")).strip().lower() if data.get("email") is not None else None,
+            province_attache=str(data.get("province_attache")).strip() if data.get("province_attache") is not None else None,
             ville=str(data.get("ville")).strip() if data.get("ville") is not None else None,
             adresse=str(data.get("adresse")).strip() if data.get("adresse") is not None else None,
             statut_source=statut_source,
             statut_normalise=statut_normalise,
             cabinet_attache=cabinet_attache,
-            numero_impot=None,
+            numero_impot=numero_impot,
             nif=nif,
             nom_employeur=nom_employeur,
             assure_synthetique=assure,
@@ -1487,11 +1516,20 @@ async def _materialize_member_snapshot(
             date_situation=imp.date_situation,
             numero_ordre=numero,
             societe=str(data.get("membre")).strip(),
+            associe_gerant=str(data.get("associe_gerant")).strip() if data.get("associe_gerant") is not None else None,
+            sigle=str(data.get("sigle")).strip() if data.get("sigle") is not None else None,
+            raison_sociale=str(data.get("raison_sociale")).strip() if data.get("raison_sociale") is not None else None,
+            lieu_creation=str(data.get("lieu_creation")).strip() if data.get("lieu_creation") is not None else None,
             telephone=str(data.get("telephone")).strip() if data.get("telephone") is not None else None,
             email=str(data.get("email")).strip().lower() if data.get("email") is not None else None,
+            province_attache=str(data.get("province_attache")).strip() if data.get("province_attache") is not None else None,
             ville=str(data.get("ville")).strip() if data.get("ville") is not None else None,
             adresse=str(data.get("adresse")).strip() if data.get("adresse") is not None else None,
-            numero_impot=str(data.get("nif")).strip() if data.get("nif") is not None else None,
+            numero_impot=(
+                str(data.get("numero_impot") or data.get("nif")).strip()
+                if (data.get("numero_impot") or data.get("nif")) is not None
+                else None
+            ),
             cotisation_source=str(cotisation_raw) if cotisation_raw is not None else None,
             cotisation_normalisee=cotisation_normalisee,
             solde=solde,

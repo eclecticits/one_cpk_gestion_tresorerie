@@ -475,6 +475,7 @@ async def create_tableau_actualisation(
                 apply_value("nom_employeur", latest_person_row.nom_employeur, latest_person_row, "PP")
                 apply_value("active", latest_person_row.actif, latest_person_row, "PP")
                 apply_value("date_naissance", latest_person_row.date_naissance, latest_person_row, "PP")
+                apply_value("province_attache", latest_person_row.province_attache, latest_person_row, "PP")
                 apply_value("ville", latest_person_row.ville, latest_person_row, "PP")
                 apply_value("adresse", latest_person_row.adresse, latest_person_row, "PP")
                 apply_value("assure_synthetique", latest_person_row.assure_synthetique, latest_person_row, "PP")
@@ -488,10 +489,12 @@ async def create_tableau_actualisation(
                     conflict = True
                     anomalies.append({"code": "AMBIGUOUS_PM_SNAPSHOT_DATE", "severity": "ERROR"})
                 apply_value("nom_denomination", selected_pm.societe, selected_pm, "PM")
-                apply_value("raison_sociale", selected_pm.societe, selected_pm, "PM")
+                apply_value("raison_sociale", selected_pm.raison_sociale or selected_pm.societe, selected_pm, "PM")
+                apply_value("associe_gerant", selected_pm.associe_gerant, selected_pm, "PM")
                 apply_value("telephone", selected_pm.telephone, selected_pm, "PM")
                 apply_value("email", selected_pm.email, selected_pm, "PM")
                 apply_value("nif", selected_pm.numero_impot, selected_pm, "PM")
+                apply_value("province_attache", selected_pm.province_attache, selected_pm, "PM")
                 apply_value("ville", selected_pm.ville, selected_pm, "PM")
                 apply_value("adresse", selected_pm.adresse, selected_pm, "PM")
                 apply_value("assure_synthetique", selected_pm.assure_synthetique, selected_pm, "PM")
@@ -568,7 +571,9 @@ async def create_tableau_actualisation(
                 insurance_values = [
                     {
                         "declare": row.declare_normalise,
+                        "date_declaration": _json_value(row.date_declaration),
                         "souscrit": row.souscrit_normalise,
+                        "date_souscription": _json_value(row.date_souscription),
                         "fin_couverture": _json_value(row.fin_couverture),
                         "annee_souscription": row.annee_souscription,
                         "assureur": row.assureur_normalise,

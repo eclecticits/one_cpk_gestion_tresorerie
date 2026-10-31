@@ -275,6 +275,41 @@ class TestExcelImport:
         assert r0["heures_forco"] == 120
         assert r0["cabinet"] == "FICADEX"
 
+    def test_en_tetes_du_modele_telechargeable(self):
+        """Miroir de FEUILLES_MODELE_TABLEAU : « Heures formation » sans NHV perdrait le nombre."""
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Lisez-moi"
+        ws.append(["N° d'ordre, Nom, Cotisation, Assurance : une seule colonne, jamais un en-tête."])
+        cabinet = wb.create_sheet("EC EN CABINET")
+        cabinet.append(["CONSEIL PROVINCIAL"])
+        cabinet.append(["SECTION A1 : EXPERTS-COMPTABLES EN CABINET"])
+        cabinet.append([])
+        cabinet.append(["N°", "N° d'ordre", "Nom, post-noms et prénoms", "Sexe", "N° téléphone", "E-mail",
+                        "Date naissance", "Ancienneté", "Cabinet d'attache", "Cotisation", "Heures formation (NHV)"])
+        cabinet.append([1, "EC/16.99001", "EXEMPLE Jean", "M", "(+243)810000000", "e@x.cd",
+                        "15/06/1980", "Ancien", "EXEMPLE SARL", "OUI", 120])
+        societes = wb.create_sheet("SOCIETES")
+        societes.append(["N°", "N° d'ordre", "Dénomination", "Associé gérant", "NIF", "N° téléphone", "E-mail",
+                         "Cotisation", "Assurance", "Chiffre d'affaires"])
+        societes.append([1, "SEC/18.99001", "EXEMPLE SARL", "EXEMPLE Gérant", "A0000000X", None, None, "OUI", "OUI", "NON"])
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        rows, errors = parse_excel_bytes(buf.getvalue(), "2026")
+
+        assert errors == []
+        assert [r["categorie"] for r in rows] == ["EC Cabinet", "Société"]
+        ec, sec = rows
+        assert ec["heures_forco"] == 120
+        assert ec["cotisation_payee"] is True
+        assert ec["cabinet"] == "EXEMPLE SARL"
+        assert ec["date_naissance"] == date(1980, 6, 15)
+        assert ec["anciennete"] == "Ancien"
+        assert sec["nom"] == "EXEMPLE SARL"
+        assert sec["raw_data"]["gerant"] == "EXEMPLE Gérant"
+        assert sec["chiffre_affaires"] is False
+
     def test_champs_delibération_en_colonnes(self):
         rows, _ = parse_excel_bytes(_make_workbook_bytes(), "2026")
         indep = next(r for r in rows if r["categorie"] == "EC Indépendant")

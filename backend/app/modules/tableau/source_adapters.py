@@ -52,12 +52,23 @@ def _header_map(headers: list[str]) -> dict[str, str]:
     mapped: dict[str, str] = {}
     for header in headers:
         normalized = _norm(header)
-        if "ordre" in normalized:
+        # Le modèle historique « Membres PP CP » contient la faute
+        # « N°Ordrre ». Elle est désormais un alias explicite du numéro
+        # d'ordre, sans élargir la détection à n'importe quelle référence.
+        if "ordre" in normalized or normalized in {"n ordrre", "no ordrre", "numero ordrre"}:
             mapped[header] = "numero_ordre"
         elif "cabinet" in normalized and "attach" in normalized:
             mapped[header] = "cabinet_attache"
         elif "nom employeur" in normalized or "employeur" in normalized:
             mapped[header] = "nom_employeur"
+        elif "associe" in normalized and "gerant" in normalized:
+            mapped[header] = "associe_gerant"
+        elif "raison" in normalized and "social" in normalized:
+            mapped[header] = "raison_sociale"
+        elif normalized == "sigle" or normalized.startswith("sigle "):
+            mapped[header] = "sigle"
+        elif "lieu" in normalized and ("creation" in normalized or "constitution" in normalized):
+            mapped[header] = "lieu_creation"
         elif normalized in {"nom", "noms", "membre", "nom post noms", "nom post noms et prenoms"} or "denomination" in normalized or "societe" in normalized:
             mapped[header] = "membre"
         elif "sexe" in normalized:
@@ -70,11 +81,15 @@ def _header_map(headers: list[str]) -> dict[str, str]:
             mapped[header] = "email"
         elif normalized == "ville" or "ville" in normalized:
             mapped[header] = "ville"
+        elif normalized == "province" or "province" in normalized:
+            mapped[header] = "province_attache"
         elif "adresse" in normalized:
             mapped[header] = "adresse"
         elif "statut" in normalized:
             mapped[header] = "statut"
-        elif "impot" in normalized or normalized == "nif":
+        elif "impot" in normalized:
+            mapped[header] = "numero_impot"
+        elif normalized == "nif":
             mapped[header] = "nif"
         elif normalized == "actif" or normalized.startswith("actif "):
             mapped[header] = "actif"
@@ -90,23 +105,23 @@ def _header_map(headers: list[str]) -> dict[str, str]:
             mapped[header] = "cotisation"
         elif normalized == "solde" or "solde" in normalized:
             mapped[header] = "solde"
-        elif "nb employ" in normalized:
+        elif "nb employ" in normalized or "nb empl" in normalized:
             mapped[header] = "nb_employes"
         elif normalized in {"nb ec", "nombre ec"}:
             mapped[header] = "nb_ec"
         elif normalized in {"nb sta", "nombre sta"}:
             mapped[header] = "nb_sta"
-        elif "annee souscription" in normalized:
+        elif "annee" in normalized and "souscription" in normalized:
             mapped[header] = "annee_souscription"
-        elif "annee" in normalized:
+        elif "annee" in normalized or normalized == "an":
             mapped[header] = "annee"
-        elif "devise" in normalized or "currency" in normalized:
+        elif "devise" in normalized or "currency" in normalized or normalized == "dev":
             mapped[header] = "devise"
         elif "ca facture" in normalized or "chiffre affaire facture" in normalized:
             mapped[header] = "ca_facture"
         elif "ca collecte" in normalized or "chiffre affaire collecte" in normalized:
             mapped[header] = "ca_collecte"
-        elif "date mise" in normalized or "mise a jour" in normalized:
+        elif "date mise" in normalized or "mise a jour" in normalized or ("date" in normalized and "maj" in normalized):
             mapped[header] = "date_mise_a_jour"
         elif "declare" in normalized:
             mapped[header] = "declare"

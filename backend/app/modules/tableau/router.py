@@ -801,7 +801,9 @@ async def tableau_actualisation_ligne(
             "id": x.id,
             "date_situation": x.date_situation,
             "declare": x.declare_normalise,
+            "date_declaration": x.date_declaration,
             "souscrit": x.souscrit_normalise,
+            "date_souscription": x.date_souscription,
             "assureur": x.assureur_normalise,
         }
         for x in assurances

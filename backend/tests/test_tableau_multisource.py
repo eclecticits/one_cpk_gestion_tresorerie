@@ -73,13 +73,46 @@ def test_file_and_row_fingerprints_are_distinct_concepts():
     assert row_sha256(raw) == row_sha256(dict(raw))
 
 
-@pytest.mark.parametrize("order_header", ["N° Ordre", "N° d'ordre", "N° ordre", "Numéro d'ordre"])
+@pytest.mark.parametrize("order_header", ["N° Ordre", "N° d'ordre", "N° ordre", "Numéro d'ordre", "N°Ordrre"])
 def test_real_order_header_variants_are_recognized_without_overmatching(order_header):
     accepted = parse_source_excel(_xlsx([order_header, "Nom"], [["EC/18.00062", "DUPONT"]]), "personnes_physiques")
     assert len(accepted.rows) == 1
     rejected = parse_source_excel(_xlsx(["Référence libre", "Nom"], [["EC/18.00062", "DUPONT"]]), "personnes_physiques")
     assert rejected.rows == []
     assert any(error["champ"] == "headers" for error in rejected.errors)
+
+
+def test_modele_membres_pp_cp_maps_all_business_columns():
+    headers = [
+        "N°Ordrre", "Nom", "Sexe", "Actif", "Date naissance", "Téléphone", "Email", "Province",
+        "Statut", "N° impôt", "Assuré", "AMLCO", "% 120 FOR", "%80 FOR",
+    ]
+    values = [
+        "EC/17.00002", "EXEMPLE BOSILA Marie", "F", "oui", "13/12/1974", "(+243)810000001",
+        "marie@exemple.cd", "KINSHASA", "indépendant", "A0000001X", "oui", "non", 82, 123,
+    ]
+
+    result = parse_source_excel(_xlsx(headers, [values]), "personnes_physiques")
+
+    assert result.errors == []
+    assert len(result.rows) == 1
+    assert result.rows[0].business_key_candidate == "EC/17.00002"
+    assert result.rows[0].normalized_data == {
+        "numero_ordre": "EC/17.00002",
+        "membre": "EXEMPLE BOSILA Marie",
+        "sexe": "F",
+        "actif": "oui",
+        "date_naissance": "13/12/1974",
+        "telephone": "(+243)810000001",
+        "email": "marie@exemple.cd",
+        "province_attache": "KINSHASA",
+        "statut": "indépendant",
+        "numero_impot": "A0000001X",
+        "assure": "oui",
+        "amlco": "non",
+        "pourcentage_120_for": 82,
+        "pourcentage_80_for": 123,
+    }
 
 
 def test_real_export_column_sets_are_accepted():
@@ -109,6 +142,82 @@ def test_real_export_column_sets_are_accepted():
         result = parse_source_excel(_xlsx(headers, [values[source_type]]), source_type)
         assert len(result.rows) == 1, (source_type, result.errors)
         assert result.errors == [], (source_type, result.errors)
+
+
+def test_modele_membres_pm_cp_maps_all_business_columns():
+    headers = [
+        "N° Ordre", "Société", "Associé gérant", "Téléphone", "Email", "Province", "Sigle",
+        "Raison sociale", "Lieu création", "Numéro impôt", "Solde", "Nb empl", "Nb EC", "Nb StA",
+    ]
+    values = [
+        "SEC/18.00001", "EXEMPLE & CO SAS", "EXEMPLE Gerant", "(+243)810000002",
+        "contact@exemple.cd", "KINSHASA", "ABN", "Exemple & Co", "Kinshasa", "A0000002X",
+        0, 10, 1, 0,
+    ]
+
+    result = parse_source_excel(_xlsx(headers, [values]), "personnes_morales")
+
+    assert result.errors == []
+    assert len(result.rows) == 1
+    assert result.rows[0].normalized_data == {
+        "numero_ordre": "SEC/18.00001",
+        "membre": "EXEMPLE & CO SAS",
+        "associe_gerant": "EXEMPLE Gerant",
+        "telephone": "(+243)810000002",
+        "email": "contact@exemple.cd",
+        "province_attache": "KINSHASA",
+        "sigle": "ABN",
+        "raison_sociale": "Exemple & Co",
+        "lieu_creation": "Kinshasa",
+        "numero_impot": "A0000002X",
+        "solde": 0,
+        "nb_employes": 10,
+        "nb_ec": 1,
+        "nb_sta": 0,
+    }
+
+
+def test_modele_ca_membres_cp_maps_all_business_columns():
+    headers = ["N° d'ordre", "Membre", "Actif", "AN.", "Dev", "CA facturé", "CA collecté", "Date maj"]
+    values = ["SEC/18.00001", "EXEMPLE & CO SAS", "oui", 2024, "CDF", 834140885, 765311125, "12/12/2025"]
+
+    result = parse_source_excel(_xlsx(headers, [values]), "chiffres_affaires")
+
+    assert result.errors == []
+    assert len(result.rows) == 1
+    assert result.rows[0].business_key_candidate == "SEC/18.00001"
+    assert result.rows[0].normalized_data == {
+        "numero_ordre": "SEC/18.00001",
+        "membre": "EXEMPLE & CO SAS",
+        "actif": "oui",
+        "annee": 2024,
+        "devise": "CDF",
+        "ca_facture": 834140885,
+        "ca_collecte": 765311125,
+        "date_mise_a_jour": "12/12/2025",
+    }
+
+
+def test_modele_declarations_assurance_gestionnaire_cp_maps_all_business_columns():
+    headers = ["Membre", "Déclaré", "Souscrit", "Fin couverture", "Année de souscription", "Assureur", "Période"]
+    values = [
+        "SEC/20.00005 EXEMPLE CONSULTANTS SARL", "09/08/2024", "29/05/2024", "21/05/2025",
+        2024, "MAYFAIR Insurance Congo SA", "2024 - 2025",
+    ]
+
+    result = parse_source_excel(_xlsx(headers, [values]), "assurances")
+
+    assert result.errors == []
+    assert len(result.rows) == 1
+    assert result.rows[0].normalized_data == {
+        "membre": "SEC/20.00005 EXEMPLE CONSULTANTS SARL",
+        "declare": "09/08/2024",
+        "souscrit": "29/05/2024",
+        "fin_couverture": "21/05/2025",
+        "annee_souscription": 2024,
+        "assureur": "MAYFAIR Insurance Congo SA",
+        "periode": "2024 - 2025",
+    }
 
 
 @pytest.mark.asyncio
@@ -191,6 +300,80 @@ async def test_pp_creates_internal_ec_identity_and_snapshot_without_tableau_doss
 
 
 @pytest.mark.asyncio
+async def test_modele_membres_pp_cp_materializes_the_expected_snapshot(db_session, test_admin_user):
+    headers = [
+        "N°Ordrre", "Nom", "Sexe", "Actif", "Date naissance", "Téléphone", "Email", "Province",
+        "Statut", "N° impôt", "Assuré", "AMLCO", "% 120 FOR", "%80 FOR",
+    ]
+    values = [
+        "EC/25.00604", "EXEMPLE MALU Jean", "M", "oui", "14/09/1992", "0810000003",
+        "jean@exemple.cd", "KINSHASA", "indépendant", "E0000003R", "oui", "non", 153, 229,
+    ]
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id, "Membres PP CP.xlsx",
+        _xlsx(headers, [values]), "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+
+    snapshot = (await db_session.execute(
+        select(TableauPersonnePhysiqueSnapshot).where(
+            TableauPersonnePhysiqueSnapshot.source_import_id == outcome.imp.id
+        )
+    )).scalar_one()
+    assert snapshot.numero_ordre == "EC/25.00604"
+    assert snapshot.nom == "EXEMPLE MALU Jean"
+    assert snapshot.actif is True
+    assert snapshot.date_naissance == date(1992, 9, 14)
+    assert snapshot.province_attache == "KINSHASA"
+    assert snapshot.numero_impot == "E0000003R"
+    assert snapshot.nif == "E0000003R"
+    assert snapshot.assure_synthetique is True
+    assert snapshot.amlco is False
+    assert str(snapshot.pourcentage_120_for) == "153.00"
+    assert str(snapshot.pourcentage_80_for) == "229.00"
+
+
+@pytest.mark.asyncio
+async def test_modele_membres_pp_cp_ne_signale_que_les_vraies_anomalies(db_session, test_admin_user):
+    headers = ["N°Ordrre", "Nom", "Date naissance", "Statut", "N° impôt", "Assuré", "AMLCO"]
+    rows = [
+        # Salarié : N/A et date nulle du portail, sans colonne Employeur dans le modèle.
+        ["EC/16.99101", "EXEMPLE Salarie", "30/11/-0001", "salarié", None, "N/A", "N/A"],
+        ["EC/16.99102", "EXEMPLE Cabinet", "15/06/1980", "en cabinet", None, "oui", "non"],
+        ["EC/16.99103", "EXEMPLE Sans Nif", "31/02/1980", "indépendant", None, "oui", "non"],
+    ]
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id, "Membres PP CP.xlsx",
+        _xlsx(headers, rows), "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+
+    source_rows = (await db_session.execute(
+        select(TableauSourceRow).where(TableauSourceRow.import_id == outcome.imp.id).order_by(TableauSourceRow.line_number)
+    )).scalars().all()
+    assert [row.normalization_status for row in source_rows] == ["accepted", "accepted", "warning"]
+    salarie = (await db_session.execute(
+        select(TableauPersonnePhysiqueSnapshot).where(
+            TableauPersonnePhysiqueSnapshot.source_import_id == outcome.imp.id,
+            TableauPersonnePhysiqueSnapshot.numero_ordre == "EC/16.99101",
+        )
+    )).scalar_one()
+    assert salarie.date_naissance is None
+    assert salarie.assure_synthetique is None
+    assert salarie.amlco is None
+    # Le rapport d'import annonce ce que portent les lignes.
+    assert {(error["ligne"], error["champ"]) for error in outcome.errors} == {(4, "date_naissance"), (4, "nif")}
+
+
+@pytest.mark.asyncio
+async def test_employeur_vide_reste_signale_quand_la_colonne_existe(db_session, test_admin_user):
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id, "pp-employeur.xlsx",
+        _xlsx(["N° Ordre", "Nom", "Statut", "Employeur"], [["EC/16.99104", "EXEMPLE Salarie", "salarié", None]]),
+        "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+    assert [error["champ"] for error in outcome.errors] == ["nom_employeur"]
+
+
+@pytest.mark.asyncio
 async def test_pm_creates_internal_sec_identity(db_session, test_admin_user):
     content = _xlsx(["N° Ordre", "Société", "Nb employés", "Nb EC", "Nb StA"], [["SEC/18.00071", "SOCIETE X", 5, 2, 1]])
     await import_source_snapshot(
@@ -202,6 +385,38 @@ async def test_pm_creates_internal_sec_identity(db_session, test_admin_user):
     assert identity.member_kind == "SEC"
     assert identity.person_kind == "MORALE"
     assert snapshot.nb_ec == 2
+
+
+@pytest.mark.asyncio
+async def test_modele_membres_pm_cp_materializes_the_expected_snapshot(db_session, test_admin_user):
+    headers = [
+        "N° Ordre", "Société", "Associé gérant", "Téléphone", "Email", "Province", "Sigle",
+        "Raison sociale", "Lieu création", "Numéro impôt", "Solde", "Nb empl", "Nb EC", "Nb StA",
+    ]
+    values = [
+        "SEC/26.00999", "CABINET TEST SARL", "GERANT Test", "+243810000000", "test@cabinet.cd",
+        "KINSHASA", "CTS", "CABINET TEST", "Kinshasa", "A0000001X", 1500, 12, 2, 3,
+    ]
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id, "Membres PM CP.xlsx",
+        _xlsx(headers, [values]), "personnes_morales", "2026", date(2026, 10, 31),
+    )
+
+    snapshot = (await db_session.execute(
+        select(TableauPersonneMoraleSnapshot).where(
+            TableauPersonneMoraleSnapshot.source_import_id == outcome.imp.id
+        )
+    )).scalar_one()
+    assert snapshot.numero_ordre == "SEC/26.00999"
+    assert snapshot.societe == "CABINET TEST SARL"
+    assert snapshot.associe_gerant == "GERANT Test"
+    assert snapshot.sigle == "CTS"
+    assert snapshot.raison_sociale == "CABINET TEST"
+    assert snapshot.lieu_creation == "Kinshasa"
+    assert snapshot.province_attache == "KINSHASA"
+    assert snapshot.numero_impot == "A0000001X"
+    assert str(snapshot.solde) == "1500.00"
+    assert (snapshot.nb_employes, snapshot.nb_ec, snapshot.nb_sta) == (12, 2, 3)
 
 
 @pytest.mark.asyncio
@@ -310,6 +525,44 @@ async def test_insurance_ec_and_sec_are_rattachees_without_dossier(db_session, t
     assert rows[0].declare_normalise is True and rows[0].souscrit_normalise is True
     assert rows[0].assureur_normalise == "assureur x" and rows[0].periode_normalisee == "annuelle"
     assert (await db_session.execute(select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_modele_declarations_assurance_gestionnaire_cp_materializes_dates(db_session, test_admin_user):
+    numero = "SEC/20.00005"
+    await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id, "pm-assurance-modele.xlsx",
+        _xlsx(["N° Ordre", "Société"], [[numero, "EXEMPLE CONSULTANTS SARL"]]),
+        "personnes_morales", "2026", date(2026, 10, 30),
+    )
+    headers = ["Membre", "Déclaré", "Souscrit", "Fin couverture", "Année de souscription", "Assureur", "Période"]
+    values = [
+        f"{numero} EXEMPLE CONSULTANTS SARL", "09/08/2024", "29/05/2024", "21/05/2025",
+        2024, "MAYFAIR Insurance Congo SA", "2024 - 2025",
+    ]
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id,
+        "Déclarations assurance gestionnaire CP.xlsx", _xlsx(headers, [values]),
+        "assurances", "2026", date(2026, 10, 31),
+    )
+
+    declaration = (await db_session.execute(
+        select(TableauInsuranceDeclaration).where(TableauInsuranceDeclaration.source_import_id == outcome.imp.id)
+    )).scalar_one()
+    source_row = (await db_session.execute(
+        select(TableauSourceRow).where(TableauSourceRow.import_id == outcome.imp.id)
+    )).scalar_one()
+    assert declaration.member_identity_id is not None
+    assert declaration.numero_ordre_normalise == numero
+    assert declaration.declare_normalise is True
+    assert declaration.date_declaration == date(2024, 8, 9)
+    assert declaration.souscrit_normalise is True
+    assert declaration.date_souscription == date(2024, 5, 29)
+    assert declaration.fin_couverture == date(2025, 5, 21)
+    assert declaration.annee_souscription == 2024
+    assert declaration.assureur_normalise == "mayfair insurance congo sa"
+    assert declaration.periode_normalisee == "2024 - 2025"
+    assert source_row.normalization_status == "accepted"
 
 
 @pytest.mark.asyncio
@@ -510,6 +763,34 @@ async def test_ca_ec_is_rattache_et_decimal_preserved(db_session, test_admin_use
     assert row.member_identity_id is not None
     assert row.ca_facture == 1250000.50 and row.ca_collecte == 1000000
     assert row.devise_normalisee == "USD" and row.annee == 2025 and row.ca_present is True
+
+
+@pytest.mark.asyncio
+async def test_modele_ca_membres_cp_materializes_the_expected_declaration(db_session, test_admin_user):
+    numero = "EC/26.00998"
+    await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id, "pp-ca-modele.xlsx",
+        _xlsx(["N° Ordre", "Nom"], [[numero, "MEMBRE TEST"]]),
+        "personnes_physiques", "2026", date(2026, 10, 30),
+    )
+    headers = ["N° d'ordre", "Membre", "Actif", "AN.", "Dev", "CA facturé", "CA collecté", "Date maj"]
+    values = [numero, "MEMBRE TEST", "oui", 2024, "USD", 8360, 7000, "18/08/2025"]
+    outcome = await import_source_snapshot(
+        db_session, test_admin_user, test_admin_user.organisation_id, "CA membres CP.xlsx",
+        _xlsx(headers, [values]), "chiffres_affaires", "2026", date(2026, 10, 31),
+    )
+
+    declaration = (await db_session.execute(
+        select(TableauCaDeclaration).where(TableauCaDeclaration.source_import_id == outcome.imp.id)
+    )).scalar_one()
+    assert declaration.member_identity_id is not None
+    assert declaration.actif_normalise is True
+    assert declaration.annee == 2024
+    assert declaration.devise_normalisee == "USD"
+    assert str(declaration.ca_facture) == "8360.00"
+    assert str(declaration.ca_collecte) == "7000.00"
+    assert declaration.date_mise_a_jour == date(2025, 8, 18)
+    assert declaration.ca_present is True
 
 
 @pytest.mark.asyncio

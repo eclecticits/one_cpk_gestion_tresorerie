@@ -25,47 +25,108 @@ const SOURCES: Record<SourceType, {
     title: 'Tableau des experts-comptables',
     description: 'Classeur complet : il alimente la base et l’analyse.',
     accent: 'expertAccentSec',
-    required: ['numero_ordre', 'nom', 'categorie'],
+    required: ["N° d'ordre", 'Nom, post-noms et prénoms (Dénomination pour une société)'],
     optional: [
-      'cotisation', 'assurance', 'chiffre_affaires', 'heures_formation',
-      'date_naissance', 'anciennete', 'sexe', 'telephone', 'email', 'cabinet', 'nif',
+      'Sexe', 'N° téléphone', 'E-mail', 'Date naissance', 'Ancienneté', "Cabinet d'attache", 'Employeur',
+      'Associé gérant', 'NIF', 'Cotisation', 'Assurance', "Chiffre d'affaires", 'Heures formation (NHV)',
     ],
   },
   personnes_physiques: {
     shortTitle: 'Personnes physiques',
     title: 'Source détaillée — personnes physiques',
-    description: 'Fiches EC, rapprochées du référentiel national.',
+    description: 'Fiches EC au format Membres PP CP, rapprochées du référentiel national.',
     accent: 'expertAccentIndependant',
-    required: ['numero_ordre', 'membre'],
-    optional: [],
+    required: ['N°Ordrre', 'Nom'],
+    optional: [
+      'Sexe', 'Actif', 'Date naissance', 'Téléphone', 'Email', 'Province', 'Statut',
+      'N° impôt', 'Assuré', 'AMLCO', '% 120 FOR', '%80 FOR',
+    ],
   },
   personnes_morales: {
     shortTitle: 'Personnes morales',
     title: 'Source détaillée — personnes morales',
-    description: 'Fiches SEC, rapprochées du référentiel national.',
+    description: 'Fiches SEC au format Membres PM CP, rapprochées du référentiel national.',
     accent: 'expertAccentCabinet',
-    required: ['numero_ordre', 'membre'],
-    optional: [],
+    required: ['N° Ordre', 'Société'],
+    optional: [
+      'Associé gérant', 'Téléphone', 'Email', 'Province', 'Sigle', 'Raison sociale',
+      'Lieu création', 'Numéro impôt', 'Solde', 'Nb empl', 'Nb EC', 'Nb StA',
+    ],
   },
   chiffres_affaires: {
     shortTitle: 'Chiffres d’affaires',
     title: 'Source détaillée — chiffres d’affaires',
-    description: 'Déclarations de chiffre d’affaires, par année.',
+    description: 'Déclarations au format CA membres CP, par année et devise.',
     accent: 'expertAccentSalarie',
-    required: ['numero_ordre ou membre', 'annee'],
-    optional: [],
+    required: ["N° d'ordre", 'Membre', 'AN.'],
+    optional: ['Actif', 'Dev', 'CA facturé', 'CA collecté', 'Date maj'],
   },
   assurances: {
     shortTitle: 'Assurances',
     title: 'Source détaillée — assurances',
-    description: 'Attestations d’assurance des membres.',
+    description: 'Déclarations au format Déclarations assurance gestionnaire CP.',
     accent: 'expertAccentNational',
-    required: ['numero_ordre ou membre'],
-    optional: [],
+    required: ["Membre (N° d'ordre puis nom)"],
+    optional: ['Déclaré', 'Souscrit', 'Fin couverture', 'Année de souscription', 'Assureur', 'Période'],
   },
 }
 
 const CATEGORIES = ['Société', 'EC Cabinet', 'EC Indépendant', 'EC Salarié', 'Stagiaire']
+
+// Une feuille par section, aux libellés de l'export du Tableau (`exporter.py`).
+// Seul « NHV » alimente les heures au parseur : « Heures formation » seul y est
+// lu comme un OUI/NON et perdrait le nombre. Âge et Conclusion n'y sont pas :
+// l'application les calcule.
+const IDENTITE_EC = ['N°', "N° d'ordre", 'Nom, post-noms et prénoms', 'Sexe', 'N° téléphone', 'E-mail', 'Date naissance', 'Ancienneté']
+const IDENTITE_EC_EXEMPLE = ['M', '(+243)810000000', 'exemple@onec.cd', '15/06/1980', 'Ancien']
+
+const FEUILLES_MODELE_TABLEAU: { nom: string; section: string; colonnes: string[]; exemple: (string | number)[] }[] = [
+  {
+    nom: 'SOCIETES',
+    section: "SECTION C : SOCIETES D'EXPERTISE COMPTABLE",
+    colonnes: ['N°', "N° d'ordre", 'Dénomination', 'Associé gérant', 'NIF', 'N° téléphone', 'E-mail', 'Cotisation', 'Assurance', "Chiffre d'affaires"],
+    exemple: [1, 'SEC/18.99001', 'EXEMPLE CABINET SARL', 'EXEMPLE Gérant', 'A0000000X', '(+243)810000000', 'contact@exemple.cd', 'OUI', 'OUI', 'OUI'],
+  },
+  {
+    nom: 'EC EN CABINET',
+    section: 'SECTION A1 : EXPERTS-COMPTABLES EN CABINET',
+    colonnes: [...IDENTITE_EC, "Cabinet d'attache", 'Cotisation', 'Heures formation (NHV)'],
+    exemple: [1, 'EC/16.99001', 'EXEMPLE EN CABINET Jean', ...IDENTITE_EC_EXEMPLE, 'EXEMPLE CABINET SARL', 'OUI', 120],
+  },
+  {
+    nom: 'EC INDEPENDANTS',
+    section: 'SECTION A2 : EXPERTS-COMPTABLES INDEPENDANTS',
+    colonnes: [...IDENTITE_EC, 'NIF', 'Cotisation', 'Assurance valide', "Chiffre d'affaires", 'Heures formation (NHV)'],
+    exemple: [1, 'EC/17.99002', 'EXEMPLE INDEPENDANT Marie', ...IDENTITE_EC_EXEMPLE, 'A0000000X', 'OUI', 'OUI', 'OUI', 120],
+  },
+  {
+    nom: 'EC SALARIES',
+    section: 'SECTION B : EXPERTS-COMPTABLES SALARIES',
+    colonnes: [...IDENTITE_EC, 'Employeur', 'Cotisation', 'Heures formation (NHV)'],
+    exemple: [1, 'EC/16.99003', 'EXEMPLE SALARIE Paul', ...IDENTITE_EC_EXEMPLE, 'EXEMPLE EMPLOYEUR SA', 'OUI', 120],
+  },
+  {
+    nom: 'STAGIAIRES',
+    section: 'STAGIAIRES',
+    colonnes: ['N°', "N° d'ordre", 'Nom', 'Sexe', 'Téléphone', 'E-mail'],
+    exemple: [1, 'ECS/24.99001', 'EXEMPLE STAGIAIRE Anne', 'F', '(+243)810000000', 'stagiaire@exemple.cd'],
+  },
+]
+
+// Une seule colonne : le parseur ne prend jamais ces lignes pour un en-tête.
+const CONSIGNES_MODELE_TABLEAU = [
+  'Modèle du Tableau des experts-comptables : une feuille par section.',
+  '',
+  "1. Remplacez la ligne d'exemple de chaque feuille : laissée en place, elle serait importée comme un membre.",
+  "2. Ne renommez ni les feuilles, ni les colonnes : le nom de la feuille donne la catégorie du membre. Une section sans membre peut rester vide.",
+  "3. N° d'ordre : il relie le membre à ses situations précédentes. Sans lui, la ligne est importée mais non rattachée.",
+  '4. Cotisation, Assurance, Chiffre d\'affaires : OUI ou NON.',
+  '5. Heures formation (NHV) : un nombre, par exemple 120.',
+  '6. Date naissance : JJ/MM/AAAA. Elle sert à calculer l\'âge.',
+  '7. Ancienneté : Ancien ou Nouveau.',
+  "8. Une cellule vide n'efface pas ce qui était déjà connu du membre.",
+  "9. La conclusion (INSCRIT / NON INSCRIT / À DÉLIBÉRER) est calculée à l'analyse : ne la saisissez pas.",
+]
 
 interface FeuilleApercu {
   nom: string
@@ -101,32 +162,110 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
   const canImport = !importing && !!fichier && !!exercice.trim() && !!dateSituation
 
   const downloadTemplate = () => {
-    const rows = [
-      {
-        numero_ordre: 'EC/16.00001', nom: 'ABEDI ASSAD', categorie: 'EC Cabinet',
-        cotisation: 'OUI', assurance: '', chiffre_affaires: '', heures_formation: 120,
-        date_naissance: '12/05/1980', anciennete: 'Ancien', sexe: 'M',
-        telephone: '(+243)895873021', email: 'abedi@exemple.cd', cabinet: 'FICADEX', nif: '',
-      },
-      {
-        numero_ordre: 'EC/17.00002', nom: 'ABISA LYDIE', categorie: 'EC Indépendant',
-        cotisation: 'OUI', assurance: 'OUI', chiffre_affaires: 'OUI', heures_formation: 122,
-        date_naissance: '03/09/1975', anciennete: 'Ancien', sexe: 'F',
-        telephone: '(+243)859437431', email: 'abisa@exemple.cd', cabinet: '', nif: 'A1810696X',
-      },
-      {
-        numero_ordre: 'SEC/18.00001', nom: 'ABN NZAILU & CO SAS', categorie: 'Société',
-        cotisation: 'OUI', assurance: 'OUI', chiffre_affaires: 'OUI', heures_formation: '',
-        date_naissance: '', anciennete: 'Ancien', sexe: '',
-        telephone: '(+243)829000113', email: 'contact@abn.cd', cabinet: '', nif: '',
-      },
-    ]
-    const ws = XLSX.utils.json_to_sheet(rows, {
-      header: ['numero_ordre', 'nom', 'categorie', 'cotisation', 'assurance', 'chiffre_affaires',
-        'heures_formation', 'date_naissance', 'anciennete', 'sexe', 'telephone', 'email', 'cabinet', 'nif'],
-    })
+    if (sourceType === 'personnes_physiques') {
+      const headers = [
+        'N°Ordrre', 'Nom', 'Sexe', 'Actif', 'Date naissance', 'Téléphone', 'Email', 'Province',
+        'Statut', 'N° impôt', 'Assuré', 'AMLCO', '% 120 FOR', '%80 FOR',
+      ]
+      const rows = [{
+        'N°Ordrre': 'EC/18.99003',
+        Nom: 'EXEMPLE Jean',
+        Sexe: 'M',
+        Actif: 'oui',
+        'Date naissance': '01/12/1960',
+        Téléphone: '(+243)810000000',
+        Email: 'exemple@onec.cd',
+        Province: 'KINSHASA',
+        Statut: 'en cabinet',
+        'N° impôt': '',
+        Assuré: 'non',
+        AMLCO: 'non',
+        '% 120 FOR': '',
+        '%80 FOR': '',
+      }]
+      const ws = XLSX.utils.json_to_sheet(rows, { header: headers })
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
+      XLSX.writeFile(wb, 'Membres_PP_CP.xlsx')
+      return
+    }
+
+    if (sourceType === 'personnes_morales') {
+      const headers = [
+        'N° Ordre', 'Société', 'Associé gérant', 'Téléphone', 'Email', 'Province', 'Sigle',
+        'Raison sociale', 'Lieu création', 'Numéro impôt', 'Solde', 'Nb empl', 'Nb EC', 'Nb StA',
+      ]
+      const rows = [{
+        'N° Ordre': 'SEC/18.99001',
+        Société: 'CABINET EXEMPLE SARL',
+        'Associé gérant': 'GERANT Exemple',
+        Téléphone: '(+243)810000000',
+        Email: 'contact@cabinet-exemple.cd',
+        Province: 'KINSHASA',
+        Sigle: 'CE SARL',
+        'Raison sociale': 'CABINET EXEMPLE',
+        'Lieu création': 'Kinshasa',
+        'Numéro impôt': 'A0000000X',
+        Solde: 0,
+        'Nb empl': 10,
+        'Nb EC': 1,
+        'Nb StA': 0,
+      }]
+      const ws = XLSX.utils.json_to_sheet(rows, { header: headers })
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
+      XLSX.writeFile(wb, 'Membres_PM_CP.xlsx')
+      return
+    }
+
+    if (sourceType === 'chiffres_affaires') {
+      const headers = ["N° d'ordre", 'Membre', 'Actif', 'AN.', 'Dev', 'CA facturé', 'CA collecté', 'Date maj']
+      const rows = [{
+        "N° d'ordre": 'EC/17.99002',
+        Membre: 'MEMBRE EXEMPLE',
+        Actif: 'oui',
+        'AN.': 2024,
+        Dev: 'USD',
+        'CA facturé': 8360,
+        'CA collecté': 7000,
+        'Date maj': '18/08/2025',
+      }]
+      const ws = XLSX.utils.json_to_sheet(rows, { header: headers })
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
+      XLSX.writeFile(wb, 'CA_membres_CP.xlsx')
+      return
+    }
+
+    if (sourceType === 'assurances') {
+      const headers = ['Membre', 'Déclaré', 'Souscrit', 'Fin couverture', 'Année de souscription', 'Assureur', 'Période']
+      const rows = [{
+        Membre: 'SEC/20.99005 CABINET EXEMPLE SARL',
+        Déclaré: '09/08/2024',
+        Souscrit: '29/05/2024',
+        'Fin couverture': '21/05/2025',
+        'Année de souscription': 2024,
+        Assureur: 'MAYFAIR Insurance Congo SA',
+        Période: '2024 - 2025',
+      }]
+      const ws = XLSX.utils.json_to_sheet(rows, { header: headers })
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
+      XLSX.writeFile(wb, 'Declarations_assurance_gestionnaire_CP.xlsx')
+      return
+    }
+
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Membres')
+    const consignes = XLSX.utils.aoa_to_sheet(CONSIGNES_MODELE_TABLEAU.map((ligne) => [ligne]))
+    consignes['!cols'] = [{ wch: 110 }]
+    XLSX.utils.book_append_sheet(wb, consignes, 'Lisez-moi')
+    FEUILLES_MODELE_TABLEAU.forEach(({ nom, section, colonnes, exemple }) => {
+      const ws = XLSX.utils.aoa_to_sheet([['CONSEIL PROVINCIAL'], [section], [], colonnes, exemple])
+      ws['!cols'] = colonnes.map((colonne, index) => ({
+        wch: index === 0 ? 5 : Math.max(colonne.length + 2, String(exemple[index] ?? '').length + 2, 12),
+      }))
+      XLSX.utils.book_append_sheet(wb, ws, nom)
+    })
     XLSX.writeFile(wb, 'modele_tableau_membres.xlsx')
   }
 
@@ -322,8 +461,8 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
           )}
           {sourceType === 'tableau' && (
             <>
-              <span>categorie ∈ {CATEGORIES.join(' / ')}.</span>
-              <span>cotisation / assurance / chiffre_affaires = OUI ou NON · heures_formation = nombre (NHV).</span>
+              <span>Feuille à plat : colonne categorie ∈ {CATEGORIES.join(' / ')}.</span>
+              <span>Cotisation / Assurance / Chiffre d'affaires = OUI ou NON · Heures formation (NHV) = nombre.</span>
             </>
           )}
           <span>Un fichier déjà importé pour la même date de situation est reconnu et n'est pas rechargé.</span>
