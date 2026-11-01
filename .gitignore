@@ -74,3 +74,6 @@ backend/backups/
 # en aucun cas entrer dans l'historique. resultats/ accumule les flux k6 bruts.
 backend/scripts/loadtest/k6/context.json
 backend/scripts/loadtest/resultats/
+
+# Rapports d'analyse hors application : téléphones et e-mails réels des membres.
+livrables/

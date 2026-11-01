@@ -1137,7 +1137,7 @@ async def test_pagination_et_filtres_des_membres_a_completer(db_session, admin_i
     assert [m["nom"] for m in page["membres_a_completer"]] == ["PAGE 3"]
     assert page["total_membres"] == 4
     assert (await _base(db_session, admin_isole, categorie="EC Salarié"))["total_a_completer"] == 2
-    assert [m["nom"] for m in (await _base(db_session, admin_isole, recherche="page 1"))["membres_a_completer"]] == ["PAGE 1"]
+    assert [m["nom"] for m in (await _base(db_session, admin_isole, recherche="EC/16.99831"))["membres_a_completer"]] == ["PAGE 1"]
     assert (await _base(db_session, admin_isole, anomalie_only=True))["total_a_completer"] == 0
     autre = await tableau_service.get_base_tableau(db_session, [admin_isole.organisation_id + 999], exercice="2026", limit=50)
     assert autre["total_a_completer"] == 0
@@ -1204,6 +1204,128 @@ async def test_filtres_personne_province_sexe_et_anciennete(db_session, admin_is
     assert await noms(personne="physique", province="KINSHASA", anciennete="Ancien") == ["ANCIEN Jean", "ANCIENNE Marie"]
     base = await _base(db_session, admin_isole)
     assert base["province_options"] == ["HAUT-KATANGA", "KINSHASA"]
+
+
+@pytest.mark.asyncio
+async def test_recherche_par_nom_tolerante_sur_les_membres_et_les_dossiers(db_session, admin_isole):
+    org = admin_isole.organisation_id
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pp-recherche.xlsx",
+        _xlsx(
+            ["N° Ordre", "Nom", "Statut"],
+            [
+                ["EC/17.99881", "MUSULUBILA KIONI Christian", "en cabinet"],
+                ["EC/18.99881", "BITOTA KABEYA Laurène", "en cabinet"],
+                ["EC/17.99882", "N'GOY Jean-Marie", "en cabinet"],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 30),
+    )
+    wb = openpyxl.Workbook()
+    wb.active.title = "EC EN CABINET"
+    wb.active.append(["N°", "N° d'ordre", "Nom", "Prénom", "Sexe", "Cabinet d'attache"])
+    wb.active.append([1, "EC/17.99883", "KALALA", "Marie", "F", "CABINET X"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    await tableau_service.import_excel(
+        db_session, admin_isole, org, "classeur-recherche.xlsx", buffer.getvalue(), "2026", date_situation=date(2026, 10, 31),
+    )
+
+    async def noms(recherche):
+        base = await _base(db_session, admin_isole, recherche=recherche)
+        trouves = sorted([d.nom for d in base["dossiers"]] + [m["nom"] for m in base["membres_a_completer"]])
+        assert base["total_membres"] == len(trouves)
+        return trouves
+
+    musulubila = ["MUSULUBILA KIONI Christian"]
+    for recherche in ("MUSULUBILA", "musulubila", "Christian MUSULUBILA", "kioni  christian", " MUSULUBILA KIONI "):
+        assert await noms(recherche) == musulubila
+    assert await noms("laurene bitota") == ["BITOTA KABEYA Laurène"]
+    assert await noms("ngoy") == ["N'GOY Jean-Marie"]
+    assert await noms("jean marie") == ["N'GOY Jean-Marie"]
+    assert await noms("Marie Kalala") == ["KALALA"]
+    assert await noms("Christian Laurène") == []
+    # Le numéro reste d'un seul tenant, et un caractère spécial ne vaut pas joker.
+    assert await noms("EC/17.99881") == musulubila
+    assert await noms("1799881") == musulubila
+    assert await noms("%") == []
+    assert await noms("-") == []
+
+
+@pytest.mark.asyncio
+async def test_recherche_comme_a_l_encaissement_gerant_email_et_le_plus_proche_d_abord(db_session, admin_isole):
+    org = admin_isole.organisation_id
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pp-ordre.xlsx",
+        _xlsx(
+            ["N° Ordre", "Nom", "Statut", "Email"],
+            [
+                ["EC/17.99891", "ZOLA Mai", "en cabinet", "zola@gmail.com"],
+                ["EC/17.99892", "MAITRE Paul", "en cabinet", "maitre@exemple.cd"],
+                ["EC/17.99893", "ABEDI Jean", "en cabinet", "abedi@gmail.com"],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 30),
+    )
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pm-ordre.xlsx",
+        _xlsx(["N° Ordre", "Société", "Associé gérant", "Numéro impôt"], [["SEC/18.99894", "AUDIT SA", "KALALA André", "A1X"]]),
+        "personnes_morales", "2026", date(2026, 10, 30),
+    )
+
+    async def noms(recherche):
+        return [m["nom"] for m in (await _base(db_session, admin_isole, recherche=recherche))["membres_a_completer"]]
+
+    # Le nom qui commence par le mot passe devant, et « mai » ne ramène pas tous les « gmail ».
+    assert await noms("mai") == ["MAITRE Paul", "ZOLA Mai"]
+    assert await noms("andre kalala") == ["AUDIT SA"]
+    assert await noms("abedi@gmail.com") == ["ABEDI Jean"]
+
+
+@pytest.mark.asyncio
+async def test_filtre_actif_sur_les_membres_et_les_dossiers(db_session, admin_isole):
+    org = admin_isole.organisation_id
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pp-actif.xlsx",
+        _xlsx(
+            ["N° Ordre", "Nom", "Statut", "Actif"],
+            [
+                ["EC/17.99871", "ACTIF Jean", "en cabinet", "oui"],
+                ["EC/17.99872", "INACTIF Marie", "en cabinet", "non"],
+                ["EC/17.99873", "INCONNU Paul", "en cabinet", None],
+                ["EC/17.99874", "DOSSIER Actif", "en cabinet", "oui"],
+                ["EC/17.99875", "DOSSIER Inactif", "en cabinet", "non"],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 30),
+    )
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pm-actif.xlsx",
+        _xlsx(["N° Ordre", "Société", "Numéro impôt"], [["SEC/18.99876", "SOCIETE SA", "A1X"]]),
+        "personnes_morales", "2026", date(2026, 10, 30),
+    )
+    wb = openpyxl.Workbook()
+    wb.active.title = "EC EN CABINET"
+    wb.active.append(["N°", "N° d'ordre", "Nom, post-noms et prénoms", "Sexe", "Ancienneté", "Cabinet d'attache"])
+    wb.active.append([1, "EC/17.99874", "DOSSIER Actif", "M", "Ancien", "CABINET X"])
+    wb.active.append([2, "EC/17.99875", "DOSSIER Inactif", "F", "Ancien", "CABINET X"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    await tableau_service.import_excel(
+        db_session, admin_isole, org, "classeur-actif.xlsx", buffer.getvalue(), "2026", date_situation=date(2026, 10, 31),
+    )
+
+    async def noms(**filtres):
+        base = await _base(db_session, admin_isole, **filtres)
+        assert base["total_membres"] == len(base["dossiers"]) + len(base["membres_a_completer"])
+        return sorted([d.nom for d in base["dossiers"]] + [m["nom"] for m in base["membres_a_completer"]])
+
+    assert await noms(actif=True) == ["ACTIF Jean", "DOSSIER Actif"]
+    assert await noms(actif=False) == ["DOSSIER Inactif", "INACTIF Marie"]
+    assert len(await noms()) == 6
+    # La colonne affichée et le filtre disent la même chose.
+    base = await _base(db_session, admin_isole, actif=True)
+    assert all(d.actif is True for d in base["dossiers"]) and all(m["actif"] is True for m in base["membres_a_completer"])
 
 
 @pytest.mark.asyncio

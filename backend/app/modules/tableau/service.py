@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy.orm import selectinload
@@ -1707,6 +1707,7 @@ async def get_base_tableau(
     province: str | None = None,
     sexe: str | None = None,
     anciennete: str | None = None,
+    actif: bool | None = None,
 ) -> dict[str, Any]:
     """Base consolidée du Tableau pour un exercice.
 
@@ -1764,6 +1765,7 @@ async def get_base_tableau(
         province=province,
         sexe=sexe,
         anciennete=anciennete,
+        actif=actif,
     )
     resume = await get_base_summary(
         db,
@@ -1777,6 +1779,7 @@ async def get_base_tableau(
         province=province,
         sexe=sexe,
         anciennete=anciennete,
+        actif=actif,
     )
     # Après les dossiers, dans la même pagination. Le filtre « anomalies » ne les
     # concerne pas : elles naissent de l'analyse, qui ne lit que les dossiers.
@@ -1797,6 +1800,7 @@ async def get_base_tableau(
             province=province,
             sexe=sexe,
             anciennete=anciennete,
+            actif=actif,
         )
     org_rows = await db.execute(
         select(Organisation.id, Organisation.nom)
@@ -1875,6 +1879,9 @@ async def run_analyse(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
 
     dossier_rows = await list_dossiers(db, organisation_id, import_id=import_id)
+    if not dossier_rows:
+        # Une analyse « réussie » sur zéro dossier ne change rien à l'écran : le bouton semble mort.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_MESSAGE_SANS_DOSSIER)
     return await _analyser_dossiers(db, organisation_id, imp, dossier_rows, scope="import")
 
 
@@ -2378,51 +2385,293 @@ async def export_tableau(
 
     exercice_annee = _exercice_annee(imp.exercice)
     reglages = verdict_engine.TableauReglages.from_dict((imp.metadata_json or {}).get("reglages"))
+    dossier_rows = await _dossiers_de_l_analyse(db, organisation_id, import_id, analyse, scope)
+    dossiers = [_dossier_pour_sortie(d) for d in dossier_rows]
+    content = build_workbook(dossiers, imp.exercice, reglages, exercice_annee, organisation_nom)
+    suffixe = "base" if scope == "base" else str(import_id)
+    fname = f"Tableau_{imp.exercice}_{suffixe}.xlsx"
+    return content, fname
 
+
+async def _dossiers_de_l_analyse(
+    db: AsyncSession,
+    organisation_id: int,
+    import_id: int,
+    analyse: TableauAnalyse,
+    scope: str,
+) -> list[TableauDossier]:
+    """Les dossiers sur lesquels l'analyse a réellement porté, quel que soit son périmètre."""
     source_ids = [int(value) for value in (analyse.source_dossier_ids or [])]
     if source_ids:
-        dossier_rows = list((await db.execute(
+        return list((await db.execute(
             select(TableauDossier).where(
                 TableauDossier.organisation_id == organisation_id,
                 TableauDossier.id.in_(source_ids),
             ).order_by(TableauDossier.nom, TableauDossier.id)
         )).scalars().all())
-    elif scope == "import":
+    if scope == "import":
         # Compatibilité des analyses créées avant l'introduction des instantanés.
-        dossier_rows = await list_dossiers(db, organisation_id, import_id=import_id)
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="L'analyse de base doit être relancée avant l'export.",
+        return await list_dossiers(db, organisation_id, import_id=import_id)
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="L'analyse de base doit être relancée avant l'export.",
+    )
+
+
+def _dossier_pour_sortie(d: TableauDossier) -> dict[str, Any]:
+    return {
+        "id": d.id,
+        "numero_ordre": d.numero_ordre,
+        "nom": d.nom,
+        "prenom": d.prenom,
+        "categorie": d.categorie,
+        "cotisation_payee": d.cotisation_payee,
+        "assurance": d.assurance,
+        "chiffre_affaires": d.chiffre_affaires,
+        "heures_forco": float(d.heures_forco) if d.heures_forco is not None else None,
+        "sexe": d.sexe,
+        "date_naissance": d.date_naissance.isoformat() if d.date_naissance else None,
+        "age": d.age,
+        "nif": d.nif,
+        "anciennete": d.anciennete,
+        "telephone": d.telephone,
+        "email": d.email,
+        "cabinet": d.cabinet,
+        "conclusion": d.conclusion,
+        "conclusion_motif": d.conclusion_motif,
+        "raw_data": d.raw_data or {},
+    }
+
+
+_MESSAGE_SANS_DOSSIER = (
+    "Ce fichier ne contient aucun dossier à analyser : les fichiers de membres, de chiffres d'affaires et "
+    "d'assurance ne portent pas la cotisation. Ses membres figurent dans la Base Tableau, et le rapport "
+    "complet est disponible sur le périmètre « Base consolidée »."
+)
+
+
+async def _numeros_repetes(db: AsyncSession, organisation_id: int, exercice: str) -> list[dict[str, Any]]:
+    """Numéros portés par plusieurs lignes d'un même fichier : la Base n'en montre qu'une."""
+    repetitions: list[dict[str, Any]] = []
+    for modele, colonne_nom in (
+        (TableauPersonnePhysiqueSnapshot, TableauPersonnePhysiqueSnapshot.nom),
+        (TableauPersonneMoraleSnapshot, TableauPersonneMoraleSnapshot.societe),
+    ):
+        lignes = (await db.execute(
+            select(modele.numero_ordre, func.count(), func.string_agg(colonne_nom, " / "))
+            .join(TableauImport, TableauImport.id == modele.source_import_id)
+            .where(
+                modele.organisation_id == organisation_id,
+                TableauImport.exercice == exercice,
+                func.coalesce(func.trim(modele.numero_ordre), "") != "",
+            )
+            .group_by(modele.source_import_id, modele.numero_ordre)
+            .having(func.count() > 1)
+        )).all()
+        repetitions += [{"numero_ordre": numero, "lignes": total, "noms": noms} for numero, total, noms in lignes]
+    return repetitions
+
+
+async def _numeros_ecartes(db: AsyncSession, organisation_id: int, exercice: str) -> dict[str, str]:
+    """Numéros que le conseil a déclarés erronés, conservés avec les imports de l'exercice."""
+    metadonnees = (await db.execute(
+        select(TableauImport.metadata_json).where(
+            TableauImport.organisation_id == organisation_id,
+            TableauImport.exercice == exercice,
         )
-    dossiers = [
-        {
-            "numero_ordre": d.numero_ordre,
-            "nom": d.nom,
-            "prenom": d.prenom,
-            "categorie": d.categorie,
-            "cotisation_payee": d.cotisation_payee,
-            "assurance": d.assurance,
-            "chiffre_affaires": d.chiffre_affaires,
-            "heures_forco": float(d.heures_forco) if d.heures_forco is not None else None,
-            "sexe": d.sexe,
-            "date_naissance": d.date_naissance.isoformat() if d.date_naissance else None,
-            "age": d.age,
-            "nif": d.nif,
-            "anciennete": d.anciennete,
-            "telephone": d.telephone,
-            "email": d.email,
-            "cabinet": d.cabinet,
-            "conclusion": d.conclusion,
-            "conclusion_motif": d.conclusion_motif,
-            "raw_data": d.raw_data or {},
-        }
-        for d in dossier_rows
+    )).scalars().all()
+    ecartes: dict[str, str] = {}
+    for metadonnee in metadonnees:
+        ecartes.update((metadonnee or {}).get("numeros_ecartes") or {})
+    return ecartes
+
+
+async def _declarations_par_numero(db: AsyncSession, organisation_id: int, exercice: str, modele, champ) -> dict[str, bool]:
+    """Pour chaque N° d'ordre : vrai si au moins une déclaration de l'exercice le dit."""
+    lignes = (await db.execute(
+        select(modele.numero_ordre_normalise, champ)
+        .join(TableauImport, TableauImport.id == modele.source_import_id)
+        .where(modele.organisation_id == organisation_id, TableauImport.exercice == exercice)
+    )).all()
+    resultat: dict[str, bool] = {}
+    for numero, valeur in lignes:
+        cle = _norm_numero_ordre(numero)
+        if cle and valeur is not None:
+            resultat[cle] = resultat.get(cle, False) or bool(valeur)
+    return resultat
+
+
+async def _analyse_du_perimetre(
+    db: AsyncSession, organisation_id: int, imp: TableauImport, scope: str
+) -> TableauAnalyse | None:
+    if scope == "base":
+        # L'analyse de la base est rattachée à l'import le plus récent de l'exercice,
+        # qui n'est pas forcément celui sélectionné à l'écran.
+        return (await db.execute(
+            select(TableauAnalyse).where(
+                TableauAnalyse.organisation_id == organisation_id,
+                TableauAnalyse.exercice == imp.exercice,
+                TableauAnalyse.scope == "base",
+            ).order_by(TableauAnalyse.updated_at.desc(), TableauAnalyse.id.desc()).limit(1)
+        )).scalars().first()
+    return await get_analyse_for_import(db, organisation_id, imp.id, scope="import")
+
+
+async def _conclusions_a_comparer(
+    db: AsyncSession, organisation_id: int, import_id: int, analyse: TableauAnalyse | None
+) -> dict[str, dict[str, Any]]:
+    """Conclusions d'un autre import, hors dossiers de l'analyse : un dossier ne se compare pas à lui-même."""
+    deja_analyses = {int(valeur) for valeur in (analyse.source_dossier_ids or [])} if analyse else set()
+    conclusions: dict[str, dict[str, Any]] = {}
+    for d in await list_dossiers(db, organisation_id, import_id=import_id):
+        conclusion = (d.raw_data or {}).get("conclusion_source") or d.conclusion
+        cle = _norm_numero_ordre(d.numero_ordre)
+        if d.id not in deja_analyses and cle and conclusion:
+            conclusions[cle] = {
+                "conclusion": conclusion,
+                "heures_forco": float(d.heures_forco) if d.heures_forco is not None else None,
+            }
+    return conclusions
+
+
+async def imports_comparables(
+    db: AsyncSession, organisation_id: int, import_id: int, scope: str = "import"
+) -> list[dict[str, Any]]:
+    """Imports que le rapport peut comparer : ceux que l'export accepterait."""
+    imp = await get_import(db, organisation_id, import_id)
+    if imp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
+    analyse = await _analyse_du_perimetre(db, organisation_id, imp, scope)
+    if analyse is None or analyse.status != "completed":
+        return []
+    return [
+        {"id": autre.id, "file_name": autre.file_name}
+        for autre in await list_imports(db, organisation_id)
+        if autre.id != analyse.import_id
+        and autre.exercice == imp.exercice
+        and await _conclusions_a_comparer(db, organisation_id, autre.id, analyse)
     ]
-    content = build_workbook(dossiers, imp.exercice, reglages, exercice_annee, organisation_nom)
+
+
+async def export_rapport_complet(
+    db: AsyncSession,
+    organisation_id: int,
+    import_id: int,
+    format_sortie: str = "pdf",
+    scope: str = "import",
+    comparer_a: int | None = None,
+) -> tuple[bytes, str]:
+    """Génère le rapport complet (PDF ou Excel) de l'analyse. Renvoie (octets, nom_fichier)."""
+    # Import différé : le service des journaux dépend d'endpoints qui importent des services.
+    from app.services.journaux_annexes import _identite
+
+    from . import rapport_complet
+
+    imp = await get_import(db, organisation_id, import_id)
+    if imp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
+    filtre_perimetre = (
+        TableauDossier.exercice == imp.exercice if scope == "base" else TableauDossier.import_id == import_id
+    )
+    a_des_dossiers = (await db.execute(
+        select(TableauDossier.id)
+        .where(TableauDossier.organisation_id == organisation_id, filtre_perimetre)
+        .limit(1)
+    )).first() is not None
+
+    # Sans dossier, il n'y a rien à analyser : la base se présente telle qu'importée.
+    analyse: TableauAnalyse | None = None
+    if a_des_dossiers:
+        analyse = await _analyse_du_perimetre(db, organisation_id, imp, scope)
+        consigne = (
+            "Cliquez sur « Analyser la base » dans l'onglet de la base du Tableau." if scope == "base"
+            else "Cliquez sur « Analyser cet import » dans l'onglet des imports."
+        )
+        if analyse is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Aucune analyse pour ce périmètre. {consigne}")
+        if analyse.status != "completed":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"L'analyse n'est plus à jour : des données ont changé depuis. {consigne}")
+        import_id = analyse.import_id
+        imp = await get_import(db, organisation_id, import_id) or imp
+    elif scope != "base":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_MESSAGE_SANS_DOSSIER)
+
+    comparaison: dict[str, dict[str, Any]] = {}
+    comparaison_nom: str | None = None
+    if comparer_a is not None:
+        autre = await get_import(db, organisation_id, comparer_a)
+        if autre is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import de comparaison introuvable")
+        if autre.id == imp.id or autre.exercice != imp.exercice:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="L'import de comparaison doit être un autre import du même exercice.",
+            )
+        comparaison = await _conclusions_a_comparer(db, organisation_id, autre.id, analyse)
+        if not comparaison:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="L'import choisi ne porte aucune autre conclusion à comparer à ce rapport.",
+            )
+        comparaison_nom = autre.file_name
+
+    dossier_rows = await _dossiers_de_l_analyse(db, organisation_id, import_id, analyse, scope) if analyse else []
+    actifs = await actifs_par_membre(db, [organisation_id], imp.exercice)
+    dossiers = [{**_dossier_pour_sortie(d), "actif": actifs.get((organisation_id, d.numero_ordre))} for d in dossier_rows]
+    repetitions: list[dict[str, Any]] = []
+    if scope == "base":
+        repetitions = await _numeros_repetes(db, organisation_id, imp.exercice)
+        membres, _ = await list_membres_a_completer(db, [organisation_id], imp.exercice)
+        if membres:
+            ca = await _declarations_par_numero(db, organisation_id, imp.exercice, TableauCaDeclaration, TableauCaDeclaration.ca_present)
+            assurances = await _declarations_par_numero(db, organisation_id, imp.exercice, TableauInsuranceDeclaration, TableauInsuranceDeclaration.souscrit_normalise)
+            dossiers += [rapport_complet.membre_en_dossier(m, ca, assurances, _norm_numero_ordre) for m in membres]
+    ecartes = await _numeros_ecartes(db, organisation_id, imp.exercice)
+    nombre_avant = len(dossiers)
+    dossiers = [d for d in dossiers if not rapport_complet.est_fiche_essai(d.get("nom"))]
+    fiches_essai = nombre_avant - len(dossiers)
+    numeros_ecartes = {
+        numero_normalise
+        for numero in ecartes
+        if (numero_normalise := _norm_numero_ordre(numero)) is not None
+    }
+    dossiers = [d for d in dossiers if _norm_numero_ordre(d.get("numero_ordre")) not in numeros_ecartes]
+    if not dossiers:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Aucun membre pour l'exercice {imp.exercice}.")
+    anomalies = [
+        {
+            "dossier_id": a.dossier_id,
+            "type_anomalie": a.type_anomalie,
+            "gravite": a.gravite,
+            "description": a.description,
+        }
+        for a in (await list_anomalies(db, organisation_id, analyse_id=analyse.id) if analyse else [])
+    ]
+    identite = await _identite(db, organisation_id, "")
+    source = "Base consolidée de l'exercice" if scope == "base" else f"Fichier {imp.file_name}"
+    contexte = rapport_complet.ContexteRapport(
+        exercice=imp.exercice,
+        date_situation=imp.date_situation,
+        scope=scope,
+        source=source,
+        organisation=identite.nom,
+        contact=identite.contact,
+        logo=identite.logo,
+        reglages=verdict_engine.TableauReglages.from_dict((imp.metadata_json or {}).get("reglages")),
+        exercice_annee=_exercice_annee(imp.exercice),
+        genere_le=datetime.now(timezone.utc).date(),
+        comparaison=comparaison,
+        comparaison_nom=comparaison_nom,
+        repetitions=repetitions,
+        fiches_essai_ecartees=fiches_essai,
+        numeros_ecartes=ecartes,
+    )
+    donnees = rapport_complet.construire_donnees(dossiers, anomalies, contexte, _norm_numero_ordre)
+    exercice = re.sub(r"[^0-9A-Za-z_-]+", "_", str(imp.exercice))
     suffixe = "base" if scope == "base" else str(import_id)
-    fname = f"Tableau_{imp.exercice}_{suffixe}.xlsx"
-    return content, fname
+    if format_sortie == "xlsx":
+        return rapport_complet.build_excel(donnees), f"Rapport_Tableau_{exercice}_{suffixe}.xlsx"
+    return rapport_complet.build_pdf(donnees), f"Rapport_Tableau_{exercice}_{suffixe}.pdf"
 
 
 async def create_report(

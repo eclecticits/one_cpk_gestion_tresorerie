@@ -175,6 +175,10 @@ def _text(value: Any) -> str | None:
     return s or None
 
 
+_NUMERO_ORDRE_VALIDE = re.compile(r"^[A-Za-z]+\s*/\s*\d")
+_ENTETES_RANG = {"n", "no", "num"}
+
+
 def _find_header_row(rows: list[tuple]) -> int | None:
     """Repère la ligne d'en-tête (dans les 15 premières lignes)."""
     for i, row in enumerate(rows[:15]):
@@ -185,6 +189,77 @@ def _find_header_row(rows: list[tuple]) -> int | None:
         if recognised >= 3:
             return i
     return None
+
+
+def _derniere_ligne_du_tableau(
+    rows: list[tuple],
+    colonne_rang: int | None,
+    colonne_numero_ordre: int | None,
+) -> int | None:
+    """Indice de la dernière ligne portant un N° de rang ou un vrai N° d'ordre.
+
+    Sous le tableau, les feuilles réelles ont des blocs de statistiques (« Anciennes | 100 »)
+    dont les colonnes varient d'une feuille à l'autre : leur contenu ne les distingue pas d'un
+    membre, leur position si. Une ligne de membre incomplète, placée avant, reste gardée.
+    """
+    derniere = None
+    for index, row in enumerate(rows):
+        rang = row[colonne_rang] if colonne_rang is not None and colonne_rang < len(row) else None
+        numero = (
+            row[colonne_numero_ordre]
+            if colonne_numero_ordre is not None and colonne_numero_ordre < len(row)
+            else None
+        )
+        texte_rang = str(rang).strip() if rang is not None else ""
+        texte_numero = str(numero).strip() if numero is not None else ""
+        rang_valide = (
+            isinstance(rang, (int, float))
+            and not isinstance(rang, bool)
+        ) or bool(re.fullmatch(r"\d+(?:[.,]0+)?", texte_rang))
+        if rang_valide or _NUMERO_ORDRE_VALIDE.match(texte_numero):
+            derniere = index
+    return derniere
+
+
+def _est_ligne_de_statistiques(row: tuple, colonne_numero_ordre: int | None, colonne_nom: int) -> bool:
+    """Vrai pour un bloc de statistiques ; une ligne qui a un nom de membre reste un membre."""
+    def cellule(colonne: int | None) -> Any:
+        return row[colonne] if colonne is not None and colonne < len(row) else None
+
+    def est_nombre(valeur: Any) -> bool:
+        return isinstance(valeur, (int, float)) and not isinstance(valeur, bool)
+
+    for valeur in row:
+        if isinstance(valeur, str):
+            texte = valeur.strip().casefold()
+            if texte in {"nombre", "%"} or texte.startswith("total"):
+                return True
+    nom = cellule(colonne_nom)
+    if nom is None or not str(nom).strip():
+        # Sans nom ni numéro, la ligne est vide. Sans nom, le texte seul n'est qu'un libellé.
+        return bool(str(cellule(colonne_numero_ordre) or "").strip())
+    return est_nombre(nom) or est_nombre(cellule(colonne_nom + 1))
+
+
+def _fin_du_tableau(
+    rows: list[tuple],
+    colonne_rang: int | None,
+    colonne_numero_ordre: int | None,
+    colonne_nom: int | None,
+) -> int:
+    """Indice où s'arrête le tableau des membres : aucune ligne de membre n'est perdue au-delà.
+
+    Après le dernier repère sûr, un numéro mal écrit ou absent ne fait pas d'une ligne une
+    statistique : elle reste, comme au milieu du tableau, et seul le premier bloc arrête la lecture.
+    """
+    derniere = _derniere_ligne_du_tableau(rows, colonne_rang, colonne_numero_ordre)
+    debut = 0 if derniere is None else derniere + 1
+    if colonne_nom is None:
+        return len(rows) if derniere is None else debut
+    for index in range(debut, len(rows)):
+        if _est_ligne_de_statistiques(rows[index], colonne_numero_ordre, colonne_nom):
+            return index
+    return len(rows)
 
 
 def _compute_age(d: datetime.date | None, exercice_annee: int | None) -> int | None:
@@ -237,7 +312,13 @@ def parse_excel_bytes(content: bytes, exercice: str) -> tuple[list[dict], list[s
 
         cat_sheet = _categorie_from_sheet(ws.title)
 
-        for ligne, row in enumerate(all_rows[header_idx + 1:], start=header_idx + 2):
+        corps = all_rows[header_idx + 1:]
+        colonne_rang = next((i for i, raw in enumerate(headers) if _norm(raw) in _ENTETES_RANG), None)
+        colonne_numero_ordre = col_map.get("numero_ordre")
+        if colonne_rang is not None or colonne_numero_ordre is not None:
+            corps = corps[:_fin_du_tableau(corps, colonne_rang, colonne_numero_ordre, col_map.get("nom"))]
+
+        for ligne, row in enumerate(corps, start=header_idx + 2):
             def get(field: str, _row=row) -> Any:
                 idx = col_map.get(field)
                 return _row[idx] if idx is not None and idx < len(_row) else None

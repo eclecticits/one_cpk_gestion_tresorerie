@@ -20,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from .excel_import import _strip_accents
 from .models import (
     TableauAnomalie,
     TableauAnalyse,
@@ -148,6 +149,58 @@ def _filtre_anciennete(numero, exercice: str, anciennete: str):
     return annee == reference if anciennete == "Nouveau" else annee < reference
 
 
+# Accents et séparateurs retirés côté base, sans dépendre de l'extension unaccent.
+_LETTRES_ACCENTUEES = "àáâãäåçèéêëìíîïñòóôõöùúûüýÿÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝ"
+_LETTRES_SIMPLES = "aaaaaaceeeeiiiinooooouuuuyyAAAAAACEEEEIIIINOOOOOUUUUY"
+_SEPARATEURS = " -'’./_,"
+
+
+def _sans_accents_sql(colonne):
+    return func.lower(func.translate(colonne, _LETTRES_ACCENTUEES, _LETTRES_SIMPLES))
+
+
+def _compact_sql(colonne):
+    # Un caractère sans correspondant dans le 3e argument de translate est supprimé.
+    return func.translate(_sans_accents_sql(colonne), _SEPARATEURS, "")
+
+
+def _mots_recherches(recherche: str | None) -> list[str]:
+    return re.findall(r"[a-z0-9]+", _strip_accents(recherche or "").lower())
+
+
+def _recherche_conditions(recherche: str | None, colonnes: list, email) -> list:
+    """Même méthode que la recherche d'expert de l'encaissement : chaque mot, dans n'importe quel ordre.
+
+    « Christian Musulubila » trouve « MUSULUBILA KIONI Christian », « Laurene » trouve « Laurène »,
+    « Ngoy » trouve « N'GOY ». L'e-mail n'est lu que si la recherche en est un : « mai » ramènerait
+    sinon tous les « gmail ».
+    """
+    if not recherche or not recherche.strip():
+        return []
+    if "@" in recherche:
+        return [func.lower(email).contains(recherche.strip().lower(), autoescape=True)]
+    mots = _mots_recherches(recherche)
+    if not mots:
+        return [literal(False)]
+    return [or_(*(_compact_sql(colonne).like(f"%{mot}%") for colonne in colonnes)) for mot in mots]
+
+
+def _recherche_ordre(recherche: str | None, numero, nom) -> list:
+    """Le plus proche d'abord : le numéro exact, puis ceux dont le nom commence par le mot."""
+    mots = _mots_recherches(recherche)
+    if not mots:
+        return []
+    numero_compact = _compact_sql(numero)
+    nom_simple = _sans_accents_sql(nom)
+    return [case(
+        (numero_compact == "".join(mots), 0),
+        (numero_compact.like(f"{mots[0]}%"), 1),
+        (nom_simple.like(f"{mots[0]}%"), 2),
+        (nom_simple.like(f"% {mots[0]}%"), 3),
+        else_=4,
+    )]
+
+
 def _sexe_normalise(colonne):
     return func.upper(func.left(func.trim(colonne), 1))
 
@@ -189,13 +242,19 @@ async def provinces_par_membre(
     return {(ligne.organisation_id, ligne.numero_ordre): ligne.province for ligne in lignes}
 
 
-async def actifs_par_membre(
-    db: AsyncSession, organisation_ids: list[int], exercice: str
-) -> dict[tuple[int, str], bool]:
+def _actifs_membres(organisation_ids: list[int], exercice: str):
     """Dernier statut « Actif » de chaque membre : seul le fichier des personnes physiques le porte."""
     pp = TableauPersonnePhysiqueSnapshot
-    lignes = (await db.execute(
-        select(pp.organisation_id, pp.numero_ordre, pp.actif)
+    classes = (
+        select(
+            pp.organisation_id.label("organisation_id"),
+            pp.numero_ordre.label("numero_ordre"),
+            pp.actif.label("actif"),
+            func.row_number().over(
+                partition_by=(pp.organisation_id, pp.numero_ordre),
+                order_by=(pp.date_situation.desc(), pp.id.desc()),
+            ).label("rang"),
+        )
         .join(TableauImport, TableauImport.id == pp.source_import_id)
         .where(
             pp.organisation_id.in_(organisation_ids),
@@ -203,8 +262,15 @@ async def actifs_par_membre(
             pp.numero_ordre != "",
             pp.actif.is_not(None),
         )
-        .order_by(pp.date_situation.asc(), pp.id.asc())
-    )).all()
+        .subquery()
+    )
+    return select(classes.c.organisation_id, classes.c.numero_ordre, classes.c.actif).where(classes.c.rang == 1).subquery()
+
+
+async def actifs_par_membre(
+    db: AsyncSession, organisation_ids: list[int], exercice: str
+) -> dict[tuple[int, str], bool]:
+    lignes = (await db.execute(select(_actifs_membres(organisation_ids, exercice)))).all()
     return {(ligne.organisation_id, ligne.numero_ordre): ligne.actif for ligne in lignes}
 
 
@@ -221,6 +287,7 @@ def _base_filtrage(
     province: str | None = None,
     sexe: str | None = None,
     anciennete: str | None = None,
+    actif: bool | None = None,
 ):
     if personne == "morale":
         q = q.where(TableauDossier.categorie.in_(CATEGORIES_MORALES))
@@ -237,6 +304,17 @@ def _base_filtrage(
                 func.lower(TableauDossier.anciennete).like(f"%{anciennete.lower()}%"),
             ),
         ))
+    if actif is not None:
+        actifs = _actifs_membres(organisation_ids, exercice)
+        q = q.where(
+            select(actifs.c.numero_ordre)
+            .where(
+                actifs.c.organisation_id == TableauDossier.organisation_id,
+                actifs.c.numero_ordre == TableauDossier.numero_ordre,
+                actifs.c.actif.is_(actif),
+            )
+            .exists()
+        )
     if province:
         provinces = _provinces_membres(organisation_ids, exercice)
         q = q.where(
@@ -248,16 +326,14 @@ def _base_filtrage(
             )
             .exists()
         )
-    if recherche and recherche.strip():
-        motif = f"%{recherche.strip()}%"
-        q = q.where(or_(
-            TableauDossier.numero_ordre.ilike(motif),
-            TableauDossier.nom.ilike(motif),
-            TableauDossier.prenom.ilike(motif),
-            TableauDossier.email.ilike(motif),
-            TableauDossier.nif.ilike(motif),
-            TableauDossier.cabinet.ilike(motif),
-        ))
+    q = q.where(*_recherche_conditions(recherche, [
+        TableauDossier.numero_ordre,
+        TableauDossier.nom,
+        TableauDossier.prenom,
+        TableauDossier.raw_data["gerant"].as_string(),
+        TableauDossier.nif,
+        TableauDossier.cabinet,
+    ], TableauDossier.email))
     if categorie:
         # Une société d'expertise comptable s'appelle « Société » ; un ancien dossier
         # peut encore porter « SEC » et doit répondre au même filtre.
@@ -286,6 +362,7 @@ async def list_base_tableau(
     province: str | None = None,
     sexe: str | None = None,
     anciennete: str | None = None,
+    actif: bool | None = None,
 ) -> list[TableauDossier]:
     """Situation qui fait foi pour chaque membre de l'exercice, tous imports confondus.
 
@@ -314,7 +391,12 @@ async def list_base_tableau(
         province=province,
         sexe=sexe,
         anciennete=anciennete,
-    ).order_by(func.lower(TableauDossier.nom), TableauDossier.id)
+        actif=actif,
+    ).order_by(
+        *_recherche_ordre(recherche, TableauDossier.numero_ordre, TableauDossier.nom),
+        func.lower(TableauDossier.nom),
+        TableauDossier.id,
+    )
     if limit is not None:
         q = q.limit(limit).offset(offset)
     res = await db.execute(q)
@@ -332,6 +414,7 @@ def _membres_a_completer(
     province: str | None = None,
     sexe: str | None = None,
     anciennete: str | None = None,
+    actif: bool | None = None,
 ):
     """Membres des fichiers personnes physiques et morales encore sans dossier.
 
@@ -341,7 +424,7 @@ def _membres_a_completer(
     n'a pas de clé qui la relie à un import suivant : seul le dernier fichier de sa
     source la fait donc foi, sinon chaque réimport la dupliquerait.
     """
-    def lignes(model, genre: str, nom, categorie_expr, nif, cabinet, sexe_expr, nhv, actif):
+    def lignes(model, genre: str, nom, categorie_expr, nif, cabinet, sexe_expr, nhv, actif, gerant):
         cle = case(
             (model.identity_id.is_(None), func.concat(genre, "#", cast(model.id, String))),
             else_=model.numero_ordre,
@@ -366,6 +449,7 @@ def _membres_a_completer(
                 sexe_expr.label("sexe"),
                 nhv.label("nhv"),
                 actif.label("actif"),
+                gerant.label("gerant"),
                 func.upper(func.trim(model.province_attache)).label("province"),
                 model.date_situation.label("date_situation"),
                 TableauImport.file_name.label("source_file_name"),
@@ -392,11 +476,13 @@ def _membres_a_completer(
             pp.sexe,
             pp.pourcentage_120_for,
             pp.actif,
+            cast(literal(None), String),
         ),
         lignes(
             pm, "PM", pm.societe, literal("Société"), pm.numero_impot,
             cast(literal(None), String), cast(literal(None), String), cast(literal(None), Numeric(8, 2)),
             cast(literal(None), Boolean),
+            pm.associe_gerant,
         ),
     ).subquery()
 
@@ -415,15 +501,13 @@ def _membres_a_completer(
         or_(union.c.identity_id.is_not(None), union.c.rang_import == 1),
         ~a_un_dossier,
     ]
-    if recherche and recherche.strip():
-        motif = f"%{recherche.strip()}%"
-        filtres.append(or_(
-            union.c.numero_ordre.ilike(motif),
-            union.c.nom.ilike(motif),
-            union.c.email.ilike(motif),
-            union.c.nif.ilike(motif),
-            union.c.cabinet.ilike(motif),
-        ))
+    filtres.extend(_recherche_conditions(recherche, [
+        union.c.numero_ordre,
+        union.c.nom,
+        union.c.gerant,
+        union.c.nif,
+        union.c.cabinet,
+    ], union.c.email))
     if categorie:
         filtres.append(union.c.categorie == ("Société" if categorie == "SEC" else categorie))
     if personne:
@@ -434,6 +518,8 @@ def _membres_a_completer(
         filtres.append(_sexe_normalise(union.c.sexe) == sexe)
     if anciennete:
         filtres.append(_filtre_anciennete(union.c.numero_ordre, exercice, anciennete))
+    if actif is not None:
+        filtres.append(union.c.actif.is_(actif))
     if organisation_id is not None:
         filtres.append(union.c.organisation_id == organisation_id)
     return union, filtres
@@ -453,11 +539,12 @@ async def list_membres_a_completer(
     province: str | None = None,
     sexe: str | None = None,
     anciennete: str | None = None,
+    actif: bool | None = None,
 ) -> tuple[list, dict]:
     """Renvoie (lignes de la page, résumé de l'ensemble)."""
     union, filtres = _membres_a_completer(
         organisation_ids, exercice, recherche=recherche, categorie=categorie, organisation_id=organisation_id,
-        personne=personne, province=province, sexe=sexe, anciennete=anciennete,
+        personne=personne, province=province, sexe=sexe, anciennete=anciennete, actif=actif,
     )
     total, sans_numero, imports, organisations = (await db.execute(
         select(
@@ -471,7 +558,7 @@ async def list_membres_a_completer(
         select(union, TableauSourceRow.normalization_errors.label("erreurs"))
         .join(TableauSourceRow, TableauSourceRow.id == union.c.source_row_id)
         .where(*filtres)
-        .order_by(func.lower(union.c.nom), union.c.genre, union.c.id)
+        .order_by(*_recherche_ordre(recherche, union.c.numero_ordre, union.c.nom), func.lower(union.c.nom), union.c.genre, union.c.id)
     )
     if limit is not None:
         q = q.limit(limit).offset(offset)
@@ -497,6 +584,7 @@ async def get_base_summary(
     province: str | None = None,
     sexe: str | None = None,
     anciennete: str | None = None,
+    actif: bool | None = None,
 ) -> dict:
     classee = _base_classee(organisation_ids, exercice)
     q = (
@@ -521,6 +609,7 @@ async def get_base_summary(
         province=province,
         sexe=sexe,
         anciennete=anciennete,
+        actif=actif,
     )
     total, sans_numero, imports, organisations = (await db.execute(q)).one()
     return {

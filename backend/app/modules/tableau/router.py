@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -50,9 +50,11 @@ from .service import (
     create_report,
     corriger_dossier,
     export_import_annote,
+    export_rapport_complet,
     export_tableau,
     get_base_tableau,
     import_source_snapshot,
+    imports_comparables,
     get_reglages,
     import_excel,
     run_analyse,
@@ -184,6 +186,7 @@ async def get_base(
     province: str | None = Query(default=None, max_length=100),
     sexe: Literal["M", "F"] | None = Query(default=None),
     anciennete: Literal["Ancien", "Nouveau"] | None = Query(default=None),
+    actif: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -218,6 +221,7 @@ async def get_base(
         province=province,
         sexe=sexe,
         anciennete=anciennete,
+        actif=actif,
         limit=limit,
         offset=offset,
     )
@@ -399,6 +403,47 @@ async def export_tableau_xlsx(
     return StreamingResponse(
         iter([content]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get(
+    "/rapport-complet/{import_id}/comparables",
+    dependencies=[Depends(has_permission("tableau.export"))],
+)
+async def list_imports_comparables(
+    import_id: int,
+    scope: Literal["import", "base"] = Query(default="import"),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> list[dict[str, Any]]:
+    """Imports dont les conclusions peuvent réellement être comparées à ce rapport."""
+    return await imports_comparables(db, tenant_id, import_id, scope=scope)
+
+
+@router.get(
+    "/rapport-complet/{import_id}",
+    dependencies=[Depends(has_permission("tableau.export"))],
+)
+async def export_rapport_complet_tableau(
+    import_id: int,
+    format: Literal["pdf", "xlsx"] = Query(default="pdf"),
+    scope: Literal["import", "base"] = Query(default="import"),
+    comparer_a: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> StreamingResponse:
+    """Télécharge le rapport complet de l'analyse : synthèse, conformité, qualité, plan d'action."""
+    content, fname = await export_rapport_complet(
+        db, tenant_id, import_id, format_sortie=format, scope=scope, comparer_a=comparer_a,
+    )
+    media_type = (
+        "application/pdf" if format == "pdf"
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    return StreamingResponse(
+        iter([content]),
+        media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 

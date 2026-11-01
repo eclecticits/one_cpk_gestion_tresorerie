@@ -32,6 +32,8 @@ import {
   updateTableauReglages,
   downloadTableauExport,
   downloadTableauImportAnnote,
+  downloadTableauRapportComplet,
+  listTableauImportsComparables,
   type TableauAuditEntry,
   type TableauReglages,
   type TableauAnalyse,
@@ -131,6 +133,13 @@ function styleNhv(valeur: number | null | undefined, minimum: number): React.CSS
   return {}
 }
 
+// Ce qui remplace le NHV quand il n'y a pas d'heures à lire : une personne morale n'en a
+// pas besoin (« — », même inscrite cette année), un nouveau en est exempté (« N/A »).
+function nhvSansObjet(categorie: string | null | undefined, anciennete: string | null | undefined): '—' | 'N/A' | null {
+  if (categorie === 'Société' || categorie === 'SEC') return '—'
+  return anciennete === 'Nouveau' ? 'N/A' : null
+}
+
 function booleanStatus(value: boolean | null) {
   if (value === true) return <span style={{ color: '#166534', fontWeight: 600 }}>Oui</span>
   if (value === false) return <span style={{ color: '#991b1b', fontWeight: 600 }}>Non</span>
@@ -212,6 +221,7 @@ export default function TableauModulePage() {
   const [baseProvince, setBaseProvince] = useState('')
   const [baseSexe, setBaseSexe] = useState('')
   const [baseAnciennete, setBaseAnciennete] = useState('')
+  const [baseActif, setBaseActif] = useState('')
   const [baseOrganisationId, setBaseOrganisationId] = useState('')
   const [basePage, setBasePage] = useState(1)
   const [basePageSize, setBasePageSize] = useState(50)
@@ -245,7 +255,28 @@ export default function TableauModulePage() {
 
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [rapportComparerA, setRapportComparerA] = useState<number | null>(null)
+  const [rapportComparables, setRapportComparables] = useState<{ id: number; file_name: string }[]>([])
+  // La base est le périmètre qui fait foi dès que l'exercice s'étale sur plusieurs fichiers.
+  const [rapportPerimetre, setRapportPerimetre] = useState<'import' | 'base'>('base')
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setRapportComparerA(null)
+  }, [selectedImport?.id, rapportPerimetre])
+
+  // Le menu ne propose que ce que l'export acceptera : un choix voué au refus est une impasse.
+  useEffect(() => {
+    if (activeTab !== 'rapports' || !selectedImport) {
+      setRapportComparables([])
+      return
+    }
+    let annule = false
+    listTableauImportsComparables(selectedImport.id, rapportPerimetre)
+      .then(liste => { if (!annule) setRapportComparables(liste) })
+      .catch(() => { if (!annule) setRapportComparables([]) })
+    return () => { annule = true }
+  }, [activeTab, selectedImport?.id, rapportPerimetre])
 
   useEffect(() => {
     if (activeTab !== 'actualisations') return
@@ -447,6 +478,24 @@ export default function TableauModulePage() {
     }
   }
 
+  const handleRapportComplet = async (format: 'pdf' | 'xlsx') => {
+    if (!selectedImport) return
+    setActionLoading(`rapport-${format}`)
+    setError(null)
+    try {
+      await downloadTableauRapportComplet(selectedImport.id, {
+        format,
+        scope: rapportPerimetre,
+        exercice: selectedImport.exercice,
+        comparer_a: rapportComparerA,
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur lors de la génération du rapport complet.')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   const handleExport = () => {
     if (!selectedReport?.contenu) return
     const blob = new Blob([selectedReport.contenu], { type: 'text/plain;charset=utf-8' })
@@ -504,6 +553,7 @@ export default function TableauModulePage() {
       province: baseProvince || undefined,
       sexe: baseSexe || undefined,
       anciennete: baseAnciennete || undefined,
+      actif: baseActif || undefined,
       limit: basePageSize,
       offset: (basePage - 1) * basePageSize,
     })
@@ -520,11 +570,11 @@ export default function TableauModulePage() {
       })
       .finally(() => { if (!annule) setBaseLoading(false) })
     return () => { annule = true }
-  }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, basePage, basePageSize, baseRefresh])
+  }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, basePage, basePageSize, baseRefresh])
 
   useEffect(() => {
     setBasePage(1)
-  }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, basePageSize])
+  }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, basePageSize])
 
   const handleBaseAnalyse = async () => {
     if (!base?.exercice) return
@@ -841,9 +891,10 @@ export default function TableauModulePage() {
                   onChange={event => {
                     const personne = event.target.value
                     setBasePersonne(personne)
-                    // Une catégorie ou un sexe sans rapport viderait la liste sans dire pourquoi.
+                    // Une catégorie, un sexe ou un statut sans rapport viderait la liste sans dire pourquoi.
                     if (personne === 'morale') {
                       setBaseSexe('')
+                      setBaseActif('')
                       if (baseCategorie !== 'Société') setBaseCategorie('')
                     } else if (personne === 'physique' && baseCategorie === 'Société') {
                       setBaseCategorie('')
@@ -881,6 +932,14 @@ export default function TableauModulePage() {
                 </select>
               </label>
               <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                Actif
+                <select value={baseActif} onChange={event => setBaseActif(event.target.value)} disabled={basePersonne === 'morale'} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                  <option value="">Tous</option>
+                  <option value="true">Oui</option>
+                  <option value="false">Non</option>
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
                 Ancienneté
                 <select value={baseAnciennete} onChange={event => setBaseAnciennete(event.target.value)} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
                   <option value="">Toutes</option>
@@ -911,7 +970,7 @@ export default function TableauModulePage() {
               <div className={styles.emptyBox}>Chargement de la base...</div>
             ) : !base || base.total_membres === 0 ? (
               <div className={styles.emptyBox}>
-                {baseSearch || baseCategorie || basePersonne || baseProvince || baseSexe || baseAnciennete
+                {baseSearch || baseCategorie || basePersonne || baseProvince || baseSexe || baseAnciennete || baseActif
                   ? 'Aucun membre ne correspond à ces filtres.'
                   : "Aucun import pour l'instant. Chargez un fichier depuis l'onglet « Import Excel »."}
               </div>
@@ -940,7 +999,7 @@ export default function TableauModulePage() {
 
                 <p style={{ color: '#6b7280', fontSize: '12px', margin: '0 0 8px' }}>
                   NHV : <strong style={{ color: COULEUR_NHV_ATTEINT }}>bleu</strong> à partir de {nhvMinimum},{' '}
-                  <strong style={{ color: COULEUR_NHV_FAIBLE }}>rouge</strong> sous {nhvMinimum * PART_NHV_ROUGE} (60 % du minimum), N/A pour les nouveaux et les sociétés.
+                  <strong style={{ color: COULEUR_NHV_FAIBLE }}>rouge</strong> sous {nhvMinimum * PART_NHV_ROUGE} (60 % du minimum), N/A pour les nouveaux, — pour les sociétés.
                 </p>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={baseTableStyle}>
@@ -980,8 +1039,8 @@ export default function TableauModulePage() {
                               <div style={{ color: '#6b7280', fontSize: '12px' }}>inscrit en {dossier.annee_inscription}</div>
                             )}
                           </td>
-                          {dossier.anciennete_libelle === 'Nouveau' || dossier.categorie === 'Société' || dossier.categorie === 'SEC'
-                            ? <td style={{ ...baseTdStyle, color: '#9ca3af' }} title="NHV non applicable">N/A</td>
+                          {nhvSansObjet(dossier.categorie, dossier.anciennete_libelle)
+                            ? <td style={{ ...baseTdStyle, color: '#9ca3af' }} title="NHV non applicable">{nhvSansObjet(dossier.categorie, dossier.anciennete_libelle)}</td>
                             : <td style={{ ...baseTdStyle, ...styleNhv(dossier.heures_forco, nhvMinimum) }}>{dossier.heures_forco ?? '—'}</td>}
                           <td style={baseTdStyle}>{booleanStatus(dossier.cotisation_payee)}</td>
                           <td style={baseTdStyle}>{booleanStatus(dossier.assurance)}</td>
@@ -1026,8 +1085,8 @@ export default function TableauModulePage() {
                                 <div style={{ color: '#6b7280', fontSize: '12px' }}>inscrit en {membre.annee_inscription}</div>
                               )}
                             </td>
-                            {membre.anciennete_libelle === 'Nouveau' || membre.categorie === 'Société' || membre.categorie === 'SEC'
-                              ? <td style={{ ...baseTdStyle, color: '#9ca3af' }} title="NHV non applicable">N/A</td>
+                            {nhvSansObjet(membre.categorie, membre.anciennete_libelle)
+                              ? <td style={{ ...baseTdStyle, color: '#9ca3af' }} title="NHV non applicable">{nhvSansObjet(membre.categorie, membre.anciennete_libelle)}</td>
                               : <td style={{ ...baseTdStyle, ...styleNhv(membre.nhv, nhvMinimum) }}>{membre.nhv ?? '—'}</td>}
                             <td style={baseTdStyle}>—</td>
                             <td style={baseTdStyle}>{booleanStatus(membre.assurance)}</td>
@@ -1173,7 +1232,7 @@ export default function TableauModulePage() {
                     </thead>
                     <tbody>
                       {dossiersAffiches.map((d, i) => {
-                        const isSociete = d.categorie === 'Société' || d.categorie === 'SEC'
+                        const nhvAbsent = nhvSansObjet(d.categorie, d.anciennete)
                         const concl = d.conclusion || d.statut_dossier
                         const conclColor =
                           concl === 'INSCRIT' ? { bg: '#d1fae5', fg: '#065f46' }
@@ -1195,8 +1254,8 @@ export default function TableauModulePage() {
                           <td style={{ padding: '7px 10px' }}>
                             {d.cotisation_payee === true ? <CheckCircle2 size={13} color="#16a34a" /> : d.cotisation_payee === false ? <XCircle size={13} color="#dc2626" /> : '—'}
                           </td>
-                          <td style={{ padding: '7px 10px', ...(isSociete || d.anciennete === 'Nouveau' ? { color: '#9ca3af' } : styleNhv(d.heures_forco, nhvMinimum)) }}>
-                            {isSociete || d.anciennete === 'Nouveau' ? 'N/A' : (d.heures_forco !== null ? d.heures_forco : '—')}
+                          <td style={{ padding: '7px 10px', ...(nhvAbsent ? { color: '#9ca3af' } : styleNhv(d.heures_forco, nhvMinimum)) }}>
+                            {nhvAbsent ?? (d.heures_forco !== null ? d.heures_forco : '—')}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             {d.assurance === true ? <CheckCircle2 size={13} color="#16a34a" /> : d.assurance === false ? <XCircle size={13} color="#dc2626" /> : '—'}
@@ -1589,8 +1648,65 @@ export default function TableauModulePage() {
               </p>
             )}
 
-            {selectedImport && (canReport || canGeneratePv) && (
+            {selectedImport && (canReport || canGeneratePv || canExport) && (
               <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                {canExport && <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', flex: 1, minWidth: '280px' }}>
+                  <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Rapport complet (PDF et Excel)</h3>
+                  <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                    Synthèse, conformité des critères, qualité des données et plan d'action.
+                  </p>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#4b5563', marginBottom: '8px' }}>
+                    Périmètre
+                    <select
+                      value={rapportPerimetre}
+                      onChange={e => setRapportPerimetre(e.target.value as 'import' | 'base')}
+                      disabled={Boolean(actionLoading?.startsWith('rapport-'))}
+                      style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '100%', marginTop: '4px' }}
+                    >
+                      <option value="base">Base consolidée {selectedImport.exercice}</option>
+                      <option value="import">Fichier : {selectedImport.file_name}</option>
+                    </select>
+                  </label>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#4b5563', marginBottom: '8px' }}>
+                    Comparer les conclusions à (facultatif)
+                    <select
+                      value={rapportComparerA ?? ''}
+                      onChange={e => setRapportComparerA(e.target.value ? Number(e.target.value) : null)}
+                      disabled={Boolean(actionLoading?.startsWith('rapport-')) || rapportComparables.length === 0}
+                      style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '100%', marginTop: '4px' }}
+                    >
+                      <option value="">Aucune comparaison</option>
+                      {rapportComparables.map(item => <option key={item.id} value={item.id}>{item.file_name}</option>)}
+                    </select>
+                    {rapportComparables.length === 0 && (
+                      <span style={{ display: 'block', color: '#6b7280', marginTop: '4px' }}>
+                        Aucun autre import de cet exercice ne porte de conclusion à comparer.
+                      </span>
+                    )}
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      onClick={() => void handleRapportComplet('pdf')}
+                      disabled={Boolean(actionLoading?.startsWith('rapport-'))}
+                      style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', flex: 1, justifyContent: 'center' }}
+                    >
+                      <FileText size={15} />
+                      {actionLoading === 'rapport-pdf' ? 'Génération...' : 'Télécharger le PDF'}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      onClick={() => void handleRapportComplet('xlsx')}
+                      disabled={Boolean(actionLoading?.startsWith('rapport-'))}
+                      style={{ flex: 1, justifyContent: 'center' }}
+                    >
+                      <FileText size={15} />
+                      {actionLoading === 'rapport-xlsx' ? 'Génération...' : "Télécharger l'Excel"}
+                    </button>
+                  </div>
+                </div>}
                 {canReport && <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', flex: 1, minWidth: '280px' }}>
                   <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '12px' }}>Générer un rapport d'analyse</h3>
                   <input

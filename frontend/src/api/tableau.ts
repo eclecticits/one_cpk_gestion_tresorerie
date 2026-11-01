@@ -275,6 +275,7 @@ export const getTableauBase = (params?: {
   province?: string
   sexe?: string
   anciennete?: string
+  actif?: string
   limit?: number
   offset?: number
 }) => {
@@ -289,6 +290,7 @@ export const getTableauBase = (params?: {
   if (params?.province) qs.set('province', params.province)
   if (params?.sexe) qs.set('sexe', params.sexe)
   if (params?.anciennete) qs.set('anciennete', params.anciennete)
+  if (params?.actif) qs.set('actif', params.actif)
   if (params?.limit) qs.set('limit', String(params.limit))
   if (params?.offset) qs.set('offset', String(params.offset))
   const suffix = qs.toString() ? `?${qs}` : ''
@@ -379,6 +381,40 @@ export const downloadTableauExport = async (import_id: number, scope: 'import' |
   const a = document.createElement('a')
   a.href = url
   a.download = `Tableau_${scope === 'base' ? 'base_' : ''}${import_id}.xlsx`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/** Imports dont les conclusions peuvent réellement être comparées au rapport complet. */
+export const listTableauImportsComparables = (import_id: number, scope: 'import' | 'base') =>
+  apiRequest<{ id: number; file_name: string }[]>('GET', `${BASE}/rapport-complet/${import_id}/comparables?scope=${scope}`)
+
+/** Télécharge le rapport complet de l'analyse (PDF ou Excel). */
+export const downloadTableauRapportComplet = async (
+  import_id: number,
+  options: { format: 'pdf' | 'xlsx'; scope: 'import' | 'base'; exercice: string; comparer_a?: number | null },
+): Promise<void> => {
+  const qs = new URLSearchParams({ format: options.format, scope: options.scope })
+  if (options.comparer_a) qs.set('comparer_a', String(options.comparer_a))
+  const path = `${BASE}/rapport-complet/${import_id}?${qs}`
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'GET',
+    headers: getAuthHeaders(path),
+    credentials: 'include',
+  })
+  if (!res.ok) {
+    const corps = await res.json().catch(() => null) as { detail?: unknown } | null
+    throw new Error(typeof corps?.detail === 'string' ? corps.detail : `Génération du rapport échouée (${res.status})`)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const disposition = res.headers.get('content-disposition')
+  const nomServeur = disposition?.match(/filename="([^"]+)"/i)?.[1]
+  a.href = url
+  a.download = nomServeur || `Rapport_Tableau_${options.exercice}_${options.scope === 'base' ? 'base' : import_id}.${options.format}`
   document.body.appendChild(a)
   a.click()
   a.remove()
