@@ -45,7 +45,7 @@ import {
   type TableauReport,
   type TableauStats,
 } from '../api/tableau'
-import styles from './SecretariatPage.module.css'
+import styles from './TableauModulePage.module.css'
 
 type TabKey = 'dashboard' | 'actualisations' | 'base' | 'import' | 'analyse' | 'anomalies' | 'comparaison' | 'rapports' | 'reglages' | 'journal'
 
@@ -170,22 +170,25 @@ function AnalyseObsolete({ scope, onRelancer }: { scope: 'import' | 'base'; onRe
   )
 }
 
-function StatCard({ value, label, icon, hint }: { value: number | string; label: string; icon: React.ReactNode; hint?: string }) {
+function StatCard({
+  value,
+  label,
+  icon,
+  hint,
+  tone = 'primary',
+}: {
+  value: number | string
+  label: string
+  icon: React.ReactNode
+  hint?: string
+  tone?: 'primary' | 'info' | 'warning' | 'danger' | 'success'
+}) {
   return (
-    <div style={{
-      background: '#fff',
-      borderRadius: '8px',
-      border: '1px solid #e5e7eb',
-      padding: '16px 20px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '6px',
-      minWidth: '140px',
-    }}>
-      <div style={{ color: 'var(--tenant-primary, #714b67)', opacity: 0.8 }}>{icon}</div>
-      <div style={{ fontSize: '28px', fontWeight: '700', color: '#1f2933', lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: '500' }}>{label}</div>
-      {hint && <div style={{ fontSize: '11px', color: '#9ca3af' }}>{hint}</div>}
+    <div className={`${styles.statCard} ${styles[`stat${tone[0].toUpperCase()}${tone.slice(1)}`]}`}>
+      <div className={styles.statIcon}>{icon}</div>
+      <div className={styles.statValue}>{value}</div>
+      <div className={styles.statLabel}>{label}</div>
+      {hint && <div className={styles.statHint}>{hint}</div>}
     </div>
   )
 }
@@ -724,27 +727,38 @@ export default function TableauModulePage() {
 
         {activeTab === 'dashboard' && (
           <section>
-            <h2 className={styles.sectionTitle} style={{ marginBottom: '14px' }}>Vue d'ensemble Commission Tableau</h2>
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '24px' }}>
-              <StatCard value={stats?.dossiers_importes ?? 0} label="Membres dans la base" icon={<FileSpreadsheet size={18} />} />
-              <StatCard value={stats?.dossiers_analyses ?? 0} label="Membres analysés" icon={<Bot size={18} />} />
+            <div className={styles.dashboardIntro}>
+              <div>
+                <div className={styles.dashboardKicker}>Pilotage de la commission</div>
+                <h2 className={styles.sectionTitle}>Vue d'ensemble Commission Tableau</h2>
+                <p className={styles.sectionSubtitle}>Suivez la qualité de la base et accédez aux opérations courantes.</p>
+              </div>
+            </div>
+
+            <div className={styles.statsGrid}>
+              <StatCard value={stats?.dossiers_importes ?? 0} label="Membres dans la base" icon={<FileSpreadsheet size={18} />} tone="primary" />
+              <StatCard value={stats?.dossiers_analyses ?? 0} label="Membres analysés" icon={<Bot size={18} />} tone="info" />
               <StatCard
                 value={stats?.dossiers_incomplets ?? '—'}
                 label="Dossiers incomplets"
                 icon={<AlertTriangle size={18} />}
                 hint={stats?.dossiers_incomplets == null ? 'Analyse de base requise' : undefined}
+                tone="warning"
               />
-              <StatCard value={stats?.anomalies_detectees ?? 0} label="Anomalies détectées" icon={<XCircle size={18} />} />
-              <StatCard value={stats?.decisions_a_valider ?? 0} label="Décisions enregistrées" icon={<CheckCircle2 size={18} />} />
+              <StatCard value={stats?.anomalies_detectees ?? 0} label="Anomalies détectées" icon={<XCircle size={18} />} tone="danger" />
+              <StatCard value={stats?.decisions_a_valider ?? 0} label="Décisions enregistrées" icon={<CheckCircle2 size={18} />} tone="success" />
             </div>
 
             {stats?.last_exercice && stats.analyse_base_status !== 'completed' && (
-              <p style={{ fontSize: '12px', color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', padding: '10px 12px', marginBottom: '20px' }}>
-                {stats.analyse_base_status === 'stale'
-                  ? `L'analyse de la base ${stats.last_exercice} est obsolète : les chiffres qui en dépendent datent d'avant le dernier changement.`
-                  : `Aucune analyse de la base ${stats.last_exercice} : les chiffres qui en dépendent ne peuvent pas être établis.`}
-                {canAnalyze ? ' Lancez-la depuis l\'onglet « Base Tableau ».' : ''}
-              </p>
+              <div className={styles.notice}>
+                <AlertTriangle size={17} aria-hidden="true" />
+                <span>
+                  {stats.analyse_base_status === 'stale'
+                    ? `L'analyse de la base ${stats.last_exercice} est obsolète : les chiffres qui en dépendent datent d'avant le dernier changement.`
+                    : `Aucune analyse de la base ${stats.last_exercice} : les chiffres qui en dépendent ne peuvent pas être établis.`}
+                  {canAnalyze ? ' Lancez-la depuis l\'onglet « Base Tableau ».' : ''}
+                </span>
+              </div>
             )}
 
             <div className={styles.intro}>
@@ -762,40 +776,49 @@ export default function TableauModulePage() {
               </aside>
             </div>
 
-            <h2 className={styles.sectionTitle} style={{ margin: '20px 0 12px' }}>Actions rapides</h2>
-            <div className={styles.grid}>
-              {[
-                { label: 'Actualisations', icon: <RefreshCw size={18} />, desc: 'Consulter les révisions matérialisées', tab: 'actualisations' as TabKey, visible: true },
-                { label: 'Consulter la base', icon: <Layers size={18} />, desc: 'Voir la situation actuelle par membre', tab: 'base' as TabKey, visible: true },
-                { label: 'Importer Excel', icon: <Upload size={18} />, desc: 'Actualiser le tableau des experts-comptables', tab: 'import' as TabKey, visible: canImport },
-                { label: 'Analyse réglementaire', icon: <Bot size={18} />, desc: 'Calculer les conclusions et anomalies', tab: 'analyse' as TabKey, visible: canAnalyze },
-                { label: 'Voir les anomalies', icon: <AlertTriangle size={18} />, desc: 'Consulter les anomalies détectées', tab: 'anomalies' as TabKey, visible: true },
-                { label: 'Comparer exercices', icon: <GitCompare size={18} />, desc: 'Comparer deux bases consolidées', tab: 'comparaison' as TabKey, visible: canCompare },
-                { label: 'Générer un rapport', icon: <FileText size={18} />, desc: 'Créer un rapport d\'analyse ou un PV', tab: 'rapports' as TabKey, visible: canReport || canGeneratePv },
-              ].filter(action => action.visible).map(action => (
-                <button
-                  key={action.tab}
-                  type="button"
-                  className={styles.featureCard}
-                  style={{ textAlign: 'left', display: 'block', width: '100%', border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', borderRadius: '8px', padding: '16px' }}
-                  onClick={() => setActiveTab(action.tab)}
-                >
-                  <div className={styles.featureHeader}>
-                    {action.icon}
-                    <span>{action.label}</span>
-                  </div>
-                  <p className={styles.featureText}>{action.desc}</p>
-                  <span className={styles.pill}>Ouvrir →</span>
-                </button>
-              ))}
+            <div className={styles.quickSection}>
+              <div className={styles.quickHeader}>
+                <h2 className={styles.sectionTitle}>Actions rapides</h2>
+                <span className={styles.quickHint}>Accès direct aux espaces de travail</span>
+              </div>
+              <div className={styles.grid}>
+                {[
+                  { label: 'Actualisations', icon: <RefreshCw size={18} />, desc: 'Consulter les révisions matérialisées', tab: 'actualisations' as TabKey, visible: true },
+                  { label: 'Consulter la base', icon: <Layers size={18} />, desc: 'Voir la situation actuelle par membre', tab: 'base' as TabKey, visible: true },
+                  { label: 'Importer Excel', icon: <Upload size={18} />, desc: 'Actualiser le tableau des experts-comptables', tab: 'import' as TabKey, visible: canImport },
+                  { label: 'Analyse réglementaire', icon: <Bot size={18} />, desc: 'Calculer les conclusions et anomalies', tab: 'analyse' as TabKey, visible: canAnalyze },
+                  { label: 'Voir les anomalies', icon: <AlertTriangle size={18} />, desc: 'Consulter les anomalies détectées', tab: 'anomalies' as TabKey, visible: true },
+                  { label: 'Comparer exercices', icon: <GitCompare size={18} />, desc: 'Comparer deux bases consolidées', tab: 'comparaison' as TabKey, visible: canCompare },
+                  { label: 'Générer un rapport', icon: <FileText size={18} />, desc: 'Créer un rapport d\'analyse ou un PV', tab: 'rapports' as TabKey, visible: canReport || canGeneratePv },
+                ].filter(action => action.visible).map(action => (
+                  <button
+                    key={action.tab}
+                    type="button"
+                    className={styles.featureCard}
+                    onClick={() => setActiveTab(action.tab)}
+                  >
+                    <div className={styles.featureHeader}>
+                      {action.icon}
+                      <span>{action.label}</span>
+                    </div>
+                    <p className={styles.featureText}>{action.desc}</p>
+                    <span className={styles.pill}>Ouvrir</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </section>
         )}
 
         {activeTab === 'actualisations' && (
           <section className={styles.managerWorkspace}>
-            <h2 className={styles.sectionTitle}>Actualisations du Tableau</h2>
-            <p className={styles.sectionSubtitle}>Les révisions sont matérialisées par le backend et restent immuables.</p>
+            <div className={styles.mailToolbar}>
+              <div>
+                <h2 className={styles.sectionTitle}>Actualisations du Tableau</h2>
+                <p className={styles.sectionSubtitle}>Les révisions sont matérialisées par le backend et restent immuables.</p>
+              </div>
+              <span className={styles.sectionMeta}>{actualisations.length} révision(s)</span>
+            </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={baseTableStyle}><thead><tr><th style={baseThStyle}>Situation</th><th style={baseThStyle}>Révision</th><th style={baseThStyle}>Actualisée le</th><th style={baseThStyle}>Lignes</th><th style={baseThStyle}>Statut</th></tr></thead>
                 <tbody>{actualisations.map(a => <tr key={a.id}><td style={baseTdStyle}>{a.date_situation}</td><td style={baseTdStyle}>#{a.revision_number}{a.is_current && <span className={styles.pill} style={{ marginLeft: 8 }}>Courante</span>}</td><td style={baseTdStyle}>{new Date(a.actualized_at).toLocaleString()}</td><td style={baseTdStyle}>{a.total_rows}</td><td style={baseTdStyle}>{a.status}</td></tr>)}</tbody>
@@ -822,7 +845,7 @@ export default function TableauModulePage() {
                     className={styles.secondaryButton}
                     disabled={baseLoading || actionLoading === 'analyse-base' || !base || base.total_dossiers === 0}
                     onClick={() => void handleBaseAnalyse()}
-                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
+                    style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)' }}
                   >
                     <Bot size={15} />
                     {actionLoading === 'analyse-base' ? 'Analyse...' : 'Analyser la base'}
@@ -1155,8 +1178,8 @@ export default function TableauModulePage() {
                       key={imp.id}
                       onClick={() => void handleSelectImport(imp)}
                       style={{
-                        background: selectedImport?.id === imp.id ? '#f5f0f5' : '#fff',
-                        border: `1px solid ${selectedImport?.id === imp.id ? 'var(--tenant-primary, #714b67)' : '#e5e7eb'}`,
+                        background: selectedImport?.id === imp.id ? 'var(--tableau-brand-soft)' : '#fff',
+                        border: `1px solid ${selectedImport?.id === imp.id ? 'var(--tenant-primary, #1f6b5c)' : '#e5e7eb'}`,
                         borderRadius: '6px',
                         padding: '12px 16px',
                         cursor: 'pointer',
@@ -1214,7 +1237,7 @@ export default function TableauModulePage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleAnalyse()}
                     disabled={actionLoading === 'analyse'}
-                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
+                    style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)' }}
                   >
                     <Bot size={15} />
                     {actionLoading === 'analyse' ? 'Analyse...' : 'Analyser cet import'}
@@ -1312,7 +1335,7 @@ export default function TableauModulePage() {
                   className={styles.secondaryButton}
                   onClick={() => void (analysisScope === 'base' ? handleBaseAnalyse() : handleAnalyse())}
                   disabled={actionLoading === 'analyse'}
-                  style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
+                  style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)' }}
                 >
                   <Bot size={15} />
                   {actionLoading === 'analyse' ? 'Analyse en cours...' : 'Relancer l\'analyse'}
@@ -1344,9 +1367,9 @@ export default function TableauModulePage() {
                     <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '10px', color: '#374151' }}>Répartition par catégorie</h3>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       {Object.entries(analyse.stats_json.categories as Record<string, number>).map(([cat, cnt]: [string, number]) => (
-                        <div key={cat} style={{ background: '#f5f0f5', borderRadius: '6px', padding: '8px 14px', fontSize: '13px' }}>
+                        <div key={cat} style={{ background: 'var(--tableau-brand-soft)', borderRadius: '6px', padding: '8px 14px', fontSize: '13px' }}>
                           <span style={{ fontWeight: '600' }}>{cat}</span>
-                          <span style={{ color: 'var(--tenant-primary, #714b67)', fontWeight: '700', marginLeft: '8px' }}>{cnt}</span>
+                          <span style={{ color: 'var(--tenant-primary, #1f6b5c)', fontWeight: '700', marginLeft: '8px' }}>{cnt}</span>
                         </div>
                       ))}
                     </div>
@@ -1406,7 +1429,7 @@ export default function TableauModulePage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleGenerateReport()}
                     disabled={actionLoading === 'report' || !analysePrete}
-                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
+                    style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)' }}
                   >
                     <FileText size={15} />
                     {actionLoading === 'report' ? 'Génération...' : 'Générer le rapport'}
@@ -1443,7 +1466,7 @@ export default function TableauModulePage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleAnalyse()}
                     disabled={actionLoading === 'analyse'}
-                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', marginTop: '8px' }}
+                    style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)', marginTop: '8px' }}
                   >
                     <Bot size={15} />
                     Lancer l'analyse réglementaire
@@ -1556,7 +1579,7 @@ export default function TableauModulePage() {
                   className={styles.secondaryButton}
                   onClick={() => void handleCompare()}
                   disabled={actionLoading === 'compare'}
-                  style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
+                  style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)' }}
                 >
                   <GitCompare size={15} />
                   {actionLoading === 'compare' ? 'Comparaison...' : 'Comparer'}
@@ -1690,7 +1713,7 @@ export default function TableauModulePage() {
                       className={styles.secondaryButton}
                       onClick={() => void handleRapportComplet('pdf')}
                       disabled={Boolean(actionLoading?.startsWith('rapport-'))}
-                      style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', flex: 1, justifyContent: 'center' }}
+                      style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)', flex: 1, justifyContent: 'center' }}
                     >
                       <FileText size={15} />
                       {actionLoading === 'rapport-pdf' ? 'Génération...' : 'Télécharger le PDF'}
@@ -1727,7 +1750,7 @@ export default function TableauModulePage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleGenerateReport()}
                     disabled={actionLoading === 'report' || !analysePrete}
-                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', width: '100%', justifyContent: 'center' }}
+                    style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)', width: '100%', justifyContent: 'center' }}
                   >
                     <FileText size={15} />
                     {actionLoading === 'report' ? 'Génération...' : 'Générer le rapport'}
@@ -1748,7 +1771,7 @@ export default function TableauModulePage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleGeneratePV()}
                     disabled={actionLoading === 'pv' || !analysePrete}
-                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', width: '100%', justifyContent: 'center' }}
+                    style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)', width: '100%', justifyContent: 'center' }}
                   >
                     <FileText size={15} />
                     {actionLoading === 'pv' ? 'Génération...' : 'Générer le PV'}
@@ -1770,8 +1793,8 @@ export default function TableauModulePage() {
                         type="button"
                         onClick={() => setSelectedReport(r)}
                         style={{
-                          background: selectedReport?.id === r.id ? '#f5f0f5' : '#fff',
-                          border: `1px solid ${selectedReport?.id === r.id ? 'var(--tenant-primary, #714b67)' : '#e5e7eb'}`,
+                          background: selectedReport?.id === r.id ? 'var(--tableau-brand-soft)' : '#fff',
+                          border: `1px solid ${selectedReport?.id === r.id ? 'var(--tenant-primary, #1f6b5c)' : '#e5e7eb'}`,
                           borderRadius: '6px',
                           padding: '10px 12px',
                           cursor: 'pointer',
@@ -1953,7 +1976,7 @@ export default function TableauModulePage() {
                   <button type="button" className={styles.secondaryButton}
                     onClick={() => void handleSaveReglages()}
                     disabled={actionLoading === 'reglages' || !selectedImport}
-                    style={{ marginTop: '8px', background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}>
+                    style={{ marginTop: '8px', background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)' }}>
                     <Settings size={15} />
                     {actionLoading === 'reglages' ? 'Application...' : 'Enregistrer et recalculer'}
                   </button>
@@ -2041,7 +2064,7 @@ export default function TableauModulePage() {
                 className={styles.secondaryButton}
                 disabled={actionLoading === 'correction' || correctionForm.motif.trim().length < 3}
                 onClick={() => void handleCorrection()}
-                style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
+                style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)' }}
               >
                 <Save size={15} />
                 {actionLoading === 'correction' ? 'Enregistrement...' : 'Enregistrer'}
