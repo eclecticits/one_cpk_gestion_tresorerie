@@ -140,6 +140,9 @@ type ArticleDraft = {
  *  reconnaîtraient pas les mêmes lignes. */
 const normaliserLibelle = (valeur: string) => valeur.trim().replace(/\s+/g, ' ').toLowerCase()
 
+// Même liste que le serveur (`ROLES_ANTIDATAGE_BANQUE`, app/core/horodatage.py).
+const ROLES_ANTIDATAGE_BANQUE = ['caissier', 'admin', 'rapporteur']
+
 export default function EncaissementForm({
   user,
   services,
@@ -194,12 +197,14 @@ export default function EncaissementForm({
     }
   })
   // Antidater un encaissement revient à en réécrire la chronologie. Le super
-  // administrateur le peut sans limite ; le caissier, sur banque seulement et
+  // administrateur le peut sans limite ; le caissier, l'administrateur et le
+  // rapporteur, sur banque seulement et
   // jusqu'à un mois en arrière, car un versement est souvent connu après coup.
   // La caisse reste au jour. Le serveur applique la même règle et refuse le reste.
   const aujourdHui = format(new Date(), 'yyyy-MM-dd')
   const antidatageIllimite = roleUtilisateur === 'super_admin'
-  const antidatageBanque = roleUtilisateur === 'caissier' && formData.canal === 'BANQUE'
+  const antidatageBanque =
+    ROLES_ANTIDATAGE_BANQUE.includes(roleUtilisateur) && formData.canal === 'BANQUE'
   const peutAntidater = antidatageIllimite || antidatageBanque
   const dateMinimale = antidatageBanque ? format(subMonths(new Date(), 1), 'yyyy-MM-dd') : undefined
   // Repasser sur la caisse remet la date au jour : sinon le champ, désactivé,

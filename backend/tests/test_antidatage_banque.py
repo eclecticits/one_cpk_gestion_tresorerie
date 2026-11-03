@@ -1,16 +1,21 @@
-"""Le caissier antidate un encaissement sur banque, jusqu'à un mois en arrière.
+"""Caissier, administrateur et rapporteur antidatent un encaissement sur banque,
+jusqu'à un mois en arrière.
 
 La caisse reste au jour ; le super administrateur garde son antidatage libre ;
-les autres profils restent à l'horloge du serveur.
+les autres profils restent à l'horloge du serveur. La conversion d'une pro forma
+suit la même règle que la saisie directe.
 """
 
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
+from app.api.v1.endpoints.encaissements import convertir_proforma
 from app.core.horodatage import resoudre_date_operation, un_mois_avant
+from app.schemas.payment import ProformaConversion
+from tests.test_encaissements import _enc_org, _enc_user, _encaissement_row
 
 
 def _user(role: str) -> SimpleNamespace:
@@ -21,10 +26,11 @@ def _il_y_a(jours: int) -> datetime:
     return datetime.now(timezone.utc) - timedelta(days=jours)
 
 
-def test_le_caissier_antidate_un_encaissement_banque():
+@pytest.mark.parametrize("role", ["caissier", "admin", "rapporteur"])
+def test_antidater_un_encaissement_banque(role):
     valeur = _il_y_a(10)
     resultat = resoudre_date_operation(
-        valeur, user=_user("caissier"), champ="date_encaissement", canal="BANQUE"
+        valeur, user=_user(role), champ="date_encaissement", canal="BANQUE"
     )
     assert resultat == valeur
 
@@ -65,7 +71,7 @@ def test_la_caisse_reste_au_jour_pour_le_caissier():
         )
 
 
-@pytest.mark.parametrize("role", ["admin", "comptable", "tresorier", "rapporteur"])
+@pytest.mark.parametrize("role", ["comptable", "tresorier", "chef_comptable", "administrateur_secretariat"])
 def test_les_autres_profils_ne_peuvent_pas_antidater_la_banque(role):
     with pytest.raises(HTTPException):
         resoudre_date_operation(
@@ -103,3 +109,31 @@ def test_le_super_administrateur_garde_l_antidatage_libre():
 )
 def test_un_mois_avant(jour, attendu):
     assert un_mois_avant(jour) == attendu
+
+
+@pytest.mark.parametrize(
+    ("ecart_jours", "message"),
+    [(3, "Seul un super administrateur"), (40, None)],
+)
+async def test_la_conversion_d_une_proforma_suit_la_meme_regle(db_session, ecart_jours, message):
+    """Avant, la date de paiement envoyée à `/convertir` était reprise sans contrôle."""
+    org = await _enc_org(db_session, name="Antidatage conversion")
+    user = await _enc_user(db_session, org)
+    proforma = await _encaissement_row(db_session, org, user, est_proforma=True)
+    user.role = "caissier"
+    await db_session.flush()
+
+    with pytest.raises(HTTPException) as erreur:
+        await convertir_proforma(
+            str(proforma.id),
+            ProformaConversion(date_paiement=_il_y_a(ecart_jours), canal="CAISSE"),
+            BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db_session,
+        )
+    assert erreur.value.status_code == 403
+    if message:
+        assert message in erreur.value.detail
+    await db_session.refresh(proforma)
+    assert proforma.est_proforma is True

@@ -2979,14 +2979,17 @@ async def convertir_proforma(
     else:
         statut_paiement = "non_paye"
 
-    date_paiement = payload.date_paiement or datetime.now(timezone.utc)
+    date_paiement = payload.date_paiement
     if isinstance(date_paiement, str):
         parsed = _parse_datetime(date_paiement)
         if not parsed:
             raise HTTPException(status_code=400, detail="date_paiement invalide")
         date_paiement = parsed
-    if isinstance(date_paiement, datetime) and date_paiement.tzinfo is None:
-        date_paiement = date_paiement.replace(tzinfo=timezone.utc)
+    # La conversion crée le reçu : même règle de date qu'une saisie directe,
+    # sinon ce chemin permettait d'antidater sans contrôle.
+    date_paiement = resoudre_date_operation(
+        date_paiement, user=user, champ="date_paiement", canal=canal
+    )
 
 
     numero_recu = await _generate_numero_recu(tenant_id=tenant_id, db=db)

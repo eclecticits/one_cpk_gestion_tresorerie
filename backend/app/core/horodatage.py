@@ -9,10 +9,11 @@ L'heure de référence est donc celle du serveur. Seul le super administrateur
 peut antidater librement — pour régulariser une saisie oubliée — et cette
 exception est concentrée ici plutôt que réécrite à chaque point d'entrée.
 
-Une seconde exception, bornée : le caissier antidate un encaissement sur
-BANQUE jusqu'à un mois en arrière. Un versement bancaire est souvent connu
-après coup (relevé, avis de crédit) et doit porter la date où la banque l'a
-reçu. La caisse, elle, reste au jour : son solde se compte au guichet.
+Une seconde exception, bornée : le caissier, l'administrateur et le rapporteur
+antidatent un encaissement sur BANQUE jusqu'à un mois en arrière. Un versement
+bancaire est souvent connu après coup (relevé, avis de crédit) et doit porter
+la date où la banque l'a reçu. La caisse, elle, reste au jour : son solde se
+compte au guichet.
 """
 
 from __future__ import annotations
@@ -30,8 +31,13 @@ def est_super_admin(user: object) -> bool:
     return _role(user) == "super_admin"
 
 
+#: Profils qui saisissent des encaissements et peuvent dater un versement
+#: bancaire du jour où la banque l'a reçu.
+ROLES_ANTIDATAGE_BANQUE = frozenset({"caissier", "admin", "rapporteur"})
+
+
 def peut_antidater_banque(user: object) -> bool:
-    return _role(user) == "caissier"
+    return _role(user) in ROLES_ANTIDATAGE_BANQUE
 
 
 def un_mois_avant(jour: date) -> date:
@@ -54,8 +60,9 @@ def resoudre_date_operation(
     """Date à enregistrer pour une opération financière.
 
     Super administrateur : la date fournie est retenue telle quelle, y compris
-    dans le passé. Caissier, opération sur BANQUE : une date passée est retenue
-    si elle n'a pas plus d'un mois. Tout autre cas : l'heure du serveur s'impose.
+    dans le passé. Caissier, administrateur ou rapporteur, opération sur
+    BANQUE : une date passée est retenue si elle n'a pas plus d'un mois. Tout
+    autre cas : l'heure du serveur s'impose.
 
     Une date d'un autre jour envoyée par un profil non habilité est refusée
     explicitement plutôt qu'écrasée en silence — l'utilisateur croirait sinon
