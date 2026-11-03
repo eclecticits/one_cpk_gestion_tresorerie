@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useId, useRef } from 'react'
-import { format } from 'date-fns'
+import { format, subMonths } from 'date-fns'
 import { AlertTriangle, Lock, Unlock, Check, ListFilter, Loader2, Search, SearchX } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
@@ -159,9 +159,7 @@ export default function EncaissementForm({
   variant = 'modal',
   formId = 'encaissement-form',
 }: EncaissementFormProps) {
-  // Antidater un encaissement revient à en réécrire la chronologie : réservé au
-  // super administrateur, le serveur applique la même règle et refuse le reste.
-  const peutAntidater = String(user?.role || '').toLowerCase() === 'super_admin'
+  const roleUtilisateur = String(user?.role || '').toLowerCase()
   const [destinationLock, setDestinationLock] = useState<DestinationLock | null>(
     () => readDestinationLock(user),
   )
@@ -195,6 +193,22 @@ export default function EncaissementForm({
       ft_reference: '',
     }
   })
+  // Antidater un encaissement revient à en réécrire la chronologie. Le super
+  // administrateur le peut sans limite ; le caissier, sur banque seulement et
+  // jusqu'à un mois en arrière, car un versement est souvent connu après coup.
+  // La caisse reste au jour. Le serveur applique la même règle et refuse le reste.
+  const aujourdHui = format(new Date(), 'yyyy-MM-dd')
+  const antidatageIllimite = roleUtilisateur === 'super_admin'
+  const antidatageBanque = roleUtilisateur === 'caissier' && formData.canal === 'BANQUE'
+  const peutAntidater = antidatageIllimite || antidatageBanque
+  const dateMinimale = antidatageBanque ? format(subMonths(new Date(), 1), 'yyyy-MM-dd') : undefined
+  // Repasser sur la caisse remet la date au jour : sinon le champ, désactivé,
+  // garderait une date passée que le serveur refuserait.
+  useEffect(() => {
+    if (!peutAntidater && formData.date_encaissement !== aujourdHui) {
+      setFormData(prev => ({ ...prev, date_encaissement: aujourdHui }))
+    }
+  }, [peutAntidater, formData.date_encaissement, aujourdHui])
   const [articles, setArticles] = useState<ArticleDraft[]>([
     { libelle: '', quantite: '1', prix_unitaire: '' },
   ])
@@ -2308,12 +2322,21 @@ export default function EncaissementForm({
                 onChange={e => setFormData(prev => ({ ...prev, date_encaissement: e.target.value }))}
                 required
                 disabled={!peutAntidater}
+                min={dateMinimale}
+                max={antidatageIllimite ? undefined : aujourdHui}
                 title={
-                  peutAntidater
+                  antidatageIllimite
                     ? 'Super administrateur : vous pouvez régulariser une saisie à une date antérieure'
-                    : "L'opération est horodatée par le serveur"
+                    : antidatageBanque
+                      ? 'Date de réception par la banque, jusqu’à un mois en arrière'
+                      : "L'opération est horodatée par le serveur"
                 }
               />
+              {antidatageBanque && dateMinimale && (
+                <small className={styles.fieldHint}>
+                  Date de la banque, au plus tôt le {format(new Date(`${dateMinimale}T00:00:00`), 'dd/MM/yyyy')}.
+                </small>
+              )}
               {!peutAntidater && (
                 <small className={styles.fieldHint}>
                   Horodatage automatique par le serveur.

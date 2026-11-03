@@ -2391,9 +2391,10 @@ async def create_encaissement(
         if not parsed:
             raise HTTPException(status_code=400, detail="date_encaissement invalide")
         date_encaissement = parsed
-    # L'horloge du serveur fait foi, sauf pour un super administrateur.
+    # L'horloge du serveur fait foi, sauf pour un super administrateur et,
+    # sur banque, pour le caissier dans la limite d'un mois.
     date_encaissement = resoudre_date_operation(
-        date_encaissement, user=user, champ="date_encaissement"
+        date_encaissement, user=user, champ="date_encaissement", canal=canal
     )
 
     # Les tarifs ensuite : ils imposent aux lignes ce qu'ils définissent (prix,
