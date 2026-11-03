@@ -153,14 +153,9 @@ class EncaissementBase(DecimalBaseModel):
     @field_validator("date_encaissement")
     @classmethod
     def validate_date_encaissement(cls, value: datetime | None):
-        if value is None:
+        if value is None or value.tzinfo is not None:
             return value
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        if value > now:
-            raise ValueError("La date d'encaissement ne peut pas être dans le futur")
-        return value
+        return value.replace(tzinfo=timezone.utc)
 
     @field_validator("client_email")
     @classmethod
@@ -208,6 +203,16 @@ class EncaissementCreate(EncaissementBase):
     #: initial n'entre pas en banque : il y est déjà, sur la recette d'origine,
     #: et en est seulement déplacé.
     identification_source_id: UUID | None = None
+
+    # Contrôle de saisie seulement. Placé sur la base, il s'appliquait aussi à
+    # la réponse : une recette à identifier, datée à midi du jour de valeur,
+    # était « dans le futur » jusqu'à midi et faisait échouer toute la liste.
+    @field_validator("date_encaissement")
+    @classmethod
+    def refuser_date_future(cls, value: datetime | None):
+        if value is not None and value > datetime.now(timezone.utc):
+            raise ValueError("La date d'encaissement ne peut pas être dans le futur")
+        return value
 
 
 class BudgetAffectationLine(DecimalBaseModel):
