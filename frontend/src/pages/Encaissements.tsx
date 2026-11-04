@@ -166,6 +166,9 @@ export default function Encaissements() {
   const [rechercheClientsEnEchec, setRechercheClientsEnEchec] = useState(false)
   const debouncedClientSaisi = useDebouncedValue(clientSaisi)
   const [filterBudgetPosteId, setFilterBudgetPosteId] = useState<string>('')
+  // Caisse ou banque : la note répond par ses versements, son en-tête à défaut
+  // (même règle côté serveur que les rapports de trésorerie).
+  const [filterCanal, setFilterCanal] = useState<string>('')
   const [tauxChange, setTauxChange] = useState<number>(1)
   const [libellePresets, setLibellePresets] = useState<string[]>([])
 
@@ -225,6 +228,7 @@ export default function Encaissements() {
           numero_recu: filterNumeroRecu,
           client: filterClient,
           budget_poste_id: filterBudgetPosteId,
+          canal: filterCanal,
           operation_status: filterOperationStatus,
           // Le tableau de bord ne compte pas les notes supprimées.
           deleted_status: natureParam ? 'active' : filterDeletedStatus,
@@ -250,7 +254,7 @@ export default function Encaissements() {
         buildQuery({ date_debut: dateDebut, date_fin: dateFin, limit: 200 })
 
       const versementsPath =
-        '/reports/versements' + buildQuery({ date_debut: dateDebut, date_fin: dateFin })
+        '/reports/versements' + buildQuery({ date_debut: dateDebut, date_fin: dateFin, canal: filterCanal })
 
       const [encRes, proRes, servicesRes, entreesRes, versementsRes] = await Promise.all([
         apiRequest<any>('GET', encPath),
@@ -341,6 +345,7 @@ export default function Encaissements() {
     filterNumeroRecu,
     filterClient,
     filterBudgetPosteId,
+    filterCanal,
     filterOperationStatus,
     filterDeletedStatus,
     natureParam,
@@ -421,7 +426,7 @@ export default function Encaissements() {
 
   useEffect(() => {
     setPage(1)
-  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus, filterDeletedStatus, pageSize])
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterCanal, filterOperationStatus, filterDeletedStatus, pageSize])
 
   // Propositions de numéros pendant la frappe. Cet appel ne touche NI la liste,
   // NI les totaux, NI la pagination : il ne remplit qu'un menu sous le champ.
@@ -587,6 +592,7 @@ export default function Encaissements() {
     setFilterClient('')
     setClientSuggestions([])
     setFilterBudgetPosteId('')
+    setFilterCanal('')
     setPage(1)
   }, [today])
 
@@ -603,7 +609,10 @@ export default function Encaissements() {
   const hasClientFilters = Boolean(
     filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId
   )
-  const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId || filterOperationStatus !== 'ACTIVE' || filterDeletedStatus !== 'all'
+  // Une entrée interne de caisse (approvisionnement) entre en caisse : un
+  // filtre « Banque » l'écarte, comme le fait l'export Excel.
+  const masquerEntreesCaisse = hasClientFilters || filterCanal === 'BANQUE'
+  const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId || filterCanal || filterOperationStatus !== 'ACTIVE' || filterDeletedStatus !== 'all'
   // Présentation seule : ce qu'annonce le bouton « Filtres » quand le panneau
   // est replié sur téléphone. La période par défaut (aujourd'hui) ne compte pas
   // comme un filtre ; elle est ignorée, comme à l'écran, pendant une recherche ciblée.
@@ -614,6 +623,7 @@ export default function Encaissements() {
     filterNumeroRecu,
     filterClient,
     filterBudgetPosteId,
+    filterCanal,
     filterOperationStatus !== 'ACTIVE',
     filterDeletedStatus !== 'all',
   ].filter(Boolean).length
@@ -653,6 +663,7 @@ export default function Encaissements() {
         numero_recu: filterNumeroRecu,
         client: filterClient,
         budget_poste_id: filterBudgetPosteId,
+        canal: filterCanal,
         operation_status: filterOperationStatus,
         deleted_status: filterDeletedStatus,
         est_proforma: false,
@@ -688,6 +699,7 @@ export default function Encaissements() {
     filterNumeroRecu,
     filterClient,
     filterBudgetPosteId,
+    filterCanal,
     filterOperationStatus,
     filterDeletedStatus,
     exportAvecAnnulations,
@@ -709,6 +721,7 @@ export default function Encaissements() {
         numero_recu: filterNumeroRecu,
         client: filterClient,
         budget_poste_id: filterBudgetPosteId,
+        canal: filterCanal,
         operation_status: filterOperationStatus,
         deleted_status: filterDeletedStatus,
         est_proforma: false,
@@ -762,6 +775,7 @@ export default function Encaissements() {
           : null,
         filterNumeroRecu ? { label: 'N° Note de débit', value: filterNumeroRecu } : null,
         filterClient ? { label: 'Client', value: filterClient } : null,
+        filterCanal ? { label: 'Encaissé sur', value: filterCanal === 'BANQUE' ? 'Banque' : 'Caisse' } : null,
         filterOperationStatus !== 'ACTIVE'
           ? { label: 'Opérations', value: filterOperationStatus }
           : null,
@@ -771,9 +785,9 @@ export default function Encaissements() {
       ],
       // Un filtre propre aux notes de débit (client, poste, statut) n'a pas de
       // sens pour un transfert interne : on les omet alors, comme l'export Excel.
-      entreesInternes: hasClientFilters ? [] : entreesCaisse,
+      entreesInternes: masquerEntreesCaisse ? [] : entreesCaisse,
     })
-  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus, filterDeletedStatus, entreesCaisse, hasClientFilters])
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterCanal, filterOperationStatus, filterDeletedStatus, entreesCaisse, masquerEntreesCaisse])
 
   const handleConvertProforma = async (proforma: Encaissement) => {
     if (!proforma?.id) return
@@ -1066,6 +1080,8 @@ export default function Encaissements() {
         filterClient={filterClient}
         filterBudgetPosteId={filterBudgetPosteId}
         setFilterBudgetPosteId={setFilterBudgetPosteId}
+        filterCanal={filterCanal}
+        setFilterCanal={setFilterCanal}
         filterOperationStatus={filterOperationStatus}
         setFilterOperationStatus={setFilterOperationStatus}
         filterDeletedStatus={filterDeletedStatus}
@@ -1216,7 +1232,7 @@ export default function Encaissements() {
         </div>
       )}
 
-      {entreesCaisse.length > 0 && !hasClientFilters && (
+      {entreesCaisse.length > 0 && !masquerEntreesCaisse && (
         <div className={styles.proformaSection}>
           <div className={styles.sectionHeader}>
             <h3>Entrées de caisse hors notes de débit</h3>

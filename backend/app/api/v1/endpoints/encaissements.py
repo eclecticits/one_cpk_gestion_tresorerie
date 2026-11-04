@@ -49,6 +49,7 @@ from app.schemas.client import TYPES_CLIENT, TYPES_CLIENT_AVEC_SEXE, TYPES_CLIEN
 from app.schemas.payment import AffecterBudgetPayload, EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
 from app.services.entrees_caisse import list_entrees_internes_caisse
+from app.services.encaissement_flux import condition_canal_note, normaliser_canal
 from app.services.report_cache import invalidate_report_summary_cache
 from app.services.recherche_documents import condition_numero
 from app.services.service_access import get_user_service_ids, has_module_menu_access
@@ -1674,8 +1675,14 @@ async def list_encaissements(
         conditions.append(Encaissement.nature_mouvement == nature_mouvement.strip().upper())
     if mode_paiement:
         conditions.append(Encaissement.mode_paiement == mode_paiement)
-    if canal:
-        conditions.append(Encaissement.canal == canal.upper())
+    # Caisse ou banque : selon les versements de la note, l'en-tête à défaut.
+    # Les totaux reprennent `conditions`, ils suivent donc le filtre.
+    try:
+        canal_filtre = normaliser_canal(canal)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if canal_filtre:
+        conditions.append(condition_canal_note(canal_filtre))
     if compte_bancaire_id:
         conditions.append(Encaissement.compte_bancaire_id == compte_bancaire_id)
     if expert_comptable_id:

@@ -152,6 +152,55 @@ def versements_numerotes(organisation_id: int):
     ).subquery("versements_numerotes")
 
 
+CANAUX = ("CAISSE", "BANQUE")
+
+
+def normaliser_canal(canal: object) -> str | None:
+    """`CAISSE`, `BANQUE`, ou `None` pour « tous ». Lève `ValueError` sinon.
+
+    Tout ce qui n'est pas une chaîne vaut « pas de filtre » : une route appelée
+    en direct (tests) reçoit l'objet `Query` par défaut.
+    """
+    if not isinstance(canal, str):
+        return None
+    valeur = canal.strip().upper()
+    if valeur in {"", "ALL"}:
+        return None
+    if valeur not in CANAUX:
+        raise ValueError("canal invalide (CAISSE, BANQUE)")
+    return valeur
+
+
+def condition_canal_note(canal: str):
+    """La note est-elle entrée par ce canal ? Même règle que `flux_encaissements`.
+
+    Ses versements actifs font foi : un acompte en caisse puis un solde par
+    virement rangent la note sous les deux canaux. Sans versement, l'en-tête
+    décide — c'est la destination annoncée d'une note pas encore payée.
+    """
+    versement_sur_canal = (
+        select(PaymentHistory.id)
+        .where(
+            PaymentHistory.encaissement_id == Encaissement.id,
+            PaymentHistory.statut == PAYMENT_STATUS_ACTIVE,
+            func.upper(PaymentHistory.canal) == canal,
+        )
+        .exists()
+    )
+    sans_versement = ~(
+        select(PaymentHistory.id)
+        .where(
+            PaymentHistory.encaissement_id == Encaissement.id,
+            PaymentHistory.statut == PAYMENT_STATUS_ACTIVE,
+        )
+        .exists()
+    )
+    return or_(
+        versement_sur_canal,
+        and_(sans_versement, func.upper(func.coalesce(Encaissement.canal, "CAISSE")) == canal),
+    )
+
+
 def nature_versement(rang: int, montant_total: Decimal, cumul: Decimal) -> str:
     """Nomme un versement : ce qu'il représente pour la note à sa date.
 

@@ -50,7 +50,12 @@ from app.models.client import Client
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
-from app.services.encaissement_flux import nature_versement, versements_numerotes
+from app.services.encaissement_flux import (
+    condition_canal_note,
+    nature_versement,
+    normaliser_canal,
+    versements_numerotes,
+)
 from app.services.entrees_caisse import list_entrees_internes_caisse, list_entrees_internes_banque
 from app.services.tenant_identity import tenant_display_name
 from app.services.tranches_decaissement import libelle_tranche, tranches_par_sortie
@@ -2130,6 +2135,7 @@ async def construire_classeur_encaissements(
     operation_status: str | None = None,
     inclure_annulations: bool = False,
     seuil_bascule: int | None = None,
+    canal: str | None = None,
 ) -> tuple[Workbook, str]:
     """Construit le classeur `encaissements` et rend `(classeur, nom de fichier)`.
 
@@ -2149,6 +2155,10 @@ async def construire_classeur_encaissements(
     deleted_filter = (deleted_status or "all").strip().lower()
     if deleted_filter not in {"all", "active", "deleted"}:
         raise HTTPException(status_code=400, detail="deleted_status invalide (all, active, deleted)")
+    try:
+        canal_filtre = normaliser_canal(canal)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     Encaisseur = aliased(User)
     query = (
         select(Encaissement, ExpertComptable, Encaisseur, Client)
@@ -2200,6 +2210,9 @@ async def construire_classeur_encaissements(
         )
     if type_client:
         filtres_note.append(Encaissement.type_client == type_client)
+    if canal_filtre:
+        # Même règle que la liste : les versements de la note, l'en-tête à défaut.
+        filtres_note.append(condition_canal_note(canal_filtre))
     if mode_paiement:
         query = query.where(Encaissement.mode_paiement == mode_paiement)
     if deleted_filter == "active":
@@ -2288,6 +2301,10 @@ async def construire_classeur_encaissements(
             versements_query = versements_query.where(v.c.date_flux <= end_dt)
         if mode_paiement:
             versements_query = versements_query.where(v.c.mode_paiement == mode_paiement)
+        if canal_filtre:
+            # Une note mixte entre par le filtre ; ses versements de l'autre
+            # canal restent hors de cette feuille.
+            versements_query = versements_query.where(v.c.canal == canal_filtre)
         versements_periode = (
             await db.execute(versements_query.order_by(v.c.date_flux.desc(), v.c.rang.desc()))
         ).all()
@@ -2309,18 +2326,22 @@ async def construire_classeur_encaissements(
             budget_poste_id, type_client, expert_comptable_id,
         ),
     ):
-        approvisionnements = await list_entrees_internes_caisse(
-            db,
-            tenant_id=organisation_id,
-            date_debut=start_dt,
-            date_fin=end_dt,
-        )
-        versements_banque = await list_entrees_internes_banque(
-            db,
-            tenant_id=organisation_id,
-            date_debut=start_dt,
-            date_fin=end_dt,
-        )
+        # Un approvisionnement entre en caisse, un versement entre en banque :
+        # filtrer sur un canal ne garde que les transferts qui y entrent.
+        if canal_filtre in (None, "CAISSE"):
+            approvisionnements = await list_entrees_internes_caisse(
+                db,
+                tenant_id=organisation_id,
+                date_debut=start_dt,
+                date_fin=end_dt,
+            )
+        if canal_filtre in (None, "BANQUE"):
+            versements_banque = await list_entrees_internes_banque(
+                db,
+                tenant_id=organisation_id,
+                date_debut=start_dt,
+                date_fin=end_dt,
+            )
 
     def _build_workbook() -> tuple[Workbook, str]:
         wb = Workbook()
@@ -2750,6 +2771,7 @@ async def export_encaissements(
     deleted_status: str | None = Query(default="all"),
     est_proforma: bool | None = Query(default=False),
     operation_status: Annotated[str | None, Query(description="ACTIVE, ANNULEE, ALL")] = None,
+    canal: Annotated[str | None, Query(description="CAISSE, BANQUE")] = None,
     avec_annulations: Annotated[
         bool, Query(description="Faux : actives seules, sans annulées ni supprimées")
     ] = True,
@@ -2782,6 +2804,7 @@ async def export_encaissements(
             "est_proforma": est_proforma,
             "operation_status": operation_status,
             "inclure_annulations": inclure_annulations,
+            "canal": canal,
     }
     try:
         wb, filename = await construire_classeur_encaissements(
@@ -2801,6 +2824,7 @@ async def export_encaissements(
             operation_status=operation_status,
             inclure_annulations=inclure_annulations,
             seuil_bascule=_seuil_bascule("encaissements"),
+            canal=canal,
         )
     except BasculeAsynchroneRequise as bascule:
         return await _soumettre_export_asynchrone(

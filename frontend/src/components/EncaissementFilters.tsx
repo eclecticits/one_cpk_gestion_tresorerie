@@ -31,6 +31,9 @@ interface EncaissementFiltersProps {
   filterClient: string
   filterBudgetPosteId: string
   setFilterBudgetPosteId: (val: string) => void
+  /** `CAISSE`, `BANQUE`, ou vide pour les deux. */
+  filterCanal: string
+  setFilterCanal: (val: string) => void
   filterOperationStatus: string
   setFilterOperationStatus: (val: string) => void
   filterDeletedStatus: string
@@ -82,6 +85,8 @@ export default function EncaissementFilters({
   filterClient,
   filterBudgetPosteId,
   setFilterBudgetPosteId,
+  filterCanal,
+  setFilterCanal,
   filterOperationStatus,
   setFilterOperationStatus,
   filterDeletedStatus,
@@ -179,6 +184,20 @@ export default function EncaissementFilters({
             <option value="partiel">Paiement partiel</option>
             <option value="non_paye">Non payé</option>
             <option value="avance">Avance</option>
+          </select>
+        </div>
+
+        <div className={styles.filterField}>
+          <label htmlFor={`${corpsId}-canal`}>Encaissé sur</label>
+          <select
+            id={`${corpsId}-canal`}
+            value={filterCanal}
+            onChange={(e) => setFilterCanal(e.target.value)}
+            title="Une note payée en partie en caisse, en partie en banque répond aux deux"
+          >
+            <option value="">Caisse et banque</option>
+            <option value="CAISSE">Caisse</option>
+            <option value="BANQUE">Banque</option>
           </select>
         </div>
 
