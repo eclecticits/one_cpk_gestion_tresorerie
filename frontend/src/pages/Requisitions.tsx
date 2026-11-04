@@ -18,6 +18,7 @@ import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import RequisitionEditModal from '../components/RequisitionEditModal'
 import ReimputationBudgetaire from '../components/ReimputationBudgetaire'
 import ChangementCanalPaiement from '../components/ChangementCanalPaiement'
+import ChangementCompteVolet from '../components/ChangementCompteVolet'
 import { peutModifierRequisition } from '../utils/requisitionLock'
 import { compareBudgetCodes } from '../utils/budgetCode'
 import { sousTotalGroupeUsd, trouverGroupeEnDepassement } from '../utils/budgetGroups'
@@ -4101,6 +4102,18 @@ export default function Requisitions() {
                   onChange={(canal) => {
                     const corrigee = { ...selectedRequisition, ...canal } as Requisition
                     void viewDetails(corrigee)
+                    void refetchRequisitions()
+                  }}
+                />
+                {/* Plus étroit que le canal : le compte d'un volet bancaire se change
+                    encore en décaissement, tant que ce volet n'a rien décaissé. */}
+                <ChangementCompteVolet
+                  requisitionId={String(selectedRequisition.id)}
+                  statut={String((selectedRequisition as any).status ?? (selectedRequisition as any).statut ?? '')}
+                  lignes={selectedLignes}
+                  comptesBancaires={comptesBancaires}
+                  onChange={() => {
+                    void viewDetails(selectedRequisition)
                     void refetchRequisitions()
                   }}
                 />

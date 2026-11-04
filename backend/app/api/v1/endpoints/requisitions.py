@@ -42,7 +42,7 @@ from app.services.audit_service import get_request_ip, log_action
 from app.services.budget_engagement import resynchroniser_engagement_requisition
 from app.services.dossier_rejet import cloturer_si_echu
 from app.services.reimputation_budgetaire import apercu_reimputation, reimputer_requisition
-from app.services.changement_canal_requisition import changer_canal_requisition
+from app.services.changement_canal_requisition import changer_canal_requisition, changer_compte_volet
 from app.services.report_cache import invalidate_report_summary_cache
 from app.services.mailer import normalize_email_list, send_requisition_notification, send_requisition_workflow_email
 from app.services.email_config import resolve_smtp_config
@@ -2542,4 +2542,57 @@ async def changer_canal_paiement(
         "mode_paiement": req.mode_paiement,
         "compte_bancaire_id": req.compte_bancaire_id,
         "lignes_alignees": resultat["lignes_alignees"],
+    }
+
+
+class ChangementCompteVoletIn(BaseModel):
+    """Nouveau compte d'un volet bancaire qui n'a encore rien décaissé."""
+    ancien_compte_id: int = Field(ge=1)
+    nouveau_compte_id: int = Field(ge=1)
+    motif: str = Field(min_length=3, max_length=500)
+
+
+@router.post(
+    "/{requisition_id}/compte-volet",
+    summary="Changer le compte bancaire d'un volet qui n'a encore rien décaissé",
+    dependencies=[Depends(has_permission("treso.requisitions.changer_canal"))],
+)
+async def changer_compte_volet_paiement(
+    requisition_id: str,
+    payload: ChangementCompteVoletIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict:
+    """Seul le compte du volet bouge ; permis en décaissement, pas sur une pièce
+    payée ni sur un volet déjà engagé (ordre ou sortie sur l'ancien compte)."""
+    req = await _requisition_pour_reimputation(db, requisition_id, tenant_id)
+    req = (
+        await db.execute(select(Requisition).where(Requisition.id == req.id).with_for_update())
+    ).scalar_one()
+
+    resultat = await changer_compte_volet(
+        db,
+        requisition=req,
+        ancien_compte_id=payload.ancien_compte_id,
+        nouveau_compte_id=payload.nouveau_compte_id,
+        tenant_id=tenant_id,
+    )
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="requisition.changement_compte_volet",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={**resultat["avant"], "statut": req.status, "montant_volet": resultat["montant_volet"]},
+        new_value={**resultat["apres"], "motif": payload.motif.strip()},
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    return {
+        "id": str(req.id),
+        "compte_bancaire_id": payload.nouveau_compte_id,
+        "lignes_modifiees": resultat["lignes_modifiees"],
     }
