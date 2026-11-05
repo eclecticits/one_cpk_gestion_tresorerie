@@ -281,3 +281,41 @@
     padding: 7px 6px;
   }
 }
+
+.rateNote {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+/* Équivalent en dollars d'un montant CDF : discret, sous le montant. */
+.equivalentUsd {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.summaryCard .equivalentUsd {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.countedAmount {
+  text-align: right;
+}
+
+.countedAmount .equivalentUsd {
+  font-size: 13px;
+}

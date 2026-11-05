@@ -44,7 +44,9 @@ const generateCloturePDF: PdfClotureGeneratorModule['generateCloturePDF'] = asyn
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import styles from './ClotureCaisse.module.css'
 import ClotureFields, {
+  equivalentUsd,
   montantAutres,
+  tauxExploitable,
   serialiserBilletage,
   totalBilletage,
   type BilletageSaisie,
@@ -154,6 +156,9 @@ export default function ClotureCaisse() {
   }, [])
 
   const tauxChange = toNumber(balance?.taux_change || 1)
+  /** « ≈ 12,50 $ » à accoler à un montant CDF ; vide sans taux renseigné. */
+  const enUsd = (montantCdf: number) =>
+    tauxExploitable(tauxChange) ? ` ≈ ${formatMoney(equivalentUsd(montantCdf, tauxChange))}` : ''
   const soldeTheoUsd = toNumber(balance?.solde_theorique_usd || 0)
   const soldeTheoCdf = toNumber(balance?.solde_theorique_cdf || 0)
   const denominations = balance?.denominations ?? []
@@ -511,7 +516,7 @@ export default function ClotureCaisse() {
               <div className={styles.metricContent}>
                 <span className={styles.metricLabel}>Solde initial</span>
                 <strong>{formatMoney(toNumber(balance.solde_initial_usd))}</strong>
-                <small>{formatMoneyCdf(toNumber(balance.solde_initial_cdf))}</small>
+                <small>{formatMoneyCdf(toNumber(balance.solde_initial_cdf))}{enUsd(toNumber(balance.solde_initial_cdf))}</small>
               </div>
             </article>
             <article className={styles.metricCard}>
@@ -519,7 +524,7 @@ export default function ClotureCaisse() {
               <div className={styles.metricContent}>
                 <span className={styles.metricLabel}>Entrées</span>
                 <strong className={styles.positiveAmount}>{formatMoney(toNumber(balance.total_entrees_usd))}</strong>
-                <small>{formatMoneyCdf(toNumber(balance.total_entrees_cdf))}</small>
+                <small>{formatMoneyCdf(toNumber(balance.total_entrees_cdf))}{enUsd(toNumber(balance.total_entrees_cdf))}</small>
               </div>
             </article>
             <article className={styles.metricCard}>
@@ -527,7 +532,7 @@ export default function ClotureCaisse() {
               <div className={styles.metricContent}>
                 <span className={styles.metricLabel}>Sorties</span>
                 <strong className={styles.negativeAmount}>{formatMoney(toNumber(balance.total_sorties_usd))}</strong>
-                <small>{formatMoneyCdf(toNumber(balance.total_sorties_cdf))}</small>
+                <small>{formatMoneyCdf(toNumber(balance.total_sorties_cdf))}{enUsd(toNumber(balance.total_sorties_cdf))}</small>
               </div>
             </article>
             <article className={`${styles.metricCard} ${styles.metricCardPrimary}`}>
@@ -535,7 +540,7 @@ export default function ClotureCaisse() {
               <div className={styles.metricContent}>
                 <span className={styles.metricLabel}>Solde théorique</span>
                 <strong>{formatMoney(soldeTheoUsd)}</strong>
-                <small>{formatMoneyCdf(soldeTheoCdf)}</small>
+                <small>{formatMoneyCdf(soldeTheoCdf)}{enUsd(soldeTheoCdf)}</small>
               </div>
             </article>
           </div>
@@ -692,6 +697,7 @@ export default function ClotureCaisse() {
           <ClotureFields
             soldeTheoriqueUsd={soldeTheoUsd}
             soldeTheoriqueCdf={soldeTheoCdf}
+            tauxChange={tauxChange}
             denominations={denominations}
             billetageUsd={billetageUsd}
             billetageCdf={billetageCdf}
@@ -777,14 +783,20 @@ export default function ClotureCaisse() {
             <div className={styles.verdictMetric}>
               <span>Solde physique CDF</span>
               <strong>{formatMoneyCdf(physiqueCdf)}</strong>
-              <small>Théorique : {formatMoneyCdf(soldeTheoCdf)}</small>
+              <small>
+                {tauxExploitable(tauxChange) && <>Soit{enUsd(physiqueCdf)} · </>}
+                Théorique : {formatMoneyCdf(soldeTheoCdf)}
+              </small>
             </div>
             <div className={styles.verdictMetric}>
               <span>Écart CDF</span>
               <strong className={ecartCdf === 0 ? styles.okText : ecartCdf < 0 ? styles.dangerText : styles.warnText}>
                 {formatMoneyCdf(ecartCdf)}
               </strong>
-              <small>{ecartCdf === 0 ? 'Aucune différence' : ecartCdf < 0 ? 'Montant manquant' : 'Montant excédentaire'}</small>
+              <small>
+                {ecartCdf === 0 ? 'Aucune différence' : ecartCdf < 0 ? 'Montant manquant' : 'Montant excédentaire'}
+                {ecartCdf !== 0 && enUsd(ecartCdf)}
+              </small>
             </div>
           </div>
         </section>

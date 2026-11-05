@@ -6,6 +6,8 @@ export type BilletageSaisie = Record<string, string>
 interface ClotureFieldsProps {
   soldeTheoriqueUsd: number
   soldeTheoriqueCdf: number
+  /** CDF pour 1 USD. Sans taux exploitable (absent, nul ou 1), la conversion n'est pas affichée. */
+  tauxChange?: number
   denominations: Denomination[]
   billetageUsd: BilletageSaisie
   billetageCdf: BilletageSaisie
@@ -55,8 +57,27 @@ const formatUsd = (value: number) =>
 const formatCdf = (value: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(value)
 
+/** Un taux de 1 est la valeur par défaut des réglages, pas un vrai cours : on ne
+ *  convertit qu'avec un taux renseigné, sinon l'équivalent affiché serait faux. */
+export const tauxExploitable = (taux: number | undefined): taux is number =>
+  typeof taux === 'number' && Number.isFinite(taux) && taux > 1
+
+/** Équivalent en dollars d'un montant CDF, au taux de la clôture. */
+export const equivalentUsd = (montantCdf: number, taux: number) =>
+  Math.round((montantCdf / taux) * 100) / 100
+
+function EquivalentUsd({ montantCdf, taux, className }: { montantCdf: number; taux?: number; className?: string }) {
+  if (!tauxExploitable(taux)) return null
+  return (
+    <small className={className ?? styles.equivalentUsd} title={`Au taux de 1 USD = ${taux.toLocaleString('fr-FR')} CDF`}>
+      ≈ {formatUsd(equivalentUsd(montantCdf, taux))}
+    </small>
+  )
+}
+
 function BilletageColonne({
   devise,
+  tauxChange,
   soldeTheorique,
   denominations,
   saisie,
@@ -67,6 +88,7 @@ function BilletageColonne({
   onAutresChange,
 }: {
   devise: 'USD' | 'CDF'
+  tauxChange?: number
   soldeTheorique: number
   denominations: Denomination[]
   saisie: BilletageSaisie
@@ -79,16 +101,22 @@ function BilletageColonne({
   const format = devise === 'USD' ? formatUsd : formatCdf
   const montantAutresSaisi = montantAutres(autres)
   const total = Math.round((totalBilletage(denominations, saisie) + montantAutresSaisi) * 100) / 100
+  // Le CDF se lit toujours avec son équivalent en dollars, au taux de la clôture.
+  const taux = devise === 'CDF' ? tauxChange : undefined
 
   return (
     <div className={styles.column}>
       <div className={styles.currencyTitle}>
         <span className={devise === 'USD' ? styles.dotUsd : styles.dotCdf} />
         DEVISE {devise}
+        {tauxExploitable(taux) && (
+          <span className={styles.rateNote}>1 USD = {taux.toLocaleString('fr-FR')} CDF</span>
+        )}
       </div>
       <div className={styles.summaryCard}>
         <p>Solde logiciel</p>
         <strong>{format(soldeTheorique)}</strong>
+        <EquivalentUsd montantCdf={soldeTheorique} taux={taux} />
       </div>
 
       {denominations.length > 0 ? (
@@ -134,7 +162,10 @@ function BilletageColonne({
                           placeholder="0"
                         />
                       </td>
-                      <td className={styles.subtotal}>{format(sousTotal)}</td>
+                      <td className={styles.subtotal}>
+                        {format(sousTotal)}
+                        {sousTotal > 0 && <EquivalentUsd montantCdf={sousTotal} taux={taux} />}
+                      </td>
                     </tr>
                   )
                 })}
@@ -156,14 +187,20 @@ function BilletageColonne({
                       placeholder="0"
                     />
                   </td>
-                  <td className={styles.subtotal}>{format(montantAutresSaisi)}</td>
+                  <td className={styles.subtotal}>
+                    {format(montantAutresSaisi)}
+                    {montantAutresSaisi > 0 && <EquivalentUsd montantCdf={montantAutresSaisi} taux={taux} />}
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div className={styles.countedTotal}>
             <span>Solde physique compté</span>
-            <strong>{format(total)}</strong>
+            <div className={styles.countedAmount}>
+              <strong>{format(total)}</strong>
+              <EquivalentUsd montantCdf={total} taux={taux} />
+            </div>
           </div>
         </div>
       ) : (
@@ -182,6 +219,7 @@ function BilletageColonne({
             onChange={(event) => onPhysiqueManuelChange(devise, Number(event.target.value || 0))}
             placeholder="0"
           />
+          <EquivalentUsd montantCdf={Number.isFinite(physiqueManuel) ? physiqueManuel : 0} taux={taux} />
         </div>
       )}
     </div>
@@ -191,6 +229,7 @@ function BilletageColonne({
 export default function ClotureFields({
   soldeTheoriqueUsd,
   soldeTheoriqueCdf,
+  tauxChange,
   denominations,
   billetageUsd,
   billetageCdf,
@@ -220,6 +259,7 @@ export default function ClotureFields({
       />
       <BilletageColonne
         devise="CDF"
+        tauxChange={tauxChange}
         soldeTheorique={soldeTheoriqueCdf}
         denominations={denominationsCdf}
         saisie={billetageCdf}
