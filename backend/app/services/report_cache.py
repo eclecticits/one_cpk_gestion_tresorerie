@@ -6,6 +6,10 @@ Le résumé ``/reports/summary`` est mis en cache quelques secondes pour absorbe
 les rafraîchissements du tableau de bord. Sans invalidation explicite, une
 opération financière n'apparaîtrait qu'après expiration du TTL — l'utilisateur
 qui vient de saisir un encaissement ne le verrait pas dans ses totaux.
+
+Les statistiques du tableau de bord (``/dashboard/stats``) sont mémorisées de
+la même façon et purgées par la même fonction : toute opération qui change un
+total change aussi un solde affiché sur le tableau de bord.
 """
 
 import hashlib
@@ -13,6 +17,7 @@ import hashlib
 from app.core.cache import cache_delete_pattern
 
 REPORT_SUMMARY_PREFIX = "reports:summary"
+DASHBOARD_STATS_PREFIX = "dashboard:stats"
 
 
 def report_summary_cache_key(
@@ -30,5 +35,14 @@ def report_summary_cache_key(
 
 
 async def invalidate_report_summary_cache(tenant_id: int) -> int:
-    """Purge les résumés mémorisés d'une organisation (toutes périodes/canaux/devises)."""
-    return await cache_delete_pattern(f"{REPORT_SUMMARY_PREFIX}:{tenant_id}:*")
+    """Purge les résumés et les statistiques du tableau de bord mémorisés
+    d'une organisation (toutes périodes, canaux, comptes et devises).
+
+    Sans la purge du tableau de bord, le solde d'un compte bancaire choisi
+    restait figé jusqu'à 60 s après une opération, alors que « Tous les
+    comptes », lu en direct sur ``/tresorerie/soldes``, était déjà à jour :
+    changer de compte donnait des chiffres qui ne se recoupaient pas.
+    """
+    purged = await cache_delete_pattern(f"{REPORT_SUMMARY_PREFIX}:{tenant_id}:*")
+    purged += await cache_delete_pattern(f"{DASHBOARD_STATS_PREFIX}:{tenant_id}:*")
+    return purged

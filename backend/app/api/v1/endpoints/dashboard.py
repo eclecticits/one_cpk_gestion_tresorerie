@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_tenant_id, get_current_user
 from app.core.cache import cache_get, cache_set
+from app.services.report_cache import DASHBOARD_STATS_PREFIX
 from app.db.session import get_db
 from app.models.user import User
 from app.models.caisse_centrale import CaisseCentrale
@@ -62,7 +63,7 @@ def _dashboard_cache_key(
 ) -> str:
     params = f"{period_type}|{date_debut}|{date_fin}|{include_all_status}|{canal}|{compte_bancaire_id}|{devise}"
     h = hashlib.md5(params.encode()).hexdigest()[:12]
-    return f"dashboard:stats:{tenant_id}:{h}"
+    return f"{DASHBOARD_STATS_PREFIX}:{tenant_id}:{h}"
 
 
 STATUT_PAIEMENT_INCLUS = ("complet", "partiel")

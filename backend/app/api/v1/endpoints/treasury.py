@@ -25,6 +25,7 @@ from app.schemas.treasury import (
 from app.services.ai_batch_service import AIBatchProcessor
 from app.services.encaissement_flux import flux_encaissements
 from app.services.ai_memory_service import AIMemoryService
+from app.services.report_cache import invalidate_report_summary_cache
 # ExcelParser est importé dans la vue : il tire pandas (57 Mo de RSS et ~1,3 s
 # d'import), payés par chaque worker au démarrage alors qu'un seul endpoint s'en
 # sert. Import différé = mémoire rendue aux workers supplémentaires.
@@ -214,6 +215,7 @@ async def recalculate_treasury_balances(
 ) -> TreasuryOverviewOut:
     caisse = await _recalculate_treasury_balances(tenant_id, db)
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     caisse_out = TreasuryCaisseOut(
         solde_usd=caisse.solde_usd,
         solde_cdf=caisse.solde_cdf,

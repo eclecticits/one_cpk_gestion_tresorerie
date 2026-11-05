@@ -13,6 +13,7 @@ from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 from app.services.audit_service import log_action
+from app.services.report_cache import invalidate_report_summary_cache
 from app.schemas.banque import (
     BanqueCreate,
     BanqueOut,
@@ -381,6 +382,7 @@ async def create_compte_bancaire(
             new_value={"is_principal": new_value["is_principal"]},
         )
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     await db.refresh(compte)
     res_compte = await db.execute(
         select(CompteBancaire).options(selectinload(CompteBancaire.banque)).where(CompteBancaire.id == compte.id)
@@ -522,6 +524,7 @@ async def update_compte_bancaire(
         )
 
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     res_compte = await db.execute(
         select(CompteBancaire).options(selectinload(CompteBancaire.banque)).where(CompteBancaire.id == compte.id)
     )
@@ -561,4 +564,5 @@ async def delete_compte_bancaire(
 
     compte.is_active = False
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     return {"ok": True, "status": "deactivated"}

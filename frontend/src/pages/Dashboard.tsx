@@ -1048,7 +1048,13 @@ export default function Dashboard() {
               <label>Canal</label>
               <select
                 value={dashboardCanal}
-                onChange={(e) => setDashboardCanal(e.target.value as 'ALL' | 'BANQUE' | 'CAISSE')}
+                onChange={(e) => {
+                  // Le compte retenu appartient à l'ancien canal : on le vide
+                  // dans le même rendu, sinon une requête part avec le nouveau
+                  // canal et l'ancien compte, que le serveur rejette (400).
+                  setDashboardCanal(e.target.value as 'ALL' | 'BANQUE' | 'CAISSE')
+                  setDashboardCompteId('')
+                }}
               >
                 <option value="ALL">Tous</option>
                 <option value="BANQUE">Banque</option>
