@@ -93,8 +93,14 @@ CATEGORIES = {
 #: que des nombres (un téléphone, une année, un nombre d'experts).
 MOTS_INFORMATION = {
     "telephone", "tel", "phone", "gsm", "annee", "exercice", "nif", "code",
-    "nombre", "nb", "effectif", "age", "id",
+    "nombre", "nb", "effectif", "age", "id", "compte",
 }
+
+#: Un relevé comptable peut accompagner les créances de colonnes de contrôle.
+#: Elles ne deviennent jamais des lignes de note de débit : un règlement est
+#: un paiement, et un numéro de compte est une référence, même s'ils ne
+#: contiennent que des chiffres.
+MOTS_REGLEMENT = {"reglement", "paiement", "versement", "encaissement", "paye"}
 
 #: Les montants d'un encaissement sont tenus en USD ; le CDF n'est qu'une
 #: devise de perception, convertie au paiement (`taux_change_applique`). Une
@@ -125,6 +131,22 @@ CATEGORIES_PAR_ONGLET = {
     "penalites": {PENALITE_APO, ARRIERE_PENALITE_APO, AUTRE_PENALITE, ARRIERE_AUTRE_PENALITE},
     "toutes": set(CATEGORIES_IMPORTABLES),
 }
+
+#: Ce qu'un réimport peut actualiser sur une note déjà émise. Chaque famille se
+#: remplace seule : réimporter les pénalités laisse la cotisation intacte.
+FAMILLES_ACTUALISATION = {
+    "cotisation": {COTISATION_ANNUELLE, ARRIERE_COTISATION},
+    "penalites": {PENALITE_APO, ARRIERE_PENALITE_APO, AUTRE_PENALITE, ARRIERE_AUTRE_PENALITE},
+    "autres": {AUTRE_CREANCE},
+}
+
+
+def categories_actualisees(familles: list[str] | None) -> set[str]:
+    """Les catégories que le réimport remplace ; vide : pas d'actualisation."""
+    inconnues = [f for f in (familles or []) if f not in FAMILLES_ACTUALISATION]
+    if inconnues:
+        raise HTTPException(status_code=400, detail=f"Famille à actualiser inconnue : {', '.join(inconnues)}")
+    return set().union(*(FAMILLES_ACTUALISATION[f] for f in (familles or [])))
 
 
 @dataclass
@@ -214,7 +236,28 @@ def _est_entete_nom(entete: str) -> bool:
 
 
 def _est_entete_arrieres(entete: str) -> bool:
-    return "arriere" in entete
+    # « Ariérés » (un seul r) existe dans plusieurs fichiers historiques de la
+    # Comptabilité. Le tolérer évite de classer ces pénalités parmi les dettes
+    # courantes, sans reproduire la faute dans les modèles téléchargés.
+    return "arriere" in entete or "ariere" in entete or _est_entete_solde_initial(entete)
+
+
+def _est_entete_solde_initial(entete: str) -> bool:
+    return any(expression in entete for expression in ("solde initial", "solde d'ouverture", "report anterieur"))
+
+
+def _est_entete_solde_controle(entete: str) -> bool:
+    return "solde au" in entete or "solde final" in entete or "solde a la date" in entete
+
+
+def _est_entete_reglement(entete: str) -> bool:
+    mots = set(re.split(r"[^a-z0-9]+", entete))
+    return bool(mots & MOTS_REGLEMENT)
+
+
+def _est_entete_compte(entete: str) -> bool:
+    compacte = re.sub(r"[^a-z0-9]+", "", entete)
+    return compacte in {"ncompte", "nocompte", "numerocompte", "comptecomptable"}
 
 
 def _est_entete_total(entete: str) -> bool:
@@ -287,6 +330,13 @@ ENTETES_PRINCIPAUX = {
     "reference_decision": {"reference / decision", "reference decision", "reference", "decision"},
     "observation": {"observation", "observations"},
 }
+
+# Le modèle téléchargé rend explicite l'usage de cette colonne pour les frais
+# de formation et autres créances, tout en restant compatible avec les anciens
+# fichiers qui l'appelaient simplement « Observation ».
+ENTETES_PRINCIPAUX["observation"].update(
+    {"observation / libelle autre creance", "observation libelle autre creance"}
+)
 
 ENTETES_DETAILS = {
     "numero_note_externe": ENTETES_PRINCIPAUX["numero_note_externe"],
@@ -503,6 +553,21 @@ def lire_feuille(contenu: bytes) -> Feuille:
         if entete in ENTETES_INDEX:
             ignorees.append({"libelle": libelle, "raison": "Numérotation des lignes"})
             continue
+        if _est_entete_compte(entete):
+            ignorees.append({"libelle": libelle, "raison": "Référence comptable non utilisée à ce stade"})
+            continue
+        if _est_entete_reglement(entete):
+            ignorees.append({"libelle": libelle, "raison": "Règlement : rapproché avec les paiements, jamais créé comme dette"})
+            continue
+        if _est_entete_solde_controle(entete):
+            ignorees.append({"libelle": libelle, "raison": "Solde de contrôle : recalculé par l'application"})
+            continue
+        # Le solde d'ouverture est une créance historique non ventilée. Il doit
+        # rester visible dans « Autres créances » avec son libellé, et non être
+        # confondu avec le solde final de contrôle.
+        if _est_entete_solde_initial(entete):
+            colonnes.append(Colonne(index=index, libelle=libelle, arrieres=True))
+            continue
         if _est_entete_total(entete):
             if col_total is None:
                 col_total = index
@@ -699,6 +764,9 @@ class LigneAnalysee:
     creances: list[CreanceAnalysee] = field(default_factory=list)
     resume_montants: dict[str, Decimal] = field(default_factory=dict)
     problemes: list[ProblemeImport] = field(default_factory=list)
+    #: Mode actualisation : ce que la ligne fera d'une note déjà en base
+    #: (`action` : creer, actualiser, inchangee, rien), cf. `_rapprocher_notes`.
+    actualisation: dict[str, Any] | None = None
 
     @property
     def total(self) -> Decimal:
@@ -728,6 +796,8 @@ class Analyse:
     categorie: str = "toutes"
     format_import: str = "historique"
     problemes: list[ProblemeImport] = field(default_factory=list)
+    #: Familles actualisées (`FAMILLES_ACTUALISATION`) ; vide : import ordinaire.
+    actualiser: list[str] = field(default_factory=list)
 
 
 def _montant_texte(valeur: Decimal) -> str:
@@ -736,22 +806,25 @@ def _montant_texte(valeur: Decimal) -> str:
 
 def _categorie_legacy(libelle: str) -> str:
     normalise = normaliser_entete(libelle)
-    if "arriere" in normalise:
-        # Sans feuille de détail, l'exercice réel est inconnu : LEGACY est plus
-        # honnête qu'une ventilation inventée.
-        return LEGACY
+    arriere = _est_entete_arrieres(normalise)
     if "cotis" in normalise:
-        return COTISATION_ANNUELLE
+        return ARRIERE_COTISATION if arriere else COTISATION_ANNUELLE
     if "penalit" in normalise and "apo" in normalise:
-        return PENALITE_APO
+        return ARRIERE_PENALITE_APO if arriere else PENALITE_APO
     if "penalit" in normalise:
-        return AUTRE_PENALITE
+        return ARRIERE_AUTRE_PENALITE if arriere else AUTRE_PENALITE
+    if arriere:
+        # Sans détail, le solde d'ouverture ne peut honnêtement être présenté
+        # comme une cotisation ou une pénalité.
+        return LEGACY
     return AUTRE_CREANCE
 
 
 def _exercice_legacy(libelle: str, defaut: int) -> int:
     trouve = re.search(r"\b(20\d{2}|2100)\b", libelle or "")
-    return int(trouve.group(1)) if trouve else defaut
+    if trouve:
+        return int(trouve.group(1))
+    return max(EXERCICE_MIN, defaut - 1) if _est_entete_arrieres(normaliser_entete(libelle)) else defaut
 
 
 def _cellule(table: TableStructuree, valeurs: list[Any], champ: str) -> Any:
@@ -796,6 +869,210 @@ def _libelle_ligne_principale(categorie: str, exercice: int, observation: str | 
     return f"{libelle_categorie(categorie)} {exercice}"[:255]
 
 
+def _retirer_probleme(
+    ligne: LigneAnalysee, problemes: list[ProblemeImport], code: str, message: str | None = None
+) -> None:
+    """Retire un problème déjà signalé (et son texte) de la ligne et de l'analyse."""
+    retires = [p for p in ligne.problemes if p.code == code and (message is None or p.message == message)]
+    for probleme in retires:
+        ligne.problemes.remove(probleme)
+        texte = f"{probleme.champ} : {probleme.message}"
+        cible = ligne.erreurs if probleme.niveau == "ERREUR" else ligne.avertissements
+        if texte in cible:
+            cible.remove(texte)
+        if probleme in problemes:
+            problemes.remove(probleme)
+
+
+def _exercice_note(note: Encaissement) -> int | None:
+    if note.exercice is not None:
+        return note.exercice
+    return note.date_encaissement.year if note.date_encaissement else None
+
+
+def _empreinte(elements: list[tuple[str | None, int | None, Decimal]]) -> list[tuple[str, int, Decimal]]:
+    return sorted((c or LEGACY, e or 0, Decimal(str(m or 0)).quantize(CENT)) for c, e, m in elements)
+
+
+async def _rapprocher_notes(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    lignes: list[LigneAnalysee],
+    categories: set[str],
+    annee: int,
+    problemes: list[ProblemeImport],
+    feuille: str,
+) -> None:
+    """Retrouve la note déjà émise de chaque ligne et dit ce que le réimport en fera.
+
+    La note se retrouve par son n° de note externe ; sans numéro, par le membre
+    et l'exercice de la ligne, à condition qu'il n'en ait qu'une. Seule une
+    note de l'exercice budgétaire en cours s'actualise : celles d'un exercice
+    passé sont figées par la clôture. Rien n'est supprimé : une note absente du
+    fichier reste telle quelle, et une note à retirer s'annule depuis la liste.
+    """
+    from app.services.report_creances import reports_actifs
+
+    experts_ids = {l.expert.id for l in lignes if l.expert is not None}
+    externes = {l.numero_note_externe.casefold() for l in lignes if l.numero_note_externe}
+    if not experts_ids:
+        return
+    conditions_notes = [
+        Encaissement.organisation_id == tenant_id,
+        Encaissement.is_deleted.is_(False),
+        Encaissement.est_proforma.is_(False),
+    ]
+    notes = list(
+        (
+            await db.execute(
+                select(Encaissement).where(
+                    *conditions_notes,
+                    Encaissement.expert_comptable_id.in_(experts_ids),
+                    Encaissement.type_client.in_(("expert_comptable", "sec")),
+                )
+            )
+        ).scalars().all()
+    )
+    par_externe: dict[str, Encaissement] = {}
+    if externes:
+        for note in (
+            await db.execute(
+                select(Encaissement).where(
+                    *conditions_notes,
+                    Encaissement.numero_note_externe.is_not(None),
+                    func.lower(Encaissement.numero_note_externe).in_(externes),
+                )
+            )
+        ).scalars().all():
+            par_externe[(note.numero_note_externe or "").casefold()] = note
+    actives = [n for n in notes if (n.statut_operation or "ACTIVE").upper() != "ANNULEE"]
+    articles_par_note: dict[uuid.UUID, list[EncaissementArticle]] = {}
+    ids_notes = {n.id for n in actives} | {n.id for n in par_externe.values()}
+    if ids_notes:
+        for article in (
+            await db.execute(
+                select(EncaissementArticle)
+                .where(EncaissementArticle.encaissement_id.in_(ids_notes))
+                .order_by(EncaissementArticle.sort_order)
+            )
+        ).scalars().all():
+            articles_par_note.setdefault(article.encaissement_id, []).append(article)
+
+    def erreur(ligne: LigneAnalysee, champ: str, valeur: Any, message: str, code: str) -> None:
+        _signaler(ligne, problemes, feuille=feuille, numero_ligne=ligne.ligne, champ=champ,
+                  valeur=valeur, message=message, code=code)
+
+    deja_visees: dict[uuid.UUID, LigneAnalysee] = {}
+    for ligne in lignes:
+        if ligne.expert is None or ligne.exercice is None or ligne.erreurs:
+            continue
+        note: Encaissement | None = None
+        if ligne.numero_note_externe:
+            note = par_externe.get(ligne.numero_note_externe.casefold())
+            if note is not None and note.expert_comptable_id != ligne.expert.id:
+                erreur(ligne, "N° note externe", ligne.numero_note_externe,
+                       f"ce numéro est celui d'une note d'un autre membre ({note.numero_recu})", "NOTE_AUTRE_MEMBRE")
+                continue
+            if note is not None and (note.statut_operation or "ACTIVE").upper() == "ANNULEE":
+                erreur(ligne, "N° note externe", ligne.numero_note_externe,
+                       f"ce numéro est celui d'une note annulée ({note.numero_recu})", "NOTE_ANNULEE")
+                continue
+        else:
+            candidates = [
+                n for n in actives if n.expert_comptable_id == ligne.expert.id and _exercice_note(n) == ligne.exercice
+            ]
+            if len(candidates) > 1:
+                erreur(ligne, "N° note externe", None,
+                       f"le membre a {len(candidates)} notes {ligne.exercice} : indiquez le n° de note externe "
+                       "de celle à actualiser", "NOTE_AMBIGUE")
+                continue
+            note = candidates[0] if candidates else None
+
+        if note is None:
+            # Une note créée ne doit pas appeler une seconde fois une cotisation
+            # que le membre porte déjà sur une autre note.
+            exercices_cotises = {c.exercice for c in ligne.creances if c.categorie == COTISATION_ANNUELLE}
+            deja = next(
+                (
+                    n
+                    for n in actives
+                    if n.expert_comptable_id == ligne.expert.id
+                    and any(
+                        a.categorie == COTISATION_ANNUELLE and a.exercice in exercices_cotises
+                        for a in articles_par_note.get(n.id, [])
+                    )
+                ),
+                None,
+            )
+            if deja is not None:
+                erreur(ligne, "Cotisation N", ligne.exercice,
+                       f"cotisation déjà émise sur la note {deja.numero_note_externe or deja.numero_recu} : "
+                       "indiquez son n° de note externe pour l'actualiser", "DOUBLON_COTISATION")
+                continue
+            if ligne.creances:
+                ligne.actualisation = {"action": "creer"}
+            else:
+                ligne.actualisation = {"action": "rien"}
+                _signaler(ligne, problemes, feuille=feuille, numero_ligne=ligne.ligne, champ="Montants",
+                          valeur=None, message="aucune note à actualiser et rien à créer", code="RIEN_A_FAIRE",
+                          niveau="AVERTISSEMENT")
+            continue
+
+        numero = note.numero_note_externe or note.numero_recu or "—"
+        if note.id in deja_visees:
+            erreur(ligne, "N° d'ordre", ligne.numero_ordre,
+                   f"la note {numero} est déjà actualisée par la ligne {deja_visees[note.id].ligne}", "NOTE_DEUX_FOIS")
+            continue
+        deja_visees[note.id] = ligne
+        if _exercice_note(note) != annee:
+            erreur(ligne, "Exercice N", ligne.exercice,
+                   f"la note {numero} est de l'exercice {_exercice_note(note)} : seules les notes {annee} "
+                   "s'actualisent", "NOTE_EXERCICE_CLOS")
+            continue
+        if (note.devise_perception or "USD").upper() != "USD":
+            erreur(ligne, "Devise", note.devise_perception, f"la note {numero} est tenue en francs", "DEVISE_REFUSEE")
+            continue
+        if await reports_actifs(db, organisation_id=tenant_id, encaissement_id=note.id):
+            erreur(ligne, "Exercice N", ligne.exercice,
+                   f"la note {numero} est reportée en arriérés : elle ne s'actualise plus", "NOTE_REPORTEE")
+            continue
+
+        articles = articles_par_note.get(note.id, [])
+        gardes = [a for a in articles if (a.categorie or LEGACY) not in categories]
+        remplaces = [a for a in articles if (a.categorie or LEGACY) in categories]
+        ancien_total = Decimal(str(note.montant_total or 0)).quantize(CENT)
+        paye = Decimal(str(note.montant_paye or 0)).quantize(CENT)
+        nouveau_total = (
+            sum((Decimal(str(a.montant or 0)) for a in gardes), Decimal("0.00"))
+            + sum((c.montant for c in ligne.creances), Decimal("0.00"))
+        ).quantize(CENT)
+        inchangee = _empreinte([(a.categorie, a.exercice, a.montant) for a in remplaces]) == _empreinte(
+            [(c.categorie, c.exercice, c.montant) for c in ligne.creances]
+        )
+        if not inchangee and nouveau_total <= 0:
+            erreur(ligne, "Montants", None,
+                   f"la note {numero} ne porterait plus aucun montant : annulez-la depuis le menu « … » de la liste",
+                   "NOTE_VIDEE")
+            continue
+        surplus = max(paye - nouveau_total, Decimal("0.00"))
+        ligne.actualisation = {
+            "action": "inchangee" if inchangee else "actualiser",
+            "note_id": str(note.id),
+            "numero": numero,
+            "ancien_total": str(ancien_total),
+            "nouveau_total": str(nouveau_total),
+            "paye": str(paye),
+            "surplus": str(surplus),
+        }
+        if not inchangee and surplus > 0:
+            _signaler(ligne, problemes, feuille=feuille, numero_ligne=ligne.ligne, champ="Total note",
+                      valeur=nouveau_total,
+                      message=(f"déjà payé {_montant_texte(paye)} : le surplus de {_montant_texte(surplus)} "
+                               "réglera la note suivante du membre"),
+                      code="AVANCE_A_REPORTER", niveau="AVERTISSEMENT")
+
+
 async def _analyser_structure(
     db: AsyncSession,
     *,
@@ -804,8 +1081,14 @@ async def _analyser_structure(
     classeur: ClasseurStructure,
     service_id: int | None,
     categorie_import: str,
+    actualiser: set[str] | None = None,
 ) -> Analyse:
-    """Analyse le classeur métier sans écrire en base."""
+    """Analyse le classeur métier sans écrire en base.
+
+    `actualiser` : les catégories que le réimport remplace sur les notes déjà
+    émises. Les autres créances du fichier sont ignorées, et une ligne qui
+    retrouve sa note l'actualise au lieu d'être signalée en doublon.
+    """
 
     services = await services_disponibles(db, user, tenant_id)
     if service_id is not None:
@@ -878,6 +1161,27 @@ async def _analyser_structure(
                 message=f"année invalide ({EXERCICE_MIN} à {EXERCICE_MAX} attendue)",
                 code="EXERCICE_INVALIDE",
             )
+        else:
+            # Les articles prennent les postes de l'exercice budgétaire en
+            # cours. Une cotisation N+1 émise sur le budget N gonflerait les
+            # recettes de N et, impayée, serait reportée en « arriérés » à la
+            # clôture alors qu'elle est la cotisation courante de N+1. Une
+            # note d'un exercice passé reste acceptée : c'est la reprise d'une
+            # note historique, qui compte pour son exercice.
+            if exercice_budget is not None and ligne.exercice > exercice_budget.annee:
+                _signaler(
+                    ligne,
+                    problemes,
+                    feuille=principale.nom,
+                    numero_ligne=numero_ligne,
+                    champ="Exercice N",
+                    valeur=ligne.exercice,
+                    message=(
+                        f"l'exercice budgétaire en cours est {exercice_budget.annee} : passez le budget "
+                        f"sur {ligne.exercice} avant d'émettre ses notes"
+                    ),
+                    code="EXERCICE_HORS_BUDGET",
+                )
 
         try:
             ligne.devise = lire_devise(_cellule(principale, valeurs, "devise"))
@@ -1228,7 +1532,7 @@ async def _analyser_structure(
                 )
                 continue
             libelle = _texte_optionnel(_cellule(detail, valeurs, "libelle"), 255)
-            if categorie_ligne in {AUTRE_PENALITE, ARRIERE_AUTRE_PENALITE} and not libelle:
+            if categorie_ligne in {AUTRE_PENALITE, ARRIERE_AUTRE_PENALITE, AUTRE_CREANCE} and not libelle:
                 _signaler(
                     cible,
                     problemes,
@@ -1236,7 +1540,11 @@ async def _analyser_structure(
                     numero_ligne=numero_ligne,
                     champ="Motif / Libellé",
                     valeur=None,
-                    message="un motif est obligatoire pour une autre pénalité",
+                    message=(
+                        "un libellé est obligatoire pour une autre créance"
+                        if categorie_ligne == AUTRE_CREANCE
+                        else "un motif est obligatoire pour une autre pénalité"
+                    ),
                     code="LIBELLE_REQUIS",
                 )
                 continue
@@ -1332,7 +1640,7 @@ async def _analyser_structure(
                 continue
             if montant_resume <= 0:
                 continue
-            if categorie_ligne == AUTRE_PENALITE and not ligne.observation:
+            if categorie_ligne in {AUTRE_PENALITE, AUTRE_CREANCE} and not ligne.observation:
                 _signaler(
                     ligne,
                     problemes,
@@ -1340,7 +1648,11 @@ async def _analyser_structure(
                     numero_ligne=ligne.ligne,
                     champ="Observation",
                     valeur=None,
-                    message="un motif est obligatoire lorsque « Autre pénalité » est renseignée",
+                    message=(
+                        "un libellé est obligatoire lorsque « Autres créances » est renseigné"
+                        if categorie_ligne == AUTRE_CREANCE
+                        else "un motif est obligatoire lorsque « Autre pénalité » est renseignée"
+                    ),
                     code="LIBELLE_REQUIS",
                 )
                 continue
@@ -1392,9 +1704,24 @@ async def _analyser_structure(
             for categorie_ligne, montant in par_categorie.items()
         }
 
+    if actualiser:
+        # Seules les familles choisies passent ; une ligne qui n'en porte plus
+        # rien reste utile : elle retire la famille de la note existante (une
+        # pénalité levée revient à 0).
+        for ligne in lignes:
+            ligne.creances = [c for c in ligne.creances if c.categorie in actualiser]
+            ligne.resume_montants = {k: v for k, v in ligne.resume_montants.items() if k in actualiser}
+            par_categorie_filtre: dict[str, Decimal] = {}
+            for creance in ligne.creances:
+                par_categorie_filtre[creance.categorie] = (
+                    par_categorie_filtre.get(creance.categorie, Decimal("0")) + creance.montant
+                )
+            ligne.montants = {INDEX_CATEGORIES[k]: v for k, v in par_categorie_filtre.items()}
+            _retirer_probleme(ligne, problemes, "MONTANT_INVALIDE", "aucune créance à importer")
+
     # Numéros externes déjà présents dans ce conseil.
     externes = {ligne.numero_note_externe.casefold() for ligne in lignes if ligne.numero_note_externe}
-    if externes:
+    if externes and not actualiser:
         existants = (
             await db.execute(
                 select(Encaissement.numero_note_externe, Encaissement.numero_recu).where(
@@ -1457,7 +1784,7 @@ async def _analyser_structure(
             if creance.categorie != COTISATION_ANNUELLE:
                 continue
             cle = (ligne.expert.id, creance.exercice)
-            if cle in cotisations_existantes:
+            if cle in cotisations_existantes and not actualiser:
                 ligne.doublon = True
                 _signaler(
                     ligne,
@@ -1486,6 +1813,17 @@ async def _analyser_structure(
                         )
             else:
                 cotisations_fichier[cle] = ligne
+
+    if actualiser:
+        await _rapprocher_notes(
+            db,
+            tenant_id=tenant_id,
+            lignes=lignes,
+            categories=actualiser,
+            annee=exercice_budget.annee if exercice_budget else datetime.now().year,
+            problemes=problemes,
+            feuille=principale.nom,
+        )
 
     # Colonnes virtuelles et suggestions de postes, compatibles avec le même
     # écran de confirmation que l'import historique.
@@ -1593,18 +1931,33 @@ async def analyser(
     contenu: bytes,
     service_id: int | None,
     categorie: str = "toutes",
+    actualiser: list[str] | None = None,
 ) -> Analyse:
     if categorie not in CATEGORIES:
         raise HTTPException(status_code=400, detail="Catégorie d'import inconnue")
+    categories = categories_actualisees(actualiser) & CATEGORIES_PAR_ONGLET[categorie]
+    if actualiser and not categories:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ces créances ne s'importent pas dans l'onglet « {CATEGORIES[categorie]} ».",
+        )
     classeur_structure = lire_classeur_structure(contenu)
     if classeur_structure is not None:
-        return await _analyser_structure(
+        analyse = await _analyser_structure(
             db,
             tenant_id=tenant_id,
             user=user,
             classeur=classeur_structure,
             service_id=service_id,
             categorie_import=categorie,
+            actualiser=categories or None,
+        )
+        analyse.actualiser = sorted(set(actualiser or []))
+        return analyse
+    if actualiser:
+        raise HTTPException(
+            status_code=400,
+            detail="L'actualisation demande le modèle détaillé (colonne « Exercice N » et feuille « Détail créances »).",
         )
     feuille = lire_feuille(contenu)
     services = await services_disponibles(db, user, tenant_id)
@@ -1818,6 +2171,7 @@ def analyse_en_reponse(analyse: Analyse) -> dict[str, Any]:
     return {
         "format_import": analyse.format_import,
         "categorie": analyse.categorie,
+        "actualiser": analyse.actualiser,
         "ligne_entete": analyse.feuille.ligne_entete,
         "exercice": analyse.annee,
         "exercice_ouvert": analyse.exercice is not None,
@@ -1854,6 +2208,7 @@ def analyse_en_reponse(analyse: Analyse) -> dict[str, Any]:
                 "total": str(l.total),
                 "statut": l.statut,
                 "doublon": l.doublon,
+                "actualisation": l.actualisation,
                 "erreurs": l.erreurs,
                 "avertissements": l.avertissements,
                 "problemes": [probleme.dict() for probleme in l.problemes],
@@ -1888,6 +2243,20 @@ def analyse_en_reponse(analyse: Analyse) -> dict[str, Any]:
                 1 for p in problemes if p.code in {"MONTANT_INCOHERENT", "TOTAL_INCOHERENT"}
             ),
             "arrieres_non_ventiles": sum(1 for p in problemes if p.code == "ARRIERE_NON_VENTILE"),
+            "nb_a_actualiser": sum(
+                1 for l in valides if (l.actualisation or {}).get("action") == "actualiser"
+            ),
+            "nb_inchangees": sum(1 for l in valides if (l.actualisation or {}).get("action") == "inchangee"),
+            "surplus_a_reporter": str(
+                sum(
+                    (
+                        Decimal(l.actualisation["surplus"])
+                        for l in valides
+                        if (l.actualisation or {}).get("action") == "actualiser"
+                    ),
+                    Decimal("0.00"),
+                )
+            ),
         },
     }
 
@@ -1908,8 +2277,19 @@ async def importer(
     postes: dict[str, int],
     importer_doublons: bool = False,
     categorie: str = "toutes",
+    actualiser: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Crée les notes du fichier, toutes ou aucune."""
+    """Crée les notes du fichier, toutes ou aucune.
+
+    `actualiser` (familles de `FAMILLES_ACTUALISATION`) : une ligne qui retrouve
+    sa note de l'exercice en cours en remplace ces familles-là, et elles
+    seules ; les autres lignes créent leur note avec ces seules familles. Un
+    surplus payé, et toute avance qui attendait, règle ensuite la dette la plus
+    ancienne du membre (`notes_debit_avances`).
+    """
+    from app.services.encaissement_payments import _payment_status_for
+    from app.services.notes_debit_avances import reporter_avances_membre
+
     # Importé ici : l'endpoint des encaissements importe déjà ce module-ci par
     # le routeur, et ces deux fonctions sont celles de la saisie — les recopier
     # serait laisser l'import diverger du formulaire au premier correctif.
@@ -1918,8 +2298,15 @@ async def importer(
 
     user_id = getattr(user, "id", None)
     analyse = await analyser(
-        db, tenant_id=tenant_id, user=user, contenu=contenu, service_id=service_id, categorie=categorie
+        db,
+        tenant_id=tenant_id,
+        user=user,
+        contenu=contenu,
+        service_id=service_id,
+        categorie=categorie,
+        actualiser=actualiser,
     )
+    categories_remplacees = categories_actualisees(actualiser) & CATEGORIES_PAR_ONGLET[categorie]
     service_retenu = await resoudre_service(db, user, tenant_id, service_id)
     if analyse.exercice is None:
         raise HTTPException(status_code=400, detail="Aucun exercice budgétaire : ouvrez l'exercice avant d'importer.")
@@ -1961,15 +2348,29 @@ async def importer(
             detail="Choisissez le poste budgétaire de : " + ", ".join(f"« {m} »" for m in manquants),
         )
 
-    a_creer = [l for l in analyse.lignes if not l.erreurs and (importer_doublons or not l.doublon)]
-    if not a_creer:
+    def action(ligne: LigneAnalysee) -> str | None:
+        return (ligne.actualisation or {}).get("action")
+
+    a_actualiser = [l for l in analyse.lignes if not l.erreurs and action(l) == "actualiser"]
+    a_creer = [
+        l
+        for l in analyse.lignes
+        if not l.erreurs
+        and (importer_doublons or not l.doublon)
+        and (not categories_remplacees or action(l) == "creer")
+    ]
+    if not a_creer and not a_actualiser:
+        if categories_remplacees and any(action(l) == "inchangee" for l in analyse.lignes):
+            raise HTTPException(status_code=400, detail="Rien à actualiser : les notes sont déjà à jour.")
         raise HTTPException(status_code=400, detail="Aucune note à créer : toutes les lignes sont en erreur ou déjà émises.")
 
     if analyse.format_import == "structure":
         # Sérialise deux imports concurrents visant le même membre. Après le
         # verrou, on recontrôle la cotisation : la prévisualisation n'est pas
         # une garantie si un autre utilisateur confirme en même temps.
-        experts_ids = sorted({ligne.expert.id for ligne in a_creer if ligne.expert is not None}, key=str)
+        experts_ids = sorted(
+            {ligne.expert.id for ligne in a_creer + a_actualiser if ligne.expert is not None}, key=str
+        )
         if experts_ids:
             await db.execute(
                 select(ExpertComptable.id)
@@ -2062,10 +2463,8 @@ async def importer(
     db.add(enregistrement)
     await db.flush()
 
-    notes: list[dict[str, Any]] = []
-    for ligne in a_creer:
-        expert = ligne.expert
-        assert expert is not None
+    def construire_articles(ligne: LigneAnalysee, debut: int = 0) -> list[dict[str, Any]]:
+        """Les articles d'une ligne du fichier, prêts pour `_add_encaissement_articles`."""
         articles: list[dict[str, Any]] = []
         sources_articles = (
             [
@@ -2075,7 +2474,7 @@ async def importer(
             if analyse.format_import == "structure"
             else [(index, montant, None) for index, montant in ligne.montants.items()]
         )
-        for ordre, (index, montant, creance) in enumerate(sources_articles):
+        for ordre, (index, montant, creance) in enumerate(sources_articles, start=debut):
             quantite, prix = Decimal("1.00"), montant
             tarif = analyse.tarifs.get(index, (None, None))[0]
             # Trois pénalités à 100, c'est 3 × 100 et non une ligne de 300 qui
@@ -2104,6 +2503,13 @@ async def importer(
                     "sort_order": ordre,
                 }
             )
+        return articles
+
+    notes: list[dict[str, Any]] = []
+    for ligne in a_creer:
+        expert = ligne.expert
+        assert expert is not None
+        articles = construire_articles(ligne)
         date_note_ligne = date_note
         if (
             analyse.format_import == "structure"
@@ -2200,8 +2606,120 @@ async def importer(
             }
         )
 
+    actualisees: list[dict[str, Any]] = []
+    for ligne in a_actualiser:
+        expert = ligne.expert
+        assert expert is not None and ligne.actualisation is not None
+        info = ligne.actualisation
+        note = (
+            await db.execute(
+                select(Encaissement)
+                .where(Encaissement.id == uuid.UUID(info["note_id"]), Encaissement.organisation_id == tenant_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if (
+            note is None
+            or (note.statut_operation or "ACTIVE").upper() == "ANNULEE"
+            or Decimal(str(note.montant_total or 0)).quantize(CENT) != Decimal(info["ancien_total"])
+            or Decimal(str(note.montant_paye or 0)).quantize(CENT) != Decimal(info["paye"])
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f"La note {info['numero']} a changé depuis la prévisualisation. Relancez l'analyse.",
+            )
+        anciens = list(
+            (
+                await db.execute(
+                    select(EncaissementArticle)
+                    .where(EncaissementArticle.encaissement_id == note.id)
+                    .order_by(EncaissementArticle.sort_order)
+                )
+            ).scalars().all()
+        )
+        gardes = [a for a in anciens if (a.categorie or LEGACY) not in categories_remplacees]
+        retires = [a for a in anciens if (a.categorie or LEGACY) in categories_remplacees]
+        nouveaux = construire_articles(ligne, debut=max((a.sort_order or 0 for a in gardes), default=-1) + 1)
+        ecarts = (
+            await appliquer_tarifs(
+                db, tenant_id, nouveaux, peut_forcer=True,
+                date_encaissement=(note.date_encaissement or datetime.now(timezone.utc)).date(),
+            )
+            if nouveaux
+            else []
+        )
+        avant = {
+            "montant_total": str(note.montant_total),
+            "articles": [
+                {"categorie": a.categorie, "exercice": a.exercice, "libelle": a.libelle, "montant": str(a.montant)}
+                for a in retires
+            ],
+        }
+        for article in retires:
+            await db.delete(article)
+        await db.flush()
+        _add_encaissement_articles(db, note, tenant_id, nouveaux)
+        nouveau_total = (
+            sum((Decimal(str(a.montant or 0)) for a in gardes), Decimal("0.00"))
+            + sum((Decimal(str(a["montant"])) for a in nouveaux), Decimal("0.00"))
+        ).quantize(CENT)
+        note.montant = nouveau_total
+        note.montant_total = nouveau_total
+        note.libelle = ", ".join([a.libelle for a in gardes] + [a["libelle"] for a in nouveaux])[:255]
+        if ligne.date_echeance is not None:
+            note.date_echeance = ligne.date_echeance
+        if ligne.reference_decision:
+            note.reference_decision = ligne.reference_decision
+        note.statut_paiement = _payment_status_for(note, Decimal(str(note.montant_paye or 0)).quantize(CENT))
+        postes_note = [a.budget_poste_id for a in gardes] + [a["budget_poste_id"] for a in nouveaux]
+        if note.budget_poste_id not in postes_note and postes_note and postes_note[0] in postes_par_id:
+            poste_entete = postes_par_id[postes_note[0]]
+            note.budget_poste_id = poste_entete.id
+            note.budget_poste_code = poste_entete.code
+            note.budget_poste_libelle = poste_entete.libelle
+        await log_action(
+            db,
+            user_id=user_id,
+            action="NOTE_DEBIT_ACTUALISEE",
+            target_table="encaissements",
+            target_id=str(note.id),
+            old_value=avant,
+            new_value={
+                "montant_total": str(nouveau_total),
+                "familles": sorted(set(actualiser or [])),
+                "import": str(enregistrement.id),
+                "articles": [
+                    {"categorie": a["categorie"], "exercice": a["exercice"], "libelle": a["libelle"],
+                     "montant": str(a["montant"])}
+                    for a in nouveaux
+                ],
+                **({"ecarts_tarif": ecarts} if ecarts else {}),
+            },
+        )
+        actualisees.append(
+            {
+                "id": str(note.id),
+                "numero_recu": note.numero_recu,
+                "numero_note_externe": note.numero_note_externe,
+                "numero_ordre": expert.numero_ordre,
+                "nom": expert.nom_denomination,
+                "ancien_total": info["ancien_total"],
+                "montant_total": str(nouveau_total),
+            }
+        )
+    await db.flush()
+
+    # Un surplus né de l'actualisation, ou une avance qui attendait une note,
+    # règle la dette la plus ancienne du membre.
+    avances: dict[str, list[dict[str, Any]]] = {"reportees": [], "en_attente": []}
+    for expert_id in sorted({l.expert.id for l in a_creer + a_actualiser if l.expert is not None}, key=str):
+        bilan = await reporter_avances_membre(db, organisation_id=tenant_id, expert_id=expert_id, user_id=user_id)
+        avances["reportees"].extend(bilan["reportes"])
+        avances["en_attente"].extend(bilan["en_attente"])
+
     enregistrement.nb_notes = len(notes)
-    enregistrement.nb_lignes_ecartees = len(analyse.lignes) - len(notes)
+    enregistrement.nb_notes_actualisees = len(actualisees)
+    enregistrement.nb_lignes_ecartees = len(analyse.lignes) - len(notes) - len(actualisees)
     enregistrement.montant_total = total
     enregistrement.montant_arrieres = total_arrieres
     await log_action(
@@ -2214,6 +2732,8 @@ async def importer(
             "categorie": categorie,
             "fichier": enregistrement.fichier,
             "nb_notes": len(notes),
+            "nb_notes_actualisees": len(actualisees),
+            "familles_actualisees": sorted(set(actualiser or [])),
             "montant_total": str(total),
             "montant_arrieres": str(total_arrieres),
         },
@@ -2224,6 +2744,10 @@ async def importer(
         "import_id": str(enregistrement.id),
         "fichier": enregistrement.fichier,
         "nb_notes": len(notes),
+        "nb_notes_actualisees": len(actualisees),
+        "notes_actualisees": actualisees,
+        "avances_reportees": avances["reportees"],
+        "avances_en_attente": avances["en_attente"],
         "nb_lignes_ecartees": enregistrement.nb_lignes_ecartees,
         "montant_total": str(total),
         "montant_arrieres": str(total_arrieres),

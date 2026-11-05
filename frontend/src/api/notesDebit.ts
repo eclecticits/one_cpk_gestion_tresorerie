@@ -44,6 +44,57 @@ export interface ListeNotesDebit {
   totaux: { montant_total: string; montant_paye: string; reste_du: string }
 }
 
+export type StatutSituationMembre = 'toutes' | 'en_retard' | 'partiel' | 'en_regle' | 'en_avance'
+
+export interface SituationMembre {
+  expert: NoteDebitExpert['expert']
+  type_client: 'expert_comptable' | 'sec'
+  cotisations_anterieures: string
+  penalites_anterieures: string
+  cotisation_n: string
+  penalites_n: string
+  autres_creances: string
+  total_creances: string
+  reglements: string
+  reste_du: string
+  avance_n_plus_1: string
+  nb_notes: number
+  statut: Exclude<StatutSituationMembre, 'toutes'>
+  autres_details: {
+    libelle: string
+    exercice: number
+    montant: string
+    paye: string
+    reste: string
+  }[]
+}
+
+export interface SituationNotesDebit {
+  annee: number
+  /** Année de l'exercice budgétaire en cours : le N par défaut. */
+  exercice_courant: number
+  items: SituationMembre[]
+  total: number
+  totaux: Omit<
+    SituationMembre,
+    'expert' | 'type_client' | 'nb_notes' | 'statut' | 'autres_details'
+  >
+}
+
+export const situationNotesDebit = (params: {
+  annee?: number
+  q?: string
+  type_client?: string
+  statut?: StatutSituationMembre
+  limit?: number
+  offset?: number
+}) =>
+  apiRequest<SituationNotesDebit>('GET', '/notes-debit/situation', {
+    params: Object.fromEntries(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== '' && v !== null),
+    ),
+  })
+
 export const listerNotesDebit = (params: {
   q?: string
   statut?: StatutNotes
@@ -118,7 +169,38 @@ export interface LigneAnalysee {
   avertissements: string[]
   problemes: ProblemeImport[]
   creances: LigneCreance[]
+  /** Mode actualisation : ce que la ligne fera de la note déjà émise. */
+  actualisation: ActualisationLigne | null
 }
+
+/** Familles de créances qu'un réimport peut remplacer sur une note déjà émise. */
+export type FamilleActualisation = 'cotisation' | 'penalites' | 'autres'
+
+export const LIBELLE_FAMILLE: Record<FamilleActualisation, string> = {
+  cotisation: 'Cotisation',
+  penalites: 'Pénalités',
+  autres: 'Autres créances',
+}
+
+/** Les familles que chaque onglet d'import peut actualiser (même règle que le serveur). */
+export const FAMILLES_PAR_ONGLET: Record<CategorieImportNotes, FamilleActualisation[]> = {
+  toutes: ['cotisation', 'penalites', 'autres'],
+  ec: ['cotisation', 'autres'],
+  sec: ['cotisation', 'autres'],
+  penalites: ['penalites'],
+}
+
+export type ActualisationLigne =
+  | { action: 'creer' | 'rien' }
+  | {
+      action: 'actualiser' | 'inchangee'
+      note_id: string
+      numero: string
+      ancien_total: string
+      nouveau_total: string
+      paye: string
+      surplus: string
+    }
 
 export interface ProblemeImport {
   feuille: string
@@ -146,6 +228,7 @@ export interface AnalyseImport {
   fichier: string
   format_import: 'historique' | 'structure'
   categorie: CategorieImportNotes
+  actualiser: FamilleActualisation[]
   ligne_entete: number
   exercice: number
   exercice_ouvert: boolean
@@ -169,6 +252,9 @@ export interface AnalyseImport {
     numeros_existants: number
     montants_incoherents: number
     arrieres_non_ventiles: number
+    nb_a_actualiser?: number
+    nb_inchangees?: number
+    surplus_a_reporter?: string
   }
 }
 
@@ -177,6 +263,9 @@ export interface ResultatImport {
   import_id: string
   fichier: string
   nb_notes: number
+  nb_notes_actualisees?: number
+  avances_reportees?: { montant: string; depuis: { numero: string }; vers: { numero: string } }[]
+  avances_en_attente?: { numero: string; montant: string; raison: string }[]
   nb_lignes_ecartees: number
   montant_total: string
   montant_arrieres: string
@@ -190,10 +279,16 @@ export interface ResultatImport {
   }[]
 }
 
-export const analyserImportNotes = (fichier: File, serviceId: number | null, categorie: CategorieImportNotes) => {
+export const analyserImportNotes = (
+  fichier: File,
+  serviceId: number | null,
+  categorie: CategorieImportNotes,
+  actualiser: FamilleActualisation[] = [],
+) => {
   const corps = new FormData()
   corps.append('fichier', fichier)
   corps.append('categorie', categorie)
+  if (actualiser.length) corps.append('actualiser', actualiser.join(','))
   if (serviceId != null) corps.append('service_id', String(serviceId))
   return apiRequest<AnalyseImport>('POST', '/notes-debit/import/analyse', { body: corps })
 }
@@ -205,6 +300,7 @@ export const importerNotes = (
     postes: Record<string, number>
     importer_doublons: boolean
     categorie: CategorieImportNotes
+    actualiser?: FamilleActualisation[]
   },
 ) => {
   const corps = new FormData()
@@ -217,6 +313,7 @@ export interface ImportNotesDebit {
   id: string
   fichier: string
   nb_notes: number
+  nb_notes_actualisees?: number
   nb_lignes_ecartees: number
   montant_total: string
   montant_arrieres: string
@@ -334,6 +431,8 @@ export interface AgregatRecouvrement {
 
 export interface TableauDeBordNotes {
   annee: number
+  /** Année de l'exercice budgétaire en cours : le N par défaut. */
+  exercice_courant: number
   kpi: {
     emis: string
     encaisse: string
@@ -354,8 +453,11 @@ export interface TableauDeBordNotes {
   top_debiteurs: { expert_id: string; numero_ordre: string; nom: string; type_ec: string; reste: string; nb_notes: number }[]
 }
 
-export const tableauDeBordNotes = (annee: number) =>
-  apiRequest<TableauDeBordNotes>('GET', '/notes-debit/tableau-de-bord', { params: { annee } })
+/** Sans année, le serveur prend l'exercice budgétaire en cours. */
+export const tableauDeBordNotes = (annee: number | null) =>
+  apiRequest<TableauDeBordNotes>('GET', '/notes-debit/tableau-de-bord', {
+    params: annee == null ? {} : { annee },
+  })
 
 export type StatutRegularite = 'en_regle' | 'non_en_regle' | 'sans_note'
 

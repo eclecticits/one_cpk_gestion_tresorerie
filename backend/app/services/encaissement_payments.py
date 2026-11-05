@@ -727,6 +727,14 @@ async def cancel_encaissement_payment(
         montant=montant,
         versement_annule_id=payment.id,
     )
+    # Un versement reporté d'une avance retourne au versement d'où il vient :
+    # l'argent n'est jamais entré une seconde fois en caisse.
+    if not rendu_a_la_source and payment.avance_source_id is not None:
+        from app.services.notes_debit_avances import rendre_avance
+
+        rendu_a_la_source = await rendre_avance(
+            db, organisation_id=organisation_id, versement=payment, user_id=user_id
+        )
     if not rendu_a_la_source:
         await _debit_treasury(
             db,

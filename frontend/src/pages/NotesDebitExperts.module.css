@@ -206,6 +206,75 @@
   border-left-color: var(--color-danger-text);
 }
 
+.chipInfo {
+  border-left-color: var(--color-info-text);
+}
+
+/* Import : les familles de créances qu'un réimport actualise */
+.famillesActualisation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-soft);
+}
+
+.famillesActualisation legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.famillesActualisation label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.famillesActualisation small {
+  flex-basis: 100%;
+  color: var(--color-text-muted);
+}
+
+.actionsLigneNote {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.situationPage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.filtreAvecLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--control-h);
+  padding-left: 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.filtreAvecLabel select {
+  border: 0;
+  border-left: 1px solid var(--color-border);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
 /* Tableau dense */
 .tableContainer {
   overflow-x: auto;
@@ -245,6 +314,60 @@
 
 .table tbody tr:hover {
   background: var(--color-surface-soft);
+}
+
+.situationTable {
+  min-width: 1520px;
+}
+
+.identiteMembre {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 190px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tenant-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.identiteMembre strong {
+  font-size: 13px;
+}
+
+.identiteMembre small,
+.autresCreances small {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.autresCreances {
+  max-width: 220px;
+}
+
+.autresCreances strong,
+.autresCreances small {
+  display: block;
+}
+
+.autresCreances small {
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.montantPenalite {
+  color: var(--color-warning-text) !important;
+  font-weight: 700;
+}
+
+.montantReglement,
+.montantAvance {
+  color: var(--color-success-text) !important;
+  font-weight: 700;
 }
 
 .num {

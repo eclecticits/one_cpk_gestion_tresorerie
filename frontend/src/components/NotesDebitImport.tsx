@@ -2,8 +2,11 @@ import { useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import {
   analyserImportNotes,
+  FAMILLES_PAR_ONGLET,
   importerNotes,
+  LIBELLE_FAMILLE,
   type AnalyseImport,
+  type FamilleActualisation,
   type CategorieImportNotes,
   type ResultatImport,
 } from '../api/notesDebit'
@@ -153,14 +156,22 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
   const [resultat, setResultat] = useState<ResultatImport | null>(null)
   const [guide, setGuide] = useState(false)
   const [detail, setDetail] = useState(false)
+  // Vide : on crée les nouvelles notes. Sinon : on actualise ces familles sur
+  // les notes déjà émises de l'exercice (et on crée celles qui manquent).
+  const [familles, setFamilles] = useState<FamilleActualisation[]>([])
 
   const config = categories[categorie]
 
-  const analyserFichier = async (choisi: File, service: number | null, cat: CategorieImportNotes) => {
+  const analyserFichier = async (
+    choisi: File,
+    service: number | null,
+    cat: CategorieImportNotes,
+    choix: FamilleActualisation[] = familles,
+  ) => {
     setChargement(true)
     setErreur(null)
     try {
-      const reponse = await analyserImportNotes(choisi, service, cat)
+      const reponse = await analyserImportNotes(choisi, service, cat, choix)
       setAnalyse(reponse)
       setServiceId(reponse.service_id)
       // Postes devinés (tarif, arriérés) en pré-remplissage ; un choix déjà
@@ -184,8 +195,19 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
   const changerCategorie = (cat: CategorieImportNotes) => {
     setCategorie(cat)
     setResultat(null)
+    // Un onglet n'actualise que ce qu'il importe : « Pénalités » ne touche
+    // jamais une cotisation.
+    const choix = familles.filter((f) => FAMILLES_PAR_ONGLET[cat].includes(f))
+    const suivantes = familles.length && !choix.length ? FAMILLES_PAR_ONGLET[cat] : choix
+    setFamilles(suivantes)
     // Le même fichier se revalide pour l'onglet choisi, comme à l'import national.
-    if (fichier) void analyserFichier(fichier, serviceId, cat)
+    if (fichier) void analyserFichier(fichier, serviceId, cat, suivantes)
+  }
+
+  const changerFamilles = (suivantes: FamilleActualisation[]) => {
+    setFamilles(suivantes)
+    setResultat(null)
+    if (fichier) void analyserFichier(fichier, serviceId, categorie, suivantes)
   }
 
   const choisirFichier = (choisi: File | undefined) => {
@@ -200,8 +222,32 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
   const postesManquants = colonnesUtiles.filter((c) => postes[c.cle] == null)
   const erreursColonnes = (analyse?.colonnes ?? []).filter((c) => c.erreur)
   const lignes = analyse?.lignes ?? []
+  const ventilation = useMemo(() => {
+    const resultat = { anterieur: 0, exerciceN: 0, penalites: 0, autres: 0 }
+    for (const ligne of lignes) {
+      // N est l'exercice de la ligne ; à défaut, celui du fichier.
+      const exerciceN = ligne.exercice ?? analyse?.exercice
+      if (!exerciceN) continue
+      for (const creance of ligne.creances) {
+        const valeur = Number(creance.montant) || 0
+        if (creance.exercice < exerciceN) resultat.anterieur += valeur
+        else resultat.exerciceN += valeur
+        if (creance.categorie.includes('PENALITE')) resultat.penalites += valeur
+        if (creance.categorie === 'AUTRE_CREANCE') resultat.autres += valeur
+      }
+    }
+    return resultat
+  }, [analyse?.exercice, lignes])
   const modeDoublonsEffectif = analyse?.format_import === 'structure' ? 'ignorer' : modeDoublons
-  const aCreer = lignes.filter((l) => l.statut !== 'erreur' && (modeDoublonsEffectif === 'importer' || !l.doublon))
+  const enActualisation = familles.length > 0
+  const aCreer = lignes.filter(
+    (l) =>
+      l.statut !== 'erreur' &&
+      (modeDoublonsEffectif === 'importer' || !l.doublon) &&
+      (!enActualisation || l.actualisation?.action === 'creer'),
+  )
+  const aActualiser = lignes.filter((l) => l.statut !== 'erreur' && l.actualisation?.action === 'actualiser')
+  const nbInchangees = lignes.filter((l) => l.statut !== 'erreur' && l.actualisation?.action === 'inchangee').length
   const totalACreer = aCreer.reduce((somme, l) => somme + Number(l.total), 0)
   const membresReconnus = lignes.filter((l) => l.expert).length
   // Un administrateur peut émettre hors service, comme à la saisie ; un agent de
@@ -247,7 +293,7 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
     !!analyse &&
     !chargement &&
     !resultat &&
-    aCreer.length > 0 &&
+    aCreer.length + aActualiser.length > 0 &&
     postesManquants.length === 0 &&
     erreursColonnes.length === 0 &&
     !serviceRequis &&
@@ -264,6 +310,7 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
         postes,
         importer_doublons: modeDoublonsEffectif === 'importer',
         categorie,
+        actualiser: familles,
       })
       setResultat(reponse)
       onImported(reponse)
@@ -386,11 +433,70 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
 
         <section className={styles.importCard}>
           <h3>Gestion des conflits</h3>
-          {analyse?.format_import === 'structure' ? (
-            <p className={styles.expertCardHint}>
-              Mode sécurisé : un numéro externe ou une cotisation déjà existante bloque la ligne. Aucune dette
-              existante n'est écrasée ou cumulée automatiquement.
-            </p>
+          {analyse?.format_import !== 'historique' ? (
+            <>
+              <div className={styles.expertConflictGrid}>
+                <label className={`${styles.conflictChoice} ${styles.conflictUpdate}`}>
+                  <input
+                    type="radio"
+                    name="notesActualisation"
+                    checked={!enActualisation}
+                    onChange={() => changerFamilles([])}
+                    disabled={chargement}
+                  />
+                  <span>
+                    <strong>Créer les nouvelles notes (recommandé)</strong>
+                    <small>
+                      Mode sécurisé : un numéro externe ou une cotisation déjà existante bloque la ligne. Aucune dette
+                      existante n'est écrasée ou cumulée automatiquement.
+                    </small>
+                  </span>
+                </label>
+                <label className={`${styles.conflictChoice} ${styles.conflictAdd}`}>
+                  <input
+                    type="radio"
+                    name="notesActualisation"
+                    checked={enActualisation}
+                    onChange={() => changerFamilles(FAMILLES_PAR_ONGLET[categorie])}
+                    disabled={chargement}
+                  />
+                  <span>
+                    <strong>Actualiser les notes déjà émises</strong>
+                    <small>
+                      Pour les notes de l'exercice {analyse?.exercice ?? 'en cours'} : seules les créances cochées sont
+                      remplacées par celles du fichier, le reste de la note ne bouge pas. Les membres sans note en
+                      reçoivent une ; une note absente du fichier n'est jamais touchée.
+                    </small>
+                  </span>
+                </label>
+              </div>
+              {enActualisation && (
+                <fieldset className={nd.famillesActualisation}>
+                  <legend>Créances à actualiser</legend>
+                  {FAMILLES_PAR_ONGLET[categorie].map((famille) => (
+                    <label key={famille}>
+                      <input
+                        type="checkbox"
+                        checked={familles.includes(famille)}
+                        disabled={chargement || (familles.length === 1 && familles.includes(famille))}
+                        onChange={(e) =>
+                          changerFamilles(
+                            e.target.checked
+                              ? FAMILLES_PAR_ONGLET[categorie].filter((f) => f === famille || familles.includes(f))
+                              : familles.filter((f) => f !== famille),
+                          )
+                        }
+                      />
+                      {LIBELLE_FAMILLE[famille]}
+                    </label>
+                  ))}
+                  <small>
+                    Un membre qui a déjà payé plus que sa note actualisée ne perd rien : le surplus règle sa plus
+                    ancienne dette, ou sa prochaine note.
+                  </small>
+                </fieldset>
+              )}
+            </>
           ) : <div className={styles.expertConflictGrid}>
             <label className={`${styles.conflictChoice} ${styles.conflictUpdate}`}>
               <input
@@ -439,11 +545,36 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
               <span>
                 Notes à créer<strong>{aCreer.length}</strong>
               </span>
+              {enActualisation && (
+                <>
+                  <span>
+                    Notes à actualiser<strong>{aActualiser.length}</strong>
+                  </span>
+                  <span>
+                    Déjà à jour<strong>{nbInchangees}</strong>
+                  </span>
+                  <span>
+                    Surplus à reporter<strong>{montant(analyse?.resume.surplus_a_reporter ?? 0)}</strong>
+                  </span>
+                </>
+              )}
               <span>
                 Total<strong>{montant(totalACreer)}</strong>
               </span>
               <span>
                 dont arriérés<strong>{montant(analyse?.resume.total_arrieres ?? 0)}</strong>
+              </span>
+              <span>
+                N-1 et antérieurs<strong>{montant(ventilation.anterieur)}</strong>
+              </span>
+              <span>
+                Exercice N<strong>{montant(ventilation.exerciceN)}</strong>
+              </span>
+              <span>
+                Pénalités<strong>{montant(ventilation.penalites)}</strong>
+              </span>
+              <span>
+                Autres créances<strong>{montant(ventilation.autres)}</strong>
               </span>
               <span>
                 Mode conflit<strong>{modeDoublonsEffectif === 'ignorer' ? 'Doublons ignorés' : 'Doublons créés'}</strong>
@@ -467,13 +598,22 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
             <h3>Aperçu avant import</h3>
             {lignes.length > 0 ? (
               <div className={styles.expertPreviewList}>
-                {lignes.slice(0, 5).map((l) => (
-                  <div className={styles.expertPreviewRow} key={l.ligne}>
-                    <strong>{l.numero_note_externe || l.expert?.numero_ordre || l.numero_ordre}</strong>
-                    <span>{l.expert?.nom ?? l.nom}</span>
-                    <em>{l.exercice ? `${l.exercice} · ` : ''}{montant(l.total)}</em>
-                  </div>
-                ))}
+                {lignes.slice(0, 5).map((l) => {
+                  const a = l.actualisation
+                  return (
+                    <div className={styles.expertPreviewRow} key={l.ligne}>
+                      <strong>{l.numero_note_externe || l.expert?.numero_ordre || l.numero_ordre}</strong>
+                      <span>{l.expert?.nom ?? l.nom}</span>
+                      <em>
+                        {a && 'ancien_total' in a
+                          ? a.action === 'inchangee'
+                            ? `Déjà à jour · ${montant(a.ancien_total)}`
+                            : `Actualisée · ${montant(a.ancien_total)} → ${montant(a.nouveau_total)}`
+                          : `${a?.action === 'creer' ? 'Nouvelle · ' : ''}${l.exercice ? `${l.exercice} · ` : ''}${montant(l.total)}`}
+                      </em>
+                    </div>
+                  )
+                })}
                 {lignes.length > 5 && <p>{lignes.length - 5} ligne(s) supplémentaires.</p>}
               </div>
             ) : (
@@ -567,6 +707,15 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
               exacte des lignes. Les montants sont en USD.
             </span>
             <span>
+              N désigne l'exercice de la ligne ; il ne peut dépasser l'exercice budgétaire en cours : pour émettre les
+              cotisations N+1, passez d'abord le budget sur N+1. Les exercices antérieurs sont affichés en N-1. Une « Autre créance » exige toujours un libellé précis (formation, séminaire,
+              documentation ou autre service) dans l'observation ou dans « Détail créances ».
+            </span>
+            <span>
+              Les colonnes « N°Compte », règlements et solde final d'un relevé comptable sont des contrôles : elles
+              sont ignorées et ne deviennent jamais des dettes.
+            </span>
+            <span>
               L'ancien format (une colonne par libellé, plus « Arriérés ») reste accepté : il est reconnu à l'absence
               de colonne « Exercice N ».
             </span>
@@ -595,10 +744,31 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
                   {resultat.nb_notes} note{resultat.nb_notes > 1 ? 's' : ''} de débit créée
                   {resultat.nb_notes > 1 ? 's' : ''} pour {montant(resultat.montant_total)}, dont{' '}
                   {montant(resultat.montant_arrieres)} d'arriérés.
+                  {(resultat.nb_notes_actualisees ?? 0) > 0 &&
+                    ` ${resultat.nb_notes_actualisees} note${(resultat.nb_notes_actualisees ?? 0) > 1 ? 's' : ''} actualisée${(resultat.nb_notes_actualisees ?? 0) > 1 ? 's' : ''}.`}
                 </p>
+                {(resultat.avances_reportees ?? []).length > 0 && (
+                  <p>
+                    Surplus reportés :{' '}
+                    {(resultat.avances_reportees ?? [])
+                      .map((r) => `${montant(r.montant)} de ${r.depuis.numero} vers ${r.vers.numero}`)
+                      .join(' ; ')}
+                    .
+                  </p>
+                )}
+                {(resultat.avances_en_attente ?? []).length > 0 && (
+                  <p>
+                    En attente d'une note :{' '}
+                    {(resultat.avances_en_attente ?? [])
+                      .map((r) => `${montant(r.montant)} sur ${r.numero} (${r.raison})`)
+                      .join(' ; ')}
+                    .
+                  </p>
+                )}
                 <div className={styles.importStats}>
                   <span>Lignes : {analyse?.resume.nb_lignes ?? 0}</span>
                   <span>Notes créées : {resultat.nb_notes}</span>
+                  {enActualisation && <span>Notes actualisées : {resultat.nb_notes_actualisees ?? 0}</span>}
                   <span>Écartées : {resultat.nb_lignes_ecartees}</span>
                   <span>Erreurs : {nbErreurs}</span>
                 </div>
@@ -642,7 +812,9 @@ export default function NotesDebitImport({ onClose, onImported }: Props) {
             <button type="button" className={styles.primaryImportButton} onClick={() => void lancerImport()} disabled={!peutImporter}>
               {chargement && fichier && analyse
                 ? 'Import en cours...'
-                : `Importer ${aCreer.length} note${aCreer.length > 1 ? 's' : ''}`}
+                : enActualisation
+                  ? `Actualiser ${aActualiser.length} · créer ${aCreer.length}`
+                  : `Importer ${aCreer.length} note${aCreer.length > 1 ? 's' : ''}`}
             </button>
           )}
         </footer>

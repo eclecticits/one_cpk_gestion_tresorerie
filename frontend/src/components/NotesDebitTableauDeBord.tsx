@@ -38,8 +38,11 @@ const joursAvant = (echeance: Date) => Math.ceil((echeance.getTime() + JOUR - Da
  * chaque bloc se lit comme le tableau qu'il est.
  */
 export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
-  const anneeCourante = new Date().getFullYear()
-  const [annee, setAnnee] = useState(anneeCourante)
+  // N suit l'exercice budgétaire en cours, pas l'année civile : à la bascule
+  // du budget sur N+1, l'écran bascule avec lui. `null` : laisser le serveur
+  // le dire au premier chargement.
+  const [annee, setAnnee] = useState<number | null>(null)
+  const [exerciceCourant, setExerciceCourant] = useState<number | null>(null)
   const [donnees, setDonnees] = useState<TableauDeBordNotes | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
 
@@ -47,7 +50,11 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
     let actif = true
     setErreur(null)
     tableauDeBordNotes(annee)
-      .then((d) => actif && setDonnees(d))
+      .then((d) => {
+        if (!actif) return
+        setDonnees(d)
+        setExerciceCourant(d.exercice_courant)
+      })
       .catch(
         (err) =>
           actif && setErreur(err instanceof ApiError ? err.message : 'Impossible de charger le tableau de bord.'),
@@ -77,6 +84,8 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
   }
 
   const kpi = donnees?.kpi
+  // L'année choisie, à défaut celle que le serveur a retenue.
+  const n = annee ?? donnees?.annee ?? null
   const maxType = Math.max(1, ...(donnees?.par_type ?? []).map((t) => Number(t.emis)))
   const maxAge = Math.max(1, ...(donnees?.anciennete ?? []).map((t) => Number(t.reste)))
   const maxLibelle = Math.max(1, ...(donnees?.par_libelle ?? []).map((l) => Number(l.emis)))
@@ -86,22 +95,23 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
       <div className={styles.bordEntete}>
         <label className={styles.champLigne}>
           Exercice
-          <select value={annee} onChange={(e) => setAnnee(Number(e.target.value))}>
-            {[0, 1, 2, 3].map((d) => (
-              <option key={d} value={anneeCourante - d}>
-                {anneeCourante - d}
-              </option>
-            ))}
+          <select value={n ?? ''} onChange={(e) => setAnnee(Number(e.target.value))} disabled={exerciceCourant == null}>
+            {exerciceCourant != null &&
+              [0, 1, 2, 3].map((d) => (
+                <option key={d} value={exerciceCourant - d}>
+                  {exerciceCourant - d}
+                </option>
+              ))}
           </select>
         </label>
-        <CompteARebours annee={annee} />
+        {n != null && <CompteARebours annee={n} />}
         <div className={styles.exports}>
           <button
             type="button"
             className={styles.secondaryBtn}
             onClick={() => void exporter('pdf')}
-            disabled={!donnees || donnees.annee !== annee || export_ !== null}
-            title={`Exporter le tableau de bord ${annee} en PDF`}
+            disabled={!donnees || donnees.annee !== n || export_ !== null}
+            title={`Exporter le tableau de bord ${n ?? ''} en PDF`}
           >
             <FileText size={16} aria-hidden /> {export_ === 'pdf' ? 'Export…' : 'PDF'}
           </button>
@@ -109,8 +119,8 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
             type="button"
             className={styles.secondaryBtn}
             onClick={() => void exporter('excel')}
-            disabled={!donnees || donnees.annee !== annee || export_ !== null}
-            title={`Exporter le tableau de bord ${annee} en Excel`}
+            disabled={!donnees || donnees.annee !== n || export_ !== null}
+            title={`Exporter le tableau de bord ${n ?? ''} en Excel`}
           >
             <FileSpreadsheet size={16} aria-hidden /> {export_ === 'excel' ? 'Export…' : 'Excel'}
           </button>
@@ -127,7 +137,7 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
         <Kpi
           libelle="Émis"
           valeur={kpi ? montant(kpi.emis) : '…'}
-          detail={kpi ? `${kpi.nb_notes} note${kpi.nb_notes > 1 ? 's' : ''} en ${annee}` : ''}
+          detail={kpi ? `${kpi.nb_notes} note${kpi.nb_notes > 1 ? 's' : ''} en ${n}` : ''}
           onClick={() => onOuvrirListe({ statut: 'toutes' })}
         />
         <Kpi
@@ -165,7 +175,7 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
           onClick={() => onOuvrirListe({ statut: 'impayees', q: 'Pénalit' })}
         />
         <Kpi
-          libelle={`Non en règle — Tableau ${annee + 1}`}
+          libelle={`Non en règle — Tableau ${n != null ? n + 1 : ''}`}
           valeur={kpi ? String(kpi.membres_non_en_regle) : '…'}
           detail="membres avec un reste dû"
           ton="err"
@@ -179,7 +189,7 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
             <h2>Recouvrement par type de membre</h2>
             <span className={styles.muted}>encaissé sur émis</span>
           </div>
-          {(donnees?.par_type ?? []).length === 0 && <p className={styles.muted}>Aucune note émise en {annee}.</p>}
+          {(donnees?.par_type ?? []).length === 0 && <p className={styles.muted}>Aucune note émise en {n}.</p>}
           <ul className={styles.barres}>
             {(donnees?.par_type ?? []).map((t) => (
               <li key={t.type_client}>
@@ -228,7 +238,7 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
         <section className={styles.card}>
           <div className={styles.cardHeader}>
             <h2>Émis par libellé</h2>
-            <span className={styles.muted}>{annee}</span>
+            <span className={styles.muted}>{n}</span>
           </div>
           {(donnees?.par_libelle ?? []).length === 0 && <p className={styles.muted}>Aucune ligne émise.</p>}
           <ul className={styles.barres}>
@@ -296,7 +306,7 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2>Par province</h2>
-          <span className={styles.muted}>province de rattachement du membre · notes de {annee}</span>
+          <span className={styles.muted}>province de rattachement du membre · notes de {n}</span>
         </div>
         <div className={styles.tableContainer}>
           <table className={styles.table}>
@@ -331,7 +341,7 @@ export default function NotesDebitTableauDeBord({ onOuvrirListe }: Props) {
               {donnees && donnees.par_province.length === 0 && (
                 <tr>
                   <td colSpan={6} className={styles.vide}>
-                    Aucune note émise en {annee}.
+                    Aucune note émise en {n}.
                   </td>
                 </tr>
               )}

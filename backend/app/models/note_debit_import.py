@@ -44,6 +44,9 @@ class NoteDebitImport(Base):
     #: PAS créé se lit aussi, sinon un total plus bas que la feuille resterait
     #: inexpliqué.
     nb_lignes_ecartees: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Notes déjà en base dont l'import a actualisé une famille de créances
+    #: (cotisation, pénalités, autres) : elles gardent leur import d'origine.
+    nb_notes_actualisees: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     montant_total: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     montant_arrieres: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     #: Colonnes retenues : libellé, poste d'imputation, total.

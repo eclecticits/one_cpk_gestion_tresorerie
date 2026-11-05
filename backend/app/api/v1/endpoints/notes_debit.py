@@ -10,6 +10,7 @@ débiteurs prennent en charge tels quels.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -24,7 +25,9 @@ from app.api.deps import get_current_tenant_id, get_current_user, has_permission
 from app.api.v1.endpoints.encaissements import _portee_encaissements
 from app.db.session import get_db
 from app.domain.notes_debit import (
+    ARRIERE_COTISATION,
     CATEGORIES_ARRIERE,
+    COTISATION_ANNUELLE,
     LEGACY,
     PENALITE_APO,
     ARRIERE_PENALITE_APO,
@@ -63,6 +66,7 @@ async def analyser_import(
     fichier: UploadFile = File(...),
     service_id: int | None = Form(default=None),
     categorie: str = Form(default="toutes"),
+    actualiser: str = Form(default="", description="Familles à actualiser : cotisation, penalites, autres"),
     tenant_id: int = Depends(get_current_tenant_id),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -70,7 +74,13 @@ async def analyser_import(
     """Ce que l'import ferait du fichier, sans rien écrire."""
     contenu = await _lire_fichier(fichier)
     analyse = await analyser(
-        db, tenant_id=tenant_id, user=user, contenu=contenu, service_id=service_id, categorie=categorie
+        db,
+        tenant_id=tenant_id,
+        user=user,
+        contenu=contenu,
+        service_id=service_id,
+        categorie=categorie,
+        actualiser=[f.strip() for f in actualiser.split(",") if f.strip()],
     )
     return {"fichier": fichier.filename, **analyse_en_reponse(analyse)}
 
@@ -87,11 +97,14 @@ async def importer_notes(
 
     `options` (JSON) : `service_id`, `postes` (clé de colonne → id de poste),
     `importer_doublons` (créer aussi les lignes déjà émises cette année),
-    `categorie` (onglet d'import : toutes, ec, sec, penalites).
+    `categorie` (onglet d'import : toutes, ec, sec, penalites),
+    `actualiser` (familles à remplacer sur les notes déjà émises de l'exercice :
+    cotisation, penalites, autres).
     """
     try:
         reglages = json.loads(options or "{}")
         postes = {str(k): int(v) for k, v in (reglages.get("postes") or {}).items() if v not in (None, "")}
+        actualiser = [str(f) for f in (reglages.get("actualiser") or [])]
         service_id = reglages.get("service_id")
         service_id = int(service_id) if service_id not in (None, "") else None
     except (ValueError, TypeError, AttributeError):
@@ -107,6 +120,7 @@ async def importer_notes(
         postes=postes,
         importer_doublons=bool(reglages.get("importer_doublons")),
         categorie=str(reglages.get("categorie") or "toutes"),
+        actualiser=actualiser,
     )
     await invalidate_report_summary_cache(tenant_id)
     return resultat
@@ -132,6 +146,7 @@ async def lister_imports(
             "id": str(imp.id),
             "fichier": imp.fichier,
             "nb_notes": imp.nb_notes,
+            "nb_notes_actualisees": imp.nb_notes_actualisees,
             "nb_lignes_ecartees": imp.nb_lignes_ecartees,
             "montant_total": str(imp.montant_total),
             "montant_arrieres": str(imp.montant_arrieres),
@@ -584,8 +599,221 @@ async def _notes_jusqu_a(db: AsyncSession, user: User, tenant_id: int, annee: in
     )
 
 
+async def _exercice_de_travail(db: AsyncSession, tenant_id: int) -> int:
+    """L'année N par défaut : celle de l'exercice budgétaire en cours.
+
+    L'import émet les notes sur cet exercice (`postes_disponibles`) ; la
+    situation et le tableau de bord doivent parler du même N. L'année civile ne
+    vaut qu'à défaut de budget : entre l'ouverture du budget N+1 et le
+    1er janvier, ou entre le 1er janvier et la bascule, elle divergerait.
+    """
+    from app.services.encaissement_tarifs import exercice_courant
+
+    exercice = await exercice_courant(db, tenant_id)
+    return exercice.annee if exercice is not None else datetime.now(timezone.utc).year
+
+
 def _reste(note: Encaissement) -> Decimal:
     return max(Decimal(note.montant_total or 0) - Decimal(note.montant_paye or 0), Decimal("0"))
+
+
+def _argent(valeur: Decimal) -> str:
+    return str(valeur.quantize(Decimal("0.01")))
+
+
+_CHAMPS_SITUATION = (
+    "cotisations_anterieures",
+    "penalites_anterieures",
+    "cotisation_n",
+    "penalites_n",
+    "autres_creances",
+    "total_creances",
+    "reglements",
+    "reste_du",
+    "avance_n_plus_1",
+)
+
+
+@router.get("/situation")
+async def situation_membres(
+    annee: int | None = Query(default=None, ge=2000, le=2100),
+    q: str | None = Query(default=None, description="N° d'ordre ou nom du membre"),
+    type_client: str | None = Query(default=None, pattern="^(expert_comptable|sec)$"),
+    statut: str = Query(default="toutes", pattern="^(toutes|en_retard|partiel|en_regle|en_avance)$"),
+    limit: int = Query(default=25, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Situation consolidée par membre pour N-1, N et les avances N+1.
+
+    Les articles portent la nature et l'exercice réels. Un versement partiel
+    d'une note s'impute d'abord sur la dette la plus ancienne : il ne peut
+    devenir une avance N+1 tant que N et les arriérés ne sont pas soldés. Le
+    surplus n'apparaît jamais comme un reste négatif : il devient une avance.
+    La recherche est celle de l'encaissement : mots dans n'importe quel ordre,
+    sans accents ni séparateurs, le plus proche d'abord.
+    """
+    from app.api.v1.endpoints.experts import _identite_conditions, _mots_recherches
+
+    courant = await _exercice_de_travail(db, tenant_id)
+    annee = annee or courant
+    conditions: list[Any] = [*_identite_conditions(q)]
+    if type_client:
+        conditions.append(Encaissement.type_client == type_client)
+    lignes = await _notes_jusqu_a(db, user, tenant_id, annee, *conditions)
+    articles = await _articles_par_note(db, [note.id for note, _ in lignes])
+    zero = Decimal("0.00")
+    categories_cotisation = {COTISATION_ANNUELLE, ARRIERE_COTISATION}
+    categories_penalite = {
+        PENALITE_APO,
+        ARRIERE_PENALITE_APO,
+        AUTRE_PENALITE,
+        ARRIERE_AUTRE_PENALITE,
+    }
+
+    groupes: dict[uuid.UUID, dict[str, Any]] = {}
+    for note, expert in lignes:
+        groupe = groupes.setdefault(
+            expert.id,
+            {
+                "expert": {
+                    "id": str(expert.id),
+                    "numero_ordre": expert.numero_ordre,
+                    "nom": expert.nom_denomination,
+                    "type_ec": expert.type_ec,
+                    "statut_professionnel": expert.statut_professionnel,
+                },
+                "type_client": note.type_client,
+                "cotisations_anterieures": zero,
+                "penalites_anterieures": zero,
+                "cotisation_n": zero,
+                "penalites_n": zero,
+                "autres_creances": zero,
+                "total_creances": zero,
+                "reglements": zero,
+                "reste_du": zero,
+                "avance_n_plus_1": zero,
+                "nb_notes": 0,
+                "autres_details": [],
+            },
+        )
+        groupe["nb_notes"] += 1
+        total_note = max(Decimal(note.montant_total or 0), zero)
+        paye_note = max(Decimal(note.montant_paye or 0), zero)
+        a_imputer = min(total_note, paye_note)
+        groupe["avance_n_plus_1"] += max(paye_note - total_note, zero)
+        exercice_note = note.exercice or (note.date_encaissement.year if note.date_encaissement else annee)
+
+        lignes_note = articles.get(note.id, [])
+        if not lignes_note:
+            lignes_note = [
+                {
+                    "categorie": LEGACY,
+                    "libelle": note.libelle or "Créance historique non ventilée",
+                    "exercice": exercice_note,
+                    "montant": str(total_note),
+                }
+            ]
+
+        # Imputation sur la dette la plus ancienne ; à exercice égal, l'ordre
+        # de la note (tri stable).
+        lignes_note = sorted(lignes_note, key=lambda a: int(a.get("exercice") or exercice_note))
+        for article in lignes_note:
+            montant_article = max(Decimal(str(article.get("montant") or 0)), zero)
+            exercice_article = int(article.get("exercice") or exercice_note)
+            paye_article = min(montant_article, a_imputer)
+            a_imputer -= paye_article
+            reste_article = montant_article - paye_article
+
+            # Une cotisation N+1 déjà réglée est un paiement anticipatif du
+            # point de vue de l'exercice N. Sa dette future n'alourdit pas le
+            # reste exigible de N.
+            if exercice_article > annee:
+                groupe["avance_n_plus_1"] += paye_article
+                continue
+
+            categorie = article.get("categorie") or LEGACY
+            libelle = str(article.get("libelle") or libelle_categorie(categorie))
+            groupe["total_creances"] += montant_article
+            groupe["reglements"] += paye_article
+            groupe["reste_du"] += reste_article
+
+            if categorie in categories_cotisation:
+                cle = "cotisations_anterieures" if exercice_article < annee else "cotisation_n"
+                groupe[cle] += montant_article
+            elif categorie in categories_penalite or (
+                categorie == LEGACY and "penalit" in _sans_accents_minuscules(libelle)
+            ):
+                cle = "penalites_anterieures" if exercice_article < annee else "penalites_n"
+                groupe[cle] += montant_article
+            else:
+                groupe["autres_creances"] += montant_article
+                groupe["autres_details"].append(
+                    {
+                        "libelle": libelle,
+                        "exercice": exercice_article,
+                        "montant": _argent(montant_article),
+                        "paye": _argent(paye_article),
+                        "reste": _argent(reste_article),
+                    }
+                )
+
+    resultat: list[dict[str, Any]] = []
+    for groupe in groupes.values():
+        if groupe["reste_du"] > 0:
+            etat = "partiel" if groupe["reglements"] > 0 else "en_retard"
+        elif groupe["avance_n_plus_1"] > 0:
+            etat = "en_avance"
+        else:
+            etat = "en_regle"
+        if statut != "toutes" and etat != statut:
+            continue
+        resultat.append(
+            {
+                **groupe,
+                "statut": etat,
+                **{
+                    cle: _argent(groupe[cle])
+                    for cle in _CHAMPS_SITUATION
+                },
+            }
+        )
+
+    mots = _mots_recherches(q)
+
+    def proximite(item: dict[str, Any]) -> int:
+        # Même rang que `experts._identite_ordre` : numéro exact, numéro qui
+        # commence par le mot, nom qui commence par le mot, mot du nom.
+        if not mots:
+            return 0
+        numero = re.sub(r"[^a-z0-9]", "", _sans_accents_minuscules(item["expert"]["numero_ordre"] or ""))
+        nom = _sans_accents_minuscules(item["expert"]["nom"] or "")
+        if numero == "".join(mots):
+            return 0
+        if numero.startswith(mots[0]):
+            return 1
+        if nom.startswith(mots[0]):
+            return 2
+        if f" {mots[0]}" in nom:
+            return 3
+        return 4
+
+    resultat.sort(
+        key=lambda item: (proximite(item), -Decimal(item["reste_du"]), (item["expert"]["nom"] or "").casefold())
+    )
+    totaux = {
+        cle: _argent(sum((Decimal(item[cle]) for item in resultat), zero))
+        for cle in _CHAMPS_SITUATION
+    }
+    return {
+        "annee": annee,
+        "exercice_courant": courant,
+        "items": resultat[offset : offset + limit],
+        "total": len(resultat),
+        "totaux": totaux,
+    }
 
 
 @router.get("/tableau-de-bord")
@@ -603,7 +831,8 @@ async def tableau_de_bord(
     du Tableau suivant (art. 12 du RI), pas celle de la seule année.
     """
     maintenant = datetime.now(timezone.utc)
-    annee = annee or maintenant.year
+    courant = await _exercice_de_travail(db, tenant_id)
+    annee = annee or courant
     lignes = await _notes_jusqu_a(db, user, tenant_id, annee)
     de_l_annee = [
         (n, e)
@@ -692,6 +921,7 @@ async def tableau_de_bord(
 
     return {
         "annee": annee,
+        "exercice_courant": courant,
         "kpi": {
             "emis": txt(emis),
             "encaisse": txt(encaisse),

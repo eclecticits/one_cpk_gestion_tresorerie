@@ -66,6 +66,15 @@ class PaymentHistory(Base):
         nullable=True,
         index=True,
     )
+    #: Versement d'une autre note dont l'avance est reportée ici
+    #: (`services/notes_debit_avances.py`). L'argent est déjà en trésorerie sur
+    #: ce versement d'origine ; annuler celui-ci le lui rend.
+    avance_source_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("payment_history.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

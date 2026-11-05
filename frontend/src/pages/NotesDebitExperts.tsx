@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { format } from 'date-fns'
-import { FileSpreadsheet, FileText, History, LayoutDashboard, List, Printer, Settings2, Upload, X } from 'lucide-react'
+import { Ban, Banknote, FileSpreadsheet, FileText, History, LayoutDashboard, List, Printer, Settings2, Upload, UsersRound, X } from 'lucide-react'
 import {
   documentsNotesDebit,
   LIBELLE_STATUT_NOTE,
@@ -9,16 +9,21 @@ import {
   listerNotesDebit,
   listerToutesNotesDebit,
   PERMISSION_IMPORT_NOTES_DEBIT,
+  situationNotesDebit,
   type ImportNotesDebit,
   type ListeNotesDebit,
   type NoteDebitExpert,
+  type SituationNotesDebit,
+  type StatutSituationMembre,
   type StatutNotes,
 } from '../api/notesDebit'
 import NoteDebitFiche from '../components/NoteDebitFiche'
 import NotesDebitImport from '../components/NotesDebitImport'
 import NotesDebitTableauDeBord, { type FiltreListe } from '../components/NotesDebitTableauDeBord'
 import PaymentManager from '../components/PaymentManager'
+import RowActionsMenu, { type ActionLigne } from '../components/RowActionsMenu'
 import { useAuth } from '../contexts/AuthContext'
+import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { usePermissions } from '../hooks/usePermissions'
 import { useToast } from '../hooks/useToast'
@@ -39,7 +44,7 @@ async function imprimerNotes(params: { ids?: string[]; import_id?: string }) {
   return notes.length
 }
 
-type Onglet = 'bord' | 'liste' | 'imports'
+type Onglet = 'bord' | 'situation' | 'liste' | 'imports'
 
 /**
  * Notes de débit des experts-comptables et des SEC.
@@ -110,6 +115,15 @@ export default function NotesDebitExperts() {
         <button
           type="button"
           role="tab"
+          aria-selected={onglet === 'situation'}
+          className={onglet === 'situation' ? styles.ongletActif : styles.onglet}
+          onClick={() => setOnglet('situation')}
+        >
+          <UsersRound size={16} aria-hidden /> Situation des membres
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={onglet === 'liste'}
           className={onglet === 'liste' ? styles.ongletActif : styles.onglet}
           onClick={() => setOnglet('liste')}
@@ -130,6 +144,11 @@ export default function NotesDebitExperts() {
       </div>
 
       {onglet === 'bord' && <NotesDebitTableauDeBord onOuvrirListe={ouvrirListe} />}
+      {onglet === 'situation' && (
+        <SituationMembres
+          onVoirNotes={(numeroOrdre) => ouvrirListe({ q: numeroOrdre, statut: 'toutes' })}
+        />
+      )}
       {onglet === 'liste' && (
         <ListeNotes
           key={filtreListe.cle}
@@ -150,6 +169,227 @@ export default function NotesDebitExperts() {
   )
 }
 
+const SITUATION_PAR_PAGE = 25
+
+function SituationMembres({ onVoirNotes }: { onVoirNotes: (numeroOrdre: string) => void }) {
+  // N suit l'exercice budgétaire en cours (voir le tableau de bord).
+  const [annee, setAnnee] = useState<number | null>(null)
+  const [exerciceCourant, setExerciceCourant] = useState<number | null>(null)
+  const [recherche, setRecherche] = useState('')
+  const rechercheStable = useDebouncedValue(recherche)
+  const [typeClient, setTypeClient] = useState('')
+  const [statut, setStatut] = useState<StatutSituationMembre>('toutes')
+  const [page, setPage] = useState(0)
+  // Un filtre qui change ramène à la première page, dans le même rendu : un
+  // effet séparé lancerait d'abord une requête sur l'ancienne page.
+  const [filtresVus, setFiltresVus] = useState({ annee, rechercheStable, typeClient, statut })
+  if (
+    filtresVus.annee !== annee ||
+    filtresVus.rechercheStable !== rechercheStable ||
+    filtresVus.typeClient !== typeClient ||
+    filtresVus.statut !== statut
+  ) {
+    setFiltresVus({ annee, rechercheStable, typeClient, statut })
+    setPage(0)
+  }
+  const [donnees, setDonnees] = useState<SituationNotesDebit | null>(null)
+  const [chargement, setChargement] = useState(true)
+  const [erreur, setErreur] = useState<string | null>(null)
+
+  useEffect(() => {
+    let actif = true
+    setChargement(true)
+    setErreur(null)
+    situationNotesDebit({
+      annee: annee ?? undefined,
+      q: rechercheStable.trim(),
+      type_client: typeClient,
+      statut,
+      limit: SITUATION_PAR_PAGE,
+      offset: page * SITUATION_PAR_PAGE,
+    })
+      .then((reponse) => {
+        if (!actif) return
+        setDonnees(reponse)
+        setExerciceCourant(reponse.exercice_courant)
+      })
+      .catch((err) => {
+        if (actif) setErreur(err instanceof ApiError ? err.message : 'Impossible de charger la situation des membres.')
+      })
+      .finally(() => {
+        if (actif) setChargement(false)
+      })
+    return () => {
+      actif = false
+    }
+  }, [annee, rechercheStable, typeClient, statut, page])
+
+  const total = donnees?.total ?? 0
+  const pages = Math.max(1, Math.ceil(total / SITUATION_PAR_PAGE))
+  const totaux = donnees?.totaux
+  // L'année choisie, à défaut celle que le serveur a retenue.
+  const n = annee ?? donnees?.annee ?? null
+  const an = (decalage: number, repli: string) => (n == null ? repli : String(n + decalage))
+
+  return (
+    <div className={styles.situationPage}>
+      <section className={styles.filtres} aria-label="Filtres de la situation des membres">
+        <input
+          type="search"
+          className={styles.recherche}
+          placeholder="Rechercher par n° d’ordre ou nom…"
+          value={recherche}
+          onChange={(e) => setRecherche(e.target.value)}
+        />
+        <label className={styles.filtreAvecLabel}>
+          <span>Exercice N</span>
+          <select value={n ?? ''} onChange={(e) => setAnnee(Number(e.target.value))} disabled={exerciceCourant == null}>
+            {exerciceCourant != null &&
+              [0, 1, 2, 3].map((decalage) => (
+                <option key={decalage} value={exerciceCourant - decalage}>
+                  {exerciceCourant - decalage}
+                </option>
+              ))}
+          </select>
+        </label>
+        <select value={typeClient} onChange={(e) => setTypeClient(e.target.value)} aria-label="Type de membre">
+          <option value="">EC et SEC</option>
+          <option value="expert_comptable">Experts-comptables</option>
+          <option value="sec">SEC</option>
+        </select>
+        <select
+          value={statut}
+          onChange={(e) => setStatut(e.target.value as StatutSituationMembre)}
+          aria-label="Situation financière"
+        >
+          <option value="toutes">Toutes les situations</option>
+          <option value="en_retard">En retard</option>
+          <option value="partiel">Paiement partiel</option>
+          <option value="en_regle">En règle</option>
+          <option value="en_avance">En avance N+1</option>
+        </select>
+      </section>
+
+      <section className={styles.summaryStrip} aria-label={`Synthèse N ${an(0, '')}`}>
+        <SituationKpi libelle="Membres" valeur={String(total)} />
+        <SituationKpi libelle={`Cotisations ≤ ${an(-1, 'N-1')}`} valeur={montant(totaux?.cotisations_anterieures ?? 0)} />
+        <SituationKpi libelle={`Pénalités ≤ ${an(-1, 'N-1')}`} valeur={montant(totaux?.penalites_anterieures ?? 0)} ton="warn" />
+        <SituationKpi libelle={`Cotisation N (${an(0, '…')})`} valeur={montant(totaux?.cotisation_n ?? 0)} />
+        <SituationKpi libelle={`Pénalités N (${an(0, '…')})`} valeur={montant(totaux?.penalites_n ?? 0)} ton="warn" />
+        <SituationKpi libelle="Autres créances" valeur={montant(totaux?.autres_creances ?? 0)} ton="info" />
+        <SituationKpi libelle="Reste exigible" valeur={montant(totaux?.reste_du ?? 0)} ton="err" />
+        <SituationKpi libelle={`Avances N+1 (${an(1, '…')})`} valeur={montant(totaux?.avance_n_plus_1 ?? 0)} ton="ok" />
+      </section>
+
+      {erreur && <p className={styles.erreurBloc}>{erreur}</p>}
+
+      <section className={styles.card}>
+        <div className={styles.cardHeader}>
+          <div>
+            <h2>Situation consolidée par membre</h2>
+            <span className={styles.muted}>N = {an(0, '…')} · les paiements anticipatifs sont isolés en N+1</span>
+          </div>
+          {chargement && <span className={styles.muted}>Mise à jour…</span>}
+        </div>
+        <div className={styles.tableContainer}>
+          <table className={`${styles.table} ${styles.situationTable}`}>
+            <thead>
+              <tr>
+                <th>Membre</th>
+                <th>N° d’ordre</th>
+                <th className={styles.num}>Cotisations ≤ N-1</th>
+                <th className={styles.num}>Pénalités ≤ N-1</th>
+                <th className={styles.num}>Cotisation N</th>
+                <th className={styles.num}>Pénalités N</th>
+                <th>Autres créances</th>
+                <th className={styles.num}>Total</th>
+                <th className={styles.num}>Règlements</th>
+                <th className={styles.num}>Reste dû</th>
+                <th className={styles.num}>Avance N+1</th>
+                <th>Situation</th>
+                <th aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {chargement && !donnees ? (
+                <tr><td colSpan={13} className={styles.vide}>Chargement…</td></tr>
+              ) : donnees?.items.length === 0 ? (
+                <tr><td colSpan={13} className={styles.vide}>Aucune situation pour ces critères.</td></tr>
+              ) : (
+                donnees?.items.map((ligne) => {
+                  const detailsAutres = ligne.autres_details.map((detail) => `${detail.libelle} (${detail.exercice})`).join(' · ')
+                  return (
+                    <tr key={ligne.expert.id}>
+                      <td>
+                        <button type="button" className={styles.identiteMembre} onClick={() => onVoirNotes(ligne.expert.numero_ordre)}>
+                          <strong>{ligne.expert.nom}</strong>
+                          <small>{ligne.type_client === 'sec' ? 'SEC' : ligne.expert.statut_professionnel || 'Expert-comptable'}</small>
+                        </button>
+                      </td>
+                      <td className={styles.numero}>{ligne.expert.numero_ordre}</td>
+                      <td className={styles.num}>{montant(ligne.cotisations_anterieures)}</td>
+                      <td className={`${styles.num} ${Number(ligne.penalites_anterieures) > 0 ? styles.montantPenalite : ''}`}>{montant(ligne.penalites_anterieures)}</td>
+                      <td className={styles.num}>{montant(ligne.cotisation_n)}</td>
+                      <td className={`${styles.num} ${Number(ligne.penalites_n) > 0 ? styles.montantPenalite : ''}`}>{montant(ligne.penalites_n)}</td>
+                      <td className={styles.autresCreances} title={detailsAutres || undefined}>
+                        <strong>{montant(ligne.autres_creances)}</strong>
+                        {ligne.autres_details.length > 0 && (
+                          <small>
+                            {ligne.autres_details.length === 1
+                              ? ligne.autres_details[0].libelle
+                              : `${ligne.autres_details.length} créances · ${ligne.autres_details[0].libelle}`}
+                          </small>
+                        )}
+                      </td>
+                      <td className={`${styles.num} ${styles.fort}`}>{montant(ligne.total_creances)}</td>
+                      <td className={`${styles.num} ${styles.montantReglement}`}>{montant(ligne.reglements)}</td>
+                      <td className={`${styles.num} ${styles.fort}`}>{montant(ligne.reste_du)}</td>
+                      <td className={`${styles.num} ${Number(ligne.avance_n_plus_1) > 0 ? styles.montantAvance : ''}`}>{montant(ligne.avance_n_plus_1)}</td>
+                      <td><SituationBadge statut={ligne.statut} /></td>
+                      <td className={styles.actionsCellule}>
+                        <button type="button" className={styles.btnLigne} onClick={() => onVoirNotes(ligne.expert.numero_ordre)}>
+                          Voir les notes
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+        {pages > 1 && (
+          <nav className={styles.pagination} aria-label="Pagination de la situation">
+            <button type="button" className={styles.secondaryBtn} disabled={page === 0} onClick={() => setPage(page - 1)}>Précédent</button>
+            <span>Page {page + 1} / {pages}</span>
+            <button type="button" className={styles.secondaryBtn} disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>Suivant</button>
+          </nav>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function SituationKpi({ libelle, valeur, ton }: { libelle: string; valeur: string; ton?: 'ok' | 'warn' | 'err' | 'info' }) {
+  const classeTon = ton === 'ok' ? styles.chipOk : ton === 'warn' ? styles.chipWarn : ton === 'err' ? styles.chipErr : ton === 'info' ? styles.chipInfo : ''
+  return (
+    <div className={`${styles.summaryChip} ${classeTon}`}>
+      <span>{libelle}</span>
+      <strong>{valeur}</strong>
+    </div>
+  )
+}
+
+function SituationBadge({ statut }: { statut: 'en_retard' | 'partiel' | 'en_regle' | 'en_avance' }) {
+  const configuration = {
+    en_retard: { libelle: 'En retard', classe: styles.badgeErr },
+    partiel: { libelle: 'Partiel', classe: styles.badgeWarn },
+    en_regle: { libelle: 'En règle', classe: styles.badgeOk },
+    en_avance: { libelle: 'En avance N+1', classe: styles.badgeInfo },
+  }[statut]
+  return <span className={`${styles.badge} ${configuration.classe}`}>{configuration.libelle}</span>
+}
+
 function ListeNotes({
   filtreInitial,
   importFiltre,
@@ -162,7 +402,9 @@ function ListeNotes({
   onVoirImport: (imp: { id: string; fichier: string }) => void
 }) {
   const { hasPermission } = usePermissions()
-  const { notifyError } = useToast()
+  const { notifyError, notifySuccess } = useToast()
+  const confirmWithInput = useConfirmWithInput()
+  const peutAnnuler = hasPermission('cancel_encaissement')
   const [ficheOuverte, setFicheOuverte] = useState<string | null>(null)
   const [selection, setSelection] = useState<Set<string>>(new Set())
   const [impression, setImpression] = useState(false)
@@ -225,6 +467,69 @@ function ListeNotes({
   useEffect(() => {
     void charger()
   }, [charger])
+
+  const numeroNote = (note: NoteDebitExpert) => note.numero_note_externe || note.numero_recu || '—'
+
+  /**
+   * Annuler une note passe par le menu « … » : un réimport ne retire jamais
+   * une note absente du fichier. Ses versements sont annulés avec elle — et
+   * sortent de la caisse, sauf une avance reportée, qui retourne à sa note.
+   */
+  const annulerNote = async (note: NoteDebitExpert) => {
+    const paye = Number(note.montant_paye) > 0
+    const reponse = await confirmWithInput({
+      title: `Annuler la note ${numeroNote(note)} ?`,
+      description: paye
+        ? `La note ne réclamera plus rien. Ses versements (${montant(note.montant_paye)}) sont annulés avec elle et retirés de la caisse ou du compte où ils sont entrés.`
+        : 'La note ne réclamera plus rien. Elle reste visible dans la liste, marquée annulée.',
+      confirmText: 'Annuler la note',
+      variant: 'danger',
+      inputLabel: 'Motif d’annulation (obligatoire)',
+      inputPlaceholder: 'Ex. : note émise deux fois',
+      inputRequired: true,
+      inputMultiline: true,
+      inputRows: 3,
+    })
+    if (!reponse.confirmed || !reponse.value?.trim()) return
+    try {
+      await apiRequest('POST', `/encaissements/${note.id}/cancel-operation`, { motif_annulation: reponse.value.trim() })
+      notifySuccess('Note annulée', `La note ${numeroNote(note)} a été annulée.`)
+      void charger()
+    } catch (err) {
+      notifyError('Annulation impossible', err instanceof ApiError ? err.message : "La note n'a pas pu être annulée.")
+    }
+  }
+
+  const actionsNote = (note: NoteDebitExpert): ActionLigne[] => {
+    const annulee = note.statut_operation === 'ANNULEE'
+    const items: ActionLigne[] = []
+    if (peutEncaisser && !annulee && Number(note.reste_du) > 0) {
+      items.push({ cle: 'encaisser', libelle: 'Encaisser', icone: <Banknote size={15} aria-hidden />, onSelect: () => void ouvrirReglement(note) })
+    }
+    items.push(
+      { cle: 'fiche', libelle: 'Voir la fiche', icone: <FileText size={15} aria-hidden />, onSelect: () => setFicheOuverte(note.id) },
+      {
+        cle: 'imprimer',
+        libelle: 'Imprimer la note',
+        icone: <Printer size={15} aria-hidden />,
+        onSelect: () =>
+          void imprimerNotes({ ids: [note.id] }).catch((err) =>
+            notifyError('Impression', err instanceof ApiError ? err.message : "Impossible d'imprimer cette note."),
+          ),
+      },
+    )
+    if (peutAnnuler && !annulee) {
+      items.push({
+        cle: 'annuler',
+        libelle: 'Annuler la note',
+        icone: <Ban size={15} aria-hidden />,
+        destructive: true,
+        description: Number(note.montant_paye) > 0 ? 'Ses versements sont annulés avec elle' : undefined,
+        onSelect: () => void annulerNote(note),
+      })
+    }
+    return items
+  }
 
   const ouvrirReglement = async (note: NoteDebitExpert) => {
     try {
@@ -409,7 +714,7 @@ function ListeNotes({
                 <th className={styles.num}>Payé</th>
                 <th className={styles.num}>Reste</th>
                 <th>Statut</th>
-                {peutEncaisser && <th aria-label="Actions" />}
+                <th aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -473,15 +778,16 @@ function ListeNotes({
                     <td>
                       <StatutNote note={note} />
                     </td>
-                    {peutEncaisser && (
-                      <td className={styles.actionsCellule} onClick={(e) => e.stopPropagation()}>
-                        {Number(note.reste_du) > 0 && note.statut_operation !== 'ANNULEE' && (
+                    <td className={styles.actionsCellule} onClick={(e) => e.stopPropagation()}>
+                      <div className={styles.actionsLigneNote}>
+                        {peutEncaisser && Number(note.reste_du) > 0 && note.statut_operation !== 'ANNULEE' && (
                           <button type="button" className={styles.btnLigne} onClick={() => void ouvrirReglement(note)}>
                             Encaisser
                           </button>
                         )}
-                      </td>
-                    )}
+                        <RowActionsMenu items={actionsNote(note)} libelle={`Actions de la note ${numeroNote(note)}`} />
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}
@@ -606,7 +912,12 @@ function HistoriqueImports({ onVoirNotes }: { onVoirNotes: (imp: ImportNotesDebi
                   <td>{imp.created_at ? format(new Date(imp.created_at), 'dd/MM/yyyy HH:mm') : '—'}</td>
                   <td className={styles.fort}>{imp.fichier}</td>
                   <td className={styles.libelles}>{imp.colonnes.map((c) => c.libelle).join(', ')}</td>
-                  <td className={styles.num}>{imp.nb_notes}</td>
+                  <td className={styles.num}>
+                    {imp.nb_notes}
+                    {(imp.nb_notes_actualisees ?? 0) > 0 && (
+                      <small className={styles.muted}> + {imp.nb_notes_actualisees} actualisée{(imp.nb_notes_actualisees ?? 0) > 1 ? 's' : ''}</small>
+                    )}
+                  </td>
                   <td className={styles.num}>{imp.nb_lignes_ecartees}</td>
                   <td className={styles.num}>{montant(imp.montant_total)}</td>
                   <td className={styles.num}>{montant(imp.montant_arrieres)}</td>

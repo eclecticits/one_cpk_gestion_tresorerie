@@ -72,7 +72,8 @@ ENTETE_STRUCTURE = [
     "N° note externe", "Date note", "N° d'ordre", "Nom / Raison sociale", "Type membre",
     "Exercice N", "Cotisation N", "Arriérés cotisations", "Pénalité APO N",
     "Arriérés pénalité APO", "Autre pénalité", "Arriérés autres pénalités",
-    "Autres créances", "Total note", "Devise", "Date échéance", "Référence / décision", "Observation",
+    "Autres créances", "Total note", "Devise", "Date échéance", "Référence / décision",
+    "Observation / Libellé autre créance",
 ]
 ENTETE_DETAIL = [
     "N° note externe", "N° d'ordre", "Catégorie", "Exercice", "Montant", "Devise",
@@ -185,6 +186,31 @@ def test_les_colonnes_se_classent_et_le_titre_est_saute():
     assert {"N°", "Province", "Total"} <= ignorees
     # Le n° de ligne est celui du fichier : c'est là que l'utilisateur ira corriger.
     assert [n for n, _ in feuille.lignes] == [4, 5]
+
+
+def test_le_releve_comptable_ignore_compte_reglements_et_solde_final():
+    contenu = _classeur(
+        [
+            [
+                "N°Compte", "N° Ordre", "NOMS", "E-mail", "Statut/NIF", "Solde Initial",
+                "Ariérés Pénalités", "Cotisation 2026", "Pénalités 2026",
+                "Reglement du 01/01 au 03/11/2026", "Solde au 03/11/2026",
+            ],
+            [4111010001, "EC/18.00001", "KABONGO", "k@example.cd", "Indépendant", 300, 100, 600, 50, 400, 650],
+        ]
+    )
+
+    feuille = lire_feuille(contenu)
+
+    assert [c.libelle for c in feuille.colonnes] == [
+        "Solde Initial", "Ariérés Pénalités", "Cotisation 2026", "Pénalités 2026",
+    ]
+    assert [c.arrieres for c in feuille.colonnes] == [True, True, False, False]
+    ignorees = {i["libelle"]: i["raison"] for i in feuille.ignorees}
+    assert "Référence comptable" in ignorees["N°Compte"]
+    assert "jamais créé comme dette" in ignorees["Reglement du 01/01 au 03/11/2026"]
+    assert "Solde de contrôle" in ignorees["Solde au 03/11/2026"]
+    assert feuille.col_total is None
 
 
 def test_une_feuille_sans_identite_est_refusee():
@@ -577,6 +603,113 @@ async def test_le_tableau_de_bord_totalise_l_exercice(db_session):
 
 
 @pytest.mark.asyncio
+async def test_situation_membre_separe_cotisations_penalites_autres_et_reglements(db_session):
+    from app.api.v1.endpoints.notes_debit import situation_membres
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    await _avec_caisse(db, org)
+    numero = "ND/SITUATION/1"
+    contenu = _classeur_structure(
+        [
+            ENTETE_STRUCTURE,
+            _ligne_structure(
+                experts["ec"], numero_externe=numero, cotisation=600,
+                arrieres_cotisation=300, penalite_apo=100, arrieres_apo=50,
+                autres_creances=250, total=1300, observation="Formation IFRS 2026",
+            ),
+        ],
+        [
+            ENTETE_DETAIL,
+            [numero, experts["ec"].numero_ordre, "ARRIERE_COTISATION", 2025, 300, "USD", "Cotisation 2025", "", ""],
+            [numero, experts["ec"].numero_ordre, "ARRIERE_PENALITE_APO", 2025, 50, "USD", "Pénalité 2025", "DEC-25", ""],
+        ],
+    )
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    assert not analyse.lignes[0].erreurs
+    resultat = await importer(
+        db, tenant_id=org.id, user=user, fichier="situation.xlsx", contenu=contenu,
+        service_id=service.id, postes=_postes_structure(analyse, postes),
+    )
+    await _payer(db, org, user, resultat["notes"][0]["id"], 500)
+
+    reponse = await situation_membres(
+        annee=2026, q=None, type_client=None, statut="toutes", limit=25, offset=0,
+        tenant_id=org.id, user=user, db=db,
+    )
+
+    assert reponse["total"] == 1
+    ligne = reponse["items"][0]
+    assert Decimal(ligne["cotisations_anterieures"]) == Decimal("300.00")
+    assert Decimal(ligne["penalites_anterieures"]) == Decimal("50.00")
+    assert Decimal(ligne["cotisation_n"]) == Decimal("600.00")
+    assert Decimal(ligne["penalites_n"]) == Decimal("100.00")
+    assert Decimal(ligne["autres_creances"]) == Decimal("250.00")
+    assert Decimal(ligne["reglements"]) == Decimal("500.00")
+    assert Decimal(ligne["reste_du"]) == Decimal("800.00")
+    assert ligne["statut"] == "partiel"
+    assert ligne["autres_details"][0]["libelle"] == "Formation IFRS 2026"
+
+
+@pytest.mark.asyncio
+async def test_situation_impute_le_plus_ancien_avant_l_avance_et_cherche_comme_l_encaissement(db_session):
+    from sqlalchemy import update
+
+    from app.api.v1.endpoints.notes_debit import situation_membres
+    from app.models.encaissement import EncaissementArticle
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    await _avec_caisse(db, org)
+    numero = "ND/SITUATION/2"
+    contenu = _classeur_structure(
+        [
+            ENTETE_STRUCTURE,
+            _ligne_structure(
+                experts["ec"], numero_externe=numero, cotisation=600, arrieres_cotisation=300, total=900,
+            ),
+        ],
+        [
+            ENTETE_DETAIL,
+            [numero, experts["ec"].numero_ordre, "ARRIERE_COTISATION", 2025, 300, "USD", "Cotisation 2025", "", ""],
+        ],
+    )
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    assert not analyse.lignes[0].erreurs
+    resultat = await importer(
+        db, tenant_id=org.id, user=user, fichier="situation.xlsx", contenu=contenu,
+        service_id=service.id, postes=_postes_structure(analyse, postes),
+    )
+    note_id = uuid.UUID(resultat["notes"][0]["id"])
+    # La cotisation de la note devient celle de 2027 : une cotisation anticipative.
+    await db.execute(
+        update(EncaissementArticle)
+        .where(EncaissementArticle.encaissement_id == note_id, EncaissementArticle.exercice == 2026)
+        .values(exercice=2027)
+    )
+    await db.commit()
+    await _payer(db, org, user, str(note_id), 500)
+
+    async def situation(q=None):
+        return await situation_membres(
+            annee=2026, q=q, type_client=None, statut="toutes", limit=25, offset=0,
+            tenant_id=org.id, user=user, db=db,
+        )
+
+    ligne = (await situation())["items"][0]
+    # 300 soldent d'abord 2025 ; les 200 restants sont une avance, pas un reste.
+    assert Decimal(ligne["cotisations_anterieures"]) == Decimal("300.00")
+    assert Decimal(ligne["reglements"]) == Decimal("300.00")
+    assert Decimal(ligne["reste_du"]) == Decimal("0.00")
+    assert Decimal(ligne["avance_n_plus_1"]) == Decimal("200.00")
+    assert ligne["statut"] == "en_avance"
+
+    # Mots dans n'importe quel ordre, sans accents ni casse.
+    assert (await situation("jean kabongo"))["total"] == 1
+    assert (await situation("dupont"))["total"] == 0
+
+
+@pytest.mark.asyncio
 async def test_la_regularite_distingue_en_regle_debiteur_et_sans_note(db_session):
     from datetime import datetime, timezone
 
@@ -833,6 +966,63 @@ async def test_structure_refuse_categorie_inconnue_et_autre_penalite_sans_motif(
 
 
 @pytest.mark.asyncio
+async def test_structure_refuse_un_exercice_posterieur_au_budget_en_cours(db_session):
+    # Le budget du contexte est 2026 : une cotisation 2027 y serait imputée,
+    # puis reportée en arriérés à la clôture.
+    db = db_session
+    org, user, service, _postes, experts = await _contexte(db)
+    contenu = _classeur_structure([ENTETE_STRUCTURE, _ligne_structure(experts["ec"], exercice=2027)])
+
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+
+    probleme = next(p for p in analyse.lignes[0].problemes if p.code == "EXERCICE_HORS_BUDGET")
+    assert probleme.champ == "Exercice N"
+    assert "passez le budget sur 2027" in probleme.message
+    assert analyse.lignes[0].statut == "erreur"
+
+
+@pytest.mark.asyncio
+async def test_situation_et_tableau_de_bord_partent_de_l_exercice_budgetaire(db_session):
+    from app.api.v1.endpoints.notes_debit import situation_membres, tableau_de_bord
+    from app.models.print_settings import PrintSettings
+
+    db = db_session
+    org, user, _service, _postes, _experts = await _contexte(db)
+    # Le budget 2027 ouvert et retenu dans les réglages : N bascule, quelle que
+    # soit l'année civile.
+    db.add(BudgetExercice(organisation_id=org.id, annee=2027, statut=StatutBudget.BROUILLON))
+    db.add(PrintSettings(organisation_id=org.id, fiscal_year=2027))
+    await db.commit()
+
+    situation = await situation_membres(
+        annee=None, q=None, type_client=None, statut="toutes", limit=25, offset=0,
+        tenant_id=org.id, user=user, db=db,
+    )
+    bord = await tableau_de_bord(annee=None, tenant_id=org.id, user=user, db=db)
+
+    assert (situation["annee"], situation["exercice_courant"]) == (2027, 2027)
+    assert (bord["annee"], bord["exercice_courant"]) == (2027, 2027)
+
+
+@pytest.mark.asyncio
+async def test_structure_exige_un_libelle_pour_une_autre_creance(db_session):
+    db = db_session
+    org, user, service, _postes, experts = await _contexte(db)
+    contenu = _classeur_structure(
+        [
+            ENTETE_STRUCTURE,
+            _ligne_structure(experts["ec"], cotisation=0, autres_creances=250, total=250, observation=""),
+        ]
+    )
+
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+
+    probleme = next(p for p in analyse.lignes[0].problemes if p.code == "LIBELLE_REQUIS")
+    assert probleme.champ == "Observation"
+    assert "libellé" in probleme.message
+
+
+@pytest.mark.asyncio
 async def test_recherche_numero_externe_et_document_pdf_detaille(db_session):
     from app.api.v1.endpoints.notes_debit import documents_a_imprimer, lister_notes
 
@@ -977,3 +1167,167 @@ async def test_chaque_onglet_refuse_les_creances_d_un_autre(db_session, onglet, 
         db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id, categorie=onglet
     )
     assert any(p.code == "CATEGORIE_HORS_ONGLET" for p in analyse.lignes[0].problemes)
+
+
+# ---------------------------------------------------------------------------
+# Réimport : actualiser une famille de créances, reporter le surplus
+# ---------------------------------------------------------------------------
+
+
+async def _importer_structure(db, org, user, service, postes, lignes, actualiser=None):
+    contenu = _classeur_structure([ENTETE_STRUCTURE, *lignes])
+    analyse = await analyser(
+        db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id, actualiser=actualiser,
+    )
+    resultat = await importer(
+        db, tenant_id=org.id, user=user, fichier="reimport.xlsx", contenu=contenu,
+        service_id=service.id, postes=_postes_structure(analyse, postes), actualiser=actualiser,
+    )
+    return analyse, resultat
+
+
+async def _articles(db, note_id):
+    return {
+        a.categorie: a.montant
+        for a in (
+            await db.execute(select(EncaissementArticle).where(EncaissementArticle.encaissement_id == uuid.UUID(note_id)))
+        ).scalars().all()
+    }
+
+
+@pytest.mark.asyncio
+async def test_reimport_actualise_les_seules_penalites(db_session):
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    ec = experts["ec"]
+    _a, premier = await _importer_structure(
+        db, org, user, service, postes,
+        [_ligne_structure(ec, numero_externe="ND/R/1", cotisation=600, penalite_apo=100, total=700)],
+    )
+    note_id = premier["notes"][0]["id"]
+
+    # La cotisation du fichier (999) est ignorée : seules les pénalités changent.
+    analyse, resultat = await _importer_structure(
+        db, org, user, service, postes,
+        [_ligne_structure(ec, numero_externe="ND/R/1", cotisation=999, penalite_apo=150, total=1149)],
+        actualiser=["penalites"],
+    )
+
+    assert analyse.lignes[0].actualisation["action"] == "actualiser"
+    assert resultat["nb_notes"] == 0 and resultat["nb_notes_actualisees"] == 1
+    note = await db.get(Encaissement, uuid.UUID(note_id))
+    await db.refresh(note)
+    assert note.montant_total == Decimal("750.00")
+    assert await _articles(db, note_id) == {"COTISATION_ANNUELLE": Decimal("600.00"), "PENALITE_APO": Decimal("150.00")}
+
+    # Le même fichier une seconde fois : rien ne change, rien n'est créé.
+    contenu = _classeur_structure(
+        [ENTETE_STRUCTURE, _ligne_structure(ec, numero_externe="ND/R/1", cotisation=999, penalite_apo=150, total=1149)]
+    )
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id,
+                             actualiser=["penalites"])
+    assert analyse.lignes[0].actualisation["action"] == "inchangee"
+    with pytest.raises(HTTPException) as exc:
+        await importer(db, tenant_id=org.id, user=user, fichier="x.xlsx", contenu=contenu, service_id=service.id,
+                       postes=_postes_structure(analyse, postes), actualiser=["penalites"])
+    assert "déjà à jour" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_reimport_sans_numero_retrouve_la_note_du_membre_et_refuse_de_la_vider(db_session):
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    ec = experts["ec"]
+    await _importer_structure(
+        db, org, user, service, postes,
+        [_ligne_structure(ec, numero_externe="", penalite_apo=100, cotisation=0, total=100)],
+    )
+    contenu = _classeur_structure(
+        [ENTETE_STRUCTURE, _ligne_structure(ec, numero_externe="", cotisation=0, penalite_apo=0, total=0)]
+    )
+
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id,
+                             actualiser=["penalites"])
+
+    codes = {p.code for p in analyse.lignes[0].problemes}
+    assert "NOTE_VIDEE" in codes and "MONTANT_INVALIDE" not in codes
+
+
+@pytest.mark.asyncio
+async def test_surplus_d_une_note_actualisee_regle_la_note_suivante_et_revient_si_on_annule(db_session):
+    from app.models.caisse_centrale import CaisseCentrale
+    from app.models.payment_history import PaymentHistory
+    from app.services.encaissement_payments import cancel_encaissement_payment
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    await _avec_caisse(db, org)
+    ec = experts["ec"]
+    _a, premier = await _importer_structure(
+        db, org, user, service, postes,
+        [
+            _ligne_structure(ec, numero_externe="ND/S/1", cotisation=600, penalite_apo=100, total=700),
+            _ligne_structure(ec, numero_externe="ND/S/2", cotisation=0, autres_creances=250, total=250,
+                             observation="Formation IFRS"),
+        ],
+    )
+    n1, n2 = (n["id"] for n in premier["notes"])
+    await _payer(db, org, user, n1, 700)
+
+    async def etat():
+        caisse = (await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == org.id))).scalar_one()
+        await db.refresh(caisse)
+        realise = Decimal("0")
+        for poste in postes.values():
+            await db.refresh(poste)
+            realise += poste.montant_paye
+        notes = [await db.get(Encaissement, uuid.UUID(i)) for i in (n1, n2)]
+        for n in notes:
+            await db.refresh(n)
+        return caisse.solde_usd, realise, [(n.montant_total, n.montant_paye) for n in notes]
+
+    avant = await etat()
+
+    # La pénalité de ND/S/1 est levée : 100 payés de trop règlent ND/S/2.
+    _a, resultat = await _importer_structure(
+        db, org, user, service, postes,
+        [_ligne_structure(ec, numero_externe="ND/S/1", cotisation=600, penalite_apo=0, total=600)],
+        actualiser=["penalites"],
+    )
+
+    assert [r["montant"] for r in resultat["avances_reportees"]] == ["100.00"]
+    caisse, realise, notes = await etat()
+    assert (caisse, realise) == (avant[0], avant[1])  # ni argent créé, ni budget en double
+    assert notes == [(Decimal("600.00"), Decimal("600.00")), (Decimal("250.00"), Decimal("100.00"))]
+    reporte = (
+        await db.execute(select(PaymentHistory).where(PaymentHistory.encaissement_id == uuid.UUID(n2)))
+    ).scalar_one()
+    assert reporte.avance_source_id is not None and reporte.montant == Decimal("100.00")
+
+    # Annuler le versement reporté rend l'argent à ND/S/1, pas à la caisse.
+    await cancel_encaissement_payment(
+        db, organisation_id=org.id, payment_id=reporte.id, motif_annulation="test", user_id=user.id,
+    )
+    await db.commit()
+    caisse, realise, notes = await etat()
+    assert (caisse, realise) == (avant[0], avant[1])
+    assert notes == [(Decimal("600.00"), Decimal("700.00")), (Decimal("250.00"), Decimal("0.00"))]
+
+
+@pytest.mark.asyncio
+async def test_reimport_ne_cree_pas_une_seconde_cotisation_sous_un_autre_numero(db_session):
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    ec = experts["ec"]
+    await _importer_structure(
+        db, org, user, service, postes, [_ligne_structure(ec, numero_externe="ND/C/1", cotisation=600, total=600)]
+    )
+    contenu = _classeur_structure(
+        [ENTETE_STRUCTURE, _ligne_structure(ec, numero_externe="ND/C/2", cotisation=600, total=600)]
+    )
+
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id,
+                             actualiser=["cotisation"])
+
+    probleme = next(p for p in analyse.lignes[0].problemes if p.code == "DOUBLON_COTISATION")
+    assert "ND/C/1" in probleme.message
