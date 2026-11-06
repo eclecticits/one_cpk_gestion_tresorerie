@@ -72,9 +72,9 @@ NOTE_NHV_FICHIER = (
 # Un même code couleur dans tout le rapport : une couleur a toujours le même sens.
 VERT_PALE, GRIS_NEUTRE = "A9D3C2", "C4CCD3"
 ETATS = {
-    "conforme": ("Conforme / inscrit", "3E9C76"),
+    "conforme": ("Conforme / en règle", "3E9C76"),
     "exempte": ("Exempté", VERT_PALE),
-    "defaut": ("En défaut / non inscrit", "C94C4C"),
+    "defaut": ("En défaut / non en règle", "C94C4C"),
     "deliberer": ("À délibérer", "D8A31A"),
     "inconnu": ("Non renseigné / à compléter", GRIS_NEUTRE),
 }
@@ -199,9 +199,9 @@ def nif_renseigne(dossier: dict[str, Any]) -> bool:
     return _maj(dossier.get("nif")) not in NIF_ABSENTS
 
 
-def criteres_rapport(categorie: Any) -> list[str]:
-    """Critères du moteur de verdict, plus le NIF exigé des EC indépendants."""
-    criteres = list(verdict_engine.CATEGORIE_CRITERES.get(categorie or "", []))
+def criteres_rapport(categorie: Any, reglages: verdict_engine.TableauReglages | None = None) -> list[str]:
+    """Critères du moteur de verdict (réglages compris), plus le NIF exigé des EC indépendants."""
+    criteres = list(verdict_engine.criteres_requis(categorie or "", reglages) or [])
     return criteres + ["nif"] if categorie == "EC Indépendant" else criteres
 
 
@@ -216,6 +216,13 @@ def _etat_critere(dossier: dict[str, Any], critere: str, ctx: ContexteRapport) -
         return "exempte"
     valeur = verdict_engine._critere_ok(critere, evaluation, nouveau, ctx.reglages)
     return "inconnu" if valeur is None else ("conforme" if valeur else "defaut")
+
+
+def libelle_affiche(conclusion: Any) -> str:
+    """Conclusion telle que le lecteur la lit : « En règle », « Non en règle »…"""
+    if not _txt(conclusion):
+        return ""
+    return verdict_engine.libelle_conclusion(classe_conclusion(conclusion)) or _txt(conclusion)
 
 
 def _oui_non(valeur: Any) -> str:
@@ -234,7 +241,7 @@ def _section(categorie: str, titre: str, feuille: str, groupe: list[dict[str, An
     """Liste et blocs de statistiques d'une section, selon les seuls critères qui la concernent."""
     groupe = sorted(groupe, key=lambda d: nom_complet(d).casefold())
     total = len(groupe)
-    criteres = criteres_rapport(categorie)
+    criteres = criteres_rapport(categorie, ctx.reglages)
 
     def etats(critere: str) -> Counter:
         return Counter(_etat_critere(d, critere, ctx) for d in groupe)
@@ -277,8 +284,8 @@ def _section(categorie: str, titre: str, feuille: str, groupe: list[dict[str, An
         blocs.append(_bloc("NIF", [("NIF renseigné", nif["conforme"]), ("NIF manquant", nif["defaut"])], total))
     conclusions = Counter(classe_conclusion(d.get("conclusion")) for d in groupe)
     blocs.append(_bloc("Conclusion", [
-        ("Les Inscrits (INSCRIT)", conclusions.pop(verdict_engine.INSCRIT, 0)),
-        ("Non Inscrits (NON INSCRIT)", conclusions.pop(verdict_engine.NON_INSCRIT, 0)),
+        ("En règle", conclusions.pop(verdict_engine.INSCRIT, 0)),
+        ("Non en règle", conclusions.pop(verdict_engine.NON_INSCRIT, 0)),
         ("À délibérer", conclusions.pop(verdict_engine.A_DELIBERER, 0)),
         ("À compléter", conclusions.pop(A_COMPLETER, 0)),
         *conclusions.most_common(),
@@ -342,7 +349,7 @@ def _section(categorie: str, titre: str, feuille: str, groupe: list[dict[str, An
         colonnes.append(("H.Formation", formation_txt, False))
     if "chiffre_affaires" in criteres:
         colonnes.append(("Chiffre d'affaires", lambda d: _oui_non(d.get("chiffre_affaires")), False))
-    colonnes.append(("Conclusion", lambda d: classe_conclusion(d.get("conclusion")), False))
+    colonnes.append(("Conclusion", lambda d: verdict_engine.libelle_conclusion(classe_conclusion(d.get("conclusion"))), False))
     if "formation" in criteres:
         colonnes.append(("NHV", lambda d: d.get("heures_forco"), False))
     # Une colonne facultative vide n'apporte rien : les fichiers ne la renseignent pas tous.
@@ -373,7 +380,6 @@ def _registre_qualite(
 ) -> list[dict[str, Any]]:
     registre: list[dict[str, Any]] = []
     par_id = {d.get("id"): d for d in membres}
-    seuil = ctx.reglages.heures_formation_min
 
     for anomalie in anomalies:
         type_ = anomalie.get("type_anomalie")
@@ -421,6 +427,7 @@ def _registre_qualite(
 
         heures = dossier.get("heures_forco")
         hformation = (dossier.get("raw_data") or {}).get("hformation")
+        seuil = ctx.reglages.heures_min(dossier.get("categorie"))
         if heures is not None and _etat_critere(dossier, "formation", ctx) != "exempte":
             if hformation is True and heures < seuil:
                 registre.append(_anomalie(
@@ -591,7 +598,7 @@ def construire_donnees(
         etats = Counter(
             _etat_critere(d, critere, ctx)
             for d in membres
-            if critere in criteres_rapport(d.get("categorie"))
+            if critere in criteres_rapport(d.get("categorie"), ctx.reglages)
         )
         evalues = etats["conforme"] + etats["defaut"]
         if sum(etats.values()):
@@ -608,7 +615,7 @@ def construire_donnees(
 
     soumis = [
         d for d in membres
-        if "formation" in verdict_engine.CATEGORIE_CRITERES.get(d.get("categorie") or "", [])
+        if "formation" in (verdict_engine.criteres_requis(d.get("categorie") or "", ctx.reglages) or [])
     ]
     exemptes = [d for d in soumis if _etat_critere(d, "formation", ctx) == "exempte"]
     ids_exemptes = {id(d) for d in exemptes}
@@ -618,7 +625,7 @@ def construire_donnees(
     for dossier in membres:
         if classe_conclusion(dossier.get("conclusion")) != verdict_engine.INSCRIT:
             for critere, _ in CRITERES:
-                if critere in criteres_rapport(dossier.get("categorie")) and _etat_critere(dossier, critere, ctx) == "defaut":
+                if critere in criteres_rapport(dossier.get("categorie"), ctx.reglages) and _etat_critere(dossier, critere, ctx) == "defaut":
                     restants[critere] += 1
 
     registre = _registre_qualite(membres, anomalies, ctx)
@@ -678,7 +685,11 @@ def construire_donnees(
             "moyenne": mean(heures) if heures else 0.0,
             "mediane": median(heures) if heures else 0.0,
             "zero": sum(h == 0 for h in heures),
-            "sous_seuil": sum(h < ctx.reglages.heures_formation_min for h in heures),
+            "sous_seuil": sum(
+                1 for d in soumis
+                if id(d) not in ids_exemptes and d.get("heures_forco") is not None
+                and float(d["heures_forco"]) < ctx.reglages.heures_min(d.get("categorie"))
+            ),
         },
     }
     donnees["plan"] = _plan_action(donnees)
@@ -737,7 +748,7 @@ def _synthese(d: dict[str, Any]) -> tuple[list[str], list[str]]:
     if nif and nif["defauts"]:
         decisions.append("Arrêter le traitement des EC indépendants sans NIF.")
     if d["a_completer"] and d["nhv"]["renseignes"]:
-        decisions.append(f"Confirmer la lecture de la colonne « % 120 FOR » face au minimum réglé de {heures_txt(ctx.reglages.heures_formation_min)}.")
+        decisions.append(f"Confirmer la lecture de la colonne « % 120 FOR » face au minimum réglé ({ctx.reglages.libelle_heures_min()}).")
     return constats, decisions
 
 
@@ -876,8 +887,8 @@ def build_excel(d: dict[str, Any]) -> bytes:
     # Tableau de bord
     ws = wb.create_sheet("Tableau de bord")
     titre(ws, f"Rapport complet du Tableau {ctx.exercice}", f"{ctx.organisation} · {ctx.source} · situation du {fdate(ctx.date_situation)} · généré le {fdate(ctx.genere_le)}")
-    cartes = [("A", "B", "MEMBRES", str(d["total"]), BLEU_CLAIR, MARINE), ("C", "D", "INSCRITS", str(d["inscrits"]), VERT_CLAIR, VERT_FONCE),
-              ("E", "F", "NON INSCRITS", str(d["non_inscrits"]), ROUGE_CLAIR, ROUGE), ("G", "H", "À DÉLIBÉRER", str(d["a_deliberer"]), OR_CLAIR, OR),
+    cartes = [("A", "B", "MEMBRES", str(d["total"]), BLEU_CLAIR, MARINE), ("C", "D", "EN RÈGLE", str(d["inscrits"]), VERT_CLAIR, VERT_FONCE),
+              ("E", "F", "NON EN RÈGLE", str(d["non_inscrits"]), ROUGE_CLAIR, ROUGE), ("G", "H", "À DÉLIBÉRER", str(d["a_deliberer"]), OR_CLAIR, OR),
               ("I", "J", "À COMPLÉTER", str(d["a_completer"]), BLEU_CLAIR, MARINE), ("K", "L", "TAUX D'INSCRIPTION", pct(d["taux"]), OR_CLAIR, OR)]
     for debut, fin, libelle, valeur, fond, couleur in cartes:
         ws.merge_cells(f"{debut}4:{fin}6")
@@ -889,7 +900,7 @@ def build_excel(d: dict[str, Any]) -> bytes:
 
     section(ws, 8, "Résultats par catégorie", 7)
     lignes = [[l["categorie"], l["total"], l["inscrits"], l["non_inscrits"], l["a_deliberer"], l["a_completer"], l["taux"]] for l in d["categories"]]
-    fin_categories = matrice(ws, 9, ["Catégorie", "Total", "Inscrits", "Non inscrits", "À délibérer", "À compléter", "Taux"], lignes)
+    fin_categories = matrice(ws, 9, ["Catégorie", "Total", "En règle", "Non en règle", "À délibérer", "À compléter", "Taux"], lignes)
     total = fin_categories + 1
     for colonne, valeur in enumerate(["TOTAL", d["total"], d["inscrits"], d["non_inscrits"], d["a_deliberer"], d["a_completer"], d["taux"]], 1):
         ws.cell(total, colonne, valeur).font = Font(bold=True)
@@ -916,8 +927,8 @@ def build_excel(d: dict[str, Any]) -> bytes:
         ws = wb.create_sheet("Rapprochement")
         titre(ws, "Rapprochement des conclusions", "Conclusion de l'analyse comparée aux autres conclusions disponibles")
         entetes = ["Origine", "Catégorie", "N° d'ordre", "Nom", "Conclusion de l'analyse", "Autre conclusion", "Motif de l'analyse", "NHV"]
-        lignes = [["Fichier importé", e["categorie"], e["numero_ordre"], e["nom"], e["conclusion"], e["autre"], e["motif"], e["nhv"]] for e in d["ecarts_fichier"]]
-        lignes += [[ctx.comparaison_nom or "Comparaison", e["categorie"], e["numero_ordre"], e["nom"], e["conclusion"], e["autre"], e["motif"], e["nhv"]] for e in d["ecarts_comparaison"]]
+        lignes = [["Fichier importé", e["categorie"], e["numero_ordre"], e["nom"], libelle_affiche(e["conclusion"]), libelle_affiche(e["autre"]), e["motif"], e["nhv"]] for e in d["ecarts_fichier"]]
+        lignes += [[ctx.comparaison_nom or "Comparaison", e["categorie"], e["numero_ordre"], e["nom"], libelle_affiche(e["conclusion"]), libelle_affiche(e["autre"]), e["motif"], e["nhv"]] for e in d["ecarts_comparaison"]]
         matrice(ws, 4, entetes, lignes, tableau=True)
         largeurs(ws, [24, 16, 15, 34, 16, 16, 38, 8])
 
@@ -933,10 +944,10 @@ def build_excel(d: dict[str, Any]) -> bytes:
 
     # À traiter
     ws = wb.create_sheet("À traiter")
-    titre(ws, "Dossiers à traiter", "Tout ce qui n'est pas encore inscrit, triable et filtrable")
+    titre(ws, "Dossiers à traiter", "Tout ce qui n'est pas encore en règle, triable et filtrable")
     a_traiter = [m for m in d["membres"] if classe_conclusion(m.get("conclusion")) != verdict_engine.INSCRIT]
     lignes = [[norm_categorie(m.get("categorie")), _txt(m.get("numero_ordre")), nom_complet(m), _txt(m.get("sexe")), _oui_non(m.get("actif")), _txt(m.get("telephone")), _txt(m.get("email")),
-               classe_conclusion(m.get("conclusion")), _txt(m.get("conclusion_motif")), m.get("heures_forco")] for m in a_traiter]
+               verdict_engine.libelle_conclusion(classe_conclusion(m.get("conclusion"))), _txt(m.get("conclusion_motif")), m.get("heures_forco")] for m in a_traiter]
     matrice(ws, 4, ["Catégorie", "N° d'ordre", "Nom", "Sexe", "Actif", "Téléphone", "E-mail", "Conclusion", "Motif", "NHV"], lignes, tableau=True)
     largeurs(ws, [16, 15, 34, 6, 7, 18, 30, 15, 42, 8])
 
@@ -1028,7 +1039,7 @@ def _methode(d: dict[str, Any]) -> list[tuple[str, str]]:
     lignes = [
         ("Source", f"{ctx.source}; situation du {fdate(ctx.date_situation)}."),
         ("Conclusion", f"Résultat de l'analyse selon les réglages de l'exercice, décisions de la commission comprises ({d['decisions']} appliquées)."),
-        ("Formation", f"NHV = nombre d'heures validées. Minimum réglé : {heures_txt(r.heures_formation_min)} h. Les exemptés sont exclus des statistiques d'heures."),
+        ("Formation", f"NHV = nombre d'heures validées. Minimum réglé : {r.libelle_heures_min()}. Les exemptés sont exclus des statistiques d'heures."),
         ("Exemption", exemption),
         ("Critères par section", "Cotisation pour toutes les sections; formation pour les personnes physiques; assurance et chiffre d'affaires pour les sociétés et les EC indépendants uniquement; NIF exigé des EC indépendants."),
         ("Taux conforme", "Conformes / (conformes + en défaut). Exemptés et non renseignés sont exclus du dénominateur."),
@@ -1182,7 +1193,7 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     S.append(Paragraph("1. Synthèse pour le Bureau", h1))
     kpis = [("Membres", str(d["total"]), MARINE, BLEU_CLAIR)]
     if d["total"] - d["a_completer"]:
-        kpis += [("Inscrits", str(d["inscrits"]), VERT_FONCE, VERT_CLAIR), ("Non inscrits", str(d["non_inscrits"]), ROUGE, ROUGE_CLAIR)]
+        kpis += [("En règle", str(d["inscrits"]), VERT_FONCE, VERT_CLAIR), ("Non en règle", str(d["non_inscrits"]), ROUGE, ROUGE_CLAIR)]
         if d["a_deliberer"]:
             kpis.append(("À délibérer", str(d["a_deliberer"]), OR, OR_CLAIR))
         kpis.append(("Taux d'inscription", pct(d["taux"]), OR, OR_CLAIR))
@@ -1208,7 +1219,7 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     if d["decisions"]:
         S.append(Paragraph(f"Ces conclusions intègrent {d['decisions']} décision(s) de la commission.", petit))
     S.append(Paragraph("Résultats par section", h2))
-    cles = [("categorie", "Section", 58), ("total", "Total", 18), ("inscrits", "Inscrits", 20), ("non_inscrits", "Non inscrits", 22), ("a_deliberer", "À délibérer", 22), ("a_completer", "À compléter", 22)]
+    cles = [("categorie", "Section", 58), ("total", "Total", 18), ("inscrits", "En règle", 20), ("non_inscrits", "Non en règle", 22), ("a_deliberer", "À délibérer", 22), ("a_completer", "À compléter", 22)]
     gardees = [c for c in cles if c[0] in {"categorie", "total"} or any(l[c[0]] for l in d["categories"])]
     avec_taux = any(l["taux"] is not None for l in d["categories"])
     lignes = [[l[c[0]] for c in gardees] + ([pct(l["taux"])] if avec_taux else []) for l in d["categories"]]
@@ -1249,12 +1260,12 @@ def build_pdf(d: dict[str, Any]) -> bytes:
         # « % 120 FOR » n'est pas forcément exprimé en heures : ni unité, ni somme.
         lignes += [
             ["Moyenne des valeurs importées", nombre(n["moyenne"])], ["Médiane des valeurs importées", nombre(n["mediane"])],
-            ["Dossiers à 0", n["zero"]], [f"Dossiers sous le minimum réglé ({heures_txt(ctx.reglages.heures_formation_min)})", n["sous_seuil"]],
+            ["Dossiers à 0", n["zero"]], [f"Dossiers sous le minimum réglé ({ctx.reglages.libelle_heures_min()})", n["sous_seuil"]],
         ]
     elif n["renseignes"]:
         lignes += [
             ["Heures validées totales", f"{nombre(n['total'])} h"], ["Moyenne", f"{nombre(n['moyenne'])} h"], ["Médiane", f"{nombre(n['mediane'])} h"],
-            ["Dossiers à 0 heure", n["zero"]], [f"Dossiers sous {heures_txt(ctx.reglages.heures_formation_min)} h", n["sous_seuil"]],
+            ["Dossiers à 0 heure", n["zero"]], [f"Dossiers sous le minimum ({ctx.reglages.libelle_heures_min()})", n["sous_seuil"]],
         ]
     S.append(tableau(["Indicateur", "Résultat"], lignes, [100, 50]))
     if n["soumis"] and not n["renseignes"]:
@@ -1284,13 +1295,13 @@ def build_pdf(d: dict[str, Any]) -> bytes:
         if d["avec_conclusion_source"]:
             S.append(Paragraph(f"{d['avec_conclusion_source']} dossiers portent une conclusion dans le fichier importé : {len(d['ecarts_fichier'])} diffèrent de l'analyse.", corps))
         if d["ecarts_fichier"]:
-            lignes = [[e["numero_ordre"] or "—", e["nom"], e["conclusion"], e["autre"], heures_txt(e["nhv"]), e["motif"]] for e in d["ecarts_fichier"]]
+            lignes = [[e["numero_ordre"] or "—", e["nom"], libelle_affiche(e["conclusion"]), libelle_affiche(e["autre"]), heures_txt(e["nhv"]), e["motif"]] for e in d["ecarts_fichier"]]
             S.append(tableau(["N° d'ordre", "Nom", "Analyse", "Fichier", "NHV", "Motif de l'analyse"], lignes, [24, 50, 20, 20, 11, 55]))
         if ctx.comparaison_nom:
             S.append(Spacer(1, 3 * mm))
             S.append(Paragraph(f"Comparaison avec {escape(ctx.comparaison_nom)} : {len(d['ecarts_comparaison'])} conclusion(s) diffèrent.", corps))
             if d["ecarts_comparaison"]:
-                lignes = [[e["numero_ordre"] or "—", e["nom"], e["conclusion"], e["autre"], heures_txt(e["nhv"]), heures_txt(e.get("nhv_autre"))] for e in d["ecarts_comparaison"]]
+                lignes = [[e["numero_ordre"] or "—", e["nom"], libelle_affiche(e["conclusion"]), libelle_affiche(e["autre"]), heures_txt(e["nhv"]), heures_txt(e.get("nhv_autre"))] for e in d["ecarts_comparaison"]]
                 S.append(tableau(["N° d'ordre", "Nom", "Analyse", "Comparaison", "NHV", "NHV comparaison"], lignes, [26, 62, 24, 26, 15, 27]))
 
     # Qualité

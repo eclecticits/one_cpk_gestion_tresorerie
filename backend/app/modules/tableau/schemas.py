@@ -63,6 +63,16 @@ class TableauDossierOut(BaseModel):
     province: str | None = None
     actif: bool | None = None
     anciennete_libelle: str | None = None
+    # Sociétés : lus dans raw_data, où l'import du classeur les range.
+    raison_sociale: str | None = None
+    associe_gerant: str | None = None
+    # Cotisation selon les notes de débit (situation des membres), si le membre
+    # en a : elle fait foi sur `cotisation_payee`, qui est ce que disait l'import.
+    cotisation_notes: dict[str, Any] | None = None
+    # Assurance selon la période de validité définie pour la catégorie (affichage).
+    assurance_valide: bool | None = None
+    # atteint / insuffisant / non_requis / inconnu, selon le minimum de la catégorie.
+    formation_etat: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -258,6 +268,15 @@ class TableauMembreACompleterOut(BaseModel):
     categorie: str
     nif: str | None = None
     cabinet: str | None = None
+    raison_sociale: str | None = None
+    associe_gerant: str | None = None
+    cotisation_notes: dict[str, Any] | None = None
+    assurance_valide: bool | None = None
+    # Conclusion des règles de délibération, calculée à la lecture (rien n'est enregistré).
+    conclusion: str | None = None
+    conclusion_motif: str | None = None
+    chiffre_affaires: bool | None = None
+    formation_etat: str | None = None
     email: str | None = None
     telephone: str | None = None
     assurance: bool | None = None
@@ -349,6 +368,10 @@ class TableauReglagesIn(BaseModel):
     age_conclusion_label: str | None = Field(default=None, min_length=1, max_length=50)
     nouveau_anciennete_ans: int | None = Field(default=None, ge=1, le=100)
     exempter_nouveaux: bool | None = None
+    # {"EC Salarié": {"formation": "a_deliberer"}} : bloquant, a_deliberer ou ignore.
+    criteres_par_categorie: dict[str, dict[str, Literal["bloquant", "a_deliberer", "ignore"]]] | None = None
+    # {"EC Cabinet": {"heures_formation_min": 60, "cotisation_arrieres": false, "cotisation_partielle": "bloquant"}}
+    definitions_par_categorie: dict[str, dict[str, Any]] | None = None
 
 
 class TableauAssistantIn(BaseModel):

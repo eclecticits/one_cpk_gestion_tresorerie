@@ -30,7 +30,7 @@ def detect_anomalies(
         prenom = (d.get("prenom") or "")
         key = f"{nom.lower()}|{prenom.lower()}"
         nouveau = verdict_engine.est_nouveau(d, exercice_annee, reglages)
-        criteres = verdict_engine.CATEGORIE_CRITERES.get(d.get("categorie", ""), None)
+        criteres = verdict_engine.criteres_requis(d.get("categorie", ""), reglages)
 
         if key in seen:
             anomalies.append({
@@ -65,7 +65,9 @@ def detect_anomalies(
 
         # Cotisation
         cot = d.get("cotisation_payee")
-        if cot is False:
+        if "cotisation" not in criteres:
+            pass
+        elif cot is False:
             anomalies.append({
                 "dossier_id": dossier_id, "type_anomalie": "cotisation_non_payee", "gravite": "high",
                 "description": "Cotisation non réglée.", "champ_concerne": "cotisation_payee",
@@ -80,21 +82,22 @@ def detect_anomalies(
 
         # Formation (uniquement si requise et non exemptée)
         if "formation" in criteres and not nouveau:
+            minimum = reglages.heures_min(d.get("categorie"))
             heures = d.get("heures_forco")
-            if heures is not None and heures < reglages.heures_formation_min:
+            if heures is not None and heures < minimum:
                 age = d.get("age")
                 gravite = "low" if (age is not None and age > reglages.age_seuil) else "medium"
                 anomalies.append({
                     "dossier_id": dossier_id, "type_anomalie": "heures_forco_insuffisantes", "gravite": gravite,
-                    "description": f"Heures de formation insuffisantes : {heures}h (minimum {int(reglages.heures_formation_min)}h).",
+                    "description": f"Heures de formation insuffisantes : {heures}h (minimum {int(minimum)}h).",
                     "champ_concerne": "heures_forco", "valeur_trouvee": str(heures),
-                    "valeur_attendue": f">= {int(reglages.heures_formation_min)}h",
+                    "valeur_attendue": f">= {int(minimum)}h",
                 })
             elif heures is None and d.get("hformation") is None:
                 anomalies.append({
                     "dossier_id": dossier_id, "type_anomalie": "heures_forco_manquantes", "gravite": "low",
                     "description": "Heures de formation non renseignées.", "champ_concerne": "heures_forco",
-                    "valeur_trouvee": None, "valeur_attendue": f">= {int(reglages.heures_formation_min)}h",
+                    "valeur_trouvee": None, "valeur_attendue": f">= {int(minimum)}h",
                 })
 
         # Assurance (sociétés + indépendants)

@@ -424,7 +424,7 @@ def _membres_a_completer(
     n'a pas de clé qui la relie à un import suivant : seul le dernier fichier de sa
     source la fait donc foi, sinon chaque réimport la dupliquerait.
     """
-    def lignes(model, genre: str, nom, categorie_expr, nif, cabinet, sexe_expr, nhv, actif, gerant):
+    def lignes(model, genre: str, nom, categorie_expr, nif, cabinet, sexe_expr, nhv, actif, gerant, raison_sociale):
         cle = case(
             (model.identity_id.is_(None), func.concat(genre, "#", cast(model.id, String))),
             else_=model.numero_ordre,
@@ -450,6 +450,7 @@ def _membres_a_completer(
                 nhv.label("nhv"),
                 actif.label("actif"),
                 gerant.label("gerant"),
+                raison_sociale.label("raison_sociale"),
                 func.upper(func.trim(model.province_attache)).label("province"),
                 model.date_situation.label("date_situation"),
                 TableauImport.file_name.label("source_file_name"),
@@ -477,12 +478,14 @@ def _membres_a_completer(
             pp.pourcentage_120_for,
             pp.actif,
             cast(literal(None), String),
+            cast(literal(None), String),
         ),
         lignes(
             pm, "PM", pm.societe, literal("Société"), pm.numero_impot,
             cast(literal(None), String), cast(literal(None), String), cast(literal(None), Numeric(8, 2)),
             cast(literal(None), Boolean),
             pm.associe_gerant,
+            pm.raison_sociale,
         ),
     ).subquery()
 
@@ -505,6 +508,7 @@ def _membres_a_completer(
         union.c.numero_ordre,
         union.c.nom,
         union.c.gerant,
+        union.c.raison_sociale,
         union.c.nif,
         union.c.cabinet,
     ], union.c.email))

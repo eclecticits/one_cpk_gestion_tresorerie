@@ -1064,7 +1064,7 @@ async def _base(db_session, user, **kwargs):
 
 
 @pytest.mark.asyncio
-async def test_la_base_montre_les_membres_importes_sans_conclusion(db_session, admin_isole):
+async def test_la_base_juge_les_membres_importes_sans_creer_de_dossier(db_session, admin_isole):
     await _pp(db_session, admin_isole, "pp-base.xlsx", [
         ["EC/16.99801", "BASE Jean", "indépendant", "A1X"],
         ["EC/16.99802", "BASE Marie", "indépendant", None],
@@ -1084,8 +1084,11 @@ async def test_la_base_montre_les_membres_importes_sans_conclusion(db_session, a
     assert par_numero["EC/16.99801"]["signalements"] == []
     assert par_numero["EC/16.99802"]["signalements"] == ["Indépendant sans NIF"]
     assert par_numero["SEC/18.99803"]["categorie"] == "Société"
-    assert "conclusion" not in par_numero["EC/16.99801"]
-    # Aucun dossier n'a été créé : l'analyse n'a rien à juger.
+    # Les règles de délibération s'appliquent à la lecture : sans cotisation connue,
+    # le membre revient au conseil.
+    assert par_numero["EC/16.99801"]["conclusion"] == "À DÉLIBÉRER"
+    assert "cotisation" in par_numero["EC/16.99801"]["conclusion_motif"]
+    # … et rien n'est écrit : aucun dossier n'a été créé.
     assert (await db_session.execute(select(TableauDossier).where(TableauDossier.organisation_id == admin_isole.organisation_id))).scalars().all() == []
 
 
@@ -1464,3 +1467,25 @@ async def test_la_base_montre_le_statut_actif(db_session, admin_isole):
     actifs = {m["nom"]: m["actif"] for m in base["membres_a_completer"]}
     assert actifs == {"ACTIF Jean": True, "INACTIF Marie": False, "SOCIETE SA": None}
     assert [d.actif for d in base["dossiers"]] == [False]
+
+
+@pytest.mark.asyncio
+async def test_la_base_se_filtre_sur_ce_que_calculent_les_regles(db_session, admin_isole):
+    await _pp(db_session, admin_isole, "pp-filtres.xlsx", [
+        ["EC/16.99821", "FILTRE Jean", "indépendant", "A1X"],
+        ["EC/16.99822", "FILTRE Marie", "indépendant", "A2X"],
+        ["EC/16.99823", "FILTRE Paul", "indépendant", "A3X"],
+    ])
+    a_deliberer = await _base(db_session, admin_isole, conclusion="À DÉLIBÉRER")
+    assert a_deliberer["total_membres"] == a_deliberer["total_a_completer"] == 3
+    assert {m["conclusion"] for m in a_deliberer["membres_a_completer"]} == {"À DÉLIBÉRER"}
+    en_regle = await _base(db_session, admin_isole, conclusion="INSCRIT")
+    assert en_regle["total_membres"] == 0 and en_regle["membres_a_completer"] == []
+    # Sans note de débit, la cotisation est inconnue.
+    assert (await _base(db_session, admin_isole, cotisation="inconnue"))["total_membres"] == 3
+    assert (await _base(db_session, admin_isole, cotisation="payee"))["total_membres"] == 0
+    # La pagination porte sur le résultat filtré.
+    page = await tableau_service.get_base_tableau(
+        db_session, [admin_isole.organisation_id], exercice="2026", limit=2, offset=2, cotisation="inconnue",
+    )
+    assert page["total_membres"] == 3 and len(page["membres_a_completer"]) == 1

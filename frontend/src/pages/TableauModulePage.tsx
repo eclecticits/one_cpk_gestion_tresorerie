@@ -1,4 +1,4 @@
-import { useEffect, useState, Suspense } from 'react'
+import { Fragment, useEffect, useState, Suspense } from 'react'
 import { lazyWithRetry } from '../utils/lazyWithRetry'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Settings, Table2, Upload, X, XCircle } from 'lucide-react'
@@ -40,6 +40,11 @@ import {
   type TableauBase,
   type TableauAnomalie,
   type TableauComparison,
+  type CritereTableau,
+  type DefinitionsCategorie,
+  type FiltresRegles,
+  type ModeCritere,
+  type TableauCotisationNotes,
   type TableauDossier,
   type TableauImport,
   type TableauReport,
@@ -140,6 +145,377 @@ function nhvSansObjet(categorie: string | null | undefined, anciennete: string |
   return anciennete === 'Nouveau' ? 'N/A' : null
 }
 
+type ColonneBase =
+  | 'rang' | 'numero_ordre' | 'nom' | 'conseil' | 'categorie' | 'province' | 'sexe' | 'actif'
+  | 'telephone' | 'email' | 'cabinet' | 'nif' | 'chiffre_affaires'
+  | 'raison_sociale' | 'associe_gerant' | 'anciennete' | 'nhv' | 'formation'
+  | 'cotisation' | 'assurance' | 'conclusion' | 'situation' | 'action'
+
+const LIBELLES_COLONNES_BASE: Record<ColonneBase, string> = {
+  rang: 'N°',
+  numero_ordre: "N° d'ordre",
+  nom: 'Nom',
+  conseil: 'Conseil',
+  categorie: 'Catégorie',
+  province: 'Province',
+  sexe: 'Sexe',
+  actif: 'Actif',
+  telephone: 'N° téléphone',
+  email: 'E-mail',
+  cabinet: "Cabinet d'attache",
+  nif: 'NIF',
+  chiffre_affaires: "Chiffre d'affaires",
+  raison_sociale: 'Raison sociale',
+  associe_gerant: 'Associé gérant',
+  anciennete: 'Ancienneté',
+  nhv: 'NHV',
+  formation: 'H.Formation',
+  cotisation: 'Cotisation',
+  assurance: 'Assurance',
+  conclusion: 'Conclusion',
+  situation: 'Situation',
+  action: 'Action',
+}
+
+const COLONNES_BASE_DEFAUT: ColonneBase[] = [
+  'numero_ordre', 'nom', 'conseil', 'categorie', 'province', 'sexe', 'actif',
+  'anciennete', 'nhv', 'cotisation', 'assurance', 'conclusion', 'situation', 'action',
+]
+
+/**
+ * Vues de la base propres à une catégorie : seules ces colonnes s'affichent
+ * quand le filtre « Catégorie » vaut la clé. « conseil » et « action » n'y
+ * apparaissent que si la vue est nationale ou l'utilisateur peut corriger.
+ */
+const COLONNES_BASE_PAR_CATEGORIE: Partial<Record<string, ColonneBase[]>> = {
+  'EC Cabinet': [
+    'rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'telephone', 'email', 'cabinet',
+    'anciennete', 'cotisation', 'formation', 'conclusion', 'action',
+  ],
+  'EC Indépendant': [
+    'rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'telephone', 'email', 'nif',
+    'anciennete', 'cotisation', 'assurance', 'nhv', 'chiffre_affaires', 'conclusion', 'action',
+  ],
+  'EC Salarié': [
+    'rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'telephone', 'email',
+    'anciennete', 'nhv', 'cotisation', 'conclusion', 'action',
+  ],
+  'Société': [
+    'rang', 'numero_ordre', 'nom', 'conseil', 'raison_sociale', 'telephone', 'email', 'associe_gerant',
+    'anciennete', 'cotisation', 'chiffre_affaires', 'assurance', 'conclusion', 'action',
+  ],
+  Stagiaire: ['rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'cotisation', 'conclusion', 'action'],
+}
+
+/** Libellés propres à une vue de catégorie, repris du classeur. */
+const LIBELLES_BASE_PAR_CATEGORIE: Partial<Record<string, Partial<Record<ColonneBase, string>>>> = {
+  'EC Cabinet': { nom: 'Nom, post-noms et prénoms' },
+  'EC Indépendant': { nom: 'Nom, post-noms et prénoms' },
+  'EC Salarié': { nom: 'Nom, post-noms et prénoms' },
+  'Société': { nom: 'Dénomination' },
+}
+
+/** « NOM, POST NOMS ET PRENOMS » : le prénom n'est ajouté que s'il n'y figure pas déjà. */
+function nomComplet(nom: string, prenom: string | null | undefined) {
+  const p = (prenom || '').trim()
+  if (!p || nom.toLowerCase().includes(p.toLowerCase())) return nom
+  return `${nom} ${p}`
+}
+
+/** Valeurs enregistrées (INSCRIT…) → ce que lit l'utilisateur. */
+const LIBELLES_CONCLUSION: Record<string, string> = {
+  'INSCRIT': 'En règle',
+  'NON INSCRIT': 'Non en règle',
+  'À DÉLIBÉRER': 'À délibérer',
+}
+
+function libelleConclusion(conclusion: string | null | undefined): string | null {
+  if (!conclusion) return null
+  return LIBELLES_CONCLUSION[conclusion.trim().toUpperCase()] ?? conclusion
+}
+
+const usd = (valeur: string) =>
+  new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(Number(valeur) || 0)
+
+/**
+ * Cotisation : En règle, Partiel ou Non en règle. Les notes de débit font foi
+ * quand le membre en a — c'est ce que la trésorerie a réellement encaissé ;
+ * sinon, ce que disait l'import (le détail est dans l'infobulle).
+ */
+function cotisationStatus(notes: TableauCotisationNotes | null | undefined, valeurImport: boolean | null) {
+  const etat = notes ? notes.etat : valeurImport === true ? 'payee' : valeurImport === false ? 'non_payee' : null
+  if (etat === null) return <span style={{ color: '#6b7280' }}>—</span>
+  const detail = notes
+    ? [
+        `Notes de débit (${notes.nb_notes})`,
+        `Cotisation N : ${usd(notes.du_n)} dû, ${usd(notes.reste_n)} restant`,
+        Number(notes.du_anterieur) > 0 && `Arriérés : ${usd(notes.du_anterieur)} dû, ${usd(notes.reste_anterieur)} restant`,
+      ].filter(Boolean).join('\n')
+    : 'Aucune note de débit de cotisation : valeur du fichier importé'
+  const { libelle, couleur } = {
+    payee: { libelle: 'En règle', couleur: '#166534' },
+    partielle: { libelle: 'Partiel', couleur: '#b45309' },
+    non_payee: { libelle: 'Non en règle', couleur: '#991b1b' },
+  }[etat]
+  return <span title={detail} style={{ color: couleur, fontWeight: 600, whiteSpace: 'nowrap' }}>{libelle}</span>
+}
+
+/** Ce que dit chaque condition, dans la phrase « Pour être en règle, il faut : … ». */
+const CONDITIONS: Record<CritereTableau, string> = {
+  cotisation: 'être en règle avec la cotisation',
+  formation: "avoir le nombre d'heures de formation requis (NHV)",
+  assurance: 'avoir une assurance en cours',
+  chiffre_affaires: "avoir déclaré le chiffre d'affaires",
+}
+
+const MODES_CRITERE: Array<{ valeur: ModeCritere; libelle: string; couleur: string }> = [
+  { valeur: 'bloquant', libelle: 'sinon Non en règle', couleur: '#991b1b' },
+  { valeur: 'a_deliberer', libelle: 'sinon À délibérer', couleur: '#92400e' },
+  { valeur: 'ignore', libelle: 'non exigé', couleur: '#6b7280' },
+]
+
+/**
+ * Règles de délibération, une carte par catégorie : « Pour être en règle, il
+ * faut : … ». Chaque condition porte sur une colonne de situation de la vue de
+ * la catégorie ; on choisit ce qu'entraîne son défaut. Seuls les écarts au
+ * barème sont enregistrés.
+ */
+function ReglesParCategorie({
+  reglages,
+  modifiable,
+  onChange,
+}: {
+  reglages: TableauReglages
+  modifiable: boolean
+  onChange: (modif: Partial<TableauReglages>) => void
+}) {
+  const bareme = reglages.bareme
+  if (!bareme) return null
+  const ecarts = reglages.criteres_par_categorie || {}
+  const definitions = reglages.definitions_par_categorie || {}
+  const minimumGeneral = reglages.heures_formation_min ?? 120
+  const definir = (categorie: string, modif: DefinitionsCategorie) => {
+    const ligne: DefinitionsCategorie = { ...(definitions[categorie] || {}), ...modif }
+    // Ne garder que ce qui s'écarte des définitions par défaut.
+    if (ligne.heures_formation_min === undefined || ligne.heures_formation_min === minimumGeneral) delete ligne.heures_formation_min
+    if (ligne.cotisation_arrieres !== false) delete ligne.cotisation_arrieres
+    if (ligne.cotisation_partielle !== 'bloquant') delete ligne.cotisation_partielle
+    if (!ligne.assurance_fin_min) delete ligne.assurance_fin_min
+    const suivant = { ...definitions }
+    if (Object.keys(ligne).length) suivant[categorie] = ligne
+    else delete suivant[categorie]
+    onChange({ definitions_par_categorie: suivant })
+  }
+  const changer = (categorie: string, critere: CritereTableau, mode: ModeCritere) => {
+    const ligne = { ...(ecarts[categorie] || {}) }
+    if (mode === bareme[categorie][critere]) delete ligne[critere]
+    else ligne[critere] = mode
+    const suivant = { ...ecarts }
+    if (Object.keys(ligne).length) suivant[categorie] = ligne
+    else delete suivant[categorie]
+    onChange({ criteres_par_categorie: suivant })
+  }
+  const nbEcarts = [...Object.values(ecarts), ...Object.values(definitions)]
+    .reduce((total, ligne) => total + Object.keys(ligne || {}).length, 0)
+  return (
+    <div style={{ marginTop: '20px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+        <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#111827', margin: 0 }}>Conditions pour être en règle</h3>
+        {modifiable && nbEcarts > 0 && (
+          <button type="button" className={styles.secondaryButton} onClick={() => onChange({ criteres_par_categorie: {}, definitions_par_categorie: {} })}>
+            Revenir au barème ({nbEcarts} modification{nbEcarts > 1 ? 's' : ''})
+          </button>
+        )}
+      </div>
+      <p style={{ fontSize: '12px', color: '#6b7280', margin: '4px 0 12px' }}>
+        Chaque condition porte sur une colonne affichée pour la catégorie et se définit pour elle :
+        ce qu'est être en règle avec la cotisation, le minimum d'heures de formation. Une donnée
+        manquante donne toujours « À délibérer ».
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '12px' }}>
+        {Object.entries(bareme).map(([categorie, criteres]) => {
+          const liste = Object.keys(criteres) as CritereTableau[]
+          return (
+            <div key={categorie} style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '12px 14px', background: '#fff' }}>
+              <div style={{ fontWeight: 700, fontSize: '13px', color: '#111827' }}>{categorie}</div>
+              <div style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 8px' }}>Pour être en règle, il faut :</div>
+              <ol style={{ margin: 0, paddingLeft: '18px', display: 'grid', gap: '8px' }}>
+                {liste.map(critere => {
+                  const origine = criteres[critere]
+                  const mode = ecarts[categorie]?.[critere] ?? origine
+                  const actif = mode !== 'ignore'
+                  const modifie = mode !== origine
+                  const style = MODES_CRITERE.find(m => m.valeur === mode)!
+                  return (
+                    <li key={critere} style={{ fontSize: '13px', color: actif ? '#111827' : '#9ca3af' }}>
+                      <span style={{ textDecoration: actif ? 'none' : 'line-through' }}>{CONDITIONS[critere]}</span>
+                      {actif && critere === 'formation' && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px', fontSize: '12px', color: '#374151' }}>
+                          au moins
+                          <input
+                            type="number"
+                            min={0}
+                            disabled={!modifiable}
+                            value={definitions[categorie]?.heures_formation_min ?? minimumGeneral}
+                            onChange={event => definir(categorie, {
+                              heures_formation_min: event.target.value === '' ? undefined : Number(event.target.value),
+                            })}
+                            aria-label={`${categorie} — minimum d'heures de formation`}
+                            style={{
+                              width: '72px', padding: '3px 6px', borderRadius: '5px', fontSize: '12px',
+                              border: definitions[categorie]?.heures_formation_min !== undefined
+                                ? '2px solid var(--tenant-primary, #1f6b5c)' : '1px solid #d1d5db',
+                            }}
+                          />
+                          heures (NHV)
+                        </label>
+                      )}
+                      {actif && critere === 'assurance' && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '3px', fontSize: '12px', color: '#374151' }}>
+                          couverture au moins jusqu'au
+                          <input
+                            type="date"
+                            disabled={!modifiable}
+                            value={definitions[categorie]?.assurance_fin_min ?? ''}
+                            onChange={event => definir(categorie, { assurance_fin_min: event.target.value || undefined })}
+                            aria-label={`${categorie} — date minimale de couverture de l'assurance`}
+                            style={{
+                              padding: '3px 6px', borderRadius: '5px', fontSize: '12px',
+                              border: definitions[categorie]?.assurance_fin_min ? '2px solid var(--tenant-primary, #1f6b5c)' : '1px solid #d1d5db',
+                            }}
+                          />
+                          {!definitions[categorie]?.assurance_fin_min && <span style={{ color: '#6b7280' }}>(vide : date de situation du fichier)</span>}
+                        </label>
+                      )}
+                      {actif && critere === 'cotisation' && (
+                        <div style={{ display: 'grid', gap: '3px', marginTop: '3px', fontSize: '12px', color: '#374151' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <input
+                              type="checkbox"
+                              disabled={!modifiable}
+                              checked={definitions[categorie]?.cotisation_arrieres !== false}
+                              onChange={event => definir(categorie, { cotisation_arrieres: event.target.checked })}
+                            />
+                            cotisation de l'exercice et arriérés de cotisation soldés
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            si partiellement réglée :
+                            <select
+                              disabled={!modifiable}
+                              value={definitions[categorie]?.cotisation_partielle ?? 'a_deliberer'}
+                              onChange={event => definir(categorie, { cotisation_partielle: event.target.value as 'a_deliberer' | 'bloquant' })}
+                              style={{ padding: '3px 6px', borderRadius: '5px', fontSize: '12px', border: '1px solid #d1d5db' }}
+                            >
+                              <option value="a_deliberer">À délibérer</option>
+                              <option value="bloquant">Non en règle</option>
+                            </select>
+                          </label>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px' }}>
+                        <select
+                          value={mode}
+                          disabled={!modifiable}
+                          aria-label={`${categorie} — ${CONDITIONS[critere]}`}
+                          title={modifie ? `Barème : ${MODES_CRITERE.find(m => m.valeur === origine)!.libelle}` : undefined}
+                          onChange={event => changer(categorie, critere, event.target.value as ModeCritere)}
+                          style={{
+                            padding: '4px 6px', borderRadius: '5px', fontSize: '12px', fontWeight: 600, color: style.couleur,
+                            background: '#fff', border: modifie ? '2px solid var(--tenant-primary, #1f6b5c)' : '1px solid #d1d5db',
+                          }}
+                        >
+                          {MODES_CRITERE.map(m => <option key={m.valeur} value={m.valeur}>{m.libelle}</option>)}
+                        </select>
+                        {modifie && <span style={{ fontSize: '11px', color: '#6b7280' }}>modifié</span>}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ol>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/** Colonnes de situation de chaque catégorie, comme côté serveur (`CRITERES_APPLICABLES`). */
+const CONDITIONS_PAR_DEFAUT: Record<string, CritereTableau[]> = {
+  'Société': ['cotisation', 'chiffre_affaires', 'assurance'],
+  'EC Indépendant': ['cotisation', 'formation', 'assurance', 'chiffre_affaires'],
+  'EC Cabinet': ['cotisation', 'formation'],
+  'EC Salarié': ['cotisation', 'formation'],
+  'Stagiaire': ['cotisation'],
+}
+
+/**
+ * Les conditions exigées pour une catégorie selon les règles de délibération.
+ * Sans catégorie : celles exigées par au moins une catégorie.
+ */
+function conditionsActives(categorie: string, reglages: TableauReglages): CritereTableau[] {
+  const pour = (cat: string): CritereTableau[] => {
+    const bareme = reglages.bareme?.[cat]
+    const liste = bareme ? (Object.keys(bareme) as CritereTableau[]) : (CONDITIONS_PAR_DEFAUT[cat] || [])
+    return liste.filter(critere => (reglages.criteres_par_categorie?.[cat]?.[critere] ?? bareme?.[critere] ?? 'bloquant') !== 'ignore')
+  }
+  if (categorie) return pour(categorie)
+  const toutes = new Set(Object.keys(reglages.bareme || CONDITIONS_PAR_DEFAUT).flatMap(pour))
+  return (['cotisation', 'formation', 'assurance', 'chiffre_affaires'] as CritereTableau[]).filter(c => toutes.has(c))
+}
+
+const OPTIONS_FILTRE: Record<CritereTableau, { libelle: string; options: Array<[string, string]> }> = {
+  cotisation: { libelle: 'Cotisation', options: [['payee', 'En règle'], ['partielle', 'Partiel'], ['non_payee', 'Non en règle'], ['inconnue', 'Inconnue']] },
+  formation: { libelle: 'NHV', options: [['atteint', 'Minimum atteint'], ['insuffisant', 'Sous le minimum'], ['non_requis', 'Non requis'], ['inconnu', 'Non renseigné']] },
+  assurance: { libelle: 'Assurance', options: [['oui', 'Valide'], ['non', 'Non valide'], ['inconnu', 'Non renseignée']] },
+  chiffre_affaires: { libelle: "Chiffre d'affaires", options: [['oui', 'Déclaré'], ['non', 'Non déclaré'], ['inconnu', 'Non renseigné']] },
+}
+
+/**
+ * Filtres de la Base qui suivent les règles de délibération : la conclusion,
+ * puis une liste par condition exigée pour la catégorie choisie.
+ */
+function FiltresConditions({
+  categorie,
+  reglages,
+  valeurs,
+  onChange,
+}: {
+  categorie: string
+  reglages: TableauReglages
+  valeurs: FiltresRegles
+  onChange: (valeurs: FiltresRegles) => void
+}) {
+  const style = { padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }
+  return (
+    <>
+      <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+        Conclusion
+        <select value={valeurs.conclusion || ''} onChange={event => onChange({ ...valeurs, conclusion: event.target.value as FiltresRegles['conclusion'] })} style={style}>
+          <option value="">Toutes</option>
+          <option value="INSCRIT">En règle</option>
+          <option value="NON INSCRIT">Non en règle</option>
+          <option value="À DÉLIBÉRER">À délibérer</option>
+          <option value="SANS">Sans conclusion</option>
+        </select>
+      </label>
+      {conditionsActives(categorie, reglages).map(critere => (
+        <label key={critere} style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+          {OPTIONS_FILTRE[critere].libelle}
+          <select
+            value={valeurs[critere] || ''}
+            onChange={event => onChange({ ...valeurs, [critere]: event.target.value })}
+            style={style}
+          >
+            <option value="">Tous</option>
+            {OPTIONS_FILTRE[critere].options.map(([valeur, libelle]) => <option key={valeur} value={valeur}>{libelle}</option>)}
+          </select>
+        </label>
+      ))}
+    </>
+  )
+}
+
 function booleanStatus(value: boolean | null) {
   if (value === true) return <span style={{ color: '#166534', fontWeight: 600 }}>Oui</span>
   if (value === false) return <span style={{ color: '#991b1b', fontWeight: 600 }}>Non</span>
@@ -225,6 +601,8 @@ export default function TableauModulePage() {
   const [baseSexe, setBaseSexe] = useState('')
   const [baseAnciennete, setBaseAnciennete] = useState('')
   const [baseActif, setBaseActif] = useState('')
+  const [baseRegles, setBaseRegles] = useState<FiltresRegles>({})
+  const baseReglesCle = JSON.stringify(baseRegles)
   const [baseOrganisationId, setBaseOrganisationId] = useState('')
   const [basePage, setBasePage] = useState(1)
   const [basePageSize, setBasePageSize] = useState(50)
@@ -557,6 +935,7 @@ export default function TableauModulePage() {
       sexe: baseSexe || undefined,
       anciennete: baseAnciennete || undefined,
       actif: baseActif || undefined,
+      regles: baseRegles,
       limit: basePageSize,
       offset: (basePage - 1) * basePageSize,
     })
@@ -573,11 +952,24 @@ export default function TableauModulePage() {
       })
       .finally(() => { if (!annule) setBaseLoading(false) })
     return () => { annule = true }
-  }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, basePage, basePageSize, baseRefresh])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- baseRegles suivi par sa clé
+  }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, baseReglesCle, basePage, basePageSize, baseRefresh])
 
   useEffect(() => {
     setBasePage(1)
-  }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, basePageSize])
+  }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, baseReglesCle, basePageSize])
+
+  // Une condition que la catégorie choisie n'exige pas ne filtre plus rien.
+  useEffect(() => {
+    setBaseRegles(courant => {
+      const permis = new Set(conditionsActives(baseCategorie, reglages))
+      const suivant: FiltresRegles = { conclusion: courant.conclusion }
+      for (const critere of ['cotisation', 'formation', 'assurance', 'chiffre_affaires'] as const) {
+        if (permis.has(critere) && courant[critere]) (suivant as Record<string, string>)[critere] = courant[critere] as string
+      }
+      return JSON.stringify(suivant) === JSON.stringify(courant) ? courant : suivant
+    })
+  }, [baseCategorie, reglages])
 
   const handleBaseAnalyse = async () => {
     if (!base?.exercice) return
@@ -680,6 +1072,94 @@ export default function TableauModulePage() {
     ? () => void (analysisScope === 'base' ? handleBaseAnalyse() : handleAnalyse())
     : undefined
   const nhvMinimum = reglages.heures_formation_min ?? 120
+  /** Le minimum d'heures de la catégorie, à défaut le minimum général. */
+  const nhvMinimumDe = (categorie: string | null | undefined): number =>
+    (categorie ? reglages.definitions_par_categorie?.[categorie]?.heures_formation_min : undefined) ?? nhvMinimum
+  const colonnesBase = (COLONNES_BASE_PAR_CATEGORIE[baseCategorie] || COLONNES_BASE_DEFAUT).filter(colonne => {
+    if (colonne === 'conseil') return !!base?.national
+    if (colonne === 'action') return canCorrect && !baseNational
+    return true
+  })
+  const cellulesBase = (ligne: {
+    rang: number
+    numero_ordre: string | null
+    nom: string
+    prenom: string | null
+    signalements?: string[]
+    organisation: string
+    categorie: string
+    province: string | null | undefined
+    sexe: string | null
+    actif: boolean | null
+    telephone: string | null
+    email: string | null
+    cabinet: string | null
+    nif: string | null
+    chiffre_affaires: React.ReactNode
+    raison_sociale: string | null | undefined
+    associe_gerant: string | null | undefined
+    anciennete: string | null | undefined
+    annee_inscription: number | null
+    nhv: number | null
+    cotisation: React.ReactNode
+    assurance: boolean | null
+    conclusion: React.ReactNode
+    date_situation: string | null | undefined
+    source_file_name: string | null | undefined
+    action: React.ReactNode
+  }): Record<ColonneBase, React.ReactNode> => {
+    const aCompleter = <span style={{ color: '#b91c1c' }}>à compléter</span>
+    const sansObjet = nhvSansObjet(ligne.categorie, ligne.anciennete)
+    const heures = sansObjet
+      ? <td style={{ ...baseTdStyle, color: '#9ca3af' }} title="NHV non applicable">{sansObjet}</td>
+      : <td style={{ ...baseTdStyle, ...styleNhv(ligne.nhv, nhvMinimumDe(ligne.categorie)) }} title={`Minimum ${nhvMinimumDe(ligne.categorie)} h`}>{ligne.nhv ?? '—'}</td>
+    const signale = !!ligne.signalements?.length
+    return {
+      rang: <td style={{ ...baseTdStyle, color: '#6b7280' }}>{ligne.rang}</td>,
+      numero_ordre: <td style={baseTdStyle}>{ligne.numero_ordre || aCompleter}</td>,
+      nom: (
+        <td style={baseTdStyle}>
+          {ligne.nom ? nomComplet(ligne.nom, ligne.prenom) : aCompleter}
+          {signale && <div style={{ color: '#991b1b', fontSize: '12px' }}>{ligne.signalements!.join(' ; ')}</div>}
+        </td>
+      ),
+      conseil: <td style={baseTdStyle}>{ligne.organisation}</td>,
+      categorie: <td style={baseTdStyle}>{ligne.categorie}</td>,
+      province: <td style={baseTdStyle}>{ligne.province || '—'}</td>,
+      sexe: <td style={baseTdStyle}>{ligne.sexe || '—'}</td>,
+      actif: <td style={baseTdStyle}>{booleanStatus(ligne.actif)}</td>,
+      telephone: (
+        <td style={{ ...baseTdStyle, whiteSpace: 'nowrap' }}>
+          {ligne.telephone ? <a href={`tel:${ligne.telephone.replace(/[^\d+]/g, '')}`}>{ligne.telephone}</a> : '—'}
+        </td>
+      ),
+      email: <td style={baseTdStyle}>{ligne.email ? <a href={`mailto:${ligne.email}`}>{ligne.email}</a> : '—'}</td>,
+      cabinet: <td style={baseTdStyle}>{ligne.cabinet || '—'}</td>,
+      nif: <td style={{ ...baseTdStyle, whiteSpace: 'nowrap' }}>{ligne.nif || '—'}</td>,
+      chiffre_affaires: <td style={baseTdStyle}>{ligne.chiffre_affaires}</td>,
+      raison_sociale: <td style={baseTdStyle}>{ligne.raison_sociale || '—'}</td>,
+      associe_gerant: <td style={baseTdStyle}>{ligne.associe_gerant || '—'}</td>,
+      anciennete: (
+        <td style={baseTdStyle}>
+          {ligne.anciennete || '—'}
+          {ligne.annee_inscription != null && ligne.anciennete !== 'À vérifier' && (
+            <div style={{ color: '#6b7280', fontSize: '12px' }}>inscrit en {ligne.annee_inscription}</div>
+          )}
+        </td>
+      ),
+      nhv: heures,
+      formation: heures,
+      cotisation: <td style={baseTdStyle}>{ligne.cotisation}</td>,
+      assurance: <td style={baseTdStyle}>{booleanStatus(ligne.assurance)}</td>,
+      conclusion: <td style={baseTdStyle}>{ligne.conclusion}</td>,
+      situation: (
+        <td style={{ ...baseTdStyle, whiteSpace: 'nowrap' }} title={ligne.source_file_name || undefined}>
+          {ligne.date_situation ? new Date(`${ligne.date_situation}T00:00:00`).toLocaleDateString('fr-FR') : '—'}
+        </td>
+      ),
+      action: <td style={baseTdStyle}>{ligne.action}</td>,
+    }
+  }
   const baseTotalPages = Math.max(1, Math.ceil((base?.total_membres || 0) / basePageSize))
   const baseImport = imports.find(item => item.id === base?.analysis_import_id) || null
   const dossierTotalPages = Math.max(1, Math.ceil(dossiers.length / dossierPageSize))
@@ -970,6 +1450,12 @@ export default function TableauModulePage() {
                   <option value="Nouveau">Nouveau</option>
                 </select>
               </label>
+              <FiltresConditions
+                categorie={baseCategorie}
+                reglages={reglages}
+                valeurs={baseRegles}
+                onChange={setBaseRegles}
+              />
               {baseNational && (
                 <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
                   Conseil
@@ -993,7 +1479,7 @@ export default function TableauModulePage() {
               <div className={styles.emptyBox}>Chargement de la base...</div>
             ) : !base || base.total_membres === 0 ? (
               <div className={styles.emptyBox}>
-                {baseSearch || baseCategorie || basePersonne || baseProvince || baseSexe || baseAnciennete || baseActif
+                {baseSearch || baseCategorie || basePersonne || baseProvince || baseSexe || baseAnciennete || baseActif || Object.values(baseRegles).some(Boolean)
                   ? 'Aucun membre ne correspond à ces filtres.'
                   : "Aucun import pour l'instant. Chargez un fichier depuis l'onglet « Import Excel »."}
               </div>
@@ -1013,113 +1499,109 @@ export default function TableauModulePage() {
 
                 {base.total_a_completer > 0 && (
                   <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '6px', color: '#92400e', fontSize: '13px', lineHeight: 1.4, marginBottom: '16px', padding: '10px 14px' }}>
-                    {base.total_a_completer} membre(s) viennent des fichiers personnes physiques ou morales. Ces fichiers
-                    ne portent ni la cotisation, ni le chiffre d'affaires : ces membres n'ont pas de
-                    conclusion et « Analyser la base » ne les prend pas en compte. Importer le classeur Tableau complète
-                    leur situation.
+                    {base.total_a_completer} membre(s) viennent des fichiers personnes physiques ou morales, sans dossier
+                    du classeur Tableau. Leur conclusion applique les règles de délibération à ce que l'on sait d'eux :
+                    cotisation des notes de débit, déclarations d'assurance et de chiffre d'affaires, NHV. Une donnée
+                    absente donne « À délibérer » ; le motif s'affiche au survol de la conclusion.
                   </div>
                 )}
 
                 <p style={{ color: '#6b7280', fontSize: '12px', margin: '0 0 8px' }}>
-                  NHV : <strong style={{ color: COULEUR_NHV_ATTEINT }}>bleu</strong> à partir de {nhvMinimum},{' '}
-                  <strong style={{ color: COULEUR_NHV_FAIBLE }}>rouge</strong> sous {nhvMinimum * PART_NHV_ROUGE} (60 % du minimum), N/A pour les nouveaux, — pour les sociétés.
+                  NHV : <strong style={{ color: COULEUR_NHV_ATTEINT }}>bleu</strong> à partir du minimum de la catégorie
+                  ({nhvMinimum} h par défaut),{' '}
+                  <strong style={{ color: COULEUR_NHV_FAIBLE }}>rouge</strong> sous 60 % de ce minimum, N/A pour les nouveaux, — pour les sociétés.
                 </p>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={baseTableStyle}>
                     <thead>
                       <tr>
-                        <th style={baseThStyle}>N° d'ordre</th>
-                        <th style={baseThStyle}>Nom</th>
-                        {base.national && <th style={baseThStyle}>Conseil</th>}
-                        <th style={baseThStyle}>Catégorie</th>
-                        <th style={baseThStyle}>Province</th>
-                        <th style={baseThStyle}>Sexe</th>
-                        <th style={baseThStyle}>Actif</th>
-                        <th style={baseThStyle}>Ancienneté</th>
-                        <th style={baseThStyle} title="Nombre d'heures validées">NHV</th>
-                        <th style={baseThStyle}>Cotisation</th>
-                        <th style={baseThStyle}>Assurance</th>
-                        <th style={baseThStyle}>Conclusion</th>
-                        <th style={baseThStyle}>Situation</th>
-                        {canCorrect && !baseNational && <th style={baseThStyle}>Action</th>}
+                        {colonnesBase.map(colonne => (
+                          <th key={colonne} style={baseThStyle} title={colonne === 'nhv' || colonne === 'formation' ? "Nombre d'heures validées" : undefined}>
+                            {LIBELLES_BASE_PAR_CATEGORIE[baseCategorie]?.[colonne] ?? LIBELLES_COLONNES_BASE[colonne]}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {base.dossiers.map(dossier => (
-                        <tr key={dossier.id}>
-                          <td style={baseTdStyle}>
-                            {dossier.numero_ordre || <span style={{ color: '#b91c1c' }}>à compléter</span>}
-                          </td>
-                          <td style={baseTdStyle}>{dossier.nom}</td>
-                          {base.national && <td style={baseTdStyle}>{dossier.organisation_nom || `#${dossier.organisation_id}`}</td>}
-                          <td style={baseTdStyle}>{dossier.categorie || '—'}</td>
-                          <td style={baseTdStyle}>{dossier.province || '—'}</td>
-                          <td style={baseTdStyle}>{dossier.sexe || '—'}</td>
-                          <td style={baseTdStyle}>{booleanStatus(dossier.actif ?? null)}</td>
-                          <td style={baseTdStyle}>
-                            {dossier.anciennete_libelle || '—'}
-                            {dossier.annee_inscription != null && dossier.anciennete_libelle !== 'À vérifier' && (
-                              <div style={{ color: '#6b7280', fontSize: '12px' }}>inscrit en {dossier.annee_inscription}</div>
-                            )}
-                          </td>
-                          {nhvSansObjet(dossier.categorie, dossier.anciennete_libelle)
-                            ? <td style={{ ...baseTdStyle, color: '#9ca3af' }} title="NHV non applicable">{nhvSansObjet(dossier.categorie, dossier.anciennete_libelle)}</td>
-                            : <td style={{ ...baseTdStyle, ...styleNhv(dossier.heures_forco, nhvMinimum) }}>{dossier.heures_forco ?? '—'}</td>}
-                          <td style={baseTdStyle}>{booleanStatus(dossier.cotisation_payee)}</td>
-                          <td style={baseTdStyle}>{booleanStatus(dossier.assurance)}</td>
-                          <td style={baseTdStyle}>{dossier.conclusion || 'À analyser'}</td>
-                          <td style={{ ...baseTdStyle, whiteSpace: 'nowrap' }} title={dossier.source_file_name || undefined}>
-                            {dossier.date_situation ? new Date(`${dossier.date_situation}T00:00:00`).toLocaleDateString('fr-FR') : '—'}
-                          </td>
-                          {canCorrect && !baseNational && (
-                            <td style={baseTdStyle}>
-                              <button type="button" className={styles.secondaryButton} onClick={() => openCorrection(dossier)} title="Corriger le dossier" aria-label={`Corriger ${dossier.nom}`}>
-                                <Pencil size={14} />
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      ))}
-                      {base.membres_a_completer.map(membre => {
+                      {base.dossiers.map((dossier, index) => {
+                        const cellules = cellulesBase({
+                          rang: base.offset + index + 1,
+                          numero_ordre: dossier.numero_ordre,
+                          nom: dossier.nom,
+                          prenom: dossier.prenom,
+                          organisation: dossier.organisation_nom || `#${dossier.organisation_id}`,
+                          categorie: dossier.categorie || '—',
+                          province: dossier.province,
+                          sexe: dossier.sexe,
+                          actif: dossier.actif ?? null,
+                          telephone: dossier.telephone,
+                          email: dossier.email,
+                          cabinet: dossier.cabinet,
+                          nif: dossier.nif,
+                          chiffre_affaires: booleanStatus(dossier.chiffre_affaires),
+                          raison_sociale: dossier.raison_sociale,
+                          associe_gerant: dossier.associe_gerant,
+                          anciennete: dossier.anciennete_libelle,
+                          annee_inscription: dossier.annee_inscription,
+                          nhv: dossier.heures_forco,
+                          cotisation: cotisationStatus(dossier.cotisation_notes, dossier.cotisation_payee),
+                          assurance: dossier.assurance_valide !== undefined ? dossier.assurance_valide : dossier.assurance,
+                          conclusion: libelleConclusion(dossier.conclusion) || 'À analyser',
+                          date_situation: dossier.date_situation,
+                          source_file_name: dossier.source_file_name,
+                          action: (
+                            <button type="button" className={styles.secondaryButton} onClick={() => openCorrection(dossier)} title="Corriger le dossier" aria-label={`Corriger ${dossier.nom}`}>
+                              <Pencil size={14} />
+                            </button>
+                          ),
+                        })
+                        return (
+                          <tr key={dossier.id}>
+                            {colonnesBase.map(colonne => <Fragment key={colonne}>{cellules[colonne]}</Fragment>)}
+                          </tr>
+                        )
+                      })}
+                      {base.membres_a_completer.map((membre, index) => {
                         const signale = membre.signalements.length > 0
+                        const cellules = cellulesBase({
+                          rang: base.offset + base.dossiers.length + index + 1,
+                          numero_ordre: membre.numero_ordre,
+                          nom: membre.nom,
+                          prenom: null,
+                          signalements: membre.signalements,
+                          organisation: membre.organisation_nom || `#${membre.organisation_id}`,
+                          categorie: membre.categorie,
+                          province: membre.province,
+                          sexe: membre.sexe,
+                          actif: membre.actif,
+                          telephone: membre.telephone,
+                          email: membre.email,
+                          cabinet: membre.cabinet,
+                          nif: membre.nif,
+                          chiffre_affaires: booleanStatus(membre.chiffre_affaires ?? null),
+                          raison_sociale: membre.raison_sociale,
+                          associe_gerant: membre.associe_gerant,
+                          anciennete: membre.anciennete_libelle,
+                          annee_inscription: membre.annee_inscription,
+                          nhv: membre.nhv,
+                          cotisation: cotisationStatus(membre.cotisation_notes, null),
+                          assurance: membre.assurance_valide !== undefined ? membre.assurance_valide : membre.assurance,
+                          conclusion: membre.conclusion
+                            ? <span title={membre.conclusion_motif || undefined} style={{ fontWeight: 600, color: membre.conclusion === 'INSCRIT' ? '#166534' : membre.conclusion === 'NON INSCRIT' ? '#991b1b' : '#92400e' }}>
+                                {libelleConclusion(membre.conclusion)}
+                              </span>
+                            : <span style={{ color: '#92400e', fontWeight: 600 }}>À compléter</span>,
+                          date_situation: membre.date_situation,
+                          source_file_name: membre.source_file_name,
+                          action: null,
+                        })
                         return (
                           <tr
                             key={membre.id}
                             style={signale ? { background: '#fee2e2' } : undefined}
                             title={signale ? membre.signalements.join(' ; ') : undefined}
                           >
-                            <td style={baseTdStyle}>
-                              {membre.numero_ordre || <span style={{ color: '#b91c1c' }}>à compléter</span>}
-                            </td>
-                            <td style={baseTdStyle}>
-                              {membre.nom || <span style={{ color: '#b91c1c' }}>à compléter</span>}
-                              {signale && (
-                                <div style={{ color: '#991b1b', fontSize: '12px' }}>{membre.signalements.join(' ; ')}</div>
-                              )}
-                            </td>
-                            {base.national && <td style={baseTdStyle}>{membre.organisation_nom || `#${membre.organisation_id}`}</td>}
-                            <td style={baseTdStyle}>{membre.categorie}</td>
-                            <td style={baseTdStyle}>{membre.province || '—'}</td>
-                            <td style={baseTdStyle}>{membre.sexe || '—'}</td>
-                            <td style={baseTdStyle}>{booleanStatus(membre.actif)}</td>
-                            <td style={baseTdStyle}>
-                              {membre.anciennete_libelle || '—'}
-                              {membre.annee_inscription != null && membre.anciennete_libelle !== 'À vérifier' && (
-                                <div style={{ color: '#6b7280', fontSize: '12px' }}>inscrit en {membre.annee_inscription}</div>
-                              )}
-                            </td>
-                            {nhvSansObjet(membre.categorie, membre.anciennete_libelle)
-                              ? <td style={{ ...baseTdStyle, color: '#9ca3af' }} title="NHV non applicable">{nhvSansObjet(membre.categorie, membre.anciennete_libelle)}</td>
-                              : <td style={{ ...baseTdStyle, ...styleNhv(membre.nhv, nhvMinimum) }}>{membre.nhv ?? '—'}</td>}
-                            <td style={baseTdStyle}>—</td>
-                            <td style={baseTdStyle}>{booleanStatus(membre.assurance)}</td>
-                            <td style={baseTdStyle}>
-                              <span style={{ color: '#92400e', fontWeight: 600 }}>À compléter</span>
-                            </td>
-                            <td style={{ ...baseTdStyle, whiteSpace: 'nowrap' }} title={membre.source_file_name || undefined}>
-                              {membre.date_situation ? new Date(`${membre.date_situation}T00:00:00`).toLocaleDateString('fr-FR') : '—'}
-                            </td>
-                            {canCorrect && !baseNational && <td style={baseTdStyle} />}
+                            {colonnesBase.map(colonne => <Fragment key={colonne}>{cellules[colonne]}</Fragment>)}
                           </tr>
                         )
                       })}
@@ -1277,7 +1759,7 @@ export default function TableauModulePage() {
                           <td style={{ padding: '7px 10px' }}>
                             {d.cotisation_payee === true ? <CheckCircle2 size={13} color="#16a34a" /> : d.cotisation_payee === false ? <XCircle size={13} color="#dc2626" /> : '—'}
                           </td>
-                          <td style={{ padding: '7px 10px', ...(nhvAbsent ? { color: '#9ca3af' } : styleNhv(d.heures_forco, nhvMinimum)) }}>
+                          <td style={{ padding: '7px 10px', ...(nhvAbsent ? { color: '#9ca3af' } : styleNhv(d.heures_forco, nhvMinimumDe(d.categorie))) }}>
                             {nhvAbsent ?? (d.heures_forco !== null ? d.heures_forco : '—')}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
@@ -1289,7 +1771,7 @@ export default function TableauModulePage() {
                               color: conclColor.fg,
                               fontSize: '11px',
                             }}>
-                              {concl}
+                              {libelleConclusion(concl)}
                             </span>
                           </td>
                         </tr>
@@ -1379,9 +1861,9 @@ export default function TableauModulePage() {
                 {!!(analyse.stats_json?.conclusions) && (() => {
                   const c = analyse.stats_json.conclusions as Record<string, number>
                   const pills: Array<[string, number, string]> = [
-                    ['INSCRIT', c.inscrits || 0, '#16a34a'],
-                    ['NON INSCRIT', c.non_inscrits || 0, '#dc2626'],
-                    ['À DÉLIBÉRER', c.a_deliberer || 0, '#d97706'],
+                    ['En règle', c.inscrits || 0, '#16a34a'],
+                    ['Non en règle', c.non_inscrits || 0, '#dc2626'],
+                    ['À délibérer', c.a_deliberer || 0, '#d97706'],
                     ['N/A', c.non_applicable || 0, '#6b7280'],
                   ]
                   return (
@@ -1928,7 +2410,7 @@ export default function TableauModulePage() {
 
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                   <div>
-                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Heures de formation min.</label>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Heures de formation min. (par défaut)</label>
                     <input type="number" min={0} value={reglages.heures_formation_min ?? 120}
                       disabled={!canSettings}
                       onChange={e => setReglages(r => ({ ...r, heures_formation_min: Number(e.target.value) }))}
@@ -1947,8 +2429,8 @@ export default function TableauModulePage() {
                       disabled={!canSettings}
                       onChange={e => setReglages(r => ({ ...r, age_action: e.target.value as TableauReglages['age_action'] }))}
                       style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '220px' }}>
-                      <option value="a_deliberer">Marquer « À DÉLIBÉRER »</option>
-                      <option value="inscrit">Valider directement (INSCRIT)</option>
+                      <option value="a_deliberer">Marquer « À délibérer »</option>
+                      <option value="inscrit">Valider directement (En règle)</option>
                       <option value="aucune">Ne rien changer (soumis au minimum d'heures)</option>
                     </select>
                   </div>
@@ -1966,6 +2448,12 @@ export default function TableauModulePage() {
                     Exempter les nouveaux membres de formation
                   </label>
                 </div>
+
+                <ReglesParCategorie
+                  reglages={reglages}
+                  modifiable={canSettings}
+                  onChange={modif => setReglages(r => ({ ...r, ...modif }))}
+                />
 
                 <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '14px' }}>
                   Enregistrer relance l'analyse du périmètre en cours : les conclusions déjà

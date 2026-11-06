@@ -159,8 +159,13 @@ class TestVerdict:
         d = _dossier(numero_ordre="EC/25.00604", anciennete="Ancien", heures_forco=0.0)
         assert V.evaluer(d, 2026)["conclusion"] == V.INSCRIT
 
-    def test_stagiaire_non_applicable(self):
-        assert V.evaluer(_dossier(categorie="Stagiaire"))["conclusion"] == V.NON_APPLICABLE
+    def test_stagiaire_soumis_a_la_cotisation_seulement(self):
+        assert V.evaluer(_dossier(categorie="Stagiaire", heures_forco=0.0))["conclusion"] == V.INSCRIT
+        assert V.evaluer(_dossier(categorie="Stagiaire", cotisation_payee=False))["conclusion"] == V.NON_INSCRIT
+
+    def test_une_categorie_sans_aucun_critere_est_non_applicable(self):
+        reglages = V.TableauReglages.from_dict({"criteres_par_categorie": {"Stagiaire": {"cotisation": "ignore"}}})
+        assert V.evaluer(_dossier(categorie="Stagiaire"), None, reglages)["conclusion"] == V.NON_APPLICABLE
 
     def test_age_action_a_deliberer(self):
         d = _dossier(heures_forco=0.0, age=65)
@@ -377,7 +382,7 @@ class TestComputeAnalyseStats:
 
     def test_stagiaire_et_societe_n_exigent_pas_de_formation(self):
         dossiers = [
-            _dossier(id=1, categorie="Stagiaire", cotisation_payee=None, heures_forco=None, assurance=None),
+            _dossier(id=1, categorie="Stagiaire", heures_forco=None, assurance=None),
             _dossier(id=2, categorie="Société", nom="Cabinet", heures_forco=None),
         ]
         anomalies = detect_anomalies(dossiers)
@@ -2181,3 +2186,134 @@ class TestAssistantDuModule:
         noms = {outil["function"]["name"] for outil in TOOLS}
         interdits = {"corriger", "creer", "supprimer", "importer", "decider", "generer", "modifier"}
         assert not any(mot in nom for nom in noms for mot in interdits), noms
+
+
+# ---------------------------------------------------------------------------
+# Règles de délibération réglables par catégorie et par colonne
+# ---------------------------------------------------------------------------
+
+
+def _ec(categorie: str, **champs):
+    base = {
+        "categorie": categorie, "numero_ordre": "EC/10.00001", "cotisation_payee": True,
+        "assurance": True, "chiffre_affaires": True, "heures_forco": 200, "age": 45,
+    }
+    base.update(champs)
+    return base
+
+
+def test_sans_reglage_le_bareme_d_origine_s_applique():
+    reglages = V.TableauReglages.from_dict({})
+    assert V.criteres_requis("EC Salarié", reglages) == ["cotisation", "formation"]
+    assert V.evaluer(_ec("EC Salarié", heures_forco=10), 2026, reglages)["conclusion"] == V.NON_INSCRIT
+
+
+def test_un_critere_peut_etre_renvoye_au_conseil_ou_ecarte_par_categorie():
+    reglages = V.TableauReglages.from_dict({"criteres_par_categorie": {
+        "EC Salarié": {"formation": "a_deliberer"},
+        "EC Cabinet": {"cotisation": "ignore"},
+        "Stagiaire": {"cotisation": "bloquant"},
+    }})
+    salarie = V.evaluer(_ec("EC Salarié", heures_forco=10), 2026, reglages)
+    assert salarie["conclusion"] == V.A_DELIBERER
+    assert "formation" in salarie["motif"]
+    # La cotisation n'est plus exigée des EC en cabinet…
+    assert V.evaluer(_ec("EC Cabinet", cotisation_payee=False), 2026, reglages)["conclusion"] == V.INSCRIT
+    # … mais elle reste bloquante pour les autres catégories.
+    assert V.evaluer(_ec("EC Salarié", cotisation_payee=False), 2026, reglages)["conclusion"] == V.NON_INSCRIT
+    # Une catégorie sans critère au barème peut en recevoir un.
+    assert V.evaluer(_ec("Stagiaire", cotisation_payee=False), 2026, reglages)["conclusion"] == V.NON_INSCRIT
+
+
+def test_les_reglages_ne_gardent_que_les_ecarts_valides():
+    reglages = V.TableauReglages.from_dict({"criteres_par_categorie": {
+        "SEC": {"assurance": "a_deliberer", "cotisation": "bloquant"},  # bloquant = barème : non retenu
+        "Inconnue": {"cotisation": "ignore"},
+        "EC Cabinet": {"assurance": "bloquant", "formation": "n'importe quoi"},
+    }})
+    assert reglages.criteres_par_categorie == {"Société": {"assurance": "a_deliberer"}}
+
+
+
+def test_societe_en_regle_cotisation_ca_et_assurance():
+    """L'exemple du Conseil : cotisation en règle, CA déclaré, assurance valide."""
+    societe = _ec("Société")
+    assert V.evaluer(societe, 2026)["conclusion"] == V.INSCRIT
+    for champ in ("cotisation_payee", "chiffre_affaires", "assurance"):
+        assert V.evaluer({**societe, champ: False}, 2026)["conclusion"] == V.NON_INSCRIT
+    # La formation n'est pas une colonne de situation des sociétés : elle ne compte pas.
+    assert V.evaluer({**societe, "heures_forco": 0}, 2026)["conclusion"] == V.INSCRIT
+
+
+def test_une_condition_ne_porte_que_sur_une_colonne_de_la_categorie():
+    reglages = V.TableauReglages.from_dict({"criteres_par_categorie": {
+        "EC Salarié": {"assurance": "bloquant", "chiffre_affaires": "bloquant"},
+        "Société": {"formation": "bloquant"},
+    }})
+    assert reglages.criteres_par_categorie == {}
+    assert V.evaluer(_ec("EC Salarié", assurance=False, chiffre_affaires=False), 2026, reglages)["conclusion"] == V.INSCRIT
+
+
+def test_cotisation_partielle_renvoie_au_conseil():
+    d = _ec("EC Salarié", cotisation_payee=False, cotisation_partielle=True)
+    resultat = V.evaluer(d, 2026)
+    assert resultat["conclusion"] == V.A_DELIBERER
+    assert "partiellement" in resultat["motif"]
+
+
+def test_les_conclusions_s_affichent_en_regle():
+    assert V.libelle_conclusion(V.INSCRIT) == "En règle"
+    assert V.libelle_conclusion(V.NON_INSCRIT) == "Non en règle"
+    assert V.libelle_conclusion(V.A_DELIBERER) == "À délibérer"
+
+
+def test_chaque_categorie_definit_son_minimum_d_heures():
+    reglages = V.TableauReglages.from_dict({
+        "heures_formation_min": 120,
+        "definitions_par_categorie": {"EC Salarié": {"heures_formation_min": 60}, "Société": {"heures_formation_min": 10}},
+    })
+    assert reglages.heures_min("EC Salarié") == 60
+    assert reglages.heures_min("EC Cabinet") == 120
+    # Les sociétés n'ont pas de colonne NHV : un minimum pour elles n'est pas retenu.
+    assert "Société" not in reglages.definitions_par_categorie
+    assert V.evaluer(_ec("EC Salarié", heures_forco=80), 2026, reglages)["conclusion"] == V.INSCRIT
+    resultat = V.evaluer(_ec("EC Cabinet", heures_forco=80), 2026, reglages)
+    assert resultat["conclusion"] == V.NON_INSCRIT and "120h" in resultat["motif"]
+    assert reglages.libelle_heures_min() == "EC Indépendant 120 h · EC Cabinet 120 h · EC Salarié 60 h"
+
+
+def test_chaque_categorie_definit_ce_qu_est_etre_en_regle_avec_la_cotisation():
+    notes = {"du_n": "600", "reste_n": "0", "du_anterieur": "300", "reste_anterieur": "300"}
+    par_defaut = V.TableauReglages()
+    # Par défaut, les arriérés de cotisation comptent : 2026 payée ne suffit pas.
+    assert V.etat_cotisation("EC Cabinet", notes, None, par_defaut) == "partielle"
+    sans_arrieres = V.TableauReglages.from_dict({"definitions_par_categorie": {"EC Cabinet": {"cotisation_arrieres": False}}})
+    assert V.etat_cotisation("EC Cabinet", notes, None, sans_arrieres) == "payee"
+    assert V.etat_cotisation("EC Salarié", notes, None, sans_arrieres) == "partielle"
+    # Sans note de débit, l'import décide.
+    assert V.etat_cotisation("EC Cabinet", None, False, par_defaut) == "non_payee"
+    assert V.etat_cotisation("EC Cabinet", None, None, par_defaut) is None
+
+
+def test_une_cotisation_partielle_peut_etre_rendue_bloquante_par_categorie():
+    reglages = V.TableauReglages.from_dict({"definitions_par_categorie": {"Société": {"cotisation_partielle": "bloquant"}}})
+    partielle = {"cotisation_payee": False, "cotisation_partielle": True}
+    assert V.evaluer(_ec("Société", **partielle), 2026, reglages)["conclusion"] == V.NON_INSCRIT
+    assert V.evaluer(_ec("EC Cabinet", **partielle), 2026, reglages)["conclusion"] == V.A_DELIBERER
+
+
+def test_l_assurance_doit_couvrir_au_moins_jusqu_a_la_date_minimale():
+    from datetime import date
+
+    couverture = {"souscrit": True, "debut": date(2024, 5, 22), "fin": date(2025, 5, 21)}
+    par_defaut = V.TableauReglages()
+    # Sans date réglée : la couverture doit atteindre la date de situation du fichier.
+    assert V.assurance_valide("Société", couverture, True, par_defaut, date_situation=date(2025, 3, 1)) is True
+    assert V.assurance_valide("Société", couverture, True, par_defaut, date_situation=date(2026, 3, 1)) is False
+    minimum = V.TableauReglages.from_dict({"definitions_par_categorie": {"Société": {"assurance_fin_min": "2025-05-21"}}})
+    assert V.assurance_valide("Société", couverture, None, minimum, date_situation=date(2026, 3, 1)) is True
+    plus_tard = V.TableauReglages.from_dict({"definitions_par_categorie": {"Société": {"assurance_fin_min": "2025-06-30"}}})
+    assert V.assurance_valide("Société", couverture, None, plus_tard) is False
+    # Sans déclaration, l'import décide ; l'EC en cabinet n'a pas de colonne Assurance à définir.
+    assert V.assurance_valide("Société", None, False, par_defaut) is False
+    assert V.TableauReglages.from_dict({"definitions_par_categorie": {"EC Cabinet": {"assurance_fin_min": "2026-12-31"}}}).definitions_par_categorie == {}

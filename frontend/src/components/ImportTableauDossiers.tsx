@@ -125,7 +125,7 @@ const CONSIGNES_MODELE_TABLEAU = [
   '6. Date naissance : JJ/MM/AAAA. Elle sert à calculer l\'âge.',
   "7. Ancienneté : déduite de l'année du N° d'ordre et de l'exercice (inscrit l'année de l'exercice : Nouveau ; avant : Ancien). La colonne ne sert que si le N° d'ordre est illisible.",
   "8. Une cellule vide n'efface pas ce qui était déjà connu du membre.",
-  "9. La conclusion (INSCRIT / NON INSCRIT / À DÉLIBÉRER) est calculée à l'analyse : ne la saisissez pas.",
+  "9. La conclusion (En règle / Non en règle / À délibérer) est calculée à l'analyse : ne la saisissez pas.",
 ]
 
 interface FeuilleApercu {
@@ -365,7 +365,7 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
         <p>
           Une feuille par section (Société, Cabinet, Indépendant, Salariés, Stagiaires) <em>ou</em> une feuille à plat
           avec une colonne <code>categorie</code>. Les en-têtes peuvent être sur n'importe quelle ligne : le parseur les
-          détecte. La conclusion (INSCRIT / NON INSCRIT / À DÉLIBÉRER) est calculée à l'analyse.
+          détecte. La conclusion (En règle / Non en règle / À délibérer) est calculée à l'analyse.
         </p>
       </div>
 

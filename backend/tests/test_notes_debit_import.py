@@ -1432,3 +1432,52 @@ async def test_situation_range_les_notes_sans_nature_par_le_poste_des_parametres
     assert Decimal(ligne["penalites_anterieures"]) == Decimal("40.00")
     assert Decimal(ligne["autres_creances"]) == Decimal("0.00")
 
+
+@pytest.mark.asyncio
+async def test_le_tableau_lit_la_cotisation_dans_la_situation_des_notes(db_session):
+    """Cotisation réglée = cotisation N et arriérés de cotisation soldés ; sans note, l'import fait foi."""
+    from app.modules.tableau.service import _cotisation_effective
+    from app.services.notes_debit_rattachements import enregistrer
+    from app.services.notes_debit_situation import cotisations_par_numero
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    experts["ec"].statut_professionnel = "En Cabinet"
+    experts["sal"].statut_professionnel = "Salarié"
+    await enregistrer(db, org.id, user.id, [
+        {"colonne": "cotisation_n", "categorie_membre": "*", "budget_poste_code": postes["cot"].code},
+        {"colonne": "cotisations_anterieures", "categorie_membre": "*", "budget_poste_code": postes["arr"].code},
+    ])
+
+    def note(numero: str, expert, poste, montant: int, paye: int) -> Encaissement:
+        return Encaissement(
+            organisation_id=org.id, numero_recu=numero, type_client="expert_comptable",
+            expert_comptable_id=expert.id, libelle="Cotisation", montant=Decimal(montant),
+            montant_total=Decimal(montant), montant_paye=Decimal(paye), montant_percu=Decimal(paye),
+            devise_perception="USD", taux_change_applique=1, budget_poste_id=poste.id,
+            budget_poste_code=poste.code, service_id=service.id,
+            statut_paiement="complet" if paye >= montant else ("partiel" if paye else "non_paye"),
+            mode_paiement="cash", canal="CAISSE", created_by=user.id,
+            date_encaissement=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        )
+
+    db.add_all([
+        note("ND-T-1", experts["ec"], postes["cot"], 600, 600),
+        # Cotisation 2026 soldée, mais 300 d'arriérés de cotisation encore
+        # dus : le membre n'est pas « cotisation réglée ».
+        note("ND-T-2", experts["sal"], postes["arr"], 300, 0),
+        note("ND-T-3", experts["sal"], postes["cot"], 450, 450),
+    ])
+    await db.commit()
+
+    cotisations = await cotisations_par_numero(db, org.id, 2026)
+    ec = cotisations[cle_numero_ordre(experts["ec"].numero_ordre)]
+    assert ec["etat"] == "payee" and ec["payee"] is True
+    sal = cotisations[cle_numero_ordre(experts["sal"].numero_ordre)]
+    assert sal["payee"] is False and sal["etat"] == "partielle"
+    assert cle_numero_ordre(experts["sec"].numero_ordre) not in cotisations
+
+    # Les notes priment sur l'import ; sans note, l'import reste.
+    assert _cotisation_effective(experts["ec"].numero_ordre, False, cotisations) is True
+    assert _cotisation_effective(experts["sal"].numero_ordre, True, cotisations) is False
+    assert _cotisation_effective(experts["sec"].numero_ordre, True, cotisations) is True

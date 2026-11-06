@@ -277,7 +277,7 @@ class TestExportBoutEnBout:
         contenu, _ = await export_rapport_complet(db_session, org, recent.imp.id, "xlsx", scope="base", comparer_a=ancien.imp.id)
         classeur = openpyxl.load_workbook(io.BytesIO(contenu))
         lignes = [l for l in classeur["Rapprochement"].iter_rows(min_row=5, values_only=True) if l[2]]
-        assert [(l[2], l[4], l[5]) for l in lignes] == [(numero, V.NON_INSCRIT, V.INSCRIT)]
+        assert [(l[2], l[4], l[5]) for l in lignes] == [(numero, "Non en règle", "En règle")]
         decisions = [c.value for c in classeur["Synthèse Bureau"]["A"]]
         assert "Valider les écarts de conclusion : 1." in decisions
 

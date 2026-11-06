@@ -29,7 +29,29 @@ export interface TableauReglages {
   age_conclusion_label?: string
   nouveau_anciennete_ans?: number
   exempter_nouveaux?: boolean
+  /** Écarts au barème, par catégorie et par critère. */
+  criteres_par_categorie?: Record<string, Partial<Record<CritereTableau, ModeCritere>>>
+  /** Barème d'origine, renvoyé par le serveur (lecture seule). */
+  /** Ce que veut dire chaque condition, par catégorie (écarts aux définitions par défaut). */
+  definitions_par_categorie?: Record<string, DefinitionsCategorie>
+  /** Seules les colonnes de situation de la catégorie y figurent. */
+  bareme?: Record<string, Partial<Record<CritereTableau, ModeCritere>>>
 }
+
+export interface DefinitionsCategorie {
+  /** Minimum d'heures (NHV) ; absent = minimum général. */
+  heures_formation_min?: number
+  /** Les arriérés de cotisation doivent être soldés (défaut : oui). */
+  cotisation_arrieres?: boolean
+  /** Cotisation commencée mais pas soldée (défaut : à délibérer). */
+  cotisation_partielle?: 'a_deliberer' | 'bloquant'
+  /** Date (AAAA-MM-JJ) jusqu'à laquelle l'assurance doit au moins couvrir ; absente = date de situation. */
+  assurance_fin_min?: string
+}
+
+export type CritereTableau = 'cotisation' | 'formation' | 'assurance' | 'chiffre_affaires'
+/** bloquant : un défaut donne Non en règle ; a_deliberer : À délibérer ; ignore : non exigé. */
+export type ModeCritere = 'bloquant' | 'a_deliberer' | 'ignore'
 
 export interface TableauImport {
   id: number
@@ -47,6 +69,17 @@ export interface TableauImport {
   error_count: number
   error_message: string | null
   created_at: string
+}
+
+/** Cotisation lue dans les notes de débit (situation des membres). Fait foi sur l'import. */
+export interface TableauCotisationNotes {
+  payee: boolean
+  etat: 'payee' | 'partielle' | 'non_payee'
+  du_n: string
+  reste_n: string
+  du_anterieur: string
+  reste_anterieur: string
+  nb_notes: number
 }
 
 export interface TableauDossier {
@@ -85,6 +118,11 @@ export interface TableauDossier {
   province?: string | null
   actif?: boolean | null
   anciennete_libelle?: string | null
+  raison_sociale?: string | null
+  associe_gerant?: string | null
+  cotisation_notes?: TableauCotisationNotes | null
+  /** Assurance selon la période de validité définie pour la catégorie. */
+  assurance_valide?: boolean | null
 }
 
 export interface TableauAnalyse {
@@ -231,6 +269,15 @@ export interface TableauMembreACompleter {
   categorie: string
   nif: string | null
   cabinet: string | null
+  raison_sociale?: string | null
+  associe_gerant?: string | null
+  cotisation_notes?: TableauCotisationNotes | null
+  assurance_valide?: boolean | null
+  /** Conclusion des règles de délibération, calculée à la lecture. */
+  conclusion?: string | null
+  conclusion_motif?: string | null
+  chiffre_affaires?: boolean | null
+  formation_etat?: string | null
   email: string | null
   telephone: string | null
   assurance: boolean | null
@@ -264,6 +311,14 @@ export interface TableauBase {
 }
 
 /** Base consolidée du Tableau : une situation par membre, tous imports de l'exercice confondus. */
+export interface FiltresRegles {
+  conclusion?: '' | 'INSCRIT' | 'NON INSCRIT' | 'À DÉLIBÉRER' | 'SANS'
+  cotisation?: '' | 'payee' | 'partielle' | 'non_payee' | 'inconnue'
+  assurance?: '' | 'oui' | 'non' | 'inconnu'
+  chiffre_affaires?: '' | 'oui' | 'non' | 'inconnu'
+  formation?: '' | 'atteint' | 'insuffisant' | 'non_requis' | 'inconnu'
+}
+
 export const getTableauBase = (params?: {
   exercice?: string
   anomalieOnly?: boolean
@@ -276,6 +331,8 @@ export const getTableauBase = (params?: {
   sexe?: string
   anciennete?: string
   actif?: string
+  /** Filtres sur ce que calculent les règles de délibération. */
+  regles?: FiltresRegles
   limit?: number
   offset?: number
 }) => {
@@ -291,6 +348,7 @@ export const getTableauBase = (params?: {
   if (params?.sexe) qs.set('sexe', params.sexe)
   if (params?.anciennete) qs.set('anciennete', params.anciennete)
   if (params?.actif) qs.set('actif', params.actif)
+  for (const [cle, valeur] of Object.entries(params?.regles || {})) if (valeur) qs.set(cle, valeur)
   if (params?.limit) qs.set('limit', String(params.limit))
   if (params?.offset) qs.set('offset', String(params.offset))
   const suffix = qs.toString() ? `?${qs}` : ''
