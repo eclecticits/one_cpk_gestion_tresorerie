@@ -145,6 +145,7 @@ const TREASURY_NAV: NavItem[] = [
     subItems: [
       { path: '/experts-comptables', label: 'Liste des experts', permission: 'experts_comptables', icon: <UserCog size={16} /> },
       { path: '/experts-comptables/notes-debit', label: 'Notes de débit', permission: 'experts_comptables', icon: <Receipt size={16} /> },
+      { path: '/experts-comptables/notes-debit/parametres', label: 'Paramètres notes de débit', permission: 'experts_comptables', icon: <Cog size={16} /> },
       { path: '/historique-imports', label: 'Historique des imports', permission: 'historique_imports', icon: <FileText size={16} /> },
     ],
   },

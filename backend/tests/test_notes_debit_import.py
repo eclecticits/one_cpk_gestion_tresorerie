@@ -1331,3 +1331,104 @@ async def test_reimport_ne_cree_pas_une_seconde_cotisation_sous_un_autre_numero(
 
     probleme = next(p for p in analyse.lignes[0].problemes if p.code == "DOUBLON_COTISATION")
     assert "ND/C/1" in probleme.message
+
+
+# ---------------------------------------------------------------------------
+# Paramètres : rattachement des colonnes de la situation au budget
+# ---------------------------------------------------------------------------
+
+
+async def test_les_rattachements_se_proposent_puis_s_enregistrent_par_code(db_session):
+    from app.services.notes_debit_rattachements import categorie_membre, enregistrer, parametres
+
+    org, user, _service, postes, _experts = await _contexte(db_session)
+
+    initial = await parametres(db_session, org.id)
+    assert initial["rattachements"] == []
+    # « Arriérés de cotisations » est le seul poste qui le dise : il est proposé,
+    # sans être enregistré.
+    assert {"colonne": "cotisations_anterieures", "categorie_membre": "*",
+            "budget_poste_code": postes["arr"].code} in initial["suggestions"]
+
+    await enregistrer(db_session, org.id, user.id, [
+        {"colonne": "cotisation_n", "categorie_membre": "EC Cabinet", "budget_poste_code": postes["cot"].code},
+        {"colonne": "penalites_n", "categorie_membre": "*", "budget_poste_code": postes["pen"].code},
+        {"colonne": "autres_creances", "categorie_membre": "*", "budget_poste_code": ""},
+    ])
+    await db_session.commit()
+    apres = await parametres(db_session, org.id)
+    assert {(r["colonne"], r["categorie_membre"], r["budget_poste_code"]) for r in apres["rattachements"]} == {
+        ("cotisation_n", "EC Cabinet", postes["cot"].code),
+        ("penalites_n", "*", postes["pen"].code),
+    }
+    assert apres["suggestions"] == []
+
+    with pytest.raises(HTTPException) as erreur:
+        await enregistrer(db_session, org.id, user.id, [
+            {"colonne": "cotisation_n", "categorie_membre": "*", "budget_poste_code": "INCONNU-999"},
+        ])
+    assert erreur.value.status_code == 422
+
+    assert categorie_membre("SEC", "Cabinet") == "Société"
+    assert categorie_membre("EC", "En Cabinet") == "EC Cabinet"
+    assert categorie_membre("EC", "Indépendant") == "EC Indépendant"
+    assert categorie_membre("EC", "Salarié") == "EC Salarié"
+
+
+@pytest.mark.asyncio
+async def test_situation_range_les_notes_sans_nature_par_le_poste_des_parametres(db_session):
+    """Une note ancienne n'a qu'un poste : le réglage dit sa colonne, pas « Autres créances »."""
+    from app.api.v1.endpoints.notes_debit import situation_membres
+    from app.services.notes_debit_rattachements import enregistrer
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    experts["ec"].statut_professionnel = "En Cabinet"
+    await enregistrer(db, org.id, user.id, [
+        {"colonne": "cotisation_n", "categorie_membre": "EC Cabinet", "budget_poste_code": postes["cot"].code},
+        # Un même poste pour les deux familles antérieures : le libellé départage.
+        {"colonne": "cotisations_anterieures", "categorie_membre": "*", "budget_poste_code": postes["arr"].code},
+        {"colonne": "penalites_anterieures", "categorie_membre": "*", "budget_poste_code": postes["arr"].code},
+        {"colonne": "penalites_n", "categorie_membre": "*", "budget_poste_code": postes["pen"].code},
+    ])
+
+    def note(numero: str, libelle: str, poste, montant: int, *, article: bool) -> Encaissement:
+        n = Encaissement(
+            organisation_id=org.id, numero_recu=numero, type_client="expert_comptable",
+            expert_comptable_id=experts["ec"].id, libelle=libelle, montant=Decimal(montant),
+            montant_total=Decimal(montant), montant_paye=0, montant_percu=0, devise_perception="USD",
+            taux_change_applique=1, budget_poste_id=poste.id, budget_poste_code=poste.code,
+            service_id=service.id, statut_paiement="non_paye", mode_paiement="cash", canal="CAISSE",
+            created_by=user.id, date_encaissement=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+        n._avec_article = article  # type: ignore[attr-defined]
+        return n
+
+    notes = [
+        note("ND-P-1", "Relevé", postes["cot"], 600, article=False),
+        note("ND-P-2", "Pénalité pour absence AG", postes["pen"], 100, article=False),
+        note("ND-P-3", "Arriérés de cotisation", postes["arr"], 300, article=True),
+        note("ND-P-4", "Arriérés de pénalités", postes["arr"], 40, article=True),
+    ]
+    db.add_all(notes)
+    await db.flush()
+    for n in notes:
+        if n._avec_article:  # type: ignore[attr-defined]
+            db.add(EncaissementArticle(
+                organisation_id=org.id, encaissement_id=n.id, libelle=n.libelle, exercice=2026,
+                quantite=1, prix_unitaire=n.montant_total, montant=n.montant_total,
+                budget_poste_id=n.budget_poste_id,
+            ))
+    await db.commit()
+
+    reponse = await situation_membres(
+        annee=2026, q=None, type_client=None, statut="toutes", limit=25, offset=0,
+        tenant_id=org.id, user=user, db=db,
+    )
+    ligne = reponse["items"][0]
+    assert Decimal(ligne["cotisation_n"]) == Decimal("600.00")
+    assert Decimal(ligne["penalites_n"]) == Decimal("100.00")
+    assert Decimal(ligne["cotisations_anterieures"]) == Decimal("300.00")
+    assert Decimal(ligne["penalites_anterieures"]) == Decimal("40.00")
+    assert Decimal(ligne["autres_creances"]) == Decimal("0.00")
+

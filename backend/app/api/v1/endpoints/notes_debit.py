@@ -348,36 +348,9 @@ async def _comptes_de_paiement(db: AsyncSession, tenant_id: int) -> list[dict[st
 
 
 async def _articles_par_note(db: AsyncSession, note_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[dict[str, Any]]]:
-    from app.models.budget import BudgetPoste
-    from app.models.encaissement import EncaissementArticle
+    from app.services.notes_debit_situation import articles_par_note
 
-    if not note_ids:
-        return {}
-    lignes = (
-        await db.execute(
-            select(EncaissementArticle, BudgetPoste.code)
-            .outerjoin(BudgetPoste, BudgetPoste.id == EncaissementArticle.budget_poste_id)
-            .where(EncaissementArticle.encaissement_id.in_(note_ids))
-            .order_by(EncaissementArticle.encaissement_id, EncaissementArticle.sort_order)
-        )
-    ).all()
-    resultat: dict[uuid.UUID, list[dict[str, Any]]] = {}
-    for article, code in lignes:
-        resultat.setdefault(article.encaissement_id, []).append(
-            {
-                "libelle": article.libelle,
-                "categorie": article.categorie or LEGACY,
-                "categorie_libelle": libelle_categorie(article.categorie, article.libelle),
-                "exercice": article.exercice,
-                "reference_decision": article.reference_decision,
-                "observation": article.description,
-                "quantite": str(article.quantite),
-                "prix_unitaire": str(article.prix_unitaire),
-                "montant": str(article.montant),
-                "poste_code": code,
-            }
-        )
-    return resultat
+    return await articles_par_note(db, note_ids)
 
 
 def _document_note(note: Encaissement, expert: ExpertComptable, articles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -664,101 +637,15 @@ async def situation_membres(
         conditions.append(Encaissement.type_client == type_client)
     lignes = await _notes_jusqu_a(db, user, tenant_id, annee, *conditions)
     articles = await _articles_par_note(db, [note.id for note, _ in lignes])
+    from app.services.notes_debit_rattachements import classeur
+    from app.services.notes_debit_situation import calculer_situation
+
+    # Les réglages « Paramètres notes de débit » rangent par leur poste les
+    # créances qui n'ont pas de nature : une note ancienne n'a qu'un poste et
+    # un libellé, et « Autres créances » n'est pas le défaut d'un poste connu.
+    rattachements = await classeur(db, tenant_id)
+    groupes = calculer_situation(lignes, articles, rattachements, annee)
     zero = Decimal("0.00")
-    categories_cotisation = {COTISATION_ANNUELLE, ARRIERE_COTISATION}
-    categories_penalite = {
-        PENALITE_APO,
-        ARRIERE_PENALITE_APO,
-        AUTRE_PENALITE,
-        ARRIERE_AUTRE_PENALITE,
-    }
-
-    groupes: dict[uuid.UUID, dict[str, Any]] = {}
-    for note, expert in lignes:
-        groupe = groupes.setdefault(
-            expert.id,
-            {
-                "expert": {
-                    "id": str(expert.id),
-                    "numero_ordre": expert.numero_ordre,
-                    "nom": expert.nom_denomination,
-                    "type_ec": expert.type_ec,
-                    "statut_professionnel": expert.statut_professionnel,
-                },
-                "type_client": note.type_client,
-                "cotisations_anterieures": zero,
-                "penalites_anterieures": zero,
-                "cotisation_n": zero,
-                "penalites_n": zero,
-                "autres_creances": zero,
-                "total_creances": zero,
-                "reglements": zero,
-                "reste_du": zero,
-                "avance_n_plus_1": zero,
-                "nb_notes": 0,
-                "autres_details": [],
-            },
-        )
-        groupe["nb_notes"] += 1
-        total_note = max(Decimal(note.montant_total or 0), zero)
-        paye_note = max(Decimal(note.montant_paye or 0), zero)
-        a_imputer = min(total_note, paye_note)
-        groupe["avance_n_plus_1"] += max(paye_note - total_note, zero)
-        exercice_note = note.exercice or (note.date_encaissement.year if note.date_encaissement else annee)
-
-        lignes_note = articles.get(note.id, [])
-        if not lignes_note:
-            lignes_note = [
-                {
-                    "categorie": LEGACY,
-                    "libelle": note.libelle or "Créance historique non ventilée",
-                    "exercice": exercice_note,
-                    "montant": str(total_note),
-                }
-            ]
-
-        # Imputation sur la dette la plus ancienne ; à exercice égal, l'ordre
-        # de la note (tri stable).
-        lignes_note = sorted(lignes_note, key=lambda a: int(a.get("exercice") or exercice_note))
-        for article in lignes_note:
-            montant_article = max(Decimal(str(article.get("montant") or 0)), zero)
-            exercice_article = int(article.get("exercice") or exercice_note)
-            paye_article = min(montant_article, a_imputer)
-            a_imputer -= paye_article
-            reste_article = montant_article - paye_article
-
-            # Une cotisation N+1 déjà réglée est un paiement anticipatif du
-            # point de vue de l'exercice N. Sa dette future n'alourdit pas le
-            # reste exigible de N.
-            if exercice_article > annee:
-                groupe["avance_n_plus_1"] += paye_article
-                continue
-
-            categorie = article.get("categorie") or LEGACY
-            libelle = str(article.get("libelle") or libelle_categorie(categorie))
-            groupe["total_creances"] += montant_article
-            groupe["reglements"] += paye_article
-            groupe["reste_du"] += reste_article
-
-            if categorie in categories_cotisation:
-                cle = "cotisations_anterieures" if exercice_article < annee else "cotisation_n"
-                groupe[cle] += montant_article
-            elif categorie in categories_penalite or (
-                categorie == LEGACY and "penalit" in _sans_accents_minuscules(libelle)
-            ):
-                cle = "penalites_anterieures" if exercice_article < annee else "penalites_n"
-                groupe[cle] += montant_article
-            else:
-                groupe["autres_creances"] += montant_article
-                groupe["autres_details"].append(
-                    {
-                        "libelle": libelle,
-                        "exercice": exercice_article,
-                        "montant": _argent(montant_article),
-                        "paye": _argent(paye_article),
-                        "reste": _argent(reste_article),
-                    }
-                )
 
     resultat: list[dict[str, Any]] = []
     for groupe in groupes.values():
@@ -772,7 +659,7 @@ async def situation_membres(
             continue
         resultat.append(
             {
-                **groupe,
+                **{k: v for k, v in groupe.items() if k != "restes"},
                 "statut": etat,
                 **{
                     cle: _argent(groupe[cle])
@@ -807,13 +694,61 @@ async def situation_membres(
         cle: _argent(sum((Decimal(item[cle]) for item in resultat), zero))
         for cle in _CHAMPS_SITUATION
     }
+    from app.services.notes_debit_rattachements import poste_par_colonne
+
     return {
         "annee": annee,
         "exercice_courant": courant,
         "items": resultat[offset : offset + limit],
         "total": len(resultat),
         "totaux": totaux,
+        "rattachements": await poste_par_colonne(db, tenant_id),
     }
+
+
+class RattachementIn(BaseModel):
+    colonne: str = Field(max_length=40)
+    categorie_membre: str = Field(default="*", max_length=40)
+    budget_poste_code: str = Field(default="", max_length=50)
+
+
+class RattachementsIn(BaseModel):
+    rattachements: list[RattachementIn] = Field(default_factory=list, max_length=200)
+
+
+@router.get("/parametres/rattachements")
+async def lire_parametres_rattachements(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Le poste de recette de chaque colonne de la situation, par catégorie de membre."""
+    from app.services.notes_debit_rattachements import parametres
+
+    return await parametres(db, tenant_id)
+
+
+@router.put("/parametres/rattachements", dependencies=[Depends(has_permission(PERMISSION_IMPORT))])
+async def enregistrer_parametres_rattachements(
+    payload: RattachementsIn,
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from app.services.notes_debit_rattachements import enregistrer, parametres
+
+    retenus = await enregistrer(
+        db, tenant_id, getattr(user, "id", None), [item.model_dump() for item in payload.rattachements]
+    )
+    await log_action(
+        db,
+        user_id=getattr(user, "id", None),
+        action="NOTES_DEBIT_RATTACHEMENTS",
+        target_table="notes_debit_rattachements",
+        target_id=str(tenant_id),
+        new_value={"rattachements": retenus},
+    )
+    await db.commit()
+    return await parametres(db, tenant_id)
 
 
 @router.get("/tableau-de-bord")
@@ -851,24 +786,34 @@ async def tableau_de_bord(
 
     # Les pénalités dues : la part « pénalité » de chaque note impayée, au prorata
     # de ce qui en reste — un versement partiel solde chaque ligne à proportion.
+    # Une note sans nature de créance se range par son poste, selon les
+    # « Paramètres notes de débit » — comme dans la situation des membres.
+    from app.services.notes_debit_rattachements import categorie_membre, classeur
+
+    rattachements = await classeur(db, tenant_id)
     penalites = zero
-    for note, _ in dues:
+    for note, expert in dues:
         total = Decimal(note.montant_total or 0)
         if total <= 0:
             continue
-        part = sum(
-            (
-                Decimal(a["montant"])
-                for a in articles.get(note.id, [])
-                if a.get("categorie")
-                in {PENALITE_APO, ARRIERE_PENALITE_APO, AUTRE_PENALITE, ARRIERE_AUTRE_PENALITE}
-                or (
-                    a.get("categorie") == LEGACY
-                    and "penalit" in _sans_accents_minuscules(a["libelle"])
-                )
-            ),
-            zero,
-        )
+        lignes_note = articles.get(note.id) or [
+            {"categorie": LEGACY, "libelle": note.libelle or "", "montant": str(total), "poste_code": None}
+        ]
+        categorie_expert = categorie_membre(expert.type_ec, expert.statut_professionnel)
+
+        def est_penalite(a: dict[str, Any]) -> bool:
+            if a.get("categorie") in {PENALITE_APO, ARRIERE_PENALITE_APO, AUTRE_PENALITE, ARRIERE_AUTRE_PENALITE}:
+                return True
+            if a.get("categorie") != LEGACY:
+                return False
+            colonne = rattachements.colonne(
+                a.get("poste_code") or note.budget_poste_code, categorie_expert, a.get("libelle")
+            )
+            if colonne is not None:
+                return colonne.startswith("penalites")
+            return "penalit" in _sans_accents_minuscules(a.get("libelle") or "")
+
+        part = sum((Decimal(a["montant"]) for a in lignes_note if est_penalite(a)), zero)
         penalites += (part * _reste(note) / total).quantize(Decimal("0.01"))
 
     def regroupe(cle, sources):

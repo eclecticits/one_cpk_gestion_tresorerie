@@ -54,6 +54,7 @@ from app.models.regularisation_caisse import RegularisationCaisse  # noqa: F401
 from app.models.category_changes_history import CategoryChangesHistory  # noqa: F401
 from app.models.imports_history import ImportsHistory  # noqa: F401
 from app.models.note_debit_import import NoteDebitImport  # noqa: F401
+from app.models.note_debit_rattachement import NoteDebitRattachement  # noqa: F401
 from app.models.ligne_requisition import LigneRequisition  # noqa: F401
 from app.models.organisation_settings import OrganisationSettings  # noqa: F401
 from app.models.payment_history import PaymentHistory  # noqa: F401

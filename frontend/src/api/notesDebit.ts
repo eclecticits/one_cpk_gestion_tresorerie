@@ -69,8 +69,42 @@ export interface SituationMembre {
   }[]
 }
 
+/** Colonnes de la situation des membres, rattachées chacune à un poste de recette. */
+export type ColonneSituation =
+  | 'cotisations_anterieures'
+  | 'penalites_anterieures'
+  | 'cotisation_n'
+  | 'penalites_n'
+  | 'autres_creances'
+
+export interface RattachementPoste {
+  colonne: ColonneSituation
+  /** « * » : toutes les catégories qui n'ont pas leur propre poste. */
+  categorie_membre: string
+  budget_poste_code: string
+  /** Le code ne désigne plus aucun poste de recette actif de l'exercice en cours. */
+  introuvable?: boolean
+}
+
+export interface ParametresRattachements {
+  colonnes: Array<{ cle: ColonneSituation; libelle: string }>
+  categories: string[]
+  postes: Array<{ code: string; libelle: string }>
+  rattachements: RattachementPoste[]
+  /** Proposition tirée des libellés du budget, tant que rien n'est enregistré. */
+  suggestions: RattachementPoste[]
+}
+
+export const lireRattachementsNotesDebit = () =>
+  apiRequest<ParametresRattachements>('GET', '/notes-debit/parametres/rattachements')
+
+export const enregistrerRattachementsNotesDebit = (rattachements: RattachementPoste[]) =>
+  apiRequest<ParametresRattachements>('PUT', '/notes-debit/parametres/rattachements', { rattachements })
+
 export interface SituationNotesDebit {
   annee: number
+  /** Poste de chaque colonne, par catégorie de membre (« * » = toutes). */
+  rattachements?: Partial<Record<ColonneSituation, Array<{ categorie_membre: string; code: string; libelle: string | null }>>>
   /** Année de l'exercice budgétaire en cours : le N par défaut. */
   exercice_courant: number
   items: SituationMembre[]
@@ -123,6 +157,24 @@ export async function listerToutesNotesDebit(params: {
   const items = [...premiere.items]
   while (items.length < premiere.total) {
     const suite = await listerNotesDebit({ ...params, limit: PAGE, offset: items.length })
+    if (!suite.items.length) break
+    items.push(...suite.items)
+  }
+  return { ...premiere, items }
+}
+
+/** Toute la situation filtrée, page après page : ce que les exports reprennent. */
+export async function situationCompleteNotesDebit(params: {
+  annee?: number
+  q?: string
+  type_client?: string
+  statut?: StatutSituationMembre
+}): Promise<SituationNotesDebit> {
+  const PAGE = 200
+  const premiere = await situationNotesDebit({ ...params, limit: PAGE, offset: 0 })
+  const items = [...premiere.items]
+  while (items.length < premiere.total) {
+    const suite = await situationNotesDebit({ ...params, limit: PAGE, offset: items.length })
     if (!suite.items.length) break
     items.push(...suite.items)
   }

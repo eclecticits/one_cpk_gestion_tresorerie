@@ -1343,3 +1343,21 @@ li.barreLigne:hover {
 .nowrap {
   white-space: nowrap;
 }
+
+/* Poste de recette sous le titre d'une colonne de la situation. */
+.posteEntete,
+.posteEnteteManquant {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.posteEntete {
+  color: #6b7280;
+}
+
+.posteEnteteManquant {
+  color: #b45309;
+}

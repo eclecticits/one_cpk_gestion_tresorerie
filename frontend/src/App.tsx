@@ -42,6 +42,7 @@ const ServiceDashboard = lazyWithRetry(() => import('./pages/ServiceDashboard'))
 const ServicePortal = lazyWithRetry(() => import('./pages/ServicePortal'))
 const ExpertsComptables = lazyWithRetry(() => import('./pages/ExpertsComptables'))
 const NotesDebitExperts = lazyWithRetry(() => import('./pages/NotesDebitExperts'))
+const NotesDebitParametres = lazyWithRetry(() => import('./pages/NotesDebitParametres'))
 const Clients = lazyWithRetry(() => import('./pages/Clients'))
 const Settings = lazyWithRetry(() => import('./pages/Settings'))
 const ImportHistory = lazyWithRetry(() => import('./pages/ImportHistory'))
@@ -353,6 +354,7 @@ function AppRoutes() {
         <Route path="services" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServiceDashboard /></Suspense></ProtectedRoute>} />
         <Route path="experts-comptables" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><ExpertsComptables /></Suspense></ProtectedRoute>} />
         <Route path="experts-comptables/notes-debit" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><NotesDebitExperts /></Suspense></ProtectedRoute>} />
+        <Route path="experts-comptables/notes-debit/parametres" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><NotesDebitParametres /></Suspense></ProtectedRoute>} />
         <Route path="clients" element={<ProtectedRoute permission={["encaissements", "sorties_fonds"]}><Suspense fallback={<LoadingFallback />}><Clients /></Suspense></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />
         <Route path="historique-imports" element={<ProtectedRoute permission="historique_imports"><Suspense fallback={<LoadingFallback />}><ImportHistory /></Suspense></ProtectedRoute>} />

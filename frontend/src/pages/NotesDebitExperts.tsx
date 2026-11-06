@@ -9,6 +9,7 @@ import {
   listerNotesDebit,
   listerToutesNotesDebit,
   PERMISSION_IMPORT_NOTES_DEBIT,
+  situationCompleteNotesDebit,
   situationNotesDebit,
   type ImportNotesDebit,
   type ListeNotesDebit,
@@ -45,6 +46,23 @@ async function imprimerNotes(params: { ids?: string[]; import_id?: string }) {
 }
 
 type Onglet = 'bord' | 'situation' | 'liste' | 'imports'
+
+/**
+ * Le poste de recette d'une colonne de la situation, sous son titre. Un poste
+ * par catégorie s'abrège ; le détail est dans l'infobulle. Une colonne sans
+ * rattachement le dit, pour qu'on aille la régler dans les paramètres.
+ */
+function PosteEntete({ postes }: { postes?: Array<{ categorie_membre: string; code: string; libelle: string | null }> }) {
+  if (!postes) return null
+  if (postes.length === 0) {
+    return <span className={styles.posteEnteteManquant} title="Aucun poste : à régler dans Paramètres notes de débit">sans poste</span>
+  }
+  const detail = postes
+    .map(p => `${p.categorie_membre === '*' ? 'Toutes catégories' : p.categorie_membre} : ${p.code}${p.libelle ? ` — ${p.libelle}` : ''}`)
+    .join('\n')
+  const codes = [...new Set(postes.map(p => p.code))]
+  return <span className={styles.posteEntete} title={detail}>{codes.length === 1 ? codes[0] : `${codes.length} postes`}</span>
+}
 
 /**
  * Notes de débit des experts-comptables et des SEC.
@@ -224,6 +242,43 @@ function SituationMembres({ onVoirNotes }: { onVoirNotes: (numeroOrdre: string) 
     }
   }, [annee, rechercheStable, typeClient, statut, page])
 
+  const { user } = useAuth()
+  const { notifyError } = useToast()
+  const [export_, setExport] = useState<'pdf' | 'excel' | null>(null)
+
+  /** Toute la situation filtrée, pas la seule page affichée. */
+  const exporter = async (formatExport: 'pdf' | 'excel') => {
+    setExport(formatExport)
+    try {
+      const situation = await situationCompleteNotesDebit({
+        annee: annee ?? undefined,
+        q: rechercheStable.trim(),
+        type_client: typeClient,
+        statut,
+      })
+      const filtres = [
+        { label: 'Exercice N', value: String(situation.annee) },
+        { label: 'Membres', value: typeClient === 'sec' ? 'SEC' : typeClient ? 'Experts-comptables' : 'EC et SEC' },
+        statut !== 'toutes' && {
+          label: 'Situation',
+          value: { en_retard: 'En retard', partiel: 'Paiement partiel', en_regle: 'En règle', en_avance: 'En avance N+1' }[statut],
+        },
+        rechercheStable.trim() && { label: 'Recherche', value: rechercheStable.trim() },
+      ].filter((f): f is { label: string; value: string } => Boolean(f))
+      const mod = await import('../utils/exportNotesDebit')
+      const params = {
+        situation,
+        filtres,
+        organisation: user?.organisation_name || user?.organisation_slug || 'ONEC',
+      }
+      await (formatExport === 'pdf' ? mod.exporterSituationPDF(params) : mod.exporterSituationExcel(params))
+    } catch (err) {
+      notifyError('Export', err instanceof ApiError ? err.message : "Impossible d'exporter la situation des membres.")
+    } finally {
+      setExport(null)
+    }
+  }
+
   const total = donnees?.total ?? 0
   const pages = Math.max(1, Math.ceil(total / SITUATION_PAR_PAGE))
   const totaux = donnees?.totaux
@@ -268,6 +323,26 @@ function SituationMembres({ onVoirNotes }: { onVoirNotes: (numeroOrdre: string) 
           <option value="en_regle">En règle</option>
           <option value="en_avance">En avance N+1</option>
         </select>
+        <div className={styles.exports}>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={() => void exporter('pdf')}
+            disabled={export_ !== null || total === 0}
+            title="Exporter toute la situation filtrée en PDF"
+          >
+            <FileText size={16} aria-hidden /> {export_ === 'pdf' ? 'Export…' : 'PDF'}
+          </button>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={() => void exporter('excel')}
+            disabled={export_ !== null || total === 0}
+            title="Exporter toute la situation filtrée en Excel"
+          >
+            <FileSpreadsheet size={16} aria-hidden /> {export_ === 'excel' ? 'Export…' : 'Excel'}
+          </button>
+        </div>
       </section>
 
       <section className={styles.summaryStrip} aria-label={`Synthèse N ${an(0, '')}`}>
@@ -297,11 +372,11 @@ function SituationMembres({ onVoirNotes }: { onVoirNotes: (numeroOrdre: string) 
               <tr>
                 <th>Membre</th>
                 <th>N° d’ordre</th>
-                <th className={styles.num}>Cotisations ≤ N-1</th>
-                <th className={styles.num}>Pénalités ≤ N-1</th>
-                <th className={styles.num}>Cotisation N</th>
-                <th className={styles.num}>Pénalités N</th>
-                <th>Autres créances</th>
+                <th className={styles.num}>Cotisations ≤ N-1<PosteEntete postes={donnees?.rattachements?.cotisations_anterieures} /></th>
+                <th className={styles.num}>Pénalités ≤ N-1<PosteEntete postes={donnees?.rattachements?.penalites_anterieures} /></th>
+                <th className={styles.num}>Cotisation N<PosteEntete postes={donnees?.rattachements?.cotisation_n} /></th>
+                <th className={styles.num}>Pénalités N<PosteEntete postes={donnees?.rattachements?.penalites_n} /></th>
+                <th>Autres créances<PosteEntete postes={donnees?.rattachements?.autres_creances} /></th>
                 <th className={styles.num}>Total</th>
                 <th className={styles.num}>Règlements</th>
                 <th className={styles.num}>Reste dû</th>

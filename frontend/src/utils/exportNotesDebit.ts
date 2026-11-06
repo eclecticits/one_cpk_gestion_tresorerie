@@ -2,7 +2,14 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { format } from 'date-fns'
 import { LIBELLE_TRANCHE } from '../api/creances'
-import { LIBELLE_STATUT_NOTE, type NoteDebitExpert, type TableauDeBordNotes } from '../api/notesDebit'
+import {
+  LIBELLE_STATUT_NOTE,
+  type ColonneSituation,
+  type NoteDebitExpert,
+  type SituationMembre,
+  type SituationNotesDebit,
+  type TableauDeBordNotes,
+} from '../api/notesDebit'
 import { formatAmount, toNumber } from './amount'
 import { buildListReport, type ReportFilter } from './pdfGeneratorReports'
 import { drawTenantFooter, drawTenantHeader, loadTenantIdentity } from './pdfTenantIdentity'
@@ -172,6 +179,197 @@ export async function exporterListeNotesExcel({ notes, totaux, filtres, organisa
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, sheet, 'Notes de débit')
   telechargerClasseur(XLSX, wb, `Notes_de_debit_${horodatage()}.xlsx`)
+}
+
+// ---------------------------------------------------------------------------
+//  Situation des membres
+// ---------------------------------------------------------------------------
+
+export const LIBELLE_SITUATION_MEMBRE: Record<SituationMembre['statut'], string> = {
+  en_retard: 'En retard',
+  partiel: 'Partiel',
+  en_regle: 'En règle',
+  en_avance: 'En avance N+1',
+}
+
+export interface ExportSituation {
+  situation: SituationNotesDebit
+  filtres: ReportFilter[]
+  organisation: string
+}
+
+const categorieSituation = (ligne: SituationMembre) =>
+  ligne.type_client === 'sec' ? 'SEC' : ligne.expert.statut_professionnel || 'EC'
+
+/** Les intitulés de colonnes, avec les années réelles de N. */
+function colonnesSituation(annee: number) {
+  return {
+    cotisations_anterieures: `Cotisations ≤ ${annee - 1}`,
+    penalites_anterieures: `Pénalités ≤ ${annee - 1}`,
+    cotisation_n: `Cotisation ${annee}`,
+    penalites_n: `Pénalités ${annee}`,
+    autres_creances: 'Autres créances',
+  } satisfies Record<ColonneSituation, string>
+}
+
+/** « Cotisation 2026 : I.3.1 (EC Cabinet), I.3.2 (EC Indépendant)… » — le rattachement en clair. */
+function postesSituation(situation: SituationNotesDebit): string[] {
+  const libelles = colonnesSituation(situation.annee)
+  return (Object.keys(libelles) as ColonneSituation[]).map((colonne) => {
+    const postes = situation.rattachements?.[colonne] ?? []
+    const detail = postes.length
+      ? postes.map((p) => (p.categorie_membre === '*' ? p.code : `${p.code} (${p.categorie_membre})`)).join(', ')
+      : 'sans poste'
+    return `${libelles[colonne]} : ${detail}`
+  })
+}
+
+export async function exporterSituationPDF({ situation, filtres }: ExportSituation) {
+  const { items, totaux, annee } = situation
+  const libelles = colonnesSituation(annee)
+  await buildListReport({
+    title: `SITUATION DES MEMBRES — EXERCICE ${annee}`,
+    footerLabel: 'Situation des membres',
+    columns: [
+      { header: 'Membre', width: 44 },
+      { header: "N° d'ordre", width: 21, halign: 'center' },
+      { header: libelles.cotisations_anterieures, width: 18, halign: 'right' },
+      { header: libelles.penalites_anterieures, width: 17, halign: 'right' },
+      { header: libelles.cotisation_n, width: 18, halign: 'right' },
+      { header: libelles.penalites_n, width: 17, halign: 'right' },
+      { header: libelles.autres_creances, width: 18, halign: 'right' },
+      { header: 'Total', width: 19, halign: 'right' },
+      { header: 'Règlements', width: 19, halign: 'right' },
+      { header: 'Reste dû', width: 19, halign: 'right' },
+      { header: `Avance ${annee + 1}`, width: 17, halign: 'right' },
+      // « Situation » plutôt que « Statut » : voir la liste des notes.
+      { header: 'Situation', width: 20, halign: 'center' },
+    ],
+    rows: items.map((ligne) => [
+      `${ligne.expert.nom} (${categorieSituation(ligne)})`,
+      ligne.expert.numero_ordre,
+      formatAmount(ligne.cotisations_anterieures),
+      formatAmount(ligne.penalites_anterieures),
+      formatAmount(ligne.cotisation_n),
+      formatAmount(ligne.penalites_n),
+      formatAmount(ligne.autres_creances),
+      formatAmount(ligne.total_creances),
+      formatAmount(ligne.reglements),
+      formatAmount(ligne.reste_du),
+      formatAmount(ligne.avance_n_plus_1),
+      LIBELLE_SITUATION_MEMBRE[ligne.statut],
+    ]),
+    footRow: [
+      'TOTAL (USD)',
+      '',
+      formatAmount(totaux.cotisations_anterieures),
+      formatAmount(totaux.penalites_anterieures),
+      formatAmount(totaux.cotisation_n),
+      formatAmount(totaux.penalites_n),
+      formatAmount(totaux.autres_creances),
+      formatAmount(totaux.total_creances),
+      formatAmount(totaux.reglements),
+      formatAmount(totaux.reste_du),
+      formatAmount(totaux.avance_n_plus_1),
+      '',
+    ],
+    summary: [
+      { label: 'Membres', value: String(items.length) },
+      { label: 'Créances', value: usd(totaux.total_creances) },
+      { label: 'Règlements', value: usd(totaux.reglements) },
+      { label: 'Reste exigible', value: usd(totaux.reste_du) },
+    ],
+    options: {
+      filters: [...filtres, { label: 'Postes', value: postesSituation(situation).join(' · ') }],
+    },
+    fileNameBase: `situation_membres_${annee}_${horodatage()}`,
+  })
+}
+
+export async function exporterSituationExcel({ situation, filtres, organisation }: ExportSituation) {
+  const XLSX = await chargerXlsx()
+  const { items, totaux, annee } = situation
+  const libelles = colonnesSituation(annee)
+  const sheet = createReportListSheet(XLSX, {
+    title: `SITUATION DES MEMBRES — EXERCICE ${annee}`,
+    organisation,
+    subtitle: filtres.length
+      ? filtres.map((f) => `${f.label} : ${f.value}`).join('  ·  ')
+      : `Généré le ${format(new Date(), 'dd/MM/yyyy HH:mm')}`,
+    headers: [
+      "N° d'ordre",
+      'Membre',
+      'Catégorie',
+      libelles.cotisations_anterieures,
+      libelles.penalites_anterieures,
+      libelles.cotisation_n,
+      libelles.penalites_n,
+      libelles.autres_creances,
+      'Détail autres créances',
+      'Total',
+      'Règlements',
+      'Reste dû',
+      `Avance ${annee + 1}`,
+      'Situation',
+      'Notes',
+    ],
+    rows: items.map((ligne) => [
+      ligne.expert.numero_ordre,
+      ligne.expert.nom,
+      categorieSituation(ligne),
+      toNumber(ligne.cotisations_anterieures),
+      toNumber(ligne.penalites_anterieures),
+      toNumber(ligne.cotisation_n),
+      toNumber(ligne.penalites_n),
+      toNumber(ligne.autres_creances),
+      ligne.autres_details.map((d) => `${d.libelle} (${d.exercice})`).join(' · '),
+      toNumber(ligne.total_creances),
+      toNumber(ligne.reglements),
+      toNumber(ligne.reste_du),
+      toNumber(ligne.avance_n_plus_1),
+      LIBELLE_SITUATION_MEMBRE[ligne.statut],
+      ligne.nb_notes,
+    ]),
+    widths: [14, 34, 14, 14, 14, 14, 14, 14, 30, 15, 15, 15, 14, 16, 7],
+    moneyColumns: [3, 4, 5, 6, 7, 9, 10, 11, 12],
+    centerColumns: [0, 2, 13, 14],
+    wrapColumns: [8],
+    notice: { text: `Rattachement au budget — ${postesSituation(situation).join('  ·  ')}`, tone: 'accent' },
+    summaryCards: [
+      { label: 'Membres', value: items.length, format: 'integer' },
+      { label: 'Créances', value: toNumber(totaux.total_creances), format: 'money' },
+      { label: 'Règlements', value: toNumber(totaux.reglements), format: 'money', tone: 'positive' },
+      { label: 'Reste exigible', value: toNumber(totaux.reste_du), format: 'money', tone: 'negative' },
+      { label: `Avances ${annee + 1}`, value: toNumber(totaux.avance_n_plus_1), format: 'money', tone: 'accent' },
+    ],
+    footerRow: [
+      'TOTAL',
+      '',
+      '',
+      toNumber(totaux.cotisations_anterieures),
+      toNumber(totaux.penalites_anterieures),
+      toNumber(totaux.cotisation_n),
+      toNumber(totaux.penalites_n),
+      toNumber(totaux.autres_creances),
+      '',
+      toNumber(totaux.total_creances),
+      toNumber(totaux.reglements),
+      toNumber(totaux.reste_du),
+      toNumber(totaux.avance_n_plus_1),
+      '',
+      '',
+    ],
+    cellTone: (valeur, _ligne, colonne) => {
+      if (colonne !== 13) return undefined
+      if (valeur === 'En retard') return 'negative'
+      if (valeur === 'Partiel') return 'warning'
+      if (valeur === 'En avance N+1') return 'accent'
+      return 'positive'
+    },
+  })
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, sheet, `Situation ${annee}`)
+  telechargerClasseur(XLSX, wb, `Situation_membres_${annee}_${horodatage()}.xlsx`)
 }
 
 // ---------------------------------------------------------------------------
