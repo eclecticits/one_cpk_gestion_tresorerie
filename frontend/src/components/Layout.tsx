@@ -50,7 +50,6 @@ import {
   PanelLeft,
   PanelLeftClose,
   Receipt,
-  RefreshCw,
   Send,
   Settings2,
   ShieldCheck,
@@ -301,7 +300,6 @@ const SECRETARIAT_NAV: NavItem[] = [
 
 const TABLEAU_NAV: NavItem[] = [
   { path: '/tableau', label: 'Tableau de bord', permission: 'tableau.view', icon: <LayoutDashboard size={18} /> },
-  { path: '/tableau/actualisations', label: 'Actualisations', permission: 'tableau.view', icon: <RefreshCw size={18} /> },
   { path: '/tableau/base', label: 'Base Tableau', permission: 'tableau.view', icon: <Layers size={18} /> },
   { path: '/tableau/imports', label: 'Imports Excel', permission: 'tableau.import', icon: <Upload size={18} /> },
   { path: '/tableau/analyse', label: 'Analyse réglementaire', permission: 'tableau.view', icon: <Bot size={18} /> },

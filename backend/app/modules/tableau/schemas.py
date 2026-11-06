@@ -27,6 +27,21 @@ class TableauImportOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TableauSortieOut(BaseModel):
+    """Sortie du Tableau d'un membre : décès, démission, radiation, omission, cessation."""
+    id: int
+    situation: Literal["DECEDE", "DEMISSIONNAIRE", "RADIE", "OMIS", "CESSE"]
+    libelle: str
+    date_effet: date
+    lieu_deces: str | None = None
+    motif_cessation: str | None = None
+    societe_absorbante: str | None = None
+    reference_decision: str | None = None
+    observation: str | None = None
+    piece_path: str | None = None
+    piece_nom: str | None = None
+
+
 class TableauDossierOut(BaseModel):
     id: int
     import_id: int
@@ -73,6 +88,8 @@ class TableauDossierOut(BaseModel):
     assurance_valide: bool | None = None
     # atteint / insuffisant / non_requis / inconnu, selon le minimum de la catégorie.
     formation_etat: str | None = None
+    # Sortie du Tableau qui vaut pour l'exercice : le membre n'est alors plus jugé.
+    sortie: TableauSortieOut | None = None
 
     model_config = {"from_attributes": True}
 
@@ -169,6 +186,21 @@ class TableauStatsOut(BaseModel):
     imports_count: int
     last_exercice: str | None
     analyse_base_status: Literal["completed", "stale"] | None = None
+    # Lus dans la base consolidée (dossiers et membres des fichiers sources).
+    membres_base: int = 0
+    en_regle: int = 0
+    non_en_regle: int = 0
+    a_deliberer: int = 0
+    sans_conclusion: int = 0
+    membres_signales: int = 0
+    membres_sortis: int = 0
+    # Pour les graphiques du tableau de bord.
+    par_categorie: list[dict[str, Any]] = Field(default_factory=list)
+    # {"cotisation": {"ok", "ko", "inconnu"}, ...} : seulement les catégories soumises au critère.
+    criteres: dict[str, dict[str, int]] = Field(default_factory=dict)
+    provinces: list[dict[str, Any]] = Field(default_factory=list)
+    # Personnes physiques : sexe, actif ; tous : ancienneté selon le N° d'ordre.
+    profil: dict[str, dict[str, int]] = Field(default_factory=dict)
 
 
 class TableauActualisationListItem(BaseModel):
@@ -289,6 +321,7 @@ class TableauMembreACompleterOut(BaseModel):
     date_situation: date | None = None
     source_file_name: str | None = None
     signalements: list[str] = Field(default_factory=list)
+    sortie: TableauSortieOut | None = None
 
 
 class TableauBaseOut(BaseModel):

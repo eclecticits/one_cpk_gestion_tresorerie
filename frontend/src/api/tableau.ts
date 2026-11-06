@@ -47,6 +47,8 @@ export interface DefinitionsCategorie {
   cotisation_partielle?: 'a_deliberer' | 'bloquant'
   /** Date (AAAA-MM-JJ) jusqu'à laquelle l'assurance doit au moins couvrir ; absente = date de situation. */
   assurance_fin_min?: string
+  /** Date (AAAA-MM-JJ) à partir de laquelle une déclaration de chiffre d'affaires compte ; absente = pas de condition de date. */
+  ca_declaration_min?: string
 }
 
 export type CritereTableau = 'cotisation' | 'formation' | 'assurance' | 'chiffre_affaires'
@@ -80,6 +82,31 @@ export interface TableauCotisationNotes {
   du_anterieur: string
   reste_anterieur: string
   nb_notes: number
+}
+
+export type SituationSortie = 'DECEDE' | 'DEMISSIONNAIRE' | 'RADIE' | 'OMIS' | 'CESSE'
+
+/** Sortie du Tableau d'un membre : il garde sa catégorie mais n'est plus jugé. */
+export interface TableauSortie {
+  id: number
+  situation: SituationSortie
+  libelle: string
+  date_effet: string
+  lieu_deces: string | null
+  motif_cessation: 'DISSOLUTION' | 'FUSION' | 'RADIATION' | null
+  societe_absorbante: string | null
+  reference_decision: string | null
+  observation: string | null
+  piece_path: string | null
+  piece_nom: string | null
+}
+
+export const LIBELLES_SITUATION_SORTIE: Record<SituationSortie, string> = {
+  DECEDE: 'Décédé',
+  DEMISSIONNAIRE: 'Démissionnaire',
+  RADIE: 'Radié',
+  OMIS: 'Omis',
+  CESSE: "A cessé d'exister",
 }
 
 export interface TableauDossier {
@@ -123,6 +150,7 @@ export interface TableauDossier {
   cotisation_notes?: TableauCotisationNotes | null
   /** Assurance selon la période de validité définie pour la catégorie. */
   assurance_valide?: boolean | null
+  sortie?: TableauSortie | null
 }
 
 export interface TableauAnalyse {
@@ -191,6 +219,19 @@ export interface TableauStats {
   imports_count: number
   last_exercice: string | null
   analyse_base_status: 'completed' | 'stale' | null
+  /** Lus dans la base consolidée : dossiers du classeur et membres des fichiers sources. */
+  membres_base?: number
+  en_regle?: number
+  non_en_regle?: number
+  a_deliberer?: number
+  sans_conclusion?: number
+  membres_signales?: number
+  membres_sortis?: number
+  par_categorie?: Array<{ categorie: string; en_regle: number; a_deliberer: number; non_en_regle: number; sans_conclusion: number; total: number }>
+  /** Par critère : seulement les membres des catégories qui y sont soumises. */
+  criteres?: Partial<Record<'cotisation' | 'formation' | 'assurance' | 'chiffre_affaires', { ok: number; ko: number; inconnu: number }>>
+  provinces?: Array<{ province: string; total: number }>
+  profil?: Partial<Record<'sexe' | 'anciennete' | 'actif', Record<string, number>>>
 }
 
 export interface TableauComparison {
@@ -290,6 +331,7 @@ export interface TableauMembreACompleter {
   date_situation: string | null
   source_file_name: string | null
   signalements: string[]
+  sortie?: TableauSortie | null
 }
 
 export interface TableauBase {
@@ -331,6 +373,8 @@ export const getTableauBase = (params?: {
   sexe?: string
   anciennete?: string
   actif?: string
+  /** en_exercice (défaut côté serveur), sortis, tous, ou un code de sortie. */
+  situation?: string
   /** Filtres sur ce que calculent les règles de délibération. */
   regles?: FiltresRegles
   limit?: number
@@ -348,11 +392,72 @@ export const getTableauBase = (params?: {
   if (params?.sexe) qs.set('sexe', params.sexe)
   if (params?.anciennete) qs.set('anciennete', params.anciennete)
   if (params?.actif) qs.set('actif', params.actif)
+  if (params?.situation) qs.set('situation', params.situation)
   for (const [cle, valeur] of Object.entries(params?.regles || {})) if (valeur) qs.set(cle, valeur)
   if (params?.limit) qs.set('limit', String(params.limit))
   if (params?.offset) qs.set('offset', String(params.offset))
   const suffix = qs.toString() ? `?${qs}` : ''
   return apiRequest<TableauBase>('GET', `${BASE}/base${suffix}`)
+}
+
+export interface SortieSaisie {
+  numero_ordre: string
+  nom: string
+  categorie: string
+  situation: SituationSortie
+  date_effet: string
+  lieu_deces?: string
+  motif_cessation?: string
+  societe_absorbante?: string
+  reference_decision?: string
+  observation?: string
+  piece?: File | null
+}
+
+/** Déclare (ou modifie) la sortie du Tableau d'un membre. */
+export const declarerSortieMembre = (saisie: SortieSaisie) => {
+  const form = new FormData()
+  for (const [cle, valeur] of Object.entries(saisie)) {
+    if (cle === 'piece') continue
+    if (valeur !== undefined && valeur !== null && String(valeur).trim() !== '') form.append(cle, String(valeur))
+  }
+  if (saisie.piece) form.append('piece', saisie.piece)
+  return apiRequest<TableauSortie>('POST', `${BASE}/sorties`, form)
+}
+
+/** Annule une sortie déclarée à tort : le membre est réintégré. */
+export const annulerSortieMembre = (sortieId: number) =>
+  apiRequest<void>('DELETE', `${BASE}/sorties/${sortieId}`)
+
+/** Lignes d'un import, colonnes du fichier Excel dans leur ordre. */
+export interface TableauImportLignes {
+  import_id: number
+  source_type: TableauImport['source_type']
+  feuilles: Array<{ nom: string; lignes: number }>
+  feuille: string | null
+  colonnes: string[]
+  total: number
+  total_signalees: number
+  limit: number
+  offset: number
+  lignes: Array<{ id: number; ligne: number; valeurs: Array<string | null>; signalements: string[] }>
+}
+
+export const getTableauImportLignes = (importId: number, params: {
+  feuille?: string | null
+  q?: string
+  signalees?: boolean
+  limit?: number
+  offset?: number
+} = {}) => {
+  const qs = new URLSearchParams()
+  if (params.feuille) qs.set('feuille', params.feuille)
+  if (params.q) qs.set('q', params.q)
+  if (params.signalees) qs.set('signalees', 'true')
+  if (params.limit) qs.set('limit', String(params.limit))
+  if (params.offset) qs.set('offset', String(params.offset))
+  const suffix = qs.toString() ? `?${qs}` : ''
+  return apiRequest<TableauImportLignes>('GET', `${BASE}/imports/${importId}/lignes${suffix}`)
 }
 
 export const uploadTableauExcel = (exercice: string, file: File, dateSituation: string, sourceType = 'tableau') => {

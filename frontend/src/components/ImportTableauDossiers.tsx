@@ -7,9 +7,11 @@ interface ImportTableauDossiersProps {
   exercice: string
   onExerciceChange: (value: string) => void
   onImported: (importId: number | null) => void
+  /** Source imposée par l'écran appelant : les onglets de source sont alors masqués. */
+  source?: SourceType
 }
 
-type SourceType = 'tableau' | 'personnes_physiques' | 'personnes_morales' | 'chiffres_affaires' | 'assurances'
+export type SourceType = 'tableau' | 'personnes_physiques' | 'personnes_morales' | 'chiffres_affaires' | 'assurances'
 
 // Contrat d'import — miroir des adaptateurs serveur (`source_adapters.py`).
 const SOURCES: Record<SourceType, {
@@ -142,9 +144,9 @@ const aujourdhui = () => {
 const tailleLisible = (octets: number) =>
   octets < 1024 * 1024 ? `${Math.max(1, Math.round(octets / 1024))} Ko` : `${(octets / (1024 * 1024)).toFixed(1)} Mo`
 
-export default function ImportTableauDossiers({ exercice, onExerciceChange, onImported }: ImportTableauDossiersProps) {
+export default function ImportTableauDossiers({ exercice, onExerciceChange, onImported, source: sourceImposee }: ImportTableauDossiersProps) {
   const [importing, setImporting] = useState(false)
-  const [sourceType, setSourceType] = useState<SourceType>('tableau')
+  const [sourceType, setSourceType] = useState<SourceType>(sourceImposee ?? 'tableau')
   const [dateSituation, setDateSituation] = useState(aujourdhui)
   const [fichier, setFichier] = useState<File | null>(null)
   const [feuilles, setFeuilles] = useState<FeuilleApercu[]>([])
@@ -369,7 +371,7 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
         </p>
       </div>
 
-      <div className={styles.expertModuleTabs} role="tablist" aria-label="Type de source">
+      {!sourceImposee && <div className={styles.expertModuleTabs} role="tablist" aria-label="Type de source">
         {(Object.keys(SOURCES) as SourceType[]).map((type) => (
           <button
             key={type}
@@ -384,7 +386,7 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
             <span>{SOURCES[type].description}</span>
           </button>
         ))}
-      </div>
+      </div>}
 
       <section className={styles.importCard}>
         <div className={styles.importCardHeader}>

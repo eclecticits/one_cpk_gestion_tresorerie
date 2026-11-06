@@ -322,7 +322,7 @@ function AppRoutes() {
         <Route path="secretariat/agenda" element={<ModuleRoute permission="secretariat.use_agent_agenda" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentAgendaPage /></Suspense></ModuleRoute>} />
         <Route path="secretariat/documents" element={<ModuleRoute permission="secretariat.use_agent_documents" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentDocumentsPage /></Suspense></ModuleRoute>} />
         <Route path="tableau" element={<ModuleRoute permission="tableau.view" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
-        <Route path="tableau/actualisations" element={<ModuleRoute permission="tableau.view" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
+        <Route path="tableau/actualisations" element={<Navigate to="/tableau" replace />} />
         <Route path="tableau/base" element={<ModuleRoute permission="tableau.view" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
         <Route path="tableau/imports" element={<ModuleRoute permission="tableau.import" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />
         <Route path="tableau/analyse" element={<ModuleRoute permission="tableau.view" moduleKey="tableau"><Suspense fallback={<LoadingFallback />}><TableauModulePage /></Suspense></ModuleRoute>} />

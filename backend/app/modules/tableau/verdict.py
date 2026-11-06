@@ -175,6 +175,9 @@ DEFINITIONS: dict[str, Any] = {
     # Date (AAAA-MM-JJ) jusqu'à laquelle l'assurance doit au moins couvrir ;
     # absente = la date de situation du fichier analysé.
     "assurance_fin_min": None,
+    # Date (AAAA-MM-JJ) à partir de laquelle une déclaration de chiffre d'affaires
+    # compte ; absente = toute déclaration de l'exercice (pas de condition de date).
+    "ca_declaration_min": None,
 }
 
 
@@ -203,6 +206,13 @@ def _definitions_valides(data: Any) -> dict[str, dict[str, Any]]:
                 propres["assurance_fin_min"] = _date.fromisoformat(str(valeurs["assurance_fin_min"])).isoformat()
             except ValueError:
                 pass  # date illisible : la date de situation reste la référence
+        if "chiffre_affaires" in CRITERES_APPLICABLES.get(categorie, []) and valeurs.get("ca_declaration_min"):
+            try:
+                from datetime import date as _date
+
+                propres["ca_declaration_min"] = _date.fromisoformat(str(valeurs["ca_declaration_min"])).isoformat()
+            except ValueError:
+                pass  # date illisible : pas de condition de date
         if propres:
             resultat[categorie] = propres
     return resultat
@@ -236,6 +246,35 @@ def assurance_valide(
         # Rien à comparer : la souscription déclarée fait foi.
         return couverture.get("souscrit") if couverture.get("souscrit") is not None else valeur_import
     return fin >= minimum
+
+
+def ca_declare(
+    categorie: str | None,
+    declarations: list[tuple[bool, Any]] | None,
+    reglages: "TableauReglages | None" = None,
+) -> bool | None:
+    """Le chiffre d'affaires est-il déclaré, selon la date réglée pour la catégorie ?
+
+    `declarations` : (ca_present, date de la déclaration) pour chaque déclaration
+    de l'exercice. Sans date réglée, une déclaration suffit, quelle que soit sa
+    date. Avec une date, seule compte une déclaration faite ce jour-là ou après ;
+    une déclaration sans date ne permet pas de trancher (None : à délibérer).
+    """
+    from datetime import date as _date
+
+    if not declarations:
+        return None
+    reglages = reglages or TableauReglages()
+    brut = reglages._definition(categorie, "ca_declaration_min")
+    presentes = [quand for present, quand in declarations if present]
+    if not brut:
+        return bool(presentes)
+    minimum = _date.fromisoformat(brut)
+    if any(isinstance(quand, _date) and quand >= minimum for quand in presentes):
+        return True
+    if any(quand is None for quand in presentes):
+        return None
+    return False
 
 
 def etat_formation(dossier: dict[str, Any], exercice_annee: int | None, reglages: "TableauReglages | None" = None) -> str:

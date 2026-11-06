@@ -124,6 +124,7 @@ from app.modules.tableau.models import (  # noqa: F401
     TableauReferenceMember,
     TableauReferenceSnapshot,
     TableauReport,
+    TableauSortieMembre,
     TableauSourceRow,
 )
 from app.modules.comptabilite.models import (  # noqa: F401

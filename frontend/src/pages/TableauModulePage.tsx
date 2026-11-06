@@ -1,10 +1,10 @@
-import { Fragment, useEffect, useState, Suspense } from 'react'
-import { lazyWithRetry } from '../utils/lazyWithRetry'
+import { Fragment, useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Settings, Table2, Upload, X, XCircle } from 'lucide-react'
+import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Settings, Table2, UserX, X, XCircle } from 'lucide-react'
 import TableauAssistantChat from '../components/TableauAssistantChat'
-// xlsx est lourd : chargement dynamique seulement quand l'onglet "import" est actif.
-const ImportTableauDossiers = lazyWithRetry(() => import('../components/ImportTableauDossiers'))
+import SortieMembreModal, { type MembreSortie } from '../components/SortieMembreModal'
+import ImportsParSource from '../components/ImportsParSource'
+import TableauDashboardCharts from '../components/TableauDashboardCharts'
 import BackButton from '../components/BackButton'
 import { ApiError } from '../lib/apiClient'
 import { usePermissions } from '../hooks/usePermissions'
@@ -20,18 +20,16 @@ import {
   getTableauReglages,
   listTableauAudit,
   TABLEAU_CATEGORIES,
+  LIBELLES_SITUATION_SORTIE,
+  type TableauSortie,
   runTableauAnalyseBase,
   getTableauStats,
   listTableauAnomalies,
-  listTableauDossiers,
   listTableauImports,
-  listTableauActualisations,
-  type TableauActualisation,
   listTableauReports,
   runTableauAnalyse,
   updateTableauReglages,
   downloadTableauExport,
-  downloadTableauImportAnnote,
   downloadTableauRapportComplet,
   listTableauImportsComparables,
   type TableauAuditEntry,
@@ -52,13 +50,12 @@ import {
 } from '../api/tableau'
 import styles from './TableauModulePage.module.css'
 
-type TabKey = 'dashboard' | 'actualisations' | 'base' | 'import' | 'analyse' | 'anomalies' | 'comparaison' | 'rapports' | 'reglages' | 'journal'
+type TabKey = 'dashboard' | 'base' | 'import' | 'analyse' | 'anomalies' | 'comparaison' | 'rapports' | 'reglages' | 'journal'
 
 /** Chaque écran du module a son adresse : le menu de gauche y mène, et un lien
  *  vers une anomalie ou un rapport reste partageable. */
 const CHEMINS: Record<TabKey, string> = {
   dashboard: '/tableau',
-  actualisations: '/tableau/actualisations',
   base: '/tableau/base',
   import: '/tableau/imports',
   analyse: '/tableau/analyse',
@@ -96,7 +93,6 @@ const baseTdStyle: React.CSSProperties = {
 
 const TITRES: Record<TabKey, string> = {
   dashboard: "Tableau de l'Ordre",
-  actualisations: 'Actualisations',
   base: 'Base Tableau',
   import: 'Imports Excel',
   analyse: 'Analyse réglementaire',
@@ -189,22 +185,22 @@ const COLONNES_BASE_DEFAUT: ColonneBase[] = [
  */
 const COLONNES_BASE_PAR_CATEGORIE: Partial<Record<string, ColonneBase[]>> = {
   'EC Cabinet': [
-    'rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'telephone', 'email', 'cabinet',
+    'rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'actif', 'telephone', 'email', 'cabinet',
     'anciennete', 'cotisation', 'formation', 'conclusion', 'action',
   ],
   'EC Indépendant': [
-    'rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'telephone', 'email', 'nif',
+    'rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'actif', 'telephone', 'email', 'nif',
     'anciennete', 'cotisation', 'assurance', 'nhv', 'chiffre_affaires', 'conclusion', 'action',
   ],
   'EC Salarié': [
-    'rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'telephone', 'email',
+    'rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'actif', 'telephone', 'email',
     'anciennete', 'nhv', 'cotisation', 'conclusion', 'action',
   ],
   'Société': [
     'rang', 'numero_ordre', 'nom', 'conseil', 'raison_sociale', 'telephone', 'email', 'associe_gerant',
     'anciennete', 'cotisation', 'chiffre_affaires', 'assurance', 'conclusion', 'action',
   ],
-  Stagiaire: ['rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'cotisation', 'conclusion', 'action'],
+  Stagiaire: ['rang', 'numero_ordre', 'nom', 'conseil', 'sexe', 'actif', 'cotisation', 'conclusion', 'action'],
 }
 
 /** Libellés propres à une vue de catégorie, repris du classeur. */
@@ -301,6 +297,7 @@ function ReglesParCategorie({
     if (ligne.cotisation_arrieres !== false) delete ligne.cotisation_arrieres
     if (ligne.cotisation_partielle !== 'bloquant') delete ligne.cotisation_partielle
     if (!ligne.assurance_fin_min) delete ligne.assurance_fin_min
+    if (!ligne.ca_declaration_min) delete ligne.ca_declaration_min
     const suivant = { ...definitions }
     if (Object.keys(ligne).length) suivant[categorie] = ligne
     else delete suivant[categorie]
@@ -385,6 +382,25 @@ function ReglesParCategorie({
                             }}
                           />
                           {!definitions[categorie]?.assurance_fin_min && <span style={{ color: '#6b7280' }}>(vide : date de situation du fichier)</span>}
+                        </label>
+                      )}
+                      {actif && critere === 'chiffre_affaires' && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '3px', fontSize: '12px', color: '#374151' }}>
+                          déclaration à partir du
+                          <input
+                            type="date"
+                            disabled={!modifiable}
+                            value={definitions[categorie]?.ca_declaration_min ?? ''}
+                            onChange={event => definir(categorie, { ca_declaration_min: event.target.value || undefined })}
+                            aria-label={`${categorie} — date à partir de laquelle la déclaration du chiffre d'affaires compte`}
+                            style={{
+                              padding: '3px 6px', borderRadius: '5px', fontSize: '12px',
+                              border: definitions[categorie]?.ca_declaration_min ? '2px solid var(--tenant-primary, #1f6b5c)' : '1px solid #d1d5db',
+                            }}
+                          />
+                          {definitions[categorie]?.ca_declaration_min
+                            ? <span style={{ color: '#6b7280' }}>(une déclaration plus ancienne ne compte pas)</span>
+                            : <span style={{ color: '#6b7280' }}>(facultatif — vide : toute déclaration de l'exercice)</span>}
                         </label>
                       )}
                       {actif && critere === 'cotisation' && (
@@ -516,6 +532,36 @@ function FiltresConditions({
   )
 }
 
+const SITUATIONS_PHYSIQUES = ['DECEDE', 'DEMISSIONNAIRE', 'RADIE', 'OMIS']
+const STYLE_LIGNE_SORTIE: React.CSSProperties = { background: '#f3f4f6', color: '#6b7280' }
+
+/** À la place de la conclusion : un membre sorti du Tableau n'est plus jugé. */
+function BadgeSortie({ sortie }: { sortie: TableauSortie }) {
+  return (
+    <span title={[sortie.libelle, sortie.observation].filter(Boolean).join(' — ')} style={{ display: 'inline-flex', flexDirection: 'column', gap: '2px' }}>
+      <span style={{ fontWeight: 600, color: '#374151' }}>{LIBELLES_SITUATION_SORTIE[sortie.situation]}</span>
+      <span style={{ fontSize: '12px', color: '#6b7280' }}>{sortie.libelle.slice(LIBELLES_SITUATION_SORTIE[sortie.situation].length).trim()}</span>
+    </span>
+  )
+}
+
+function BoutonSortie({ membre, onOpen }: { membre: MembreSortie; onOpen: (membre: MembreSortie) => void }) {
+  const morale = membre.categorie === 'Société' || membre.categorie === 'SEC'
+  const titre = membre.sortie ? 'Modifier la sortie du Tableau' : morale ? "Déclarer que la société a cessé d'exister" : 'Déclarer une sortie (décès, démission, radiation, omission)'
+  return (
+    <button
+      type="button"
+      className={styles.secondaryButton}
+      onClick={() => onOpen({ numero_ordre: membre.numero_ordre, nom: membre.nom, categorie: membre.categorie, sortie: membre.sortie })}
+      disabled={!membre.numero_ordre}
+      title={membre.numero_ordre ? titre : "Sans N° d'ordre, la sortie ne peut pas être déclarée"}
+      aria-label={`${titre} : ${membre.nom}`}
+    >
+      <UserX size={14} />
+    </button>
+  )
+}
+
 function booleanStatus(value: boolean | null) {
   if (value === true) return <span style={{ color: '#166534', fontWeight: 600 }}>Oui</span>
   if (value === false) return <span style={{ color: '#991b1b', fontWeight: 600 }}>Non</span>
@@ -574,7 +620,6 @@ export default function TableauModulePage() {
   const { user } = useAuth()
   const canImport = hasPermission('tableau.import')
   const canAnalyze = hasPermission('tableau.analyze')
-  const canCompare = hasPermission('tableau.compare')
   const canReport = hasPermission('tableau.generate_report')
   const canGeneratePv = hasPermission('tableau.generate_pv')
   const canExport = hasPermission('tableau.export')
@@ -601,6 +646,9 @@ export default function TableauModulePage() {
   const [baseSexe, setBaseSexe] = useState('')
   const [baseAnciennete, setBaseAnciennete] = useState('')
   const [baseActif, setBaseActif] = useState('')
+  // Par défaut, les membres sortis du Tableau (décès, cessation…) sont écartés.
+  const [baseSituation, setBaseSituation] = useState('en_exercice')
+  const [sortieMembre, setSortieMembre] = useState<MembreSortie | null>(null)
   const [baseRegles, setBaseRegles] = useState<FiltresRegles>({})
   const baseReglesCle = JSON.stringify(baseRegles)
   const [baseOrganisationId, setBaseOrganisationId] = useState('')
@@ -613,10 +661,6 @@ export default function TableauModulePage() {
   const baseExerciceDiffere = useDebouncedValue(baseExercice)
   const [stats, setStats] = useState<TableauStats | null>(null)
   const [imports, setImports] = useState<TableauImport[]>([])
-  const [actualisations, setActualisations] = useState<TableauActualisation[]>([])
-  const [dossiers, setDossiers] = useState<TableauDossier[]>([])
-  const [dossierPage, setDossierPage] = useState(1)
-  const [dossierPageSize, setDossierPageSize] = useState(50)
   const [anomalies, setAnomalies] = useState<TableauAnomalie[]>([])
   const [reports, setReports] = useState<TableauReport[]>([])
   const [comparison, setComparison] = useState<TableauComparison | null>(null)
@@ -658,11 +702,6 @@ export default function TableauModulePage() {
       .catch(() => { if (!annule) setRapportComparables([]) })
     return () => { annule = true }
   }, [activeTab, selectedImport?.id, rapportPerimetre])
-
-  useEffect(() => {
-    if (activeTab !== 'actualisations') return
-    listTableauActualisations().then(result => setActualisations(result.items)).catch(() => setError('Impossible de charger les actualisations.'))
-  }, [activeTab])
 
   const [exercice, setExercice] = useState(String(new Date().getFullYear()))
   const [compareExerciceA, setCompareExerciceA] = useState('')
@@ -710,12 +749,10 @@ export default function TableauModulePage() {
   const loadImportDetails = async (importId: number, scope: 'import' | 'base' = 'import') => {
     // L'analyse est relue avec le reste : c'est elle qui dit si le calcul
     // affiché vaut encore, ou s'il a été rendu obsolète depuis.
-    const [dossiersData, anomaliesData, analyseData] = await Promise.all([
-      listTableauDossiers({ import_id: importId }).catch(() => []),
+    const [anomaliesData, analyseData] = await Promise.all([
       listTableauAnomalies({ import_id: importId, scope }).catch(() => []),
       getTableauAnalyse(importId, scope).catch(() => null),
     ])
-    setDossiers(dossiersData)
     setAnomalies(anomaliesData)
     setAnalyse(analyseData)
   }
@@ -744,15 +781,17 @@ export default function TableauModulePage() {
     }
   }
 
-  const handleAnalyse = async () => {
-    if (!selectedImport) return
+  const handleAnalyse = async (choisi?: TableauImport) => {
+    const cible = choisi || selectedImport
+    if (!cible) return
+    if (choisi) setSelectedImport(choisi)
     setActionLoading('analyse')
     setError(null)
     try {
-      const result = await runTableauAnalyse(selectedImport.id)
+      const result = await runTableauAnalyse(cible.id)
       setAnalyse(result)
       setAnalysisScope('import')
-      await loadImportDetails(selectedImport.id)
+      await loadImportDetails(cible.id)
       await getTableauStats().then(s => s && setStats(s))
       setActiveTab('analyse')
     } catch (err) {
@@ -900,7 +939,6 @@ export default function TableauModulePage() {
       .catch(() => undefined)
     return () => { annule = true }
   }, [selectedImport?.id])
-  useEffect(() => { setDossierPage(1) }, [selectedImport?.id, dossierPageSize])
 
   // Le journal ne se charge qu'à l'ouverture de son écran : il n'entre dans
   // aucun autre calcul de la page.
@@ -935,6 +973,7 @@ export default function TableauModulePage() {
       sexe: baseSexe || undefined,
       anciennete: baseAnciennete || undefined,
       actif: baseActif || undefined,
+      situation: baseSituation,
       regles: baseRegles,
       limit: basePageSize,
       offset: (basePage - 1) * basePageSize,
@@ -953,11 +992,11 @@ export default function TableauModulePage() {
       .finally(() => { if (!annule) setBaseLoading(false) })
     return () => { annule = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- baseRegles suivi par sa clé
-  }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, baseReglesCle, basePage, basePageSize, baseRefresh])
+  }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, baseSituation, baseReglesCle, basePage, basePageSize, baseRefresh])
 
   useEffect(() => {
     setBasePage(1)
-  }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, baseReglesCle, basePageSize])
+  }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, baseSituation, baseReglesCle, basePageSize])
 
   // Une condition que la catégorie choisie n'exige pas ne filtre plus rien.
   useEffect(() => {
@@ -1162,11 +1201,6 @@ export default function TableauModulePage() {
   }
   const baseTotalPages = Math.max(1, Math.ceil((base?.total_membres || 0) / basePageSize))
   const baseImport = imports.find(item => item.id === base?.analysis_import_id) || null
-  const dossierTotalPages = Math.max(1, Math.ceil(dossiers.length / dossierPageSize))
-  const dossiersAffiches = dossiers.slice(
-    (dossierPage - 1) * dossierPageSize,
-    dossierPage * dossierPageSize,
-  )
   const comparisonTotalPages = Math.max(1, Math.ceil((comparison?.details.length || 0) / comparisonPageSize))
   const comparisonDetailsAffiches = (comparison?.details || []).slice(
     (comparisonPage - 1) * comparisonPageSize,
@@ -1216,20 +1250,27 @@ export default function TableauModulePage() {
             </div>
 
             <div className={styles.statsGrid}>
-              <StatCard value={stats?.dossiers_importes ?? 0} label="Membres dans la base" icon={<FileSpreadsheet size={18} />} tone="primary" />
-              <StatCard value={stats?.dossiers_analyses ?? 0} label="Membres analysés" icon={<Bot size={18} />} tone="info" />
               <StatCard
-                value={stats?.dossiers_incomplets ?? '—'}
-                label="Dossiers incomplets"
+                value={stats?.membres_base ?? 0}
+                label="Membres dans la base"
+                icon={<FileSpreadsheet size={18} />}
+                hint={stats?.membres_sortis ? `${stats.membres_sortis} sorti(s) du Tableau non comptés` : undefined}
+                tone="primary"
+              />
+              <StatCard value={stats?.en_regle ?? 0} label="En règle" icon={<CheckCircle2 size={18} />} tone="success" />
+              <StatCard value={stats?.non_en_regle ?? 0} label="Non en règle" icon={<XCircle size={18} />} tone="danger" />
+              <StatCard
+                value={stats?.a_deliberer ?? 0}
+                label="À délibérer"
                 icon={<AlertTriangle size={18} />}
-                hint={stats?.dossiers_incomplets == null ? 'Analyse de base requise' : undefined}
+                hint={stats?.sans_conclusion ? `${stats.sans_conclusion} sans conclusion` : undefined}
                 tone="warning"
               />
-              <StatCard value={stats?.anomalies_detectees ?? 0} label="Anomalies détectées" icon={<XCircle size={18} />} tone="danger" />
+              <StatCard value={stats?.membres_signales ?? 0} label="Lignes signalées à l'import" icon={<Bot size={18} />} tone="info" />
               <StatCard value={stats?.decisions_a_valider ?? 0} label="Décisions enregistrées" icon={<CheckCircle2 size={18} />} tone="success" />
             </div>
 
-            {stats?.last_exercice && stats.analyse_base_status !== 'completed' && (
+            {stats?.last_exercice && stats.dossiers_importes > 0 && stats.analyse_base_status !== 'completed' && (
               <div className={styles.notice}>
                 <AlertTriangle size={17} aria-hidden="true" />
                 <span>
@@ -1256,55 +1297,7 @@ export default function TableauModulePage() {
               </aside>
             </div>
 
-            <div className={styles.quickSection}>
-              <div className={styles.quickHeader}>
-                <h2 className={styles.sectionTitle}>Actions rapides</h2>
-                <span className={styles.quickHint}>Accès direct aux espaces de travail</span>
-              </div>
-              <div className={styles.grid}>
-                {[
-                  { label: 'Actualisations', icon: <RefreshCw size={18} />, desc: 'Consulter les révisions matérialisées', tab: 'actualisations' as TabKey, visible: true },
-                  { label: 'Consulter la base', icon: <Layers size={18} />, desc: 'Voir la situation actuelle par membre', tab: 'base' as TabKey, visible: true },
-                  { label: 'Importer Excel', icon: <Upload size={18} />, desc: 'Actualiser le tableau des experts-comptables', tab: 'import' as TabKey, visible: canImport },
-                  { label: 'Analyse réglementaire', icon: <Bot size={18} />, desc: 'Calculer les conclusions et anomalies', tab: 'analyse' as TabKey, visible: canAnalyze },
-                  { label: 'Voir les anomalies', icon: <AlertTriangle size={18} />, desc: 'Consulter les anomalies détectées', tab: 'anomalies' as TabKey, visible: true },
-                  { label: 'Comparer exercices', icon: <GitCompare size={18} />, desc: 'Comparer deux bases consolidées', tab: 'comparaison' as TabKey, visible: canCompare },
-                  { label: 'Générer un rapport', icon: <FileText size={18} />, desc: 'Créer un rapport d\'analyse ou un PV', tab: 'rapports' as TabKey, visible: canReport || canGeneratePv },
-                ].filter(action => action.visible).map(action => (
-                  <button
-                    key={action.tab}
-                    type="button"
-                    className={styles.featureCard}
-                    onClick={() => setActiveTab(action.tab)}
-                  >
-                    <div className={styles.featureHeader}>
-                      {action.icon}
-                      <span>{action.label}</span>
-                    </div>
-                    <p className={styles.featureText}>{action.desc}</p>
-                    <span className={styles.pill}>Ouvrir</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === 'actualisations' && (
-          <section className={styles.managerWorkspace}>
-            <div className={styles.mailToolbar}>
-              <div>
-                <h2 className={styles.sectionTitle}>Actualisations du Tableau</h2>
-                <p className={styles.sectionSubtitle}>Les révisions sont matérialisées par le backend et restent immuables.</p>
-              </div>
-              <span className={styles.sectionMeta}>{actualisations.length} révision(s)</span>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={baseTableStyle}><thead><tr><th style={baseThStyle}>Situation</th><th style={baseThStyle}>Révision</th><th style={baseThStyle}>Actualisée le</th><th style={baseThStyle}>Lignes</th><th style={baseThStyle}>Statut</th></tr></thead>
-                <tbody>{actualisations.map(a => <tr key={a.id}><td style={baseTdStyle}>{a.date_situation}</td><td style={baseTdStyle}>#{a.revision_number}{a.is_current && <span className={styles.pill} style={{ marginLeft: 8 }}>Courante</span>}</td><td style={baseTdStyle}>{new Date(a.actualized_at).toLocaleString()}</td><td style={baseTdStyle}>{a.total_rows}</td><td style={baseTdStyle}>{a.status}</td></tr>)}</tbody>
-              </table>
-              {!actualisations.length && <div className={styles.emptyBox}>Aucune actualisation disponible.</div>}
-            </div>
+            {stats && <TableauDashboardCharts stats={stats} />}
           </section>
         )}
 
@@ -1399,8 +1392,10 @@ export default function TableauModulePage() {
                       setBaseSexe('')
                       setBaseActif('')
                       if (baseCategorie !== 'Société') setBaseCategorie('')
-                    } else if (personne === 'physique' && baseCategorie === 'Société') {
-                      setBaseCategorie('')
+                      if (SITUATIONS_PHYSIQUES.includes(baseSituation)) setBaseSituation('sortis')
+                    } else if (personne === 'physique') {
+                      if (baseCategorie === 'Société') setBaseCategorie('')
+                      if (baseSituation === 'CESSE') setBaseSituation('sortis')
                     }
                   }}
                   style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}
@@ -1443,6 +1438,23 @@ export default function TableauModulePage() {
                 </select>
               </label>
               <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+                Situation au Tableau
+                <select value={baseSituation} onChange={event => setBaseSituation(event.target.value)} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                  <option value="en_exercice">{basePersonne === 'morale' ? 'En activité' : basePersonne === 'physique' ? 'En exercice' : 'En exercice / en activité'}</option>
+                  <option value="sortis">Sortis du Tableau</option>
+                  {basePersonne !== 'morale' && (
+                    <>
+                      <option value="DECEDE">Décédés</option>
+                      <option value="DEMISSIONNAIRE">Démissionnaires</option>
+                      <option value="RADIE">Radiés</option>
+                      <option value="OMIS">Omis</option>
+                    </>
+                  )}
+                  {basePersonne !== 'physique' && <option value="CESSE">Sociétés ayant cessé d'exister</option>}
+                  <option value="tous">Tous</option>
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
                 Ancienneté
                 <select value={baseAnciennete} onChange={event => setBaseAnciennete(event.target.value)} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
                   <option value="">Toutes</option>
@@ -1479,7 +1491,7 @@ export default function TableauModulePage() {
               <div className={styles.emptyBox}>Chargement de la base...</div>
             ) : !base || base.total_membres === 0 ? (
               <div className={styles.emptyBox}>
-                {baseSearch || baseCategorie || basePersonne || baseProvince || baseSexe || baseAnciennete || baseActif || Object.values(baseRegles).some(Boolean)
+                {baseSearch || baseCategorie || basePersonne || baseProvince || baseSexe || baseAnciennete || baseActif || baseSituation !== 'en_exercice' || Object.values(baseRegles).some(Boolean)
                   ? 'Aucun membre ne correspond à ces filtres.'
                   : "Aucun import pour l'instant. Chargez un fichier depuis l'onglet « Import Excel »."}
               </div>
@@ -1546,17 +1558,22 @@ export default function TableauModulePage() {
                           nhv: dossier.heures_forco,
                           cotisation: cotisationStatus(dossier.cotisation_notes, dossier.cotisation_payee),
                           assurance: dossier.assurance_valide !== undefined ? dossier.assurance_valide : dossier.assurance,
-                          conclusion: libelleConclusion(dossier.conclusion) || 'À analyser',
+                          conclusion: dossier.sortie
+                            ? <BadgeSortie sortie={dossier.sortie} />
+                            : libelleConclusion(dossier.conclusion) || 'À analyser',
                           date_situation: dossier.date_situation,
                           source_file_name: dossier.source_file_name,
                           action: (
-                            <button type="button" className={styles.secondaryButton} onClick={() => openCorrection(dossier)} title="Corriger le dossier" aria-label={`Corriger ${dossier.nom}`}>
-                              <Pencil size={14} />
-                            </button>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button type="button" className={styles.secondaryButton} onClick={() => openCorrection(dossier)} title="Corriger le dossier" aria-label={`Corriger ${dossier.nom}`}>
+                                <Pencil size={14} />
+                              </button>
+                              <BoutonSortie membre={dossier} onOpen={setSortieMembre} />
+                            </div>
                           ),
                         })
                         return (
-                          <tr key={dossier.id}>
+                          <tr key={dossier.id} style={dossier.sortie ? STYLE_LIGNE_SORTIE : undefined}>
                             {colonnesBase.map(colonne => <Fragment key={colonne}>{cellules[colonne]}</Fragment>)}
                           </tr>
                         )
@@ -1586,19 +1603,21 @@ export default function TableauModulePage() {
                           nhv: membre.nhv,
                           cotisation: cotisationStatus(membre.cotisation_notes, null),
                           assurance: membre.assurance_valide !== undefined ? membre.assurance_valide : membre.assurance,
-                          conclusion: membre.conclusion
+                          conclusion: membre.sortie
+                            ? <BadgeSortie sortie={membre.sortie} />
+                            : membre.conclusion
                             ? <span title={membre.conclusion_motif || undefined} style={{ fontWeight: 600, color: membre.conclusion === 'INSCRIT' ? '#166534' : membre.conclusion === 'NON INSCRIT' ? '#991b1b' : '#92400e' }}>
                                 {libelleConclusion(membre.conclusion)}
                               </span>
                             : <span style={{ color: '#92400e', fontWeight: 600 }}>À compléter</span>,
                           date_situation: membre.date_situation,
                           source_file_name: membre.source_file_name,
-                          action: null,
+                          action: <BoutonSortie membre={membre} onOpen={setSortieMembre} />,
                         })
                         return (
                           <tr
                             key={membre.id}
-                            style={signale ? { background: '#fee2e2' } : undefined}
+                            style={membre.sortie ? STYLE_LIGNE_SORTIE : signale ? { background: '#fee2e2' } : undefined}
                             title={signale ? membre.signalements.join(' ; ') : undefined}
                           >
                             {colonnesBase.map(colonne => <Fragment key={colonne}>{cellules[colonne]}</Fragment>)}
@@ -1633,175 +1652,17 @@ export default function TableauModulePage() {
         )}
 
         {activeTab === 'import' && (
-          <section className={styles.managerWorkspace}>
-            <div className={styles.mailToolbar}>
-              <div>
-                <h2 className={styles.sectionTitle}>Import Excel</h2>
-                <p className={styles.sectionSubtitle}>Importez le Tableau ou une source détaillée (.xlsx ou .xls), puis vérifiez l'aperçu avant de lancer l'import.</p>
-              </div>
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <Suspense fallback={null}>
-                <ImportTableauDossiers
-                  exercice={exercice}
-                  onExerciceChange={setExercice}
-                  onImported={(id) => void handleImported(id)}
-                />
-              </Suspense>
-            </div>
-
-            {imports.length > 0 && (
-              <>
-                <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '10px', color: '#374151' }}>Imports précédents</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {imports.map(imp => (
-                    <div
-                      key={imp.id}
-                      onClick={() => void handleSelectImport(imp)}
-                      style={{
-                        background: selectedImport?.id === imp.id ? 'var(--tableau-brand-soft)' : '#fff',
-                        border: `1px solid ${selectedImport?.id === imp.id ? 'var(--tenant-primary, #1f6b5c)' : '#e5e7eb'}`,
-                        borderRadius: '6px',
-                        padding: '12px 16px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: '10px',
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: '600', fontSize: '13px' }}>{imp.file_name}</div>
-                        <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                          Exercice {imp.exercice} · situation du {new Date(`${imp.date_situation}T00:00:00`).toLocaleDateString('fr-FR')} · {imp.imported_rows} dossiers
-                        </div>
-                        {imp.error_message && (
-                          <div style={{ fontSize: '12px', color: '#dc2626', marginTop: '2px' }}>{imp.error_message}</div>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                        {(canImport || canExport) && imp.imported_rows > 0 && (
-                          <button
-                            type="button"
-                            className={styles.secondaryButton}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              downloadTableauImportAnnote(imp.id, imp.file_name).catch((err: unknown) => {
-                                setError(err instanceof Error ? err.message : 'Téléchargement du fichier annoté impossible.')
-                              })
-                            }}
-                          >
-                            Fichier annoté
-                          </button>
-                        )}
-                        <span className={styles.pill} style={{
-                          background: imp.status === 'completed' ? '#d1fae5' : imp.status === 'error' ? '#fee2e2' : '#fef3c7',
-                          color: imp.status === 'completed' ? '#065f46' : imp.status === 'error' ? '#991b1b' : '#92400e',
-                        }}>
-                          {imp.status}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {selectedImport && dossiers.length > 0 && (
-              <div style={{ marginTop: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
-                    Dossiers — {selectedImport.exercice} ({dossiers.length})
-                  </h3>
-                  {canAnalyze && <button
-                    type="button"
-                    className={styles.secondaryButton}
-                    onClick={() => void handleAnalyse()}
-                    disabled={actionLoading === 'analyse'}
-                    style={{ background: 'var(--tenant-primary, #1f6b5c)', color: '#fff', borderColor: 'var(--tenant-primary, #1f6b5c)' }}
-                  >
-                    <Bot size={15} />
-                    {actionLoading === 'analyse' ? 'Analyse...' : 'Analyser cet import'}
-                  </button>
-                  }
-                </div>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                    <thead>
-                      <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                        {['N°', 'N° ordre', 'Nom', 'Prénom', 'Catégorie', 'Cotisation', 'Formation (h)', 'Assurance', 'Conclusion'].map(h => (
-                          <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#374151', whiteSpace: 'nowrap' }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dossiersAffiches.map((d, i) => {
-                        const nhvAbsent = nhvSansObjet(d.categorie, d.anciennete)
-                        const concl = d.conclusion || d.statut_dossier
-                        const conclColor =
-                          concl === 'INSCRIT' ? { bg: '#d1fae5', fg: '#065f46' }
-                          : concl === 'NON INSCRIT' ? { bg: '#fee2e2', fg: '#991b1b' }
-                          : concl === 'À DÉLIBÉRER' ? { bg: '#fef3c7', fg: '#92400e' }
-                          : { bg: '#f3f4f6', fg: '#374151' }
-                        return (
-                        <tr key={d.id} style={{
-                          borderBottom: '1px solid #f3f4f6',
-                          background: d.anomalie_detectee ? '#fff7ed' : '#fff',
-                        }}>
-                          <td style={{ padding: '7px 10px', color: '#6b7280', fontWeight: '600' }}>
-                            {(dossierPage - 1) * dossierPageSize + i + 1}
-                          </td>
-                          <td style={{ padding: '7px 10px', color: '#6b7280' }}>{d.numero_ordre ?? '—'}</td>
-                          <td style={{ padding: '7px 10px', fontWeight: '500' }}>{d.nom}</td>
-                          <td style={{ padding: '7px 10px' }}>{d.prenom ?? '—'}</td>
-                          <td style={{ padding: '7px 10px' }}>{d.categorie}</td>
-                          <td style={{ padding: '7px 10px' }}>
-                            {d.cotisation_payee === true ? <CheckCircle2 size={13} color="#16a34a" /> : d.cotisation_payee === false ? <XCircle size={13} color="#dc2626" /> : '—'}
-                          </td>
-                          <td style={{ padding: '7px 10px', ...(nhvAbsent ? { color: '#9ca3af' } : styleNhv(d.heures_forco, nhvMinimumDe(d.categorie))) }}>
-                            {nhvAbsent ?? (d.heures_forco !== null ? d.heures_forco : '—')}
-                          </td>
-                          <td style={{ padding: '7px 10px' }}>
-                            {d.assurance === true ? <CheckCircle2 size={13} color="#16a34a" /> : d.assurance === false ? <XCircle size={13} color="#dc2626" /> : '—'}
-                          </td>
-                          <td style={{ padding: '7px 10px' }}>
-                            <span className={styles.pill} style={{
-                              background: conclColor.bg,
-                              color: conclColor.fg,
-                              fontSize: '11px',
-                            }}>
-                              {libelleConclusion(concl)}
-                            </span>
-                          </td>
-                        </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginTop: '10px' }}>
-                  <label style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    Lignes
-                    <select value={dossierPageSize} onChange={event => setDossierPageSize(Number(event.target.value))}>
-                      {[25, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
-                    </select>
-                  </label>
-                  <span style={{ fontSize: '12px', color: '#6b7280' }}>
-                    Page {Math.min(dossierPage, dossierTotalPages)} sur {dossierTotalPages}
-                  </span>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button type="button" className={styles.secondaryButton} disabled={dossierPage <= 1} onClick={() => setDossierPage(page => Math.max(1, page - 1))} title="Page précédente">
-                      <ChevronLeft size={15} />
-                    </button>
-                    <button type="button" className={styles.secondaryButton} disabled={dossierPage >= dossierTotalPages} onClick={() => setDossierPage(page => page + 1)} title="Page suivante">
-                      <ChevronRight size={15} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
+          <ImportsParSource
+            imports={imports}
+            canImport={canImport}
+            canExport={canExport}
+            canAnalyze={canAnalyze}
+            exercice={exercice}
+            onExerciceChange={setExercice}
+            onImported={handleImported}
+            onAnalyse={imp => void handleAnalyse(imp)}
+            analyseEnCours={actionLoading === 'analyse'}
+          />
         )}
 
         {activeTab === 'analyse' && (
@@ -2474,6 +2335,17 @@ export default function TableauModulePage() {
           </section>
         )}
       </div>
+
+      {sortieMembre && (
+        <SortieMembreModal
+          membre={sortieMembre}
+          onClose={() => setSortieMembre(null)}
+          onSaved={() => {
+            setSortieMembre(null)
+            setBaseRefresh(valeur => valeur + 1)
+          }}
+        />
+      )}
 
       {correctionDossier && (
         <div

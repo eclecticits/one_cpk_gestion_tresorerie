@@ -48,6 +48,7 @@ from .repository import (
     get_stats,
     list_anomalies,
     actifs_par_membre,
+    sorties_par_membre,
     list_membres_a_completer,
     provinces_par_membre,
     list_base_tableau,
@@ -55,6 +56,7 @@ from .repository import (
     list_imports,
     list_reports,
 )
+from .sorties import sortie_payload
 from .schemas import TableauDecisionCreate, TableauDossierCorrection, TableauPVCreate, TableauReportCreate
 
 
@@ -1767,6 +1769,7 @@ async def get_base_tableau(
     assurance: str | None = None,
     chiffre_affaires: str | None = None,
     formation: str | None = None,
+    situation: str | None = "en_exercice",
 ) -> dict[str, Any]:
     """Base consolidée du Tableau pour un exercice.
 
@@ -1785,6 +1788,7 @@ async def get_base_tableau(
         complet = await get_base_tableau(
             db, organisation_ids, exercice, anomalie_only, national, recherche, categorie,
             organisation_id, None, 0, personne, province, sexe, anciennete, actif,
+            situation=situation,
         )
         return _filtrer_base(complet, filtres_calcules, limit, offset)
     exercice = exercice or await dernier_exercice(db, organisation_ids)
@@ -1839,6 +1843,7 @@ async def get_base_tableau(
         sexe=sexe,
         anciennete=anciennete,
         actif=actif,
+        situation=situation,
     )
     resume = await get_base_summary(
         db,
@@ -1853,6 +1858,7 @@ async def get_base_tableau(
         sexe=sexe,
         anciennete=anciennete,
         actif=actif,
+        situation=situation,
     )
     # Après les dossiers, dans la même pagination. Le filtre « anomalies » ne les
     # concerne pas : elles naissent de l'analyse, qui ne lit que les dossiers.
@@ -1874,6 +1880,7 @@ async def get_base_tableau(
             sexe=sexe,
             anciennete=anciennete,
             actif=actif,
+            situation=situation,
         )
     org_rows = await db.execute(
         select(Organisation.id, Organisation.nom)
@@ -1890,7 +1897,7 @@ async def get_base_tableau(
     reglages_par_conseil: dict[int, verdict_engine.TableauReglages] = {}
     couvertures_par_conseil: dict[int, dict[str, dict[str, Any]]] = {}
     situation_par_conseil: dict[int, Any] = {}
-    ca_par_conseil: dict[int, dict[str, bool]] = {}
+    ca_par_conseil: dict[int, dict[str, list[tuple[bool, Any]]]] = {}
 
     async def _charger_conseil(org_id: int) -> None:
         """Réglages, notes de débit et couvertures d'assurance d'un conseil, une fois."""
@@ -1898,9 +1905,7 @@ async def get_base_tableau(
             return
         cotisations_par_conseil[org_id] = await _cotisations_notes(db, org_id, exercice)
         couvertures_par_conseil[org_id] = await _couvertures_par_numero(db, org_id, exercice)
-        ca_par_conseil[org_id] = await _declarations_par_numero(
-            db, org_id, exercice, TableauCaDeclaration, TableauCaDeclaration.ca_present
-        )
+        ca_par_conseil[org_id] = await _declarations_ca(db, org_id, exercice)
         dernier = (await db.execute(
             select(TableauImport.metadata_json, TableauImport.date_situation)
             .where(TableauImport.organisation_id == org_id, TableauImport.exercice == exercice)
@@ -1937,7 +1942,7 @@ async def get_base_tableau(
             "cotisation_payee": None if etat is None else etat == "payee",
             "cotisation_partielle": etat == "partielle",
             "assurance": assurance,
-            "chiffre_affaires": ca_par_conseil[ligne.organisation_id].get(cle),
+            "chiffre_affaires": verdict_engine.ca_declare(ligne.categorie, ca_par_conseil[ligne.organisation_id].get(cle), reglages),
             "heures_forco": float(ligne.nhv) if ligne.nhv is not None else None,
             "anciennete": verdict_engine.libelle_anciennete(ligne.numero_ordre, annee_exercice),
             "age": None,
@@ -1956,8 +1961,17 @@ async def get_base_tableau(
         return {**situation, "etat": etat, "payee": etat == "payee"}
 
     actifs = await actifs_par_membre(db, organisation_ids, exercice)
+    sorties = await sorties_par_membre(db, organisation_ids, exercice)
+
+    def _sortie(org_id: int | None, numero: str | None) -> dict[str, Any] | None:
+        cle = _norm_numero_ordre(numero)
+        return sortie_payload(sorties.get((org_id, cle))) if org_id is not None and cle else None
+
     annee_exercice = _exercice_annee(exercice)
     for dossier in dossiers:
+        # Attribut d'affichage : la conclusion enregistrée n'est pas touchée (l'interface
+        # affiche la sortie à sa place, un membre sorti n'étant plus jugé).
+        dossier.sortie = _sortie(dossier.organisation_id, dossier.numero_ordre)
         dossier.province = provinces.get((dossier.organisation_id, dossier.numero_ordre))
         dossier.actif = actifs.get((dossier.organisation_id, dossier.numero_ordre))
         dossier.anciennete_libelle = (
@@ -2008,11 +2022,21 @@ async def get_base_tableau(
                 str(erreur.get("message")) for erreur in (ligne.erreurs or []) if erreur.get("message")
             )),
         }
-        # Les règles de délibération s'appliquent aussi aux membres sans dossier.
-        verdict = await _verdict_membre(ligne, membre["cotisation_notes"], membre["assurance_valide"])
-        membre["conclusion"] = verdict["conclusion"]
-        membre["conclusion_motif"] = verdict["motif"]
-        membre["chiffre_affaires"] = ca_par_conseil[ligne.organisation_id].get(_norm_numero_ordre(ligne.numero_ordre) or "")
+        membre["sortie"] = _sortie(ligne.organisation_id, ligne.numero_ordre)
+        if membre["sortie"]:
+            # Sorti du Tableau : plus de verdict.
+            membre["conclusion"] = None
+            membre["conclusion_motif"] = membre["sortie"]["libelle"]
+        else:
+            # Les règles de délibération s'appliquent aussi aux membres sans dossier.
+            verdict = await _verdict_membre(ligne, membre["cotisation_notes"], membre["assurance_valide"])
+            membre["conclusion"] = verdict["conclusion"]
+            membre["conclusion_motif"] = verdict["motif"]
+        membre["chiffre_affaires"] = verdict_engine.ca_declare(
+            ligne.categorie,
+            ca_par_conseil[ligne.organisation_id].get(_norm_numero_ordre(ligne.numero_ordre) or ""),
+            reglages_par_conseil[ligne.organisation_id],
+        )
         membre["formation_etat"] = verdict_engine.etat_formation(
             {"categorie": ligne.categorie, "numero_ordre": ligne.numero_ordre, "heures_forco": membre["nhv"],
              "anciennete": membre["anciennete_libelle"]},
@@ -2037,6 +2061,96 @@ async def get_base_tableau(
         "offset": offset,
         "dossiers": dossiers,
     }
+
+async def get_stats_tableau(db: AsyncSession, organisation_id: int) -> dict[str, Any]:
+    """Chiffres du tableau de bord, lus dans la base consolidée.
+
+    La base compte aussi les membres venus des seuls fichiers personnes physiques
+    et morales, sans dossier du classeur Tableau : leur conclusion est calculée à
+    la lecture. Compter les seuls dossiers laissait le tableau de bord à zéro
+    tant qu'aucun classeur Tableau n'était importé.
+    """
+    stats = await get_stats(db, organisation_id)
+    stats.update({
+        "membres_base": 0, "en_regle": 0, "non_en_regle": 0, "a_deliberer": 0,
+        "sans_conclusion": 0, "membres_signales": 0, "membres_sortis": 0,
+        "par_categorie": [], "criteres": {}, "provinces": [], "profil": {},
+    })
+    exercice = stats.get("last_exercice")
+    if not exercice:
+        return stats
+    base = await get_base_tableau(db, [organisation_id], exercice=exercice)
+    compte = {"INSCRIT": "en_regle", "NON INSCRIT": "non_en_regle", "À DÉLIBÉRER": "a_deliberer"}
+    ordre_categories = ["EC Cabinet", "EC Indépendant", "EC Salarié", "Société", "Stagiaire"]
+    par_categorie: dict[str, dict[str, int]] = {}
+    criteres = {c: {"ok": 0, "ko": 0, "inconnu": 0} for c in ("cotisation", "formation", "assurance", "chiffre_affaires")}
+    provinces: dict[str, int] = {}
+    profil = {
+        "sexe": {"M": 0, "F": 0, "inconnu": 0},
+        "anciennete": {"Ancien": 0, "Nouveau": 0, "inconnu": 0},
+        "actif": {"oui": 0, "non": 0, "inconnu": 0},
+    }
+
+    def lire(ligne: Any, cle: str) -> Any:
+        return ligne.get(cle) if isinstance(ligne, dict) else getattr(ligne, cle, None)
+
+    def oui_non(valeur: Any) -> str:
+        return "inconnu" if valeur is None else ("ok" if valeur else "ko")
+
+    for ligne in [*base["dossiers"], *base["membres_a_completer"]]:
+        conclusion = compte.get(lire(ligne, "conclusion") or "", "sans_conclusion")
+        stats[conclusion] += 1
+        if lire(ligne, "anomalie_detectee") or lire(ligne, "signalements"):
+            stats["membres_signales"] += 1
+        categorie = "Société" if lire(ligne, "categorie") == "SEC" else (lire(ligne, "categorie") or "Inconnu")
+        ligne_categorie = par_categorie.setdefault(categorie, {
+            "en_regle": 0, "a_deliberer": 0, "non_en_regle": 0, "sans_conclusion": 0, "total": 0,
+        })
+        ligne_categorie[conclusion] += 1
+        ligne_categorie["total"] += 1
+        province = (lire(ligne, "province") or "").strip().upper() or "NON RENSEIGNÉE"
+        provinces[province] = provinces.get(province, 0) + 1
+        if categorie != "Société":
+            # Sexe et statut « Actif » ne se disent que d'une personne physique.
+            sexe = (lire(ligne, "sexe") or "").strip().upper()[:1]
+            profil["sexe"][sexe if sexe in ("M", "F") else "inconnu"] += 1
+            actif = lire(ligne, "actif")
+            profil["actif"]["inconnu" if actif is None else ("oui" if actif else "non")] += 1
+        anciennete = lire(ligne, "anciennete_libelle")
+        profil["anciennete"][anciennete if anciennete in ("Ancien", "Nouveau") else "inconnu"] += 1
+        # Chaque critère n'est compté que pour les catégories qui y sont soumises.
+        applicables = verdict_engine.CRITERES_APPLICABLES.get(categorie, [])
+        if "cotisation" in applicables:
+            notes = lire(ligne, "cotisation_notes") or {}
+            etat = notes.get("etat")
+            if etat is None and not isinstance(ligne, dict):
+                payee = lire(ligne, "cotisation_payee")
+                etat = None if payee is None else ("payee" if payee else "non_payee")
+            criteres["cotisation"]["inconnu" if etat is None else ("ok" if etat == "payee" else "ko")] += 1
+        if "assurance" in applicables:
+            criteres["assurance"][oui_non(lire(ligne, "assurance_valide"))] += 1
+        if "chiffre_affaires" in applicables:
+            criteres["chiffre_affaires"][oui_non(lire(ligne, "chiffre_affaires"))] += 1
+        if "formation" in applicables:
+            etat = lire(ligne, "formation_etat")
+            if etat != "non_requis":
+                criteres["formation"]["ok" if etat == "atteint" else "ko" if etat == "insuffisant" else "inconnu"] += 1
+    stats["par_categorie"] = [
+        {"categorie": nom, **par_categorie[nom]}
+        for nom in [*ordre_categories, *sorted(set(par_categorie) - set(ordre_categories))]
+        if nom in par_categorie
+    ]
+    stats["criteres"] = criteres
+    stats["profil"] = profil
+    stats["provinces"] = [
+        {"province": nom, "total": total}
+        for nom, total in sorted(provinces.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    stats["membres_base"] = base["total_membres"]
+    sortis = await get_base_tableau(db, [organisation_id], exercice=exercice, situation="sortis", limit=1)
+    stats["membres_sortis"] = sortis["total_membres"]
+    return stats
+
 
 def _filtrer_base(base: dict[str, Any], filtres: dict[str, str | None], limit: int | None, offset: int) -> dict[str, Any]:
     """Filtre la base complète sur les valeurs calculées, puis pagine (dossiers d'abord)."""
@@ -2774,6 +2888,21 @@ def _assurance_effective(
     return verdict_engine.assurance_valide(categorie, couverture, valeur_import, reglages, date_situation=date_situation)
 
 
+async def _declarations_ca(db: AsyncSession, organisation_id: int, exercice: str) -> dict[str, list[tuple[bool, Any]]]:
+    """Pour chaque N° d'ordre : (ca_present, date de mise à jour) de chaque déclaration de l'exercice."""
+    lignes = (await db.execute(
+        select(TableauCaDeclaration.numero_ordre_normalise, TableauCaDeclaration.ca_present, TableauCaDeclaration.date_mise_a_jour)
+        .join(TableauImport, TableauImport.id == TableauCaDeclaration.source_import_id)
+        .where(TableauCaDeclaration.organisation_id == organisation_id, TableauImport.exercice == exercice)
+    )).all()
+    resultat: dict[str, list[tuple[bool, Any]]] = {}
+    for numero, present, quand in lignes:
+        cle = _norm_numero_ordre(numero)
+        if cle and present is not None:
+            resultat.setdefault(cle, []).append((bool(present), quand))
+    return resultat
+
+
 async def _declarations_par_numero(db: AsyncSession, organisation_id: int, exercice: str, modele, champ) -> dict[str, bool]:
     """Pour chaque N° d'ordre : vrai si au moins une déclaration de l'exercice le dit."""
     lignes = (await db.execute(
@@ -2920,7 +3049,13 @@ async def export_rapport_complet(
         repetitions = await _numeros_repetes(db, organisation_id, imp.exercice)
         membres, _ = await list_membres_a_completer(db, [organisation_id], imp.exercice)
         if membres:
-            ca = await _declarations_par_numero(db, organisation_id, imp.exercice, TableauCaDeclaration, TableauCaDeclaration.ca_present)
+            declarations_ca = await _declarations_ca(db, organisation_id, imp.exercice)
+            # Jugé membre par membre : la date à partir de laquelle une déclaration compte dépend de la catégorie.
+            ca = {
+                cle: verdict_engine.ca_declare(m.categorie, declarations_ca.get(cle), reglages_rapport)
+                for m in membres
+                if (cle := _norm_numero_ordre(m.numero_ordre))
+            }
             assurances = await _declarations_par_numero(db, organisation_id, imp.exercice, TableauInsuranceDeclaration, TableauInsuranceDeclaration.souscrit_normalise)
             for m in membres:
                 membre = rapport_complet.membre_en_dossier(m, ca, assurances, _norm_numero_ordre)

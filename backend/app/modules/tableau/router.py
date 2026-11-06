@@ -6,11 +6,11 @@ from datetime import date
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, get_current_user, has_any_permission, has_permission
+from app.api.deps import get_current_tenant_id, get_current_tenant_uuid, get_current_user, has_any_permission, has_permission
 from app.db.session import get_db
 from app.models.organisation import Organisation
 from app.models.user import User
@@ -40,6 +40,7 @@ from .schemas import (
     TableauReglagesIn,
     TableauReportCreate,
     TableauReportOut,
+    TableauSortieOut,
     TableauStatsOut,
     TableauActualisationListOut, TableauActualisationOut, TableauActualisationRowsOut,
     TableauActualisationRowOut, TableauActualisationStatsOut, TableauActualisationDetailOut,
@@ -53,6 +54,7 @@ from .service import (
     export_rapport_complet,
     export_tableau,
     get_base_tableau,
+    get_stats_tableau,
     import_source_snapshot,
     imports_comparables,
     get_reglages,
@@ -63,6 +65,8 @@ from .service import (
     set_reglages,
 )
 from .actualisation_service import get_current_tableau_actualisation
+from .import_lignes import lignes_import
+from .sorties import annuler_sortie, declarer_sortie, sortie_payload
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +82,7 @@ async def tableau_stats(
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> dict:
-    return await get_stats(db, tenant_id)
+    return await get_stats_tableau(db, tenant_id)
 
 
 @router.get("/imports", response_model=list[TableauImportOut], dependencies=[Depends(has_any_permission(VIEW_PERMS))])
@@ -159,6 +163,26 @@ async def download_import_annote(
     )
 
 
+@router.get(
+    "/imports/{import_id}/lignes",
+    summary="Lignes d'un import, avec les colonnes du fichier Excel dans leur ordre",
+    dependencies=[Depends(has_any_permission(VIEW_PERMS))],
+)
+async def lire_lignes_import(
+    import_id: int,
+    feuille: str | None = Query(default=None, max_length=120),
+    q: str | None = Query(default=None, max_length=120),
+    signalees: bool = Query(default=False, description="Seulement les lignes signalées à l'import"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    return await lignes_import(
+        db, tenant_id, import_id, feuille=feuille, recherche=q, signalees=signalees, limit=limit, offset=offset,
+    )
+
+
 async def _est_conseil_national(db: AsyncSession, user: User) -> bool:
     """Le Conseil National (et le super-admin) peut consolider tous les conseils."""
     if (user.role or "").lower() == "super_admin":
@@ -187,6 +211,9 @@ async def get_base(
     sexe: Literal["M", "F"] | None = Query(default=None),
     anciennete: Literal["Ancien", "Nouveau"] | None = Query(default=None),
     actif: bool | None = Query(default=None),
+    situation: Literal["en_exercice", "sortis", "tous", "DECEDE", "DEMISSIONNAIRE", "RADIE", "OMIS", "CESSE"] = Query(
+        default="en_exercice", description="Par défaut, les membres sortis du Tableau sont écartés",
+    ),
     # Filtres sur ce que calculent les règles de délibération.
     conclusion: Literal["INSCRIT", "NON INSCRIT", "À DÉLIBÉRER", "SANS"] | None = Query(default=None),
     cotisation: Literal["payee", "partielle", "non_payee", "inconnue"] | None = Query(default=None),
@@ -233,6 +260,7 @@ async def get_base(
         assurance=assurance,
         chiffre_affaires=chiffre_affaires,
         formation=formation,
+        situation=situation,
         limit=limit,
         offset=offset,
     )
@@ -525,6 +553,55 @@ async def corriger_tableau_dossier(
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> object:
     return await corriger_dossier(db, user, tenant_id, dossier_id, payload)
+
+
+@router.post(
+    "/sorties",
+    response_model=TableauSortieOut,
+    summary="Déclarer (ou modifier) la sortie du Tableau d'un membre",
+    dependencies=[Depends(has_permission("tableau.correct"))],
+)
+async def declarer_sortie_membre(
+    numero_ordre: str = Form(..., max_length=50),
+    nom: str = Form(..., max_length=300),
+    categorie: str | None = Form(default=None, max_length=50),
+    situation: Literal["DECEDE", "DEMISSIONNAIRE", "RADIE", "OMIS", "CESSE"] = Form(...),
+    date_effet: date = Form(...),
+    lieu_deces: str | None = Form(default=None, max_length=200),
+    motif_cessation: str | None = Form(default=None, max_length=20),
+    societe_absorbante: str | None = Form(default=None, max_length=300),
+    reference_decision: str | None = Form(default=None, max_length=200),
+    observation: str | None = Form(default=None, max_length=2000),
+    piece: UploadFile | None = File(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
+) -> object:
+    sortie = await declarer_sortie(
+        db, user, tenant_id, tenant_uuid,
+        numero_ordre=numero_ordre, nom=nom, categorie=categorie, situation=situation, date_effet=date_effet,
+        lieu_deces=lieu_deces, motif_cessation=motif_cessation, societe_absorbante=societe_absorbante,
+        reference_decision=reference_decision, observation=observation, piece=piece,
+    )
+    return sortie_payload(sortie)
+
+
+@router.delete(
+    "/sorties/{sortie_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Annuler une sortie déclarée à tort : le membre est réintégré",
+    dependencies=[Depends(has_permission("tableau.correct"))],
+)
+async def annuler_sortie_membre(
+    sortie_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> Response:
+    await annuler_sortie(db, user, tenant_id, sortie_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/reports", response_model=list[TableauReportOut], dependencies=[Depends(has_any_permission(VIEW_PERMS))])

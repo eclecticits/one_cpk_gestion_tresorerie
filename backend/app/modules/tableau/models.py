@@ -570,3 +570,44 @@ class TableauAuditLog(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="success", index=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+
+
+class TableauSortieMembre(Base):
+    """Sortie du Tableau d'un membre : décès, démission, radiation, omission, cessation.
+
+    Ce n'est pas une catégorie : un expert décédé reste « EC Cabinet », une société
+    dissoute reste « Société ». La sortie tient au membre (conseil + n° d'ordre),
+    pas à un import : un réimport ne la fait pas disparaître. Elle vaut pour les
+    exercices dont l'année est au moins celle de la date d'effet.
+    """
+
+    __tablename__ = "tableau_sorties_membres"
+    __table_args__ = (
+        UniqueConstraint("organisation_id", "numero_ordre", name="uq_tableau_sortie_membre"),
+        CheckConstraint("personne IN ('PP', 'PM')", name="ck_tableau_sortie_personne"),
+        CheckConstraint(
+            "situation IN ('DECEDE', 'DEMISSIONNAIRE', 'RADIE', 'OMIS', 'CESSE')",
+            name="ck_tableau_sortie_situation",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    # N° d'ordre normalisé (majuscules, sans espaces), comme `_norm_numero_ordre`.
+    numero_ordre: Mapped[str] = mapped_column(String(50), nullable=False)
+    nom: Mapped[str] = mapped_column(String(300), nullable=False)
+    personne: Mapped[str] = mapped_column(String(2), nullable=False)
+    situation: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    date_effet: Mapped[Date] = mapped_column(Date, nullable=False)
+    lieu_deces: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Société : DISSOLUTION, FUSION ou RADIATION.
+    motif_cessation: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    societe_absorbante: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    reference_decision: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    observation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    piece_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    piece_nom: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

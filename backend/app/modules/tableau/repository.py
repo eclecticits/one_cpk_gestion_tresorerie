@@ -30,6 +30,7 @@ from .models import (
     TableauPersonneMoraleSnapshot,
     TableauPersonnePhysiqueSnapshot,
     TableauReport,
+    TableauSortieMembre,
     TableauSourceRow,
 )
 
@@ -147,6 +148,39 @@ def _filtre_anciennete(numero, exercice: str, anciennete: str):
     if reference is None:
         return literal(False)
     return annee == reference if anciennete == "Nouveau" else annee < reference
+
+
+SITUATIONS_SORTIE = ("DECEDE", "DEMISSIONNAIRE", "RADIE", "OMIS", "CESSE")
+
+
+def cle_numero_sql(colonne):
+    """Le n° d'ordre comme `_norm_numero_ordre` : majuscules, sans aucun espace."""
+    return func.upper(func.regexp_replace(func.coalesce(colonne, ""), r"\s", "", "g"))
+
+
+def _sortie_du_membre(organisation, numero, exercice: str, situation: str | None = None):
+    """Le membre a une sortie qui vaut pour l'exercice (date d'effet au plus tard cette année-là)."""
+    conditions = [
+        TableauSortieMembre.organisation_id == organisation,
+        TableauSortieMembre.numero_ordre == cle_numero_sql(numero),
+    ]
+    reference = _annee_exercice(exercice)
+    if reference is not None:
+        conditions.append(func.extract("year", TableauSortieMembre.date_effet) <= reference)
+    if situation:
+        conditions.append(TableauSortieMembre.situation == situation)
+    return select(TableauSortieMembre.id).where(*conditions).exists()
+
+
+def filtre_situation(organisation, numero, exercice: str, situation: str | None):
+    """« en_exercice » écarte les sortis, « sortis » ne garde qu'eux, un code garde cette sortie."""
+    if not situation or situation == "tous":
+        return None
+    if situation == "en_exercice":
+        return ~_sortie_du_membre(organisation, numero, exercice)
+    if situation == "sortis":
+        return _sortie_du_membre(organisation, numero, exercice)
+    return _sortie_du_membre(organisation, numero, exercice, situation)
 
 
 # Accents et séparateurs retirés côté base, sans dépendre de l'extension unaccent.
@@ -267,6 +301,21 @@ def _actifs_membres(organisation_ids: list[int], exercice: str):
     return select(classes.c.organisation_id, classes.c.numero_ordre, classes.c.actif).where(classes.c.rang == 1).subquery()
 
 
+async def sorties_par_membre(
+    db: AsyncSession, organisation_ids: list[int], exercice: str | None = None
+) -> dict[tuple[int, str], TableauSortieMembre]:
+    """Les sorties des conseils, par (conseil, n° d'ordre normalisé).
+
+    Avec un exercice, seules celles qui y valent : date d'effet au plus tard cette année-là.
+    """
+    q = select(TableauSortieMembre).where(TableauSortieMembre.organisation_id.in_(organisation_ids))
+    reference = _annee_exercice(exercice) if exercice else None
+    if reference is not None:
+        q = q.where(func.extract("year", TableauSortieMembre.date_effet) <= reference)
+    lignes = (await db.execute(q)).scalars().all()
+    return {(ligne.organisation_id, ligne.numero_ordre): ligne for ligne in lignes}
+
+
 async def actifs_par_membre(
     db: AsyncSession, organisation_ids: list[int], exercice: str
 ) -> dict[tuple[int, str], bool]:
@@ -288,7 +337,11 @@ def _base_filtrage(
     sexe: str | None = None,
     anciennete: str | None = None,
     actif: bool | None = None,
+    situation: str | None = "en_exercice",
 ):
+    condition = filtre_situation(TableauDossier.organisation_id, TableauDossier.numero_ordre, exercice, situation)
+    if condition is not None:
+        q = q.where(condition)
     if personne == "morale":
         q = q.where(TableauDossier.categorie.in_(CATEGORIES_MORALES))
     elif personne == "physique":
@@ -363,6 +416,7 @@ async def list_base_tableau(
     sexe: str | None = None,
     anciennete: str | None = None,
     actif: bool | None = None,
+    situation: str | None = "en_exercice",
 ) -> list[TableauDossier]:
     """Situation qui fait foi pour chaque membre de l'exercice, tous imports confondus.
 
@@ -392,6 +446,7 @@ async def list_base_tableau(
         sexe=sexe,
         anciennete=anciennete,
         actif=actif,
+        situation=situation,
     ).order_by(
         *_recherche_ordre(recherche, TableauDossier.numero_ordre, TableauDossier.nom),
         func.lower(TableauDossier.nom),
@@ -415,6 +470,7 @@ def _membres_a_completer(
     sexe: str | None = None,
     anciennete: str | None = None,
     actif: bool | None = None,
+    situation: str | None = "en_exercice",
 ):
     """Membres des fichiers personnes physiques et morales encore sans dossier.
 
@@ -524,6 +580,9 @@ def _membres_a_completer(
         filtres.append(_filtre_anciennete(union.c.numero_ordre, exercice, anciennete))
     if actif is not None:
         filtres.append(union.c.actif.is_(actif))
+    condition = filtre_situation(union.c.organisation_id, union.c.numero_ordre, exercice, situation)
+    if condition is not None:
+        filtres.append(condition)
     if organisation_id is not None:
         filtres.append(union.c.organisation_id == organisation_id)
     return union, filtres
@@ -544,11 +603,13 @@ async def list_membres_a_completer(
     sexe: str | None = None,
     anciennete: str | None = None,
     actif: bool | None = None,
+    situation: str | None = "en_exercice",
 ) -> tuple[list, dict]:
     """Renvoie (lignes de la page, résumé de l'ensemble)."""
     union, filtres = _membres_a_completer(
         organisation_ids, exercice, recherche=recherche, categorie=categorie, organisation_id=organisation_id,
         personne=personne, province=province, sexe=sexe, anciennete=anciennete, actif=actif,
+        situation=situation,
     )
     total, sans_numero, imports, organisations = (await db.execute(
         select(
@@ -589,6 +650,7 @@ async def get_base_summary(
     sexe: str | None = None,
     anciennete: str | None = None,
     actif: bool | None = None,
+    situation: str | None = "en_exercice",
 ) -> dict:
     classee = _base_classee(organisation_ids, exercice)
     q = (
@@ -614,6 +676,7 @@ async def get_base_summary(
         sexe=sexe,
         anciennete=anciennete,
         actif=actif,
+        situation=situation,
     )
     total, sans_numero, imports, organisations = (await db.execute(q)).one()
     return {
