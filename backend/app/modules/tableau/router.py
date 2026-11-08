@@ -57,7 +57,6 @@ from .service import (
     get_base_tableau,
     get_stats_tableau,
     import_source_snapshot,
-    imports_comparables,
     get_reglages,
     import_excel,
     run_analyse,
@@ -461,20 +460,6 @@ async def export_tableau_xlsx(
 
 
 @router.get(
-    "/rapport-complet/{import_id}/comparables",
-    dependencies=[Depends(has_permission("tableau.export"))],
-)
-async def list_imports_comparables(
-    import_id: int,
-    scope: Literal["import", "base"] = Query(default="import"),
-    db: AsyncSession = Depends(get_db),
-    tenant_id: int = Depends(get_current_tenant_id),
-) -> list[dict[str, Any]]:
-    """Imports dont les conclusions peuvent réellement être comparées à ce rapport."""
-    return await imports_comparables(db, tenant_id, import_id, scope=scope)
-
-
-@router.get(
     "/rapport-complet/{import_id}",
     dependencies=[Depends(has_permission("tableau.export"))],
 )
@@ -482,13 +467,15 @@ async def export_rapport_complet_tableau(
     import_id: int,
     format: Literal["pdf", "xlsx"] = Query(default="pdf"),
     scope: Literal["import", "base"] = Query(default="import"),
-    comparer_a: int | None = Query(default=None),
+    categorie: Literal["EC Cabinet", "EC Indépendant", "Société", "EC Salarié"] | None = Query(
+        default=None, description="Limite le rapport à une catégorie ; absent : toutes.",
+    ),
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> StreamingResponse:
-    """Télécharge le rapport complet de l'analyse : synthèse, conformité, qualité, plan d'action."""
+    """Télécharge le rapport complet : le tableau de bord, puis la liste des membres."""
     content, fname = await export_rapport_complet(
-        db, tenant_id, import_id, format_sortie=format, scope=scope, comparer_a=comparer_a,
+        db, tenant_id, import_id, format_sortie=format, scope=scope, categorie=categorie,
     )
     media_type = (
         "application/pdf" if format == "pdf"

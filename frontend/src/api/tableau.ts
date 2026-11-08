@@ -667,17 +667,13 @@ export const downloadTableauExport = async (import_id: number, scope: 'import' |
   URL.revokeObjectURL(url)
 }
 
-/** Imports dont les conclusions peuvent réellement être comparées au rapport complet. */
-export const listTableauImportsComparables = (import_id: number, scope: 'import' | 'base') =>
-  apiRequest<{ id: number; file_name: string }[]>('GET', `${BASE}/rapport-complet/${import_id}/comparables?scope=${scope}`)
-
-/** Télécharge le rapport complet de l'analyse (PDF ou Excel). */
+/** Télécharge le rapport complet (PDF ou Excel), pour toutes les catégories ou pour une seule. */
 export const downloadTableauRapportComplet = async (
   import_id: number,
-  options: { format: 'pdf' | 'xlsx'; scope: 'import' | 'base'; exercice: string; comparer_a?: number | null },
+  options: { format: 'pdf' | 'xlsx'; scope: 'import' | 'base'; exercice: string; categorie?: string },
 ): Promise<void> => {
   const qs = new URLSearchParams({ format: options.format, scope: options.scope })
-  if (options.comparer_a) qs.set('comparer_a', String(options.comparer_a))
+  if (options.categorie) qs.set('categorie', options.categorie)
   const path = `${BASE}/rapport-complet/${import_id}?${qs}`
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: 'GET',

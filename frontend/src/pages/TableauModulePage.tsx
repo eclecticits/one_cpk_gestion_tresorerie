@@ -35,7 +35,6 @@ import {
   updateTableauReglages,
   downloadTableauExport,
   downloadTableauRapportComplet,
-  listTableauImportsComparables,
   type TableauAuditEntry,
   type TableauReglages,
   type TableauAnalyse,
@@ -739,28 +738,11 @@ export default function TableauModulePage() {
 
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const [rapportComparerA, setRapportComparerA] = useState<number | null>(null)
-  const [rapportComparables, setRapportComparables] = useState<{ id: number; file_name: string }[]>([])
+  // Rapport limité à une catégorie ; vide : toutes.
+  const [rapportCategorie, setRapportCategorie] = useState('')
   // La base est le périmètre qui fait foi dès que l'exercice s'étale sur plusieurs fichiers.
   const [rapportPerimetre, setRapportPerimetre] = useState<'import' | 'base'>('base')
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    setRapportComparerA(null)
-  }, [selectedImport?.id, rapportPerimetre])
-
-  // Le menu ne propose que ce que l'export acceptera : un choix voué au refus est une impasse.
-  useEffect(() => {
-    if (activeTab !== 'rapports' || !selectedImport) {
-      setRapportComparables([])
-      return
-    }
-    let annule = false
-    listTableauImportsComparables(selectedImport.id, rapportPerimetre)
-      .then(liste => { if (!annule) setRapportComparables(liste) })
-      .catch(() => { if (!annule) setRapportComparables([]) })
-    return () => { annule = true }
-  }, [activeTab, selectedImport?.id, rapportPerimetre])
 
   const [exercice, setExercice] = useState(String(new Date().getFullYear()))
   const [compareExerciceA, setCompareExerciceA] = useState('')
@@ -966,7 +948,7 @@ export default function TableauModulePage() {
         format,
         scope: rapportPerimetre,
         exercice: selectedImport.exercice,
-        comparer_a: rapportComparerA,
+        categorie: rapportCategorie || undefined,
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur lors de la génération du rapport complet.')
@@ -2250,7 +2232,7 @@ export default function TableauModulePage() {
                 {canExport && <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', flex: 1, minWidth: '280px' }}>
                   <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Rapport complet (PDF et Excel)</h3>
                   <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
-                    Synthèse, conformité des critères, qualité des données et plan d'action.
+                    Le tableau de bord en graphiques, puis la liste des membres.
                   </p>
                   <label style={{ display: 'block', fontSize: '12px', color: '#4b5563', marginBottom: '8px' }}>
                     Périmètre
@@ -2265,21 +2247,17 @@ export default function TableauModulePage() {
                     </select>
                   </label>
                   <label style={{ display: 'block', fontSize: '12px', color: '#4b5563', marginBottom: '8px' }}>
-                    Comparer les conclusions à (facultatif)
+                    Catégorie
                     <select
-                      value={rapportComparerA ?? ''}
-                      onChange={e => setRapportComparerA(e.target.value ? Number(e.target.value) : null)}
-                      disabled={Boolean(actionLoading?.startsWith('rapport-')) || rapportComparables.length === 0}
+                      value={rapportCategorie}
+                      onChange={e => setRapportCategorie(e.target.value)}
+                      disabled={Boolean(actionLoading?.startsWith('rapport-'))}
                       style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '100%', marginTop: '4px' }}
                     >
-                      <option value="">Aucune comparaison</option>
-                      {rapportComparables.map(item => <option key={item.id} value={item.id}>{item.file_name}</option>)}
+                      <option value="">Toutes</option>
+                      {/* Les stagiaires n'ont pas de critère automatique : ils restent hors du rapport par catégorie. */}
+                      {TABLEAU_CATEGORIES.filter(item => item !== 'Stagiaire').map(item => <option key={item} value={item}>{item}</option>)}
                     </select>
-                    {rapportComparables.length === 0 && (
-                      <span style={{ display: 'block', color: '#6b7280', marginTop: '4px' }}>
-                        Aucun autre import de cet exercice ne porte de conclusion à comparer.
-                      </span>
-                    )}
                   </label>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button

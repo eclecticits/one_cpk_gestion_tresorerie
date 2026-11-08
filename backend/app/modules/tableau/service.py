@@ -2809,28 +2809,6 @@ _MESSAGE_SANS_DOSSIER = (
 )
 
 
-async def _numeros_repetes(db: AsyncSession, organisation_id: int, exercice: str) -> list[dict[str, Any]]:
-    """Numéros portés par plusieurs lignes d'un même fichier : la Base n'en montre qu'une."""
-    repetitions: list[dict[str, Any]] = []
-    for modele, colonne_nom in (
-        (TableauPersonnePhysiqueSnapshot, TableauPersonnePhysiqueSnapshot.nom),
-        (TableauPersonneMoraleSnapshot, TableauPersonneMoraleSnapshot.societe),
-    ):
-        lignes = (await db.execute(
-            select(modele.numero_ordre, func.count(), func.string_agg(colonne_nom, " / "))
-            .join(TableauImport, TableauImport.id == modele.source_import_id)
-            .where(
-                modele.organisation_id == organisation_id,
-                TableauImport.exercice == exercice,
-                func.coalesce(func.trim(modele.numero_ordre), "") != "",
-            )
-            .group_by(modele.source_import_id, modele.numero_ordre)
-            .having(func.count() > 1)
-        )).all()
-        repetitions += [{"numero_ordre": numero, "lignes": total, "noms": noms} for numero, total, noms in lignes]
-    return repetitions
-
-
 async def _numeros_ecartes(db: AsyncSession, organisation_id: int, exercice: str) -> dict[str, str]:
     """Numéros que le conseil a déclarés erronés, conservés avec les imports de l'exercice."""
     metadonnees = (await db.execute(
@@ -2934,51 +2912,18 @@ async def _analyse_du_perimetre(
     return await get_analyse_for_import(db, organisation_id, imp.id, scope="import")
 
 
-async def _conclusions_a_comparer(
-    db: AsyncSession, organisation_id: int, import_id: int, analyse: TableauAnalyse | None
-) -> dict[str, dict[str, Any]]:
-    """Conclusions d'un autre import, hors dossiers de l'analyse : un dossier ne se compare pas à lui-même."""
-    deja_analyses = {int(valeur) for valeur in (analyse.source_dossier_ids or [])} if analyse else set()
-    conclusions: dict[str, dict[str, Any]] = {}
-    for d in await list_dossiers(db, organisation_id, import_id=import_id):
-        conclusion = (d.raw_data or {}).get("conclusion_source") or d.conclusion
-        cle = _norm_numero_ordre(d.numero_ordre)
-        if d.id not in deja_analyses and cle and conclusion:
-            conclusions[cle] = {
-                "conclusion": conclusion,
-                "heures_forco": float(d.heures_forco) if d.heures_forco is not None else None,
-            }
-    return conclusions
-
-
-async def imports_comparables(
-    db: AsyncSession, organisation_id: int, import_id: int, scope: str = "import"
-) -> list[dict[str, Any]]:
-    """Imports que le rapport peut comparer : ceux que l'export accepterait."""
-    imp = await get_import(db, organisation_id, import_id)
-    if imp is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
-    analyse = await _analyse_du_perimetre(db, organisation_id, imp, scope)
-    if analyse is None or analyse.status != "completed":
-        return []
-    return [
-        {"id": autre.id, "file_name": autre.file_name}
-        for autre in await list_imports(db, organisation_id)
-        if autre.id != analyse.import_id
-        and autre.exercice == imp.exercice
-        and await _conclusions_a_comparer(db, organisation_id, autre.id, analyse)
-    ]
-
-
 async def export_rapport_complet(
     db: AsyncSession,
     organisation_id: int,
     import_id: int,
     format_sortie: str = "pdf",
     scope: str = "import",
-    comparer_a: int | None = None,
+    categorie: str | None = None,
 ) -> tuple[bytes, str]:
-    """Génère le rapport complet (PDF ou Excel) de l'analyse. Renvoie (octets, nom_fichier)."""
+    """Génère le rapport complet (PDF ou Excel) de l'analyse. Renvoie (octets, nom_fichier).
+
+    `categorie` (« EC Cabinet »…) limite le rapport à une catégorie : tableau de bord et liste.
+    """
     # Import différé : le service des journaux dépend d'endpoints qui importent des services.
     from app.services.journaux_annexes import _identite
 
@@ -3013,25 +2958,6 @@ async def export_rapport_complet(
     elif scope != "base":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_MESSAGE_SANS_DOSSIER)
 
-    comparaison: dict[str, dict[str, Any]] = {}
-    comparaison_nom: str | None = None
-    if comparer_a is not None:
-        autre = await get_import(db, organisation_id, comparer_a)
-        if autre is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import de comparaison introuvable")
-        if autre.id == imp.id or autre.exercice != imp.exercice:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="L'import de comparaison doit être un autre import du même exercice.",
-            )
-        comparaison = await _conclusions_a_comparer(db, organisation_id, autre.id, analyse)
-        if not comparaison:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="L'import choisi ne porte aucune autre conclusion à comparer à ce rapport.",
-            )
-        comparaison_nom = autre.file_name
-
     dossier_rows = await _dossiers_de_l_analyse(db, organisation_id, import_id, analyse, scope) if analyse else []
     actifs = await actifs_par_membre(db, [organisation_id], imp.exercice)
     cotisations = await _cotisations_notes(db, organisation_id, imp.exercice)
@@ -3044,9 +2970,7 @@ async def export_rapport_complet(
         }
         for d in dossier_rows
     ]
-    repetitions: list[dict[str, Any]] = []
     if scope == "base":
-        repetitions = await _numeros_repetes(db, organisation_id, imp.exercice)
         membres, _ = await list_membres_a_completer(db, [organisation_id], imp.exercice)
         if membres:
             declarations_ca = await _declarations_ca(db, organisation_id, imp.exercice)
@@ -3079,9 +3003,7 @@ async def export_rapport_complet(
                 membre["conclusion_motif"] = verdict["motif"]
                 dossiers.append(membre)
     ecartes = await _numeros_ecartes(db, organisation_id, imp.exercice)
-    nombre_avant = len(dossiers)
     dossiers = [d for d in dossiers if not rapport_complet.est_fiche_essai(d.get("nom"))]
-    fiches_essai = nombre_avant - len(dossiers)
     numeros_ecartes = {
         numero_normalise
         for numero in ecartes
@@ -3090,21 +3012,13 @@ async def export_rapport_complet(
     dossiers = [d for d in dossiers if _norm_numero_ordre(d.get("numero_ordre")) not in numeros_ecartes]
     if not dossiers:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Aucun membre pour l'exercice {imp.exercice}.")
-    anomalies = [
-        {
-            "dossier_id": a.dossier_id,
-            "type_anomalie": a.type_anomalie,
-            "gravite": a.gravite,
-            "description": a.description,
-        }
-        for a in (await list_anomalies(db, organisation_id, analyse_id=analyse.id) if analyse else [])
-    ]
+    if categorie and not any(rapport_complet.norm_categorie(d.get("categorie")) == categorie for d in dossiers):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Aucun membre de la catégorie {categorie} pour l'exercice {imp.exercice}.")
     identite = await _identite(db, organisation_id, "")
     source = "Base consolidée de l'exercice" if scope == "base" else f"Fichier {imp.file_name}"
     contexte = rapport_complet.ContexteRapport(
         exercice=imp.exercice,
         date_situation=imp.date_situation,
-        scope=scope,
         source=source,
         organisation=identite.nom,
         contact=identite.contact,
@@ -3112,15 +3026,13 @@ async def export_rapport_complet(
         reglages=reglages_rapport,
         exercice_annee=_exercice_annee(imp.exercice),
         genere_le=datetime.now(timezone.utc).date(),
-        comparaison=comparaison,
-        comparaison_nom=comparaison_nom,
-        repetitions=repetitions,
-        fiches_essai_ecartees=fiches_essai,
-        numeros_ecartes=ecartes,
+        categorie=categorie,
     )
-    donnees = rapport_complet.construire_donnees(dossiers, anomalies, contexte, _norm_numero_ordre)
+    donnees = rapport_complet.construire_donnees(dossiers, contexte)
     exercice = re.sub(r"[^0-9A-Za-z_-]+", "_", str(imp.exercice))
     suffixe = "base" if scope == "base" else str(import_id)
+    if categorie:
+        suffixe += "_" + re.sub(r"[^0-9A-Za-z]+", "_", unicodedata.normalize("NFKD", categorie).encode("ascii", "ignore").decode()).strip("_")
     if format_sortie == "xlsx":
         return rapport_complet.build_excel(donnees), f"Rapport_Tableau_{exercice}_{suffixe}.xlsx"
     return rapport_complet.build_pdf(donnees), f"Rapport_Tableau_{exercice}_{suffixe}.pdf"
