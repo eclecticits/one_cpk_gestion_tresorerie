@@ -56,6 +56,8 @@ TEMPLATE_VARIABLES: dict[str, str] = {
     "periode": "Période couverte par un rapport transmis",
     "resume": "Chiffres clés d'un rapport transmis, une ligne par chiffre",
     "message": "Mot d'accompagnement saisi par l'expéditeur",
+    "conclusion": "Conclusion au Tableau : EN RÈGLE ou NON EN RÈGLE",
+    "consigne": "Invitation à déclarer sur l'espace membre, vide si le membre est en règle",
     "piece_jointe": "Phrase annonçant le PDF envoyé par e-mail, vide s'il n'est pas parti",
 }
 
@@ -206,6 +208,21 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "{{piece_jointe}}\n"
         "\n"
         "_Transmis par : {{auteur}}_"
+    ),
+    # Civilité, critères et conclusion viennent de `app.modules.tableau.releves` :
+    # l'e-mail dit la même chose, avec la même civilité.
+    events.TABLEAU_SITUATION: (
+        _header("SITUATION AU TABLEAU")
+        + "{{salutation}}\n"
+        "{{message}}\n"
+        "\n"
+        "{{resume}}\n"
+        "\n"
+        "Conclusion : *{{conclusion}}*\n"
+        "\n"
+        "{{consigne}}\n"
+        "\n"
+        "_La Commission Tableau – {{organisation}}_"
     ),
     events.TEST_MESSAGE: (
         "*{{organisation}}* · ONEC Smart\n"

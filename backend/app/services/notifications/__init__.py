@@ -31,6 +31,7 @@ from .events import (
     PAYMENT_REMINDER,
     REPORT_SENT,
     REQUISITION_APPROVED,
+    TABLEAU_SITUATION,
     TEST_MESSAGE,
 )
 from .phone import format_phone_display, mask_phone, normalize_phone, normalize_phone_list
@@ -70,6 +71,7 @@ __all__ = [
     "PAYMENT_REMINDER",
     "REPORT_SENT",
     "REQUISITION_APPROVED",
+    "TABLEAU_SITUATION",
     "TEST_MESSAGE",
     # Téléphone
     "format_phone_display",

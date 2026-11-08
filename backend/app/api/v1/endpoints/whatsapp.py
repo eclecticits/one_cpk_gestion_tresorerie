@@ -87,6 +87,7 @@ from app.services.notifications import (
     PAYMENT_REMINDER,
     REPORT_SENT,
     REQUISITION_APPROVED,
+    TABLEAU_SITUATION,
     TEST_MESSAGE,
     Recipient,
     available_providers,
@@ -129,6 +130,7 @@ _PREFERRED_EVENT_ORDER = (
     FUND_OUTFLOW,
     REQUISITION_APPROVED,
     REPORT_SENT,
+    TABLEAU_SITUATION,
     TEST_MESSAGE,
 )
 

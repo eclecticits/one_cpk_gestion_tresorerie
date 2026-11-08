@@ -611,3 +611,72 @@ class TableauSortieMembre(Base):
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class TableauReleve(Base):
+    """Un relevé de situation envoyé à un membre, sur un canal.
+
+    Le texte envoyé est gardé tel quel : c'est la preuve de ce que le membre a
+    reçu, même si la situation change ensuite. `empreinte` résume la situation
+    (critères et conclusion, sans la date) : la même empreinte déjà envoyée sur
+    le même canal signale un doublon.
+    """
+
+    __tablename__ = "tableau_releves"
+    __table_args__ = (
+        CheckConstraint("canal IN ('email', 'whatsapp')", name="ck_tableau_releve_canal"),
+        CheckConstraint("statut IN ('envoye', 'echec')", name="ck_tableau_releve_statut"),
+        Index("ix_tableau_releves_membre", "organisation_id", "exercice", "numero_ordre"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    exercice: Mapped[str] = mapped_column(String(20), nullable=False)
+    # N° d'ordre normalisé, comme `_norm_numero_ordre`.
+    numero_ordre: Mapped[str] = mapped_column(String(50), nullable=False)
+    nom: Mapped[str] = mapped_column(String(300), nullable=False)
+    categorie: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    conclusion: Mapped[str] = mapped_column(String(30), nullable=False)
+    canal: Mapped[str] = mapped_column(String(10), nullable=False)
+    destinataire: Mapped[str] = mapped_column(String(255), nullable=False)
+    sujet: Mapped[str] = mapped_column(String(300), nullable=False)
+    corps: Mapped[str] = mapped_column(Text, nullable=False)
+    empreinte: Mapped[str] = mapped_column(String(64), nullable=False)
+    statut: Mapped[str] = mapped_column(String(10), nullable=False)
+    erreur: Mapped[str | None] = mapped_column(Text, nullable=True)
+    envoye_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    # Envoi groupé d'où vient ce relevé ; None pour un envoi depuis la ligne du membre.
+    lot_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tableau_releve_lots.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class TableauReleveLot(Base):
+    """Envoi groupé de relevés de situation, traité en arrière-plan.
+
+    `numeros` fige la liste au lancement, dans l'ordre de la Base ; `traites` dit
+    où l'on en est, ce qui permet de reprendre un lot interrompu sans renvoyer
+    ce qui est parti (la garde anti-doublon des relevés fait le reste).
+    """
+
+    __tablename__ = "tableau_releve_lots"
+    __table_args__ = (
+        CheckConstraint("statut IN ('en_cours', 'termine', 'interrompu')", name="ck_tableau_releve_lot_statut"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    exercice: Mapped[str] = mapped_column(String(20), nullable=False)
+    canaux: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    renvoyer: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    numeros: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    traites: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    envoyes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    echecs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deja_envoyes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ignores: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    statut: Mapped[str] = mapped_column(String(12), nullable=False, default="en_cours")
+    cree_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    termine_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

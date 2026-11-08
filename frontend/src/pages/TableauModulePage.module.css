@@ -585,3 +585,17 @@
     transition: none;
   }
 }
+
+/* Base Tableau : survol et sélection des lignes. */
+.baseRow > td {
+  transition: background-color 120ms ease;
+}
+
+.baseRow:hover > td {
+  background-color: #f8fafc;
+}
+
+.baseRowSelected > td,
+.baseRowSelected:hover > td {
+  background-color: #eff6ff;
+}

@@ -66,6 +66,16 @@ dépend que de l'activation générale du canal, pas d'une famille d'événement
 Le PDF part par e-mail ; WhatsApp porte le mot d'accompagnement et les chiffres.
 """
 
+# ── Tableau ──────────────────────────────────────────────────────────────────
+
+TABLEAU_SITUATION = "TABLEAU_SITUATION"
+"""Relevé de situation au Tableau envoyé à un membre depuis la Base du Tableau.
+
+Envoi manuel, membre par membre : comme le rapport transmis, il ne dépend que
+de l'activation générale du canal. Le texte est construit par
+`app.modules.tableau.releves`, identique à celui de l'e-mail.
+"""
+
 # ── Service ──────────────────────────────────────────────────────────────────
 
 TEST_MESSAGE = "TEST_MESSAGE"
@@ -80,7 +90,7 @@ OUTFLOW_EVENTS: frozenset[str] = frozenset(
     {FUND_OUTFLOW, FUND_OUTFLOW_BENEFICIARY, JUSTIFICATIF_RELANCE, REQUISITION_APPROVED}
 )
 
-ALL_EVENTS: frozenset[str] = PAYMENT_EVENTS | OUTFLOW_EVENTS | {REPORT_SENT, TEST_MESSAGE}
+ALL_EVENTS: frozenset[str] = PAYMENT_EVENTS | OUTFLOW_EVENTS | {REPORT_SENT, TABLEAU_SITUATION, TEST_MESSAGE}
 
 #: Libellés pour l'écran d'historique.
 EVENT_LABELS: dict[str, str] = {
@@ -93,6 +103,7 @@ EVENT_LABELS: dict[str, str] = {
     JUSTIFICATIF_RELANCE: "Relance de justificatif",
     REQUISITION_APPROVED: "Réquisition approuvée",
     REPORT_SENT: "Rapport transmis au Bureau",
+    TABLEAU_SITUATION: "Situation au Tableau",
     TEST_MESSAGE: "Message de test",
 }
 

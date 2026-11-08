@@ -1501,3 +1501,139 @@ def send_rapport_bureau_email(
         msg=msg,
     )
     logger.info("Rapport email sent to=%s cc=%s", ", ".join(to_emails), ", ".join(cc_emails))
+
+
+#: Couleurs du relevé selon la conclusion : bordeaux pour « non en règle »,
+#: bleu pour « en règle ». Mêmes teintes dans le bandeau, l'encadré et le bouton.
+_PALETTES_RELEVE = {
+    True: {"fort": "#1e40af", "sombre": "#1e3a8a", "clair": "#eff6ff", "bord": "#bfdbfe", "texte": "#1e3a8a"},
+    False: {"fort": "#7f1d2d", "sombre": "#5c1420", "clair": "#fdf2f4", "bord": "#f1c5cf", "texte": "#7f1d2d"},
+}
+_GRIS_RELEVE = "#6b7280"
+
+
+def _releve_situation_html(
+    *,
+    titre: str,
+    reference: str,
+    entete: list[str],
+    appel: str,
+    annonce: str,
+    criteres: list[tuple[str, str, bool | None]],
+    conclusion: str,
+    en_regle: bool,
+    consigne: str,
+    lien: str,
+    politesse: str,
+    brand_label: str,
+    apercu_boite: str = "",
+) -> str:
+    """Carte du relevé, sur le modèle des notifications de réquisition (bandeau,
+    détails encadrés, bouton, pied), aux couleurs de la conclusion."""
+    e = html.escape
+    p = _PALETTES_RELEVE[en_regle]
+    lignes_entete = "".join(f'<div style="margin:0 0 2px;">{e(texte)}</div>' for texte in entete)
+
+    def ligne(label: str, valeur: str, conforme: bool | None) -> str:
+        # Une pastille dessinée, pas un caractère : les e-mails ne portent aucun pictogramme.
+        teinte = _GRIS_RELEVE if conforme is None else _PALETTES_RELEVE[bool(conforme)]["fort"]
+        return (
+            '<tr><td style="padding:7px 0; border-bottom:1px solid #eef2f7;">'
+            f'<span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:{teinte}; margin-right:8px;"></span>'
+            f'<strong>{e(label)} :</strong> <span style="color:{teinte}; font-weight:700;">{e(valeur)}</span>'
+            "</td></tr>"
+        )
+
+    lignes_criteres = "".join(ligne(*c) for c in criteres)
+    bloc_lien = (
+        f"""
+            <div style="margin:18px 0 4px; padding:14px 16px; border:1px solid {p['bord']}; border-radius:12px; background:{p['clair']};">
+              <div style="font-size:13px; color:#374151; margin-bottom:10px;">{e(consigne)}</div>
+              <a href="{e(lien)}" style="display:inline-block; padding:10px 16px; border-radius:10px; background:{p['fort']}; color:#ffffff; text-decoration:none; font-weight:700;">Accéder à mon espace membre</a>
+              <div style="margin-top:8px; font-size:12px; color:{_GRIS_RELEVE};">{e(lien)}</div>
+            </div>"""
+        if consigne and lien
+        else ""
+    )
+    # Texte d'aperçu : ce que la boîte de réception affiche à côté de l'objet.
+    preheader = (
+        f'<div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">{e(apercu_boite)}</div>'
+        if apercu_boite
+        else ""
+    )
+    return f"""
+    <html>
+      <body style="margin:0; padding:24px; background:#f5f7fa; font-family: Arial, sans-serif; color: #1f2937; line-height: 1.65;">
+        {preheader}
+        <div style="max-width:640px; margin:0 auto; border:1px solid {p['bord']}; border-radius:16px; overflow:hidden; background:#ffffff;">
+          <div style="padding:22px 24px; background:{p['fort']}; background-image:linear-gradient(135deg, {p['fort']}, {p['sombre']}); color:#ffffff;">
+            <table role="presentation" style="width:100%; border-collapse:collapse;"><tr>
+              <td style="vertical-align:top;">
+                <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; opacity:.86;">{e(brand_label)}</div>
+                <h2 style="margin:6px 0 0; font-size:21px; line-height:1.25;">{e(titre)}</h2>
+                <div style="margin-top:4px; font-size:13px; opacity:.9;">{e(reference)}</div>
+              </td>
+              <td style="vertical-align:top; text-align:right; white-space:nowrap; padding-left:12px;">
+                <span style="display:inline-block; padding:6px 12px; border-radius:999px; background:#ffffff; color:{p['texte']}; font-size:12px; font-weight:800; letter-spacing:.04em;">{e(conclusion)}</span>
+              </td>
+            </tr></table>
+          </div>
+          <div style="padding:22px 24px;">
+            <p style="margin:0 0 6px; font-weight:700;">{e(appel)}</p>
+            <div style="margin:0 0 16px; color:#4b5563; font-size:14px;">{lignes_entete}</div>
+            <p style="margin:0 0 14px;">{e(annonce)}</p>
+            <div style="padding:14px 16px; border:1px solid {p['bord']}; border-radius:12px; background:#ffffff;">
+              <div style="font-weight:800; color:{p['texte']}; margin-bottom:6px;">Votre situation</div>
+              <table style="border-collapse: collapse; width:100%;">
+                {lignes_criteres}
+              </table>
+              <div style="margin-top:12px; padding:10px 12px; border-radius:10px; background:{p['fort']}; color:#ffffff; font-weight:800; letter-spacing:.02em;">
+                Conclusion : {e(conclusion)}
+              </div>
+            </div>{bloc_lien}
+            <p style="margin:18px 0 0;">{e(politesse)}</p>
+            <p style="margin:14px 0 0; font-weight:700;">La Commission Tableau — {e(brand_label)}</p>
+          </div>
+          <div style="padding:14px 24px; background:#f8fafc; color:#7b8d88; font-size:12px; text-align:center;">
+            {e(brand_label)} · ONEC Smart<br />
+            {e(AUTOMATIC_MESSAGE_NOTICE)}
+          </div>
+        </div>
+      </body>
+    </html>
+    """.strip()
+
+
+def send_releve_situation_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    to_emails: list[str],
+    subject: str,
+    texte: str,
+    html_body: str,
+) -> None:
+    """Relevé de situation au Tableau, adressé au membre.
+
+    Lève en cas d'échec : l'écran doit dire ce qui n'est pas parti, et le
+    journal des relevés le consigner.
+    """
+    destinataires = [a for a in to_emails if a]
+    if not destinataires:
+        raise ValueError("Aucune adresse e-mail.")
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(destinataires)
+    msg.set_content(texte)
+    msg.add_alternative(html_body, subtype="html")
+    _send_email_message(
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        smtp_user=smtp_user,
+        smtp_password=smtp_password,
+        msg=msg,
+    )

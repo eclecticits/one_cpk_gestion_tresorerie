@@ -614,6 +614,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
           { code: 'tableau.analyze', label: 'Lancer l\'analyse', kind: 'other' },
           { code: 'tableau.decide', label: 'Enregistrer une décision', kind: 'manage' },
           { code: 'tableau.correct', label: 'Corriger un dossier', kind: 'manage' },
+          { code: 'tableau.notify', label: 'Envoyer leur situation aux membres', kind: 'manage' },
         ],
       },
       {

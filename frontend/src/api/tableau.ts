@@ -429,6 +429,123 @@ export const declarerSortieMembre = (saisie: SortieSaisie) => {
 export const annulerSortieMembre = (sortieId: number) =>
   apiRequest<void>('DELETE', `${BASE}/sorties/${sortieId}`)
 
+export type CanalReleve = 'email' | 'whatsapp'
+export const CANAUX_RELEVE: CanalReleve[] = ['email', 'whatsapp']
+export const LIBELLES_CANAL_RELEVE: Record<CanalReleve, string> = { email: 'E-mail', whatsapp: 'WhatsApp' }
+
+export type StatutEnvoiReleve = 'envoye' | 'echec' | 'deja_envoye' | 'ignore'
+
+/** Relevé de situation d'un membre, tel qu'il partirait. */
+export interface TableauReleveApercu {
+  exercice: string
+  numero_ordre: string
+  nom: string
+  categorie: string | null
+  envoyable: boolean
+  raison: string | null
+  sujet: string
+  corps: string
+  emails: string[]
+  telephone: string | null
+  fonction_bureau: string | null
+  email_actif: boolean
+  whatsapp_actif: boolean
+  /** Canaux sur lesquels cette même situation est déjà partie, avec la date. */
+  deja_envoye: Partial<Record<CanalReleve, string>>
+  historique: Array<{ date: string; canal: CanalReleve; destinataire: string; statut: 'envoye' | 'echec'; conclusion: string; erreur: string | null }>
+}
+
+export interface TableauReleveResultat {
+  numero_ordre: string
+  resultats: Array<{ canal: CanalReleve; destinataire: string; statut: StatutEnvoiReleve; message: string | null }>
+}
+
+export const getTableauReleveApercu = (numeroOrdre: string, exercice?: string) => {
+  const params = new URLSearchParams({ numero_ordre: numeroOrdre })
+  if (exercice) params.set('exercice', exercice)
+  return apiRequest<TableauReleveApercu>('GET', `${BASE}/releves/apercu?${params}`)
+}
+
+export const envoyerTableauReleve = (payload: { numero_ordre: string; exercice?: string; canaux: CanalReleve[]; renvoyer?: boolean }) =>
+  apiRequest<TableauReleveResultat>('POST', `${BASE}/releves`, payload)
+
+/** Les filtres de la Base, pour viser « tous les membres du filtre ». */
+export interface FiltresBaseReleve {
+  q?: string
+  categorie?: string
+  personne?: string
+  province?: string
+  sexe?: string
+  anciennete?: string
+  actif?: boolean
+  situation?: string
+  conclusion?: string
+  cotisation?: string
+  assurance?: string
+  chiffre_affaires?: string
+  formation?: string
+}
+
+export interface SelectionReleves {
+  exercice?: string
+  /** Des n° d'ordre choisis ; sinon `filtres` désigne tous les membres du filtre. */
+  numeros?: string[]
+  filtres?: FiltresBaseReleve
+  canaux: CanalReleve[]
+  renvoyer?: boolean
+}
+
+export interface TableauRelevesPreparation {
+  exercice: string
+  total: number
+  envoyables: number
+  en_regle: number
+  non_en_regle: number
+  bloques: Array<{ code: string; libelle: string; nombre: number }>
+  par_canal: Partial<Record<CanalReleve, { joignables: number; deja_envoye: number }>>
+  email_actif: boolean
+  whatsapp_actif: boolean
+  max: number
+  exemple: { nom: string; sujet: string; corps: string } | null
+}
+
+export interface TableauReleveLot {
+  id: number
+  exercice: string
+  canaux: CanalReleve[]
+  statut: 'en_cours' | 'termine' | 'interrompu'
+  total: number
+  traites: number
+  envoyes: number
+  echecs: number
+  deja_envoyes: number
+  ignores: number
+  created_at: string
+  termine_le: string | null
+  erreurs: Array<{ numero_ordre: string; nom: string; canal: CanalReleve; destinataire: string; erreur: string | null }>
+}
+
+export const preparerTableauReleves = (selection: SelectionReleves) =>
+  apiRequest<TableauRelevesPreparation>('POST', `${BASE}/releves/selection`, selection)
+
+export const lancerTableauRelevesLot = (selection: SelectionReleves) =>
+  apiRequest<TableauReleveLot>('POST', `${BASE}/releves/lots`, selection)
+
+export const getTableauRelevesLot = (lotId: number) =>
+  apiRequest<TableauReleveLot>('GET', `${BASE}/releves/lots/${lotId}`)
+
+export const reprendreTableauRelevesLot = (lotId: number) =>
+  apiRequest<TableauReleveLot>('POST', `${BASE}/releves/lots/${lotId}/reprendre`)
+
+export interface TableauDernierReleve {
+  date: string
+  canaux: CanalReleve[]
+}
+
+/** Dernier relevé parti pour chaque N° d'ordre de l'exercice. */
+export const getTableauDerniersReleves = (exercice: string) =>
+  apiRequest<Record<string, TableauDernierReleve>>('GET', `${BASE}/releves/derniers?exercice=${encodeURIComponent(exercice)}`)
+
 /** Lignes d'un import, colonnes du fichier Excel dans leur ordre. */
 export interface TableauImportLignes {
   import_id: number

@@ -21,6 +21,7 @@ TABLEAU_PERMISSIONS: list[tuple[str, str]] = [
     ("tableau.export", "Tableau : exporter les résultats"),
     ("tableau.decide", "Tableau : enregistrer une décision"),
     ("tableau.correct", "Tableau : corriger un dossier"),
+    ("tableau.notify", "Tableau : envoyer leur situation aux membres"),
     ("tableau.settings", "Tableau : modifier les règles de délibération"),
     ("tableau.view_audit_logs", "Tableau : consulter le journal des actions"),
     ("tableau.use_assistant", "Tableau : utiliser l'assistant"),

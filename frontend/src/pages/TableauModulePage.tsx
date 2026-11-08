@@ -1,8 +1,10 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Settings, Table2, UserX, X, XCircle } from 'lucide-react'
+import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Send, Settings, Table2, UserX, X, XCircle } from 'lucide-react'
 import TableauAssistantChat from '../components/TableauAssistantChat'
 import SortieMembreModal, { type MembreSortie } from '../components/SortieMembreModal'
+import ReleveSituationModal, { type MembreReleve } from '../components/ReleveSituationModal'
+import RelevesLotModal from '../components/RelevesLotModal'
 import ImportsParSource from '../components/ImportsParSource'
 import TableauDashboardCharts from '../components/TableauDashboardCharts'
 import BackButton from '../components/BackButton'
@@ -17,10 +19,12 @@ import {
   generateTableauPV,
   generateTableauReport,
   getTableauBase,
+  getTableauDerniersReleves,
   getTableauReglages,
   listTableauAudit,
   TABLEAU_CATEGORIES,
   LIBELLES_SITUATION_SORTIE,
+  type TableauDernierReleve,
   type TableauSortie,
   runTableauAnalyseBase,
   getTableauStats,
@@ -71,9 +75,12 @@ const ONGLETS: Record<string, TabKey> = Object.fromEntries(
 
 const baseTableStyle: React.CSSProperties = {
   width: '100%',
-  borderCollapse: 'collapse',
+  borderCollapse: 'separate',
+  borderSpacing: 0,
   fontSize: '13px',
   background: '#fff',
+  // Chiffres à chasse fixe : rangs et NHV restent alignés d'une ligne à l'autre.
+  fontVariantNumeric: 'tabular-nums',
 }
 
 const baseThStyle: React.CSSProperties = {
@@ -83,6 +90,11 @@ const baseThStyle: React.CSSProperties = {
   color: '#6b7280',
   fontWeight: 600,
   whiteSpace: 'nowrap',
+  // L'en-tête reste visible quand on fait défiler une longue page de membres.
+  position: 'sticky',
+  top: 0,
+  zIndex: 1,
+  background: '#f9fafb',
 }
 
 const baseTdStyle: React.CSSProperties = {
@@ -562,6 +574,43 @@ function BoutonSortie({ membre, onOpen }: { membre: MembreSortie; onOpen: (membr
   )
 }
 
+/** Membre coché pour l'envoi groupé, désigné par son n° d'ordre normalisé. */
+interface MembreCoche {
+  numero: string
+  nom: string
+}
+
+/** Envoie au membre sa situation ; la date du dernier envoi s'affiche sous le bouton. */
+function BoutonReleve({ membre, dernier, onOpen }: {
+  membre: { numero_ordre: string | null; nom: string }
+  dernier?: TableauDernierReleve
+  onOpen: (membre: MembreReleve) => void
+}) {
+  const { numero_ordre: numero, nom } = membre
+  const titre = dernier
+    ? `Envoyer sa situation au membre (dernier envoi le ${new Date(dernier.date).toLocaleDateString('fr-FR')})`
+    : 'Envoyer sa situation au membre'
+  return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+      <button
+        type="button"
+        className={styles.secondaryButton}
+        onClick={() => { if (numero) onOpen({ numero_ordre: numero, nom }) }}
+        disabled={!numero}
+        title={numero ? titre : "Sans N° d'ordre, la situation ne peut pas être envoyée"}
+        aria-label={`${titre} : ${nom}`}
+      >
+        <Send size={14} />
+      </button>
+      {dernier && (
+        <span style={{ fontSize: '11px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+          {new Date(dernier.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}
+        </span>
+      )}
+    </span>
+  )
+}
+
 function booleanStatus(value: boolean | null) {
   if (value === true) return <span style={{ color: '#166534', fontWeight: 600 }}>Oui</span>
   if (value === false) return <span style={{ color: '#991b1b', fontWeight: 600 }}>Non</span>
@@ -608,7 +657,7 @@ function StatCard({
   return (
     <div className={`${styles.statCard} ${styles[`stat${tone[0].toUpperCase()}${tone.slice(1)}`]}`}>
       <div className={styles.statIcon}>{icon}</div>
-      <div className={styles.statValue}>{value}</div>
+      <div className={styles.statValue}>{typeof value === 'number' ? value.toLocaleString('fr-FR') : value}</div>
       <div className={styles.statLabel}>{label}</div>
       {hint && <div className={styles.statHint}>{hint}</div>}
     </div>
@@ -624,6 +673,7 @@ export default function TableauModulePage() {
   const canGeneratePv = hasPermission('tableau.generate_pv')
   const canExport = hasPermission('tableau.export')
   const canCorrect = hasPermission('tableau.correct')
+  const canNotify = hasPermission('tableau.notify')
   const canSettings = hasPermission('tableau.settings')
   const canUseAssistant = hasPermission('tableau.use_assistant')
   const canViewAudit = hasPermission('tableau.view_audit_logs')
@@ -649,6 +699,15 @@ export default function TableauModulePage() {
   // Par défaut, les membres sortis du Tableau (décès, cessation…) sont écartés.
   const [baseSituation, setBaseSituation] = useState('en_exercice')
   const [sortieMembre, setSortieMembre] = useState<MembreSortie | null>(null)
+  const [releveMembre, setReleveMembre] = useState<MembreReleve | null>(null)
+  const [derniersReleves, setDerniersReleves] = useState<Record<string, TableauDernierReleve>>({})
+  const [relevesRefresh, setRelevesRefresh] = useState(0)
+  // Envoi groupé : des membres cochés (n° d'ordre → nom, conservés d'une page à
+  // l'autre), ou tous les membres du filtre courant.
+  const [selectionReleves, setSelectionReleves] = useState<Map<string, string>>(new Map())
+  const [selectionFiltre, setSelectionFiltre] = useState(false)
+  const [lotOuvert, setLotOuvert] = useState(false)
+  const rafraichirReleves = useCallback(() => setRelevesRefresh(valeur => valeur + 1), [])
   const [baseRegles, setBaseRegles] = useState<FiltresRegles>({})
   const baseReglesCle = JSON.stringify(baseRegles)
   const [baseOrganisationId, setBaseOrganisationId] = useState('')
@@ -994,6 +1053,96 @@ export default function TableauModulePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- baseRegles suivi par sa clé
   }, [activeTab, baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, baseSituation, baseReglesCle, basePage, basePageSize, baseRefresh])
 
+  // Date du dernier relevé envoyé, sous le bouton de chaque membre.
+  const exerciceBase = base?.exercice || ''
+  useEffect(() => {
+    if (!canNotify || baseNational || !exerciceBase) {
+      setDerniersReleves({})
+      return
+    }
+    let annule = false
+    getTableauDerniersReleves(exerciceBase)
+      .then(data => { if (!annule) setDerniersReleves(data) })
+      .catch(() => { if (!annule) setDerniersReleves({}) })
+    return () => { annule = true }
+  }, [canNotify, baseNational, exerciceBase, relevesRefresh])
+  // « Tous les membres du filtre » vaut pour le filtre affiché : il tombe dès qu'il change.
+  useEffect(() => {
+    setSelectionFiltre(false)
+  }, [baseExerciceDiffere, baseSearchDiffere, baseCategorie, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, baseSituation, baseReglesCle])
+  // Les membres cochés l'ont été devant la situation d'un exercice : un autre
+  // exercice affiché, et la sélection tombe (le lot partirait pour celui-ci).
+  useEffect(() => {
+    setSelectionReleves(new Map())
+  }, [exerciceBase, baseNational])
+  const selectionPossible = canNotify && !baseNational
+  const filtresBaseActifs = [
+    baseSearch, baseCategorie, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif,
+    baseSituation !== 'en_exercice' ? baseSituation : '',
+    ...Object.values(baseRegles),
+  ].filter(Boolean).length
+  const effacerFiltresBase = () => {
+    setBaseSearch('')
+    setBaseCategorie('')
+    setBasePersonne('')
+    setBaseProvince('')
+    setBaseSexe('')
+    setBaseAnciennete('')
+    setBaseActif('')
+    setBaseSituation('en_exercice')
+    setBaseRegles({})
+    setBasePage(1)
+  }
+  const cleNumero = (numero: string) => numero.trim().toUpperCase().replace(/\s+/g, '')
+  const basculerSelection = (membres: MembreCoche[], coche: boolean) => {
+    setSelectionReleves(courante => {
+      const suivante = new Map(courante)
+      for (const { numero, nom } of membres) {
+        if (coche) suivante.set(cleNumero(numero), nom)
+        else suivante.delete(cleNumero(numero))
+      }
+      return suivante
+    })
+  }
+  const selectionnablesPage: MembreCoche[] = base
+    ? [
+        ...base.dossiers.filter(d => d.numero_ordre && !d.sortie).map(d => ({ numero: cleNumero(d.numero_ordre!), nom: nomComplet(d.nom, d.prenom) })),
+        ...base.membres_a_completer.filter(m => m.numero_ordre && !m.sortie).map(m => ({ numero: cleNumero(m.numero_ordre!), nom: m.nom })),
+      ]
+    : []
+  const pageEntierementCochee = selectionnablesPage.length > 0 && selectionnablesPage.every(m => selectionReleves.has(m.numero))
+  const libelleSelection = selectionFiltre
+    ? `Tous les membres du filtre (${base?.total_membres ?? 0})`
+    : `${selectionReleves.size} membre(s) sélectionné(s)`
+  const filtresReleves = {
+    q: baseSearchDiffere || undefined,
+    categorie: baseCategorie || undefined,
+    personne: basePersonne || undefined,
+    province: baseProvince || undefined,
+    sexe: baseSexe || undefined,
+    anciennete: baseAnciennete || undefined,
+    actif: baseActif === '' ? undefined : baseActif === 'true',
+    situation: baseSituation,
+    ...Object.fromEntries(Object.entries(baseRegles).filter(([, valeur]) => valeur)),
+  }
+  const ligneCochee = (numero: string | null | undefined) =>
+    selectionPossible && !!numero && (selectionFiltre || selectionReleves.has(cleNumero(numero)))
+  const caseSelection = (numero: string | null | undefined, nom: string, sortie: TableauSortie | null | undefined) => (
+    <td style={{ ...baseTdStyle, width: '28px' }}>
+      {numero && !sortie && (
+        <input
+          type="checkbox"
+          checked={ligneCochee(numero)}
+          disabled={selectionFiltre}
+          onChange={event => basculerSelection([{ numero, nom }], event.target.checked)}
+          aria-label={`Sélectionner ${nom}`}
+        />
+      )}
+    </td>
+  )
+  const dernierReleve = (numero: string | null | undefined) =>
+    numero ? derniersReleves[cleNumero(numero)] : undefined
+
   useEffect(() => {
     setBasePage(1)
   }, [baseNational, baseExerciceDiffere, baseSearchDiffere, baseCategorie, baseOrganisationId, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif, baseSituation, baseReglesCle, basePageSize])
@@ -1116,7 +1265,7 @@ export default function TableauModulePage() {
     (categorie ? reglages.definitions_par_categorie?.[categorie]?.heures_formation_min : undefined) ?? nhvMinimum
   const colonnesBase = (COLONNES_BASE_PAR_CATEGORIE[baseCategorie] || COLONNES_BASE_DEFAUT).filter(colonne => {
     if (colonne === 'conseil') return !!base?.national
-    if (colonne === 'action') return canCorrect && !baseNational
+    if (colonne === 'action') return (canCorrect || canNotify) && !baseNational
     return true
   })
   const cellulesBase = (ligne: {
@@ -1363,6 +1512,7 @@ export default function TableauModulePage() {
                 <span style={{ position: 'relative' }}>
                   <Search size={14} style={{ position: 'absolute', left: '9px', top: '9px', color: '#6b7280' }} />
                   <input
+                    type="search"
                     value={baseSearch}
                     onChange={event => setBaseSearch(event.target.value)}
                     placeholder="N° d'ordre, nom, e-mail, NIF ou cabinet"
@@ -1477,6 +1627,13 @@ export default function TableauModulePage() {
                   </select>
                 </label>
               )}
+              {filtresBaseActifs > 0 && (
+                <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                  <button type="button" className={styles.secondaryButton} onClick={effacerFiltresBase} title="Revenir à la base complète de l'exercice">
+                    <X size={14} /> Effacer les filtres ({filtresBaseActifs})
+                  </button>
+                </div>
+              )}
             </div>
 
             {baseAnalyse && (
@@ -1487,16 +1644,27 @@ export default function TableauModulePage() {
 
             {baseError ? (
               <div className={styles.emptyBox}>{baseError}</div>
-            ) : baseLoading ? (
-              <div className={styles.emptyBox}>Chargement de la base...</div>
+            ) : baseLoading && !base ? (
+              <div className={styles.emptyBox} role="status">Chargement de la base...</div>
             ) : !base || base.total_membres === 0 ? (
-              <div className={styles.emptyBox}>
-                {baseSearch || baseCategorie || basePersonne || baseProvince || baseSexe || baseAnciennete || baseActif || baseSituation !== 'en_exercice' || Object.values(baseRegles).some(Boolean)
-                  ? 'Aucun membre ne correspond à ces filtres.'
-                  : "Aucun import pour l'instant. Chargez un fichier depuis l'onglet « Import Excel »."}
+              <div className={styles.emptyBox} role={baseLoading ? 'status' : undefined}>
+                {baseLoading
+                  ? 'Chargement de la base...'
+                  : filtresBaseActifs > 0
+                    ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        Aucun membre ne correspond à ces filtres.
+                        <button type="button" className={styles.secondaryButton} onClick={effacerFiltresBase}>
+                          <X size={14} /> Effacer les filtres
+                        </button>
+                      </span>
+                    )
+                    : "Aucun import pour l'instant. Chargez un fichier depuis l'onglet « Import Excel »."}
               </div>
             ) : (
-              <>
+              // Pendant un rechargement, la page reste affichée, estompée : pas de saut
+              // de mise en page, et la position de défilement est conservée.
+              <div aria-busy={baseLoading} style={{ opacity: baseLoading ? 0.55 : 1, transition: 'opacity 150ms ease', pointerEvents: baseLoading ? 'none' : undefined }}>
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '20px' }}>
                   <StatCard value={base.total_membres} label={`Membres - exercice ${base.exercice}`} icon={<Table2 size={18} />} />
                   <StatCard value={base.imports_couverts.length} label="Imports consolidés" icon={<Layers size={18} />} />
@@ -1523,10 +1691,50 @@ export default function TableauModulePage() {
                   ({nhvMinimum} h par défaut),{' '}
                   <strong style={{ color: COULEUR_NHV_FAIBLE }}>rouge</strong> sous 60 % de ce minimum, N/A pour les nouveaux, — pour les sociétés.
                 </p>
-                <div style={{ overflowX: 'auto' }}>
+                {selectionPossible && base.total_membres > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 12px', marginBottom: '8px', border: '1px solid #d9eee7', borderRadius: '6px', background: '#f2fbf8', fontSize: '13px' }}>
+                    <span style={{ fontWeight: 600 }} aria-live="polite">
+                      {selectionFiltre || selectionReleves.size
+                        ? libelleSelection
+                        : 'Cochez des membres, ou envoyez à tout le filtre'}
+                    </span>
+                    {!selectionFiltre && (
+                      <button type="button" className={styles.secondaryButton} onClick={() => setSelectionFiltre(true)}>
+                        Sélectionner les {base.total_membres} membres du filtre
+                      </button>
+                    )}
+                    {(selectionFiltre || selectionReleves.size > 0) && (
+                      <>
+                        <button type="button" className={styles.secondaryButton} style={{ background: '#0f7b62', borderColor: '#0f7b62', color: '#ffffff' }} onClick={() => setLotOuvert(true)}>
+                          <Send size={14} /> Envoyer leur situation
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.secondaryButton}
+                          onClick={() => { setSelectionFiltre(false); setSelectionReleves(new Map()) }}
+                        >
+                          Effacer la sélection
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+                <div style={{ overflow: 'auto', maxHeight: 'min(72vh, 960px)', border: '1px solid #eef0f3', borderRadius: '6px' }}>
                   <table style={baseTableStyle}>
                     <thead>
                       <tr>
+                        {selectionPossible && (
+                          <th style={{ ...baseThStyle, width: '28px' }}>
+                            <input
+                              type="checkbox"
+                              checked={selectionFiltre || pageEntierementCochee}
+                              disabled={selectionFiltre || selectionnablesPage.length === 0}
+                              onChange={event => basculerSelection(selectionnablesPage, event.target.checked)}
+                              title="Sélectionner les membres de la page"
+                              aria-label="Sélectionner les membres de la page"
+                            />
+                          </th>
+                        )}
                         {colonnesBase.map(colonne => (
                           <th key={colonne} style={baseThStyle} title={colonne === 'nhv' || colonne === 'formation' ? "Nombre d'heures validées" : undefined}>
                             {LIBELLES_BASE_PAR_CATEGORIE[baseCategorie]?.[colonne] ?? LIBELLES_COLONNES_BASE[colonne]}
@@ -1565,15 +1773,25 @@ export default function TableauModulePage() {
                           source_file_name: dossier.source_file_name,
                           action: (
                             <div style={{ display: 'flex', gap: '4px' }}>
-                              <button type="button" className={styles.secondaryButton} onClick={() => openCorrection(dossier)} title="Corriger le dossier" aria-label={`Corriger ${dossier.nom}`}>
-                                <Pencil size={14} />
-                              </button>
-                              <BoutonSortie membre={dossier} onOpen={setSortieMembre} />
+                              {canCorrect && (
+                                <button type="button" className={styles.secondaryButton} onClick={() => openCorrection(dossier)} title="Corriger le dossier" aria-label={`Corriger ${dossier.nom}`}>
+                                  <Pencil size={14} />
+                                </button>
+                              )}
+                              {canCorrect && <BoutonSortie membre={dossier} onOpen={setSortieMembre} />}
+                              {canNotify && !dossier.sortie && (
+                                <BoutonReleve membre={dossier} dernier={dernierReleve(dossier.numero_ordre)} onOpen={setReleveMembre} />
+                              )}
                             </div>
                           ),
                         })
                         return (
-                          <tr key={dossier.id} style={dossier.sortie ? STYLE_LIGNE_SORTIE : undefined}>
+                          <tr
+                            key={dossier.id}
+                            className={`${styles.baseRow} ${ligneCochee(dossier.numero_ordre) ? styles.baseRowSelected : ''}`}
+                            style={dossier.sortie ? STYLE_LIGNE_SORTIE : undefined}
+                          >
+                            {selectionPossible && caseSelection(dossier.numero_ordre, nomComplet(dossier.nom, dossier.prenom), dossier.sortie)}
                             {colonnesBase.map(colonne => <Fragment key={colonne}>{cellules[colonne]}</Fragment>)}
                           </tr>
                         )
@@ -1612,14 +1830,23 @@ export default function TableauModulePage() {
                             : <span style={{ color: '#92400e', fontWeight: 600 }}>À compléter</span>,
                           date_situation: membre.date_situation,
                           source_file_name: membre.source_file_name,
-                          action: <BoutonSortie membre={membre} onOpen={setSortieMembre} />,
+                          action: (
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              {canCorrect && <BoutonSortie membre={membre} onOpen={setSortieMembre} />}
+                              {canNotify && !membre.sortie && (
+                                <BoutonReleve membre={membre} dernier={dernierReleve(membre.numero_ordre)} onOpen={setReleveMembre} />
+                              )}
+                            </div>
+                          ),
                         })
                         return (
                           <tr
                             key={membre.id}
+                            className={`${styles.baseRow} ${ligneCochee(membre.numero_ordre) ? styles.baseRowSelected : ''}`}
                             style={membre.sortie ? STYLE_LIGNE_SORTIE : signale ? { background: '#fee2e2' } : undefined}
                             title={signale ? membre.signalements.join(' ; ') : undefined}
                           >
+                            {selectionPossible && caseSelection(membre.numero_ordre, membre.nom, membre.sortie)}
                             {colonnesBase.map(colonne => <Fragment key={colonne}>{cellules[colonne]}</Fragment>)}
                           </tr>
                         )
@@ -1635,18 +1862,22 @@ export default function TableauModulePage() {
                     </select>
                   </label>
                   <span style={{ fontSize: '12px', color: '#6b7280' }}>
-                    Page {Math.min(basePage, baseTotalPages)} sur {baseTotalPages}
+                    {baseLoading
+                      ? <span role="status">Mise à jour…</span>
+                      : <>
+                          {(base.offset + 1).toLocaleString('fr-FR')}–{Math.min(base.offset + basePageSize, base.total_membres).toLocaleString('fr-FR')} sur {base.total_membres.toLocaleString('fr-FR')} · Page {Math.min(basePage, baseTotalPages)} sur {baseTotalPages}
+                        </>}
                   </span>
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    <button type="button" className={styles.secondaryButton} disabled={basePage <= 1 || baseLoading} onClick={() => setBasePage(page => Math.max(1, page - 1))} title="Page précédente">
+                    <button type="button" className={styles.secondaryButton} disabled={basePage <= 1 || baseLoading} onClick={() => setBasePage(page => Math.max(1, page - 1))} title="Page précédente" aria-label="Page précédente">
                       <ChevronLeft size={15} />
                     </button>
-                    <button type="button" className={styles.secondaryButton} disabled={basePage >= baseTotalPages || baseLoading} onClick={() => setBasePage(page => page + 1)} title="Page suivante">
+                    <button type="button" className={styles.secondaryButton} disabled={basePage >= baseTotalPages || baseLoading} onClick={() => setBasePage(page => page + 1)} title="Page suivante" aria-label="Page suivante">
                       <ChevronRight size={15} />
                     </button>
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </section>
         )}
@@ -2335,6 +2566,27 @@ export default function TableauModulePage() {
           </section>
         )}
       </div>
+
+      {lotOuvert && (
+        <RelevesLotModal
+          selection={{
+            exercice: base?.exercice || undefined,
+            ...(selectionFiltre ? { filtres: filtresReleves } : { numeros: [...selectionReleves.keys()] }),
+          }}
+          libelleSelection={libelleSelection}
+          onClose={() => setLotOuvert(false)}
+          onProgress={rafraichirReleves}
+        />
+      )}
+
+      {releveMembre && (
+        <ReleveSituationModal
+          membre={releveMembre}
+          exercice={base?.exercice || undefined}
+          onClose={() => setReleveMembre(null)}
+          onSent={rafraichirReleves}
+        />
+      )}
 
       {sortieMembre && (
         <SortieMembreModal

@@ -5,8 +5,9 @@ from collections import Counter
 from datetime import date
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,8 +68,21 @@ from .service import (
 from .actualisation_service import get_current_tableau_actualisation
 from .import_lignes import lignes_import
 from .sorties import annuler_sortie, declarer_sortie, sortie_payload
+from . import releves as releves_service
 
 logger = logging.getLogger(__name__)
+
+# Valeurs des filtres de la Base : les mêmes pour la page et pour l'envoi
+# groupé à « tous les membres du filtre ».
+FiltrePersonne = Literal["morale", "physique"]
+FiltreSexe = Literal["M", "F"]
+FiltreAnciennete = Literal["Ancien", "Nouveau"]
+FiltreSituation = Literal["en_exercice", "sortis", "tous", "DECEDE", "DEMISSIONNAIRE", "RADIE", "OMIS", "CESSE"]
+FiltreConclusion = Literal["INSCRIT", "NON INSCRIT", "À DÉLIBÉRER", "SANS"]
+FiltreCotisation = Literal["payee", "partielle", "non_payee", "inconnue"]
+FiltreOuiNon = Literal["oui", "non", "inconnu"]
+FiltreFormation = Literal["atteint", "insuffisant", "non_requis", "inconnu"]
+CanalReleve = Literal["email", "whatsapp"]
 
 router = APIRouter(prefix="/tableau", tags=["Tableau"])
 
@@ -206,20 +220,20 @@ async def get_base(
     q: str | None = Query(default=None, max_length=120),
     categorie: str | None = Query(default=None, max_length=50),
     organisation_id: int | None = Query(default=None, ge=1),
-    personne: Literal["morale", "physique"] | None = Query(default=None),
+    personne: FiltrePersonne | None = Query(default=None),
     province: str | None = Query(default=None, max_length=100),
-    sexe: Literal["M", "F"] | None = Query(default=None),
-    anciennete: Literal["Ancien", "Nouveau"] | None = Query(default=None),
+    sexe: FiltreSexe | None = Query(default=None),
+    anciennete: FiltreAnciennete | None = Query(default=None),
     actif: bool | None = Query(default=None),
-    situation: Literal["en_exercice", "sortis", "tous", "DECEDE", "DEMISSIONNAIRE", "RADIE", "OMIS", "CESSE"] = Query(
+    situation: FiltreSituation = Query(
         default="en_exercice", description="Par défaut, les membres sortis du Tableau sont écartés",
     ),
     # Filtres sur ce que calculent les règles de délibération.
-    conclusion: Literal["INSCRIT", "NON INSCRIT", "À DÉLIBÉRER", "SANS"] | None = Query(default=None),
-    cotisation: Literal["payee", "partielle", "non_payee", "inconnue"] | None = Query(default=None),
-    assurance: Literal["oui", "non", "inconnu"] | None = Query(default=None),
-    chiffre_affaires: Literal["oui", "non", "inconnu"] | None = Query(default=None),
-    formation: Literal["atteint", "insuffisant", "non_requis", "inconnu"] | None = Query(default=None),
+    conclusion: FiltreConclusion | None = Query(default=None),
+    cotisation: FiltreCotisation | None = Query(default=None),
+    assurance: FiltreOuiNon | None = Query(default=None),
+    chiffre_affaires: FiltreOuiNon | None = Query(default=None),
+    formation: FiltreFormation | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -602,6 +616,167 @@ async def annuler_sortie_membre(
 ) -> Response:
     await annuler_sortie(db, user, tenant_id, sortie_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class TableauReleveEnvoiIn(BaseModel):
+    numero_ordre: str = Field(..., min_length=1, max_length=50)
+    exercice: str | None = Field(default=None, max_length=20)
+    canaux: list[CanalReleve] = Field(default_factory=lambda: ["email", "whatsapp"])
+    renvoyer: bool = Field(default=False, description="Renvoyer même si la même situation est déjà partie.")
+
+
+@router.get(
+    "/releves/apercu",
+    summary="Relevé de situation d'un membre, tel qu'il partirait",
+    dependencies=[Depends(has_permission("tableau.notify"))],
+)
+async def apercu_releve(
+    numero_ordre: str = Query(..., min_length=1, max_length=50),
+    exercice: str | None = Query(default=None, max_length=20),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    return await releves_service.apercu(db, tenant_id, exercice, numero_ordre)
+
+
+@router.post(
+    "/releves",
+    summary="Envoyer au membre son relevé de situation (e-mail, WhatsApp)",
+    dependencies=[Depends(has_permission("tableau.notify"))],
+)
+async def envoyer_releve(
+    payload: TableauReleveEnvoiIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    return await releves_service.envoyer(
+        db, user, tenant_id,
+        exercice=payload.exercice, numero_ordre=payload.numero_ordre,
+        canaux=payload.canaux, renvoyer=payload.renvoyer,
+    )
+
+
+class TableauReleveFiltres(BaseModel):
+    """Les filtres de la Base, pour viser « tous les membres du filtre »."""
+
+    q: str | None = Field(default=None, max_length=120)
+    categorie: str | None = Field(default=None, max_length=50)
+    personne: FiltrePersonne | None = None
+    province: str | None = Field(default=None, max_length=100)
+    sexe: FiltreSexe | None = None
+    anciennete: FiltreAnciennete | None = None
+    actif: bool | None = None
+    situation: FiltreSituation = "en_exercice"
+    conclusion: FiltreConclusion | None = None
+    cotisation: FiltreCotisation | None = None
+    assurance: FiltreOuiNon | None = None
+    chiffre_affaires: FiltreOuiNon | None = None
+    formation: FiltreFormation | None = None
+    anomalie_only: bool = False
+
+    def en_criteres(self) -> dict[str, Any]:
+        donnees = self.model_dump(exclude={"q"})
+        donnees["recherche"] = self.q
+        return donnees
+
+
+class TableauReleveSelectionIn(BaseModel):
+    """Des n° d'ordre choisis un à un, ou tous les membres d'un filtre de la Base."""
+
+    exercice: str | None = Field(default=None, max_length=20)
+    numeros: list[str] | None = Field(default=None, max_length=releves_service.MAX_LOT)
+    filtres: TableauReleveFiltres | None = None
+    canaux: list[CanalReleve] = Field(default_factory=lambda: ["email", "whatsapp"])
+    renvoyer: bool = False
+
+    def selection(self) -> dict[str, Any]:
+        if self.numeros is None and self.filtres is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sélectionnez des membres, ou un filtre.")
+        return {
+            "numeros": self.numeros,
+            "filtres": None if self.numeros is not None else self.filtres.en_criteres(),
+        }
+
+
+@router.post(
+    "/releves/selection",
+    summary="Envoi groupé : qui recevra sa situation, qui est écarté et pourquoi",
+    dependencies=[Depends(has_permission("tableau.notify"))],
+)
+async def preparer_releves(
+    payload: TableauReleveSelectionIn,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    return await releves_service.preparer_selection(
+        db, tenant_id, exercice=payload.exercice, canaux=payload.canaux, **payload.selection(),
+    )
+
+
+@router.post(
+    "/releves/lots",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Lancer l'envoi groupé des relevés de situation (en arrière-plan)",
+    dependencies=[Depends(has_permission("tableau.notify"))],
+)
+async def lancer_lot_releves(
+    payload: TableauReleveSelectionIn,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    lot = await releves_service.creer_lot(
+        db, user, tenant_id, exercice=payload.exercice, canaux=payload.canaux,
+        renvoyer=payload.renvoyer, **payload.selection(),
+    )
+    background_tasks.add_task(releves_service.traiter_lot, lot.id, tenant_id)
+    return releves_service.lot_payload(lot)
+
+
+@router.get(
+    "/releves/lots/{lot_id}",
+    summary="Avancement d'un envoi groupé",
+    dependencies=[Depends(has_permission("tableau.notify"))],
+)
+async def avancement_lot_releves(
+    lot_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    lot = await releves_service.lire_lot(db, tenant_id, lot_id)
+    return releves_service.lot_payload(lot, await releves_service.echecs_du_lot(db, lot))
+
+
+@router.post(
+    "/releves/lots/{lot_id}/reprendre",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Reprendre un envoi groupé interrompu, là où il s'est arrêté",
+    dependencies=[Depends(has_permission("tableau.notify"))],
+)
+async def reprendre_lot_releves(
+    lot_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    lot = await releves_service.reprendre_lot(db, tenant_id, lot_id)
+    background_tasks.add_task(releves_service.traiter_lot, lot.id, tenant_id)
+    return releves_service.lot_payload(lot)
+
+
+@router.get(
+    "/releves/derniers",
+    summary="Dernier relevé envoyé à chaque membre de l'exercice",
+    dependencies=[Depends(has_any_permission(VIEW_PERMS))],
+)
+async def derniers_releves(
+    exercice: str = Query(..., min_length=1, max_length=20),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    return await releves_service.derniers_envois(db, tenant_id, exercice)
 
 
 @router.get("/reports", response_model=list[TableauReportOut], dependencies=[Depends(has_any_permission(VIEW_PERMS))])
