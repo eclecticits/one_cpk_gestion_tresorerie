@@ -94,7 +94,8 @@ export type NotificationSettings = {
   budget_poste_deficit_caisse_id: number | null
   smtp_password: string
   smtp_host: string
-  smtp_port: number
+  /** null hors super administrateur : le compte d'envoi lui est masqué. */
+  smtp_port: number | null
   whatsapp_api_url: string
   whatsapp_api_key: string
   whatsapp_agents: string

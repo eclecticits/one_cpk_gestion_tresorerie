@@ -60,6 +60,7 @@ import {
   type WhatsAppSettingsUpdate,
   type WhatsAppTemplate,
 } from '../../api/whatsapp'
+import { useAuth } from '../../contexts/AuthContext'
 import { usePermissions } from '../../hooks/usePermissions'
 import styles from './WhatsAppSettings.module.css'
 
@@ -313,6 +314,10 @@ export default function WhatsAppSettings() {
   const canRead = hasPermission(WHATSAPP_PERMISSIONS.read)
   const canUpdate = hasPermission(WHATSAPP_PERMISSIONS.update)
   const canTest = hasPermission(WHATSAPP_PERMISSIONS.test)
+  // Le fournisseur et ses accès (URL, numéro, clé) : super administrateur seulement.
+  // Le serveur les masque et refuse leur modification pour tout autre rôle.
+  const { user } = useAuth()
+  const isSuperAdmin = user?.role === 'super_admin'
 
   const [loading, setLoading] = useState(true)
   const [banner, setBanner] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null)
@@ -697,14 +702,18 @@ export default function WhatsAppSettings() {
           </span>
         </div>
         <div className={styles.summaryGrid}>
-          <div className={styles.summaryItem}>
-            <span className={styles.summaryLabel}>Fournisseur</span>
-            <span className={styles.summaryValueText}>{providerLabel}</span>
-          </div>
-          <div className={styles.summaryItem}>
-            <span className={styles.summaryLabel}>Numéro émetteur</span>
-            <span className={styles.summaryValueText}>{senderDisplay || 'Non renseigné'}</span>
-          </div>
+          {isSuperAdmin && (
+            <>
+              <div className={styles.summaryItem}>
+                <span className={styles.summaryLabel}>Fournisseur</span>
+                <span className={styles.summaryValueText}>{providerLabel}</span>
+              </div>
+              <div className={styles.summaryItem}>
+                <span className={styles.summaryLabel}>Numéro émetteur</span>
+                <span className={styles.summaryValueText}>{senderDisplay || 'Non renseigné'}</span>
+              </div>
+            </>
+          )}
           <SummaryItem
             label="Notifications paiements"
             value={form.notify_payments ? 'Oui' : 'Non'}
@@ -715,11 +724,13 @@ export default function WhatsAppSettings() {
             value={form.notify_sorties ? 'Oui' : 'Non'}
             active={form.notify_sorties}
           />
-          <SummaryItem
-            label="Clé API enregistrée"
-            value={settings?.has_api_key ? 'Oui' : 'Non'}
-            active={Boolean(settings?.has_api_key)}
-          />
+          {isSuperAdmin && (
+            <SummaryItem
+              label="Clé API enregistrée"
+              value={settings?.has_api_key ? 'Oui' : 'Non'}
+              active={Boolean(settings?.has_api_key)}
+            />
+          )}
         </div>
         {envelope?.warning && (
           <div className={styles.summaryWarning}>
@@ -804,159 +815,168 @@ export default function WhatsAppSettings() {
             </label>
           </div>
 
-          <div className={styles.formGrid}>
-            <div className={styles.field}>
-              <label htmlFor="wa-provider">Fournisseur</label>
-              <select
-                id="wa-provider"
-                value={form.provider}
-                disabled={!canUpdate}
-                onChange={event => setField('provider', event.target.value)}
-              >
-                <option value="">— Choisir un fournisseur —</option>
-                {providers.map(option => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <p className={styles.fieldHint}>Détermine les champs à renseigner ci-dessous.</p>
+          {!isSuperAdmin && (
+            <div className={styles.inlineNotice}>
+              <Info size={14} aria-hidden="true" />
+              <span>Le fournisseur et ses accès sont réglés par le super administrateur de la plateforme.</span>
             </div>
+          )}
 
-            <div className={styles.field}>
-              <label htmlFor="wa-url">
-                {providerIsMeta
-                  ? "URL de l'API Graph"
-                  : providerIsTwilio
-                    ? "URL de base de l'API Twilio"
-                    : 'URL Evolution / Baileys'}
-              </label>
-              <input
-                id="wa-url"
-                type="text"
-                value={form.api_url}
-                disabled={!canUpdate}
-                onChange={event => setField('api_url', event.target.value)}
-                placeholder={
-                  providerIsMeta
-                    ? 'https://graph.facebook.com'
+          {isSuperAdmin && (
+            <div className={styles.formGrid}>
+              <div className={styles.field}>
+                <label htmlFor="wa-provider">Fournisseur</label>
+                <select
+                  id="wa-provider"
+                  value={form.provider}
+                  disabled={!canUpdate}
+                  onChange={event => setField('provider', event.target.value)}
+                >
+                  <option value="">— Choisir un fournisseur —</option>
+                  {providers.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className={styles.fieldHint}>Détermine les champs à renseigner ci-dessous.</p>
+              </div>
+
+              <div className={styles.field}>
+                <label htmlFor="wa-url">
+                  {providerIsMeta
+                    ? "URL de l'API Graph"
                     : providerIsTwilio
-                      ? 'https://api.twilio.com/2010-04-01'
-                      : 'https://wa.exemple.org/message/sendText/onec'
-                }
-              />
-              <p className={styles.fieldHint}>
-                {providerIsMeta || providerIsTwilio
-                  ? "Facultatif : laissez vide pour l'adresse standard du fournisseur."
-                  : "Adresse complète d'envoi de message de votre instance."}
-              </p>
-            </div>
-
-            <div className={styles.field}>
-              <label htmlFor="wa-sender">Numéro émetteur</label>
-              <input
-                id="wa-sender"
-                type="text"
-                value={form.sender}
-                disabled={!canUpdate}
-                onChange={event => setField('sender', event.target.value)}
-                placeholder="243810123456"
-              />
-              <p className={styles.fieldHint}>Numéro depuis lequel les messages sont envoyés, au format international.</p>
-            </div>
-
-            <div className={styles.field}>
-              <label htmlFor="wa-key">Clé API</label>
-              <input
-                id="wa-key"
-                type="password"
-                autoComplete="new-password"
-                value={apiKeyInput}
-                disabled={!canUpdate || clearApiKey}
-                onChange={event => setApiKeyInput(event.target.value)}
-                placeholder={settings?.has_api_key ? '•••••••• (clé enregistrée)' : 'Saisissez la clé du fournisseur'}
-              />
-              <p className={styles.fieldHint}>
-                {settings?.has_api_key
-                  ? 'Une clé est enregistrée. Elle n’est jamais réaffichée : laissez ce champ vide pour la conserver, ou saisissez-en une nouvelle pour la remplacer.'
-                  : 'Aucune clé enregistrée pour le moment. Elle sera chiffrée et ne sera plus jamais réaffichée.'}
-                {' '}Le champ se vide à chaque enregistrement, réussi ou non.
-              </p>
-              {settings?.has_api_key && canUpdate && (
-                <label className={styles.clearKeyRow}>
-                  <input
-                    type="checkbox"
-                    checked={clearApiKey}
-                    onChange={event => {
-                      setClearApiKey(event.target.checked)
-                      if (event.target.checked) setApiKeyInput('')
-                    }}
-                  />
-                  Supprimer la clé enregistrée à l'enregistrement
+                      ? "URL de base de l'API Twilio"
+                      : 'URL Evolution / Baileys'}
                 </label>
+                <input
+                  id="wa-url"
+                  type="text"
+                  value={form.api_url}
+                  disabled={!canUpdate}
+                  onChange={event => setField('api_url', event.target.value)}
+                  placeholder={
+                    providerIsMeta
+                      ? 'https://graph.facebook.com'
+                      : providerIsTwilio
+                        ? 'https://api.twilio.com/2010-04-01'
+                        : 'https://wa.exemple.org/message/sendText/onec'
+                  }
+                />
+                <p className={styles.fieldHint}>
+                  {providerIsMeta || providerIsTwilio
+                    ? "Facultatif : laissez vide pour l'adresse standard du fournisseur."
+                    : "Adresse complète d'envoi de message de votre instance."}
+                </p>
+              </div>
+
+              <div className={styles.field}>
+                <label htmlFor="wa-sender">Numéro émetteur</label>
+                <input
+                  id="wa-sender"
+                  type="text"
+                  value={form.sender}
+                  disabled={!canUpdate}
+                  onChange={event => setField('sender', event.target.value)}
+                  placeholder="243810123456"
+                />
+                <p className={styles.fieldHint}>Numéro depuis lequel les messages sont envoyés, au format international.</p>
+              </div>
+
+              <div className={styles.field}>
+                <label htmlFor="wa-key">Clé API</label>
+                <input
+                  id="wa-key"
+                  type="password"
+                  autoComplete="new-password"
+                  value={apiKeyInput}
+                  disabled={!canUpdate || clearApiKey}
+                  onChange={event => setApiKeyInput(event.target.value)}
+                  placeholder={settings?.has_api_key ? '•••••••• (clé enregistrée)' : 'Saisissez la clé du fournisseur'}
+                />
+                <p className={styles.fieldHint}>
+                  {settings?.has_api_key
+                    ? 'Une clé est enregistrée. Elle n’est jamais réaffichée : laissez ce champ vide pour la conserver, ou saisissez-en une nouvelle pour la remplacer.'
+                    : 'Aucune clé enregistrée pour le moment. Elle sera chiffrée et ne sera plus jamais réaffichée.'}
+                  {' '}Le champ se vide à chaque enregistrement, réussi ou non.
+                </p>
+                {settings?.has_api_key && canUpdate && (
+                  <label className={styles.clearKeyRow}>
+                    <input
+                      type="checkbox"
+                      checked={clearApiKey}
+                      onChange={event => {
+                        setClearApiKey(event.target.checked)
+                        if (event.target.checked) setApiKeyInput('')
+                      }}
+                    />
+                    Supprimer la clé enregistrée à l'enregistrement
+                  </label>
+                )}
+              </div>
+
+              {providerIsMeta && (
+                <>
+                  <div className={styles.field}>
+                    <label htmlFor="wa-phone-id">Identifiant du numéro émetteur (Meta)</label>
+                    <input
+                      id="wa-phone-id"
+                      type="text"
+                      value={form.phone_number_id}
+                      disabled={!canUpdate}
+                      onChange={event => setField('phone_number_id', event.target.value)}
+                      placeholder="123456789012345"
+                    />
+                    <p className={styles.fieldHint}>
+                      Champ obligatoire pour Meta : c'est lui, et non le numéro, qui adresse l'envoi.
+                    </p>
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="wa-business-id">Identifiant du compte professionnel (Meta)</label>
+                    <input
+                      id="wa-business-id"
+                      type="text"
+                      value={form.business_account_id}
+                      disabled={!canUpdate}
+                      onChange={event => setField('business_account_id', event.target.value)}
+                      placeholder="098765432109876"
+                    />
+                    <p className={styles.fieldHint}>Identifiant du compte WhatsApp Business rattaché au numéro.</p>
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="wa-template-name">Nom du template approuvé (Meta)</label>
+                    <input
+                      id="wa-template-name"
+                      type="text"
+                      value={form.template_name}
+                      disabled={!canUpdate}
+                      onChange={event => setField('template_name', event.target.value)}
+                      placeholder="notification_onec"
+                    />
+                    <p className={styles.fieldHint}>
+                      Sans template, Meta ne livre un message qu'à une personne qui a écrit au numéro dans les
+                      24 dernières heures. Template en français, catégorie « Utilitaire », avec une seule
+                      variable {'{{1}}'} qui reçoit le message.
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {providerIsTwilio && (
+                <div className={styles.fieldWide}>
+                  <div className={styles.inlineNotice}>
+                    <Info size={14} aria-hidden="true" />
+                    <span>
+                      Twilio : la clé API correspond au jeton d'authentification (Auth Token). Le SID de compte
+                      (Account SID) n'est pas modifiable depuis cet écran — l'API de réglages ne l'expose pas ; il reste
+                      réglable par le paramétrage serveur.
+                    </span>
+                  </div>
+                </div>
               )}
             </div>
-
-            {providerIsMeta && (
-              <>
-                <div className={styles.field}>
-                  <label htmlFor="wa-phone-id">Identifiant du numéro émetteur (Meta)</label>
-                  <input
-                    id="wa-phone-id"
-                    type="text"
-                    value={form.phone_number_id}
-                    disabled={!canUpdate}
-                    onChange={event => setField('phone_number_id', event.target.value)}
-                    placeholder="123456789012345"
-                  />
-                  <p className={styles.fieldHint}>
-                    Champ obligatoire pour Meta : c'est lui, et non le numéro, qui adresse l'envoi.
-                  </p>
-                </div>
-                <div className={styles.field}>
-                  <label htmlFor="wa-business-id">Identifiant du compte professionnel (Meta)</label>
-                  <input
-                    id="wa-business-id"
-                    type="text"
-                    value={form.business_account_id}
-                    disabled={!canUpdate}
-                    onChange={event => setField('business_account_id', event.target.value)}
-                    placeholder="098765432109876"
-                  />
-                  <p className={styles.fieldHint}>Identifiant du compte WhatsApp Business rattaché au numéro.</p>
-                </div>
-                <div className={styles.field}>
-                  <label htmlFor="wa-template-name">Nom du template approuvé (Meta)</label>
-                  <input
-                    id="wa-template-name"
-                    type="text"
-                    value={form.template_name}
-                    disabled={!canUpdate}
-                    onChange={event => setField('template_name', event.target.value)}
-                    placeholder="notification_onec"
-                  />
-                  <p className={styles.fieldHint}>
-                    Sans template, Meta ne livre un message qu'à une personne qui a écrit au numéro dans les
-                    24 dernières heures. Template en français, catégorie « Utilitaire », avec une seule
-                    variable {'{{1}}'} qui reçoit le message.
-                  </p>
-                </div>
-              </>
-            )}
-
-            {providerIsTwilio && (
-              <div className={styles.fieldWide}>
-                <div className={styles.inlineNotice}>
-                  <Info size={14} aria-hidden="true" />
-                  <span>
-                    Twilio : la clé API correspond au jeton d'authentification (Auth Token). Le SID de compte
-                    (Account SID) n'est pas modifiable depuis cet écran — l'API de réglages ne l'expose pas ; il reste
-                    réglable par le paramétrage serveur.
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
+          )}
         </div>
 
         <div className={styles.actionBar}>

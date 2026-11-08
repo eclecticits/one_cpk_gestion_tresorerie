@@ -271,7 +271,8 @@ class NotificationSettingsOut(BaseModel):
     budget_poste_deficit_caisse_id: int | None = None
     smtp_password: str
     smtp_host: str
-    smtp_port: int
+    # None pour qui n'est pas super administrateur : le compte d'envoi lui est masqué.
+    smtp_port: int | None = None
     whatsapp_api_url: str
     whatsapp_api_key: str
     whatsapp_agents: str

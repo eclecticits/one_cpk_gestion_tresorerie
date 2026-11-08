@@ -307,20 +307,46 @@ def _readiness_warning(settings_obj) -> str:
     return "" if ok else reason
 
 
-async def _settings_envelope(db: AsyncSession, tenant_id: int) -> WhatsAppSettingsEnvelope:
+#: Le fournisseur et ses accès : vus et modifiés par le super administrateur
+#: seulement. Qui change l'URL fait partir la clé chez un tiers au prochain envoi.
+PROVIDER_FIELDS = (
+    "provider", "api_url", "sender", "phone_number_id", "business_account_id", "template_name",
+    "api_key", "clear_api_key",
+)
+
+
+def _is_super_admin(user: User | None) -> bool:
+    return (getattr(user, "role", "") or "").lower() == "super_admin"
+
+
+def _masked_provider(settings_out: WhatsAppSettingsOut) -> WhatsAppSettingsOut:
+    return settings_out.model_copy(update={
+        "provider": "", "provider_label": "", "api_url": "", "sender": "",
+        "phone_number_id": "", "business_account_id": "", "template_name": "", "has_api_key": False,
+    })
+
+
+async def _settings_envelope(db: AsyncSession, tenant_id: int, user: User) -> WhatsAppSettingsEnvelope:
     """Réponse complète des réglages : l'état, et de quoi l'éditer.
 
     Construite au même endroit pour la lecture et pour l'écriture — un `PUT` qui
     ne rendrait pas exactement ce que rend le `GET` obligerait l'écran à
     recharger pour se croire à jour.
+
+    Hors super administrateur, le fournisseur et ses accès sont masqués, et le
+    motif d'indisponibilité ne les nomme pas.
     """
     row = await _settings_row(db, tenant_id)
     settings_obj = await load_whatsapp_settings(
         db, tenant_id, await _organisation_name(db, tenant_id)
     )
+    super_admin = _is_super_admin(user)
+    warning = _readiness_warning(settings_obj)
+    if warning and not super_admin and settings_obj.enabled:
+        warning = "Le canal WhatsApp n'est pas prêt : son fournisseur est à régler par l'administrateur de la plateforme."
     return WhatsAppSettingsEnvelope(
-        settings=_public_settings(row),
-        providers=[ProviderOption(**option) for option in available_providers()],
+        settings=_public_settings(row) if super_admin else _masked_provider(_public_settings(row)),
+        providers=[ProviderOption(**option) for option in available_providers()] if super_admin else [],
         default_templates=dict(wa_templates.DEFAULT_TEMPLATES),
         template_variables=dict(wa_templates.TEMPLATE_VARIABLES),
         events=[
@@ -331,7 +357,7 @@ async def _settings_envelope(db: AsyncSession, tenant_id: int) -> WhatsAppSettin
             )
             for event in _ordered_events()
         ],
-        warning=_readiness_warning(settings_obj),
+        warning=warning,
     )
 
 
@@ -473,11 +499,12 @@ def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | N
     dependencies=[Depends(has_permission(PERM_READ))],
 )
 async def get_whatsapp_settings(
+    current_user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> WhatsAppSettingsEnvelope:
     """Réglages publics du tenant, plus tout ce qu'il faut pour les éditer."""
-    return await _settings_envelope(db, tenant_id)
+    return await _settings_envelope(db, tenant_id, current_user)
 
 
 @router.put(
@@ -498,8 +525,15 @@ async def update_whatsapp_settings(
     suppression est un geste explicite (`clear_api_key`), pour qu'un formulaire
     qui renvoie un champ mot de passe vide n'efface pas une clé opérationnelle.
     """
-    row = await _settings_row(db, tenant_id)
     data = payload.model_dump(exclude_unset=True)
+    if not _is_super_admin(current_user) and any(
+        data.get(field) not in (None, "", False) for field in PROVIDER_FIELDS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Le fournisseur WhatsApp et ses accès sont réservés au super administrateur.",
+        )
+    row = await _settings_row(db, tenant_id)
 
     columns = {
         "enabled": "whatsapp_enabled",
@@ -554,7 +588,7 @@ async def update_whatsapp_settings(
 
     # Relu après consolidation : celle-ci peut fusionner des lignes en double et
     # la réponse doit décrire la ligne qui fait désormais foi.
-    return await _settings_envelope(db, tenant_id)
+    return await _settings_envelope(db, tenant_id, current_user)
 
 
 # ── Destinataires ────────────────────────────────────────────────────────────

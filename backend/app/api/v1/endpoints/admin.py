@@ -309,7 +309,7 @@ def _sanitize_notification_settings(data: dict, current_user: User) -> dict:
         return data
     sanitized = dict(data)
     for field in NOTIFICATION_SENSITIVE_FIELDS:
-        sanitized[field] = ""
+        sanitized[field] = None if field == "smtp_port" else ""
     return sanitized
 
 
@@ -396,9 +396,14 @@ def _require_super_admin(current_user: User) -> None:
         raise HTTPException(status_code=403, detail="Accès réservé au super administrateur")
 
 
+# Le compte d'envoi : réservé au super administrateur, en lecture comme en
+# écriture. L'hôte et le port en font partie : qui peut les changer peut faire
+# partir le mot de passe enregistré vers un serveur de son choix.
 NOTIFICATION_SENSITIVE_FIELDS = {
     "email_expediteur",
     "smtp_password",
+    "smtp_host",
+    "smtp_port",
     "whatsapp_api_url",
     "whatsapp_api_key",
 }
