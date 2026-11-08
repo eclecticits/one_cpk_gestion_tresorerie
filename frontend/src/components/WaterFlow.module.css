@@ -11,12 +11,12 @@
   mask-image: linear-gradient(180deg, transparent 0, #000 78%);
 }
 
-/* Sur mobile, on remonte la vague au-dessus de la barre de navigation fixe
-   (~64px) pour qu'elle reste visible et ne soit pas masquée par la nav. */
-@media (max-width: 1024px) {
-  .water {
-    bottom: 64px;
-  }
+/* Remontée au-dessus de la barre de raccourcis du bas (~64px), seulement
+   quand celle-ci est affichée : elle n'existe que dans la trésorerie. Ailleurs,
+   une vague remontée flottait au milieu de l'écran, par-dessus les dernières
+   lignes de la page, qu'aucun défilement ne pouvait dégager. */
+.aboveBottomNav {
+  bottom: 64px;
 }
 
 .water svg {

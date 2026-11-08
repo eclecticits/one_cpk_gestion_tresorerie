@@ -1165,7 +1165,7 @@ export default function Layout() {
         <MobileBottomNav items={mobileNavItems} hasPermission={canAccessRoute} />
       )}
 
-      <WaterFlow />
+      <WaterFlow aboveBottomNav={showMobileBottomNav} />
 
       {showChangePassword && (
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />

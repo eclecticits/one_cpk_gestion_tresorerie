@@ -197,6 +197,7 @@
 
 .viewToggle {
   display: flex;
+  flex-shrink: 0;
   border: 1px solid var(--odoo-border);
   border-radius: 4px;
   overflow: hidden;
@@ -1486,6 +1487,26 @@
 }
 
 @media (max-width: 768px) {
+  /* Annule exactement la marge de .main sur téléphone (12 px en haut, 16 px
+     sur les côtés) : les -20 px du bureau débordaient de 4 px de chaque côté,
+     et toute la page défilait de travers. */
+  .page {
+    margin: -12px -16px -20px;
+  }
+
+  /* Collé en haut, l'en-tête avec recherche et filtres couvrait plus de la
+     moitié d'un écran de téléphone. */
+  .controlPanel {
+    position: static;
+  }
+
+  /* Titre et actions passent l'un sous l'autre plutôt que de s'écraser. */
+  .topRow,
+  .actionsGroup {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
   .formPanel {
     grid-template-columns: 1fr;
   }
@@ -1509,5 +1530,12 @@
   .punchPagination {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+/* Petits téléphones : .main n'a plus que 12 px sur les côtés (Layout.module.css). */
+@media (max-width: 480px) {
+  .page {
+    margin: -12px -12px -20px;
   }
 }

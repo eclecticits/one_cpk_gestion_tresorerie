@@ -2171,7 +2171,7 @@ export default function TableauModulePage() {
                 </div>
 
                 {comparison.details.length > 0 && (
-                  <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                  <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                       <thead>
                         <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
@@ -2354,8 +2354,8 @@ export default function TableauModulePage() {
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: '16px' }}>
-              <div style={{ width: '260px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
+              <div style={{ width: '260px', maxWidth: '100%', flexShrink: 0 }}>
                 <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '8px' }}>Rapports générés ({reports.length})</h3>
                 {reports.length === 0 ? (
                   <div className={styles.emptyBox} style={{ padding: '16px' }}>Aucun rapport.</div>
@@ -2387,7 +2387,7 @@ export default function TableauModulePage() {
               </div>
 
               {selectedReport && (
-                <div style={{ flex: 1, background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px' }}>
+                <div style={{ flex: '1 1 280px', minWidth: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <h3 style={{ fontSize: '14px', fontWeight: '600' }}>{selectedReport.titre}</h3>
                     {selectedReport.contenu && (

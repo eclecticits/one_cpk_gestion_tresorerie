@@ -5,6 +5,8 @@ interface WaterFlowProps {
   /** Hauteur de la bande d'eau en pixels (défaut 120). */
   height?: number
   className?: string
+  /** La barre de raccourcis du bas est affichée : la vague passe au-dessus. */
+  aboveBottomNav?: boolean
 }
 
 /**
@@ -17,12 +19,12 @@ interface WaterFlowProps {
  * donc hérité même depuis body). z-index sous la sidebar/nav/modales.
  * Coupée si prefers-reduced-motion.
  */
-export default function WaterFlow({ height = 120, className }: WaterFlowProps) {
+export default function WaterFlow({ height = 120, className, aboveBottomNav = false }: WaterFlowProps) {
   if (typeof document === 'undefined') return null
 
   return createPortal(
     <div
-      className={`${styles.water}${className ? ` ${className}` : ''}`}
+      className={[styles.water, aboveBottomNav && styles.aboveBottomNav, className].filter(Boolean).join(' ')}
       style={{ height }}
       aria-hidden="true"
     >

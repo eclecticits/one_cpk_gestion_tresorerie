@@ -533,6 +533,12 @@
     padding-left: 14px;
   }
 
+  /* Collé en haut, l'en-tête (surtitre, titre, Retour, Actualiser) prenait
+     près de la moitié d'un écran de téléphone pendant tout le défilement. */
+  .controlPanel {
+    position: static;
+  }
+
   .topRow,
   .dashboardIntro,
   .mailToolbar {
