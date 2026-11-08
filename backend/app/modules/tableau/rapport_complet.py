@@ -19,6 +19,7 @@ from typing import Any, Iterable
 from xml.sax.saxutils import escape
 
 from . import verdict as verdict_engine
+from .signature import Signature
 
 # Même découpage que le Tableau publié : une section, une liste, ses propres statistiques.
 SECTIONS = [
@@ -79,6 +80,8 @@ class ContexteRapport:
     logo: bytes | None = None
     # Rapport limité à une catégorie (« EC Cabinet »…) ; None : toutes.
     categorie: str | None = None
+    # Commission Tableau du conseil et son président, en fin de rapport.
+    signature: Signature | None = None
 
 
 def est_fiche_essai(nom: Any) -> bool:
@@ -501,6 +504,13 @@ def build_excel(d: dict[str, Any]) -> bytes:
         for index, largeur in enumerate([15, 34, 6, 18, 30], 1):
             ws.column_dimensions[get_column_letter(index)].width = largeur
 
+    if ctx.signature:
+        ws = wb.worksheets[-1]
+        ligne = ws.max_row + 3
+        for rang, texte in enumerate(ctx.signature.lignes()):
+            cellule = ws.cell(ligne + rang, 2, texte)
+            cellule.font = Font(bold=rang != 1, color=MARINE)
+
     tampon = io.BytesIO()
     wb.save(tampon)
     return tampon.getvalue()
@@ -514,7 +524,7 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     from reportlab.graphics.shapes import Circle, Drawing, Rect, String, Wedge
     from reportlab.lib import colors
     from reportlab.lib.colors import HexColor
-    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
@@ -741,6 +751,18 @@ def build_pdf(d: dict[str, Any]) -> bytes:
         tailles_pdf = [tailles.get(section["entetes"][i], 180 - occupe) for i in gardees]
         lignes_liste = [["" if ligne[i] is None else (heures_txt(ligne[i]) if isinstance(ligne[i], float) else ligne[i]) for i in gardees] for ligne in section["lignes"]]
         S.append(liste([section["entetes"][i] for i in gardees], lignes_liste, tailles_pdf))
+
+    if ctx.signature:
+        signe = ParagraphStyle("signe", fontName="Helvetica-Bold", fontSize=9.5, leading=13, textColor=marine, alignment=TA_RIGHT)
+        qualite = ParagraphStyle("qualite", parent=signe, fontName="Helvetica")
+        commission, titre_president, *nom = ctx.signature.lignes()
+        S.append(KeepTogether([
+            Spacer(1, 10 * mm),
+            Paragraph(escape(commission), signe),
+            Paragraph(escape(titre_president), qualite),
+            Spacer(1, 14 * mm),  # La place de la signature manuscrite.
+            *[Paragraph(escape(n), signe) for n in nom],
+        ]))
 
     doc.build(S, onFirstPage=premiere_page, onLaterPages=page_suivante)
     return tampon.getvalue()

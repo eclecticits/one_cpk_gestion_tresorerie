@@ -40,6 +40,7 @@ from .models import (
 from .official_reference import OfficialExpertRecord, list_official_experts_read_only
 from .source_adapters import SOURCE_TYPES, file_sha256, parse_source_excel, row_sha256
 from .report_generator import generate_analyse_report, generate_pv
+from .signature import signature_commission
 from .repository import (
     dernier_exercice,
     get_analyse_for_import,
@@ -3027,6 +3028,7 @@ async def export_rapport_complet(
         exercice_annee=_exercice_annee(imp.exercice),
         genere_le=datetime.now(timezone.utc).date(),
         categorie=categorie,
+        signature=await signature_commission(db, organisation_id, identite.nom),
     )
     donnees = rapport_complet.construire_donnees(dossiers, contexte)
     exercice = re.sub(r"[^0-9A-Za-z_-]+", "_", str(imp.exercice))
@@ -3074,12 +3076,16 @@ async def create_report(
         "stats_json": analyse.stats_json if analyse else {},
     }
 
+    from app.services.journaux_annexes import _identite
+
+    identite = await _identite(db, organisation_id, "")
     contenu = generate_analyse_report(
         payload.exercice,
         stats,
         anomaly_dicts,
         payload.instructions,
         scope=payload.scope,
+        signature=(await signature_commission(db, organisation_id, identite.nom)).lignes(),
     )
 
     report = TableauReport(

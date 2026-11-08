@@ -10,7 +10,9 @@ def generate_analyse_report(
     anomalies: list[dict[str, Any]],
     instructions: str | None = None,
     scope: str = "import",
+    signature: list[str] | None = None,
 ) -> str:
+    """`signature` : commission, qualité et nom du président, écrits en fin de rapport."""
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
     anomalies_haute = [a for a in anomalies if a.get("gravite") == "high"]
     anomalies_moyenne = [a for a in anomalies if a.get("gravite") == "medium"]
@@ -62,6 +64,9 @@ def generate_analyse_report(
 
     if instructions:
         lines += ["INSTRUCTIONS COMPLÉMENTAIRES", "─" * 40, f"  {instructions}", ""]
+
+    if signature:
+        lines += ["═" * 60, *signature, ""]
 
     lines += [
         "═" * 60,
