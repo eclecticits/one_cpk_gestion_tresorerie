@@ -232,7 +232,16 @@ export interface TableauStats {
   criteres?: Partial<Record<'cotisation' | 'formation' | 'assurance' | 'chiffre_affaires', { ok: number; ko: number; inconnu: number }>>
   provinces?: Array<{ province: string; total: number }>
   profil?: Partial<Record<'sexe' | 'anciennete' | 'actif', Record<string, number>>>
+  /** Filtres appliqués, la base entière, et les membres sans statut écartés par « Actifs ». */
+  filtre?: { personne: StatsPersonne; actif: StatsActif }
+  membres_total?: number
+  hors_filtre_actif_inconnu?: number
 }
+
+export type StatsPersonne = 'toutes' | 'physique' | 'morale'
+export type StatsActif = 'tous' | 'oui' | 'non' | 'inconnu'
+/** Par défaut, le tableau de bord porte sur les personnes physiques actives. */
+export const FILTRE_STATS_DEFAUT: { personne: StatsPersonne; actif: StatsActif } = { personne: 'physique', actif: 'oui' }
 
 export interface TableauComparison {
   exercice_a: string
@@ -244,8 +253,8 @@ export interface TableauComparison {
   details: Array<Record<string, unknown>>
 }
 
-export const getTableauStats = () =>
-  apiRequest<TableauStats>('GET', `${BASE}/stats`)
+export const getTableauStats = (filtre: { personne: StatsPersonne; actif: StatsActif } = FILTRE_STATS_DEFAUT) =>
+  apiRequest<TableauStats>('GET', `${BASE}/stats?${new URLSearchParams(filtre)}`)
 
 export const listTableauImports = () =>
   apiRequest<TableauImport[]>('GET', `${BASE}/imports`)
@@ -680,10 +689,13 @@ export const downloadTableauExport = async (import_id: number, scope: 'import' |
 /** Télécharge le rapport complet (PDF ou Excel), pour toutes les catégories ou pour une seule. */
 export const downloadTableauRapportComplet = async (
   import_id: number,
-  options: { format: 'pdf' | 'xlsx'; scope: 'import' | 'base'; exercice: string; categorie?: string },
+  options: { format: 'pdf' | 'xlsx'; scope: 'import' | 'base'; exercice: string; categorie?: string; formation?: 'heures' | 'oui_non'; personne?: StatsPersonne; actif?: StatsActif },
 ): Promise<void> => {
   const qs = new URLSearchParams({ format: options.format, scope: options.scope })
   if (options.categorie) qs.set('categorie', options.categorie)
+  if (options.formation) qs.set('formation', options.formation)
+  if (options.personne) qs.set('personne', options.personne)
+  if (options.actif) qs.set('actif', options.actif)
   const path = `${BASE}/rapport-complet/${import_id}?${qs}`
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: 'GET',

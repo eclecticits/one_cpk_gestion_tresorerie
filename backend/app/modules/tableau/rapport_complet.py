@@ -83,6 +83,12 @@ class ContexteRapport:
     categorie: str | None = None
     # Commission Tableau du conseil et son président, en fin de rapport.
     signature: Signature | None = None
+    # Une seule colonne formation : « heures » affiche le NHV chiffré, « oui_non » l'état (OUI/NON/N/A).
+    formation: str = "heures"
+    # Mêmes filtres que le tableau de bord : « toutes » / « physique » / « morale »,
+    # et « tous » / « oui » / « non » / « inconnu » pour le statut Actif.
+    personne: str = "toutes"
+    actif: str = "tous"
 
 
 def est_fiche_essai(nom: Any) -> bool:
@@ -232,12 +238,12 @@ def _section(categorie: str, titre: str, feuille: str, groupe: list[dict[str, An
     if "assurance" in criteres:
         colonnes.append(("Assurance valide", lambda d: _oui_non(d.get("assurance")), False))
     if "formation" in criteres:
-        colonnes.append(("H.Formation", formation_txt, False))
+        # Une seule colonne, toujours nommée NHV : l'auteur choisit les heures ou OUI/NON.
+        lire_nhv = formation_txt if ctx.formation == "oui_non" else (lambda d: d.get("heures_forco"))
+        colonnes.append(("NHV", lire_nhv, False))
     if "chiffre_affaires" in criteres:
         colonnes.append(("Chiffre d'affaires", lambda d: _oui_non(d.get("chiffre_affaires")), False))
     colonnes.append(("Conclusion", lambda d: verdict_engine.libelle_conclusion(classe_conclusion(d.get("conclusion"))), False))
-    if "formation" in criteres:
-        colonnes.append(("NHV", lambda d: d.get("heures_forco"), False))
     # Une colonne facultative vide n'apporte rien : les fichiers ne la renseignent pas tous.
     colonnes = [(libelle, lire, False) for libelle, lire, facultative in colonnes if not facultative or any(lire(d) for d in groupe)]
     entetes = ["N°"] + [libelle for libelle, _, _ in colonnes]
@@ -264,7 +270,33 @@ def _parts(comptes: Counter, libelles: list[tuple[str, str]], total: int) -> lis
     return parts + ([("Non renseigné", reste)] if reste else [])
 
 
+def dans_le_filtre(dossier: dict[str, Any], personne: str, actif: str) -> bool:
+    """Filtre personne / statut du tableau de bord. Le statut « Actif » ne se dit que
+    d'une personne physique : il ne filtre jamais les personnes morales."""
+    morale = norm_categorie(dossier.get("categorie")) == "Société"
+    if (personne == "physique" and morale) or (personne == "morale" and not morale):
+        return False
+    if morale or actif == "tous":
+        return True
+    valeur = dossier.get("actif")
+    return ("inconnu" if valeur is None else ("oui" if valeur else "non")) == actif
+
+
+def libelle_filtre(ctx: ContexteRapport) -> str:
+    """« Personnes physiques · actives », vide sans filtre."""
+    morceaux = []
+    if ctx.personne == "physique":
+        morceaux.append("Personnes physiques")
+    elif ctx.personne == "morale":
+        morceaux.append("Personnes morales")
+    if ctx.personne != "morale" and ctx.actif != "tous":
+        statut = {"oui": "actives", "non": "non actives", "inconnu": "statut actif non renseigné"}[ctx.actif]
+        morceaux.append(statut if ctx.personne == "physique" else f"personnes physiques {statut}")
+    return " · ".join(morceaux)
+
+
 def construire_donnees(dossiers: list[dict[str, Any]], ctx: ContexteRapport) -> dict[str, Any]:
+    dossiers = [d for d in dossiers if dans_le_filtre(d, ctx.personne, ctx.actif)]
     stagiaires = [d for d in dossiers if d.get("categorie") == "Stagiaire"]
     membres = [d for d in dossiers if d.get("categorie") != "Stagiaire"]
     if ctx.categorie:
@@ -426,7 +458,7 @@ def build_excel(d: dict[str, Any]) -> bytes:
     comptes = d["conclusions"]
     ws = feuille(
         "Graphiques", titre_rapport(ctx),
-        f"{ctx.organisation} · {ctx.source} · situation du {fdate(ctx.date_situation)} · généré le {fdate(ctx.genere_le)}",
+        " · ".join(filter(None, [ctx.organisation, ctx.source, libelle_filtre(ctx), f"situation du {fdate(ctx.date_situation)}", f"généré le {fdate(ctx.genere_le)}"])),
     )
     largeurs = [34, 13, 13, 14, 15, 10]
     for index, largeur in enumerate(largeurs, 1):
@@ -531,6 +563,7 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     from reportlab.lib.units import mm
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.pdfgen.canvas import Canvas
     from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     ctx: ContexteRapport = d["ctx"]
@@ -542,11 +575,12 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     piste = HexColor(f"#{MARQUE_PISTE}")
     filet = HexColor(f"#{GRIS_MOYEN}")
     corps = ParagraphStyle("corps", fontName="Helvetica", fontSize=9, leading=13, textColor=gris, spaceAfter=6)
-    h1 = ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=14, leading=18, textColor=marine, spaceBefore=4, spaceAfter=2, keepWithNext=1)
+    h1 = ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=13, leading=17, textColor=marque, spaceBefore=4, spaceAfter=1, keepWithNext=1)
     h2 = ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=marine, spaceBefore=8, spaceAfter=0, keepWithNext=1)
     petit = ParagraphStyle("petit", fontName="Helvetica", fontSize=7.5, leading=10, textColor=gris, spaceAfter=4)
     cellule = ParagraphStyle("cellule", fontName="Helvetica", fontSize=7.5, leading=9.5, textColor=gris)
-    entete = ParagraphStyle("entete", fontName="Helvetica-Bold", fontSize=6.8, leading=8.5, textColor=colors.white, alignment=TA_CENTER)
+    cellule_centree = ParagraphStyle("cellule_c", parent=cellule, alignment=TA_CENTER)
+    entete = ParagraphStyle("entete", fontName="Helvetica-Bold", fontSize=6.8, leading=8.5, textColor=marine)
     total = d["total"]
     comptes = d["conclusions"]
     etats = [e for e in ETATS_CONCLUSION if e[0] != "sans_conclusion" or comptes["sans_conclusion"]]
@@ -668,66 +702,146 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     def carte(titre: str, aide: str, dessin: Drawing) -> KeepTogether:
         return KeepTogether([Paragraph(escape(titre), h2), Paragraph(escape(aide), petit), dessin, Spacer(1, 2 * mm)])
 
+    def pastille_conclusion(valeur: Any) -> tuple[str, str] | None:
+        """Fond pâle et encre soutenue de la conclusion, comme les badges d'état d'Odoo."""
+        classe = classe_conclusion(valeur)
+        libelle = _maj(valeur)
+        if classe == verdict_engine.INSCRIT or libelle == "EN RÈGLE":
+            return "E7F5E7", "0A7A0A"
+        if classe == verdict_engine.NON_INSCRIT or libelle == "NON EN RÈGLE":
+            return "FBE9E9", "A82E2E"
+        if classe == verdict_engine.A_DELIBERER or libelle == "À DÉLIBÉRER":
+            return "FEF3D7", "805300"
+        return ("F1F0EB", "5B5A52") if _txt(valeur) else None
+
     def liste(entetes: list[str], lignes: list[list[Any]], tailles: list[float]) -> Table:
+        """Tableau à la manière d'Odoo : en-tête sans aplat souligné d'un filet marqué,
+        lignes séparées d'un filet fin, aucun quadrillage vertical."""
+        rang_conclusion = entetes.index("Conclusion") if "Conclusion" in entetes else None
         contenu = [[Paragraph(escape(e), entete) for e in entetes]]
-        contenu += [[Paragraph(escape(_txt(valeur)), cellule) for valeur in ligne] for ligne in lignes]
+        styles_cellules: list[tuple] = []
+        for i, ligne in enumerate(lignes, start=1):
+            rangee = []
+            for j, valeur in enumerate(ligne):
+                pastille = pastille_conclusion(valeur) if j == rang_conclusion else None
+                if pastille:
+                    fond, encre = pastille
+                    rangee.append(Paragraph(f'<font color="#{encre}"><b>{escape(_txt(valeur))}</b></font>', cellule_centree))
+                    styles_cellules.append(("BACKGROUND", (j, i), (j, i), HexColor(f"#{fond}")))
+                else:
+                    rangee.append(Paragraph(escape(_txt(valeur)), cellule))
+            contenu.append(rangee)
         t = Table(contenu, colWidths=[taille * mm for taille in tailles], repeatRows=1, hAlign="LEFT")
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), HexColor(f"#{VERT}")),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("GRID", (0, 0), (-1, -1), 0.3, filet),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("VALIGN", (0, 0), (-1, 0), "BOTTOM"),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.2, marine),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.4, filet),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.2),
             ("LEFTPADDING", (0, 0), (-1, -1), 3),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3),
             *[("BACKGROUND", (0, i), (-1, i), HexColor(f"#{GRIS_CLAIR}")) for i in range(2, len(contenu), 2)],
+            *styles_cellules,
         ]))
         return t
 
-    def premiere_page(canvas, doc) -> None:
-        canvas.saveState()
+    def bloc_informations(paires: list[tuple[str, str]]) -> Table:
+        """Le bandeau d'Odoo sous le titre : libellé discret au-dessus, valeur en gras."""
+        etiquette = ParagraphStyle("info_lib", fontName="Helvetica-Bold", fontSize=6.8, leading=9, textColor=HexColor("#7A8691"))
+        valeur = ParagraphStyle("info_val", fontName="Helvetica", fontSize=9, leading=12, textColor=marine)
+        t = Table(
+            [[Paragraph(escape(libelle.upper()), etiquette) for libelle, _ in paires],
+             [Paragraph(escape(contenu), valeur) for _, contenu in paires]],
+            # Le périmètre, premier, porte les filtres : il prend deux parts de largeur.
+            colWidths=[utile * (2 if rang == 0 else 1) / (len(paires) + 1) for rang in range(len(paires))], hAlign="LEFT",
+        )
+        t.setStyle(TableStyle([
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        return t
+
+    def entete_page(canvas) -> None:
+        """Logo à gauche, organisation à droite, filet de marque : sur chaque page, comme Odoo."""
+        haut = hauteur - 10 * mm
         if ctx.logo:
             try:
-                canvas.drawImage(ImageReader(io.BytesIO(ctx.logo)), 15 * mm, hauteur - 24 * mm, width=34 * mm, height=16 * mm, preserveAspectRatio=True, mask="auto")
+                canvas.drawImage(ImageReader(io.BytesIO(ctx.logo)), 15 * mm, haut - 14 * mm, width=30 * mm, height=14 * mm, preserveAspectRatio=True, anchor="w", mask="auto")
             except (OSError, ValueError):
                 pass  # Un logo illisible ne doit pas priver du rapport.
         canvas.setFillColor(marine)
-        canvas.setFont("Helvetica-Bold", 10)
-        canvas.drawRightString(largeur - 15 * mm, hauteur - 14 * mm, ctx.organisation[:70])
+        canvas.setFont("Helvetica-Bold", 9.5)
+        canvas.drawRightString(largeur - 15 * mm, haut - 4.5 * mm, ctx.organisation[:80])
         if ctx.contact:
             canvas.setFont("Helvetica", 7)
             canvas.setFillColor(gris)
-            canvas.drawRightString(largeur - 15 * mm, hauteur - 19 * mm, ctx.contact[:110])
-        pied(canvas, doc)
-        canvas.restoreState()
+            canvas.drawRightString(largeur - 15 * mm, haut - 9 * mm, ctx.contact[:120])
+        canvas.setStrokeColor(marque)
+        canvas.setLineWidth(1.4)
+        canvas.line(15 * mm, haut - 16.5 * mm, largeur - 15 * mm, haut - 16.5 * mm)
 
-    def pied(canvas, doc) -> None:
-        canvas.setStrokeColor(filet)
-        canvas.line(15 * mm, 13 * mm, largeur - 15 * mm, 13 * mm)
-        canvas.setFont("Helvetica", 7)
-        canvas.setFillColor(gris)
-        canvas.drawString(15 * mm, 9 * mm, f"{titre_rapport(ctx)} · situation du {fdate(ctx.date_situation)} · usage interne")
-        canvas.drawRightString(largeur - 15 * mm, 9 * mm, f"Page {doc.page}")
-
-    def page_suivante(canvas, doc) -> None:
+    def habillage(canvas, doc) -> None:
         canvas.saveState()
-        pied(canvas, doc)
+        entete_page(canvas)
         canvas.restoreState()
+
+    class CanevasPagine(Canvas):
+        """Retient chaque page pour écrire « Page x / y » une fois le total connu."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._pages: list[dict] = []
+
+        def showPage(self):
+            self._pages.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            nombre_pages = len(self._pages)
+            for etat in self._pages:
+                self.__dict__.update(etat)
+                self._pied(nombre_pages)
+                super().showPage()
+            super().save()
+
+        def _pied(self, nombre_pages: int) -> None:
+            self.saveState()
+            self.setStrokeColor(filet)
+            self.setLineWidth(0.5)
+            self.line(15 * mm, 14 * mm, largeur - 15 * mm, 14 * mm)
+            self.setFont("Helvetica", 7)
+            self.setFillColor(gris)
+            self.drawCentredString(largeur / 2, 9.5 * mm, f"{titre_rapport(ctx)} · situation du {fdate(ctx.date_situation)} · usage interne")
+            self.setFillColor(marine)
+            self.setFont("Helvetica-Bold", 7)
+            self.drawRightString(largeur - 15 * mm, 9.5 * mm, f"Page {self._pageNumber} / {nombre_pages}")
+            self.restoreState()
 
     tampon = io.BytesIO()
     doc = SimpleDocTemplate(
-        tampon, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm, topMargin=15 * mm, bottomMargin=18 * mm,
+        tampon, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm, topMargin=33 * mm, bottomMargin=20 * mm,
         title=titre_rapport(ctx), author=ctx.organisation,
     )
+    perimetre = " · ".join(filter(None, [ctx.categorie, libelle_filtre(ctx)])) or "Toutes catégories"
     S: list[Any] = [
-        Spacer(1, 14 * mm),
-        # Titre centré et souligné, dans une police à empattements classique.
-        Paragraph(f"<u>{escape(titre_rapport(ctx))}</u>", ParagraphStyle("t", fontName="Times-Bold", fontSize=20, leading=26, textColor=marine, alignment=TA_CENTER, spaceAfter=6)),
-        Paragraph(f"{escape(ctx.source)} · situation du {fdate(ctx.date_situation)} · généré le {fdate(ctx.genere_le)}", ParagraphStyle("t_sous", parent=petit, alignment=TA_CENTER, spaceAfter=10)),
+        # Titre aligné à gauche, couleur de marque, sans soulignement : la sobriété d'un document Odoo.
+        Paragraph(escape(titre_rapport(ctx)), ParagraphStyle("t", fontName="Helvetica-Bold", fontSize=19, leading=24, textColor=marque, spaceAfter=7)),
+        bloc_informations([
+            ("Périmètre", perimetre),
+            ("Situation du", fdate(ctx.date_situation)),
+            ("Source", ctx.source or "—"),
+            ("Généré le", fdate(ctx.genere_le)),
+            ("Membres", str(total)),
+        ]),
+        Spacer(1, 7 * mm),
     ]
 
     # D'abord la liste ; la première section suit le titre, les autres ouvrent une page.
-    tailles = {"N°": 7, "N° d'ordre": 20, "Actif": 10, "Ancienneté": 16, "Cotisation": 15, "Assurance valide": 15, "H.Formation": 17, "Chiffre d'affaires": 14, "Conclusion": 21, "NHV": 9, "NIF": 18}
+    tailles = {"N°": 7, "N° d'ordre": 20, "Actif": 10, "Ancienneté": 16, "Cotisation": 15, "Assurance valide": 15, "Chiffre d'affaires": 14, "Conclusion": 21, "NHV": 12, "NIF": 18}
     for rang_section, section in enumerate(d["sections"]):
         if rang_section:
             S.append(PageBreak())
@@ -770,5 +884,5 @@ def build_pdf(d: dict[str, Any]) -> bytes:
             *[Paragraph(escape(n), signe) for n in nom],
         ]))
 
-    doc.build(S, onFirstPage=premiere_page, onLaterPages=page_suivante)
+    doc.build(S, onFirstPage=habillage, onLaterPages=habillage, canvasmaker=CanevasPagine)
     return tampon.getvalue()

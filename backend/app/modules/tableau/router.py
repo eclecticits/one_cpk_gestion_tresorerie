@@ -92,10 +92,12 @@ VIEW_PERMS = ["tableau.view"]
 
 @router.get("/stats", response_model=TableauStatsOut, dependencies=[Depends(has_any_permission(VIEW_PERMS))])
 async def tableau_stats(
+    personne: Literal["toutes", "physique", "morale"] = Query(default="physique"),
+    actif: Literal["tous", "oui", "non", "inconnu"] = Query(default="oui"),
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> dict:
-    return await get_stats_tableau(db, tenant_id)
+    return await get_stats_tableau(db, tenant_id, personne=personne, actif=actif)
 
 
 @router.get("/imports", response_model=list[TableauImportOut], dependencies=[Depends(has_any_permission(VIEW_PERMS))])
@@ -470,12 +472,17 @@ async def export_rapport_complet_tableau(
     categorie: Literal["EC Cabinet", "EC Indépendant", "Société", "EC Salarié"] | None = Query(
         default=None, description="Limite le rapport à une catégorie ; absent : toutes.",
     ),
+    formation: Literal["heures", "oui_non"] = Query(
+        default="heures", description="Colonne formation : NHV chiffré (heures) ou OUI/NON (oui_non).",
+    ),
+    personne: Literal["toutes", "physique", "morale"] = Query(default="toutes"),
+    actif: Literal["tous", "oui", "non", "inconnu"] = Query(default="tous"),
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> StreamingResponse:
     """Télécharge le rapport complet : le tableau de bord, puis la liste des membres."""
     content, fname = await export_rapport_complet(
-        db, tenant_id, import_id, format_sortie=format, scope=scope, categorie=categorie,
+        db, tenant_id, import_id, format_sortie=format, scope=scope, categorie=categorie, formation=formation, personne=personne, actif=actif,
     )
     media_type = (
         "application/pdf" if format == "pdf"

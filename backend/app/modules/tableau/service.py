@@ -2063,8 +2063,17 @@ async def get_base_tableau(
         "dossiers": dossiers,
     }
 
-async def get_stats_tableau(db: AsyncSession, organisation_id: int) -> dict[str, Any]:
+async def get_stats_tableau(
+    db: AsyncSession,
+    organisation_id: int,
+    personne: str = "physique",
+    actif: str = "oui",
+) -> dict[str, Any]:
     """Chiffres du tableau de bord, lus dans la base consolidée.
+
+    `personne` : « toutes », « physique » ou « morale » (les sociétés).
+    `actif` : « tous », « oui », « non » ou « inconnu ». Le statut ne se dit que
+    d'une personne physique : il ne filtre jamais les personnes morales.
 
     La base compte aussi les membres venus des seuls fichiers personnes physiques
     et morales, sans dossier du classeur Tableau : leur conclusion est calculée à
@@ -2076,6 +2085,8 @@ async def get_stats_tableau(db: AsyncSession, organisation_id: int) -> dict[str,
         "membres_base": 0, "en_regle": 0, "non_en_regle": 0, "a_deliberer": 0,
         "sans_conclusion": 0, "membres_signales": 0, "membres_sortis": 0,
         "par_categorie": [], "criteres": {}, "provinces": [], "profil": {},
+        "filtre": {"personne": personne, "actif": actif},
+        "membres_total": 0, "hors_filtre_actif_inconnu": 0,
     })
     exercice = stats.get("last_exercice")
     if not exercice:
@@ -2098,7 +2109,27 @@ async def get_stats_tableau(db: AsyncSession, organisation_id: int) -> dict[str,
     def oui_non(valeur: Any) -> str:
         return "inconnu" if valeur is None else ("ok" if valeur else "ko")
 
-    for ligne in [*base["dossiers"], *base["membres_a_completer"]]:
+    def est_morale(ligne: Any) -> bool:
+        return lire(ligne, "categorie") in ("SEC", "Société")
+
+    def statut(ligne: Any) -> str:
+        valeur = lire(ligne, "actif")
+        return "inconnu" if valeur is None else ("oui" if valeur else "non")
+
+    def garde(ligne: Any) -> bool:
+        morale = est_morale(ligne)
+        if (personne == "physique" and morale) or (personne == "morale" and not morale):
+            return False
+        return morale or actif == "tous" or statut(ligne) == actif
+
+    toutes = [*base["dossiers"], *base["membres_a_completer"]]
+    retenues = [ligne for ligne in toutes if garde(ligne)]
+    stats["membres_total"] = len(toutes)
+    # Ceux que le filtre « Actifs » écarte faute de statut : à montrer, pas à perdre en silence.
+    if actif not in ("tous", "inconnu") and personne != "morale":
+        stats["hors_filtre_actif_inconnu"] = sum(1 for ligne in toutes if not est_morale(ligne) and statut(ligne) == "inconnu")
+
+    for ligne in retenues:
         conclusion = compte.get(lire(ligne, "conclusion") or "", "sans_conclusion")
         stats[conclusion] += 1
         if lire(ligne, "anomalie_detectee") or lire(ligne, "signalements"):
@@ -2147,7 +2178,7 @@ async def get_stats_tableau(db: AsyncSession, organisation_id: int) -> dict[str,
         {"province": nom, "total": total}
         for nom, total in sorted(provinces.items(), key=lambda item: (-item[1], item[0]))
     ]
-    stats["membres_base"] = base["total_membres"]
+    stats["membres_base"] = len(retenues)
     sortis = await get_base_tableau(db, [organisation_id], exercice=exercice, situation="sortis", limit=1)
     stats["membres_sortis"] = sortis["total_membres"]
     return stats
@@ -2921,6 +2952,9 @@ async def export_rapport_complet(
     format_sortie: str = "pdf",
     scope: str = "import",
     categorie: str | None = None,
+    formation: str = "heures",
+    personne: str = "toutes",
+    actif: str = "tous",
 ) -> tuple[bytes, str]:
     """Génère le rapport complet (PDF ou Excel) de l'analyse. Renvoie (octets, nom_fichier).
 
@@ -3014,7 +3048,10 @@ async def export_rapport_complet(
     dossiers = [d for d in dossiers if _norm_numero_ordre(d.get("numero_ordre")) not in numeros_ecartes]
     if not dossiers:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Aucun membre pour l'exercice {imp.exercice}.")
-    if categorie and not any(rapport_complet.norm_categorie(d.get("categorie")) == categorie for d in dossiers):
+    dossiers_filtres = [d for d in dossiers if rapport_complet.dans_le_filtre(d, personne, actif)]
+    if not dossiers_filtres:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Aucun membre ne correspond aux filtres Personne et Statut pour l'exercice {imp.exercice}.")
+    if categorie and not any(rapport_complet.norm_categorie(d.get("categorie")) == categorie for d in dossiers_filtres):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Aucun membre de la catégorie {categorie} pour l'exercice {imp.exercice}.")
     identite = await _identite(db, organisation_id, "")
     source = "Base consolidée de l'exercice" if scope == "base" else f"Fichier {imp.file_name}"
@@ -3029,6 +3066,9 @@ async def export_rapport_complet(
         exercice_annee=_exercice_annee(imp.exercice),
         genere_le=datetime.now(timezone.utc).date(),
         categorie=categorie,
+        formation=formation,
+        personne=personne,
+        actif=actif,
         signature=await signature_commission(db, organisation_id, identite.nom),
     )
     donnees = rapport_complet.construire_donnees(dossiers, contexte)

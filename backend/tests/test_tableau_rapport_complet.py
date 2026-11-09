@@ -159,7 +159,8 @@ def test_pdf_la_liste_puis_le_tableau_de_bord():
     assert "10 janvier 2026" in pages[0]
     assert "SECTION A1" in pages[0]
     assert "Conformité de la base" not in pages[0]
-    assert pages[-1].lstrip().startswith("Graphiques")
+    # Sous l'en-tête répété de page (organisation), la page s'ouvre sur les graphiques.
+    assert pages[-1].split("\n")[1].startswith("Graphiques")
     assert "Conformité de la base" in pages[-1]
     assert "Conformité par critère" in pages[-1]
     assert "50 %" in pages[-1]
@@ -398,8 +399,8 @@ def test_assurance_et_ca_reserves_aux_societes_et_aux_independants():
     for categorie in ("EC Cabinet", "EC Salarié"):
         assert "Assurance valide" not in sections[categorie]["entetes"]
         assert "Chiffre d'affaires" not in sections[categorie]["entetes"]
-    assert "H.Formation" not in sections["Société"]["entetes"]
-    assert {"Assurance valide", "H.Formation", "Chiffre d'affaires"} <= set(sections["EC Indépendant"]["entetes"])
+    assert "NHV" not in sections["Société"]["entetes"]
+    assert {"Assurance valide", "NHV", "Chiffre d'affaires"} <= set(sections["EC Indépendant"]["entetes"])
 
     classeur = openpyxl.load_workbook(io.BytesIO(R.build_excel(donnees)))
     feuille = classeur["EC EN CABINET"]
@@ -453,3 +454,28 @@ def test_fiche_d_essai_reconnue():
     assert not R.est_fiche_essai("TESTA Jean")
     assert not R.est_fiche_essai("MUTEST Jean")
     assert not R.est_fiche_essai(None)
+
+
+def test_une_seule_colonne_formation_au_choix_de_l_auteur():
+    dossiers = [_dossier(1, "EC/16.00001", heures_forco=120.0), _dossier(2, "EC/16.00002", heures_forco=0.0)]
+    for formation, attendu in (("heures", [120.0, 0.0]), ("oui_non", ["OUI", "NON"])):
+        section = _donnees(dossiers, formation=formation)["sections"][0]
+        assert section["entetes"].count("NHV") == 1 and "H.Formation" not in section["entetes"]
+        assert [ligne[section["entetes"].index("NHV")] for ligne in section["lignes"]] == attendu
+
+
+def test_filtres_personne_et_statut_du_rapport():
+    dossiers = [
+        _dossier(1, "EC/16.00001", actif=True),
+        _dossier(2, "EC/16.00002", actif=False),
+        _dossier(3, "EC/16.00003", actif=None),
+        _dossier(4, "SEC/16.00004", categorie="SEC", actif=None),
+    ]
+    assert _donnees(dossiers)["total"] == 4
+    defaut = _donnees(dossiers, personne="physique", actif="oui")
+    assert defaut["total"] == 1
+    assert "Personnes physiques · actives" in _texte_pdf(defaut)[0]
+    # Le statut ne filtre jamais les personnes morales.
+    assert _donnees(dossiers, personne="morale", actif="oui")["total"] == 1
+    assert _donnees(dossiers, personne="toutes", actif="non")["total"] == 2
+    assert _donnees(dossiers, personne="physique", actif="inconnu")["total"] == 1

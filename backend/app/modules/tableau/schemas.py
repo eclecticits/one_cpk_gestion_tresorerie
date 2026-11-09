@@ -201,6 +201,11 @@ class TableauStatsOut(BaseModel):
     provinces: list[dict[str, Any]] = Field(default_factory=list)
     # Personnes physiques : sexe, actif ; tous : ancienneté selon le N° d'ordre.
     profil: dict[str, dict[str, int]] = Field(default_factory=dict)
+    # Filtres appliqués aux chiffres ci-dessus, la base entière, et les membres
+    # sans statut « Actif » que le filtre écarte.
+    filtre: dict[str, str] = Field(default_factory=dict)
+    membres_total: int = 0
+    hors_filtre_actif_inconnu: int = 0
 
 
 class TableauActualisationListItem(BaseModel):

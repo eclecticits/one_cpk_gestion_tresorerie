@@ -29,6 +29,9 @@ import {
   type TableauSortie,
   runTableauAnalyseBase,
   getTableauStats,
+  FILTRE_STATS_DEFAUT,
+  type StatsActif,
+  type StatsPersonne,
   listTableauAnomalies,
   listTableauImports,
   listTableauReports,
@@ -721,6 +724,24 @@ export default function TableauModulePage() {
   const baseSearchDiffere = useDebouncedValue(baseSearch)
   const baseExerciceDiffere = useDebouncedValue(baseExercice)
   const [stats, setStats] = useState<TableauStats | null>(null)
+  // Filtres du tableau de bord, retenus d'une visite à l'autre sur ce poste.
+  const [filtreStats, setFiltreStats] = useState<{ personne: StatsPersonne; actif: StatsActif }>(() => {
+    try {
+      const lu = JSON.parse(localStorage.getItem('tableau.filtreStats') || 'null')
+      if (lu && ['toutes', 'physique', 'morale'].includes(lu.personne) && ['tous', 'oui', 'non', 'inconnu'].includes(lu.actif)) return lu
+    } catch { /* stockage indisponible : on reprend le défaut */ }
+    return FILTRE_STATS_DEFAUT
+  })
+  const filtreStatsRef = useRef(filtreStats)
+  filtreStatsRef.current = filtreStats
+  const chargerStats = useCallback(() => getTableauStats(filtreStatsRef.current), [])
+  const premierFiltreStats = useRef(true)
+  useEffect(() => {
+    try { localStorage.setItem('tableau.filtreStats', JSON.stringify(filtreStats)) } catch { /* sans effet */ }
+    // Le premier chargement passe par loadAll ; ensuite, chaque changement recharge les chiffres.
+    if (premierFiltreStats.current) { premierFiltreStats.current = false; return }
+    chargerStats().then(s => s && setStats(s)).catch(() => undefined)
+  }, [filtreStats, chargerStats])
   const [imports, setImports] = useState<TableauImport[]>([])
   const [anomalies, setAnomalies] = useState<TableauAnomalie[]>([])
   const [reports, setReports] = useState<TableauReport[]>([])
@@ -743,6 +764,11 @@ export default function TableauModulePage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   // Rapport limité à une catégorie ; vide : toutes.
   const [rapportCategorie, setRapportCategorie] = useState('')
+  // Une seule colonne NHV : les heures validées ou OUI/NON, au choix.
+  const [rapportFormation, setRapportFormation] = useState<'heures' | 'oui_non'>('heures')
+  // Mêmes filtres que le tableau de bord, et même défaut : personnes physiques actives.
+  const [rapportPersonne, setRapportPersonne] = useState<StatsPersonne>(FILTRE_STATS_DEFAUT.personne)
+  const [rapportActif, setRapportActif] = useState<StatsActif>(FILTRE_STATS_DEFAUT.actif)
   // La base est le périmètre qui fait foi dès que l'exercice s'étale sur plusieurs fichiers.
   const [rapportPerimetre, setRapportPerimetre] = useState<'import' | 'base'>('base')
   const [error, setError] = useState<string | null>(null)
@@ -770,7 +796,7 @@ export default function TableauModulePage() {
     setError(null)
     try {
       const [statsData, importsData, reportsData] = await Promise.all([
-        getTableauStats().catch(() => null),
+        chargerStats().catch(() => null),
         listTableauImports().catch(() => []),
         listTableauReports().catch(() => []),
       ])
@@ -836,7 +862,7 @@ export default function TableauModulePage() {
       setAnalyse(result)
       setAnalysisScope('import')
       await loadImportDetails(cible.id)
-      await getTableauStats().then(s => s && setStats(s))
+      await chargerStats().then(s => s && setStats(s))
       setActiveTab('analyse')
     } catch (err) {
       setError(apiErr(err, "Erreur lors de l'analyse."))
@@ -952,6 +978,9 @@ export default function TableauModulePage() {
         scope: rapportPerimetre,
         exercice: selectedImport.exercice,
         categorie: rapportCategorie || undefined,
+        formation: rapportFormation,
+        personne: rapportPersonne,
+        actif: rapportActif,
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur lors de la génération du rapport complet.')
@@ -1172,7 +1201,7 @@ export default function TableauModulePage() {
         }
       }
       setBaseRefresh(value => value + 1)
-      await getTableauStats().then(setStats)
+      await chargerStats().then(setStats)
     } catch (err) {
       setBaseAnalyse(apiErr(err, "L'analyse de la base a échoué."))
     } finally {
@@ -1224,7 +1253,7 @@ export default function TableauModulePage() {
       // La correction rend l'analyse obsolète : on la relit pour l'annoncer,
       // plutôt que de la masquer comme si elle n'avait jamais existé.
       if (selectedImport) await loadImportDetails(selectedImport.id, analysisScope)
-      await getTableauStats().then(s => s && setStats(s)).catch(() => undefined)
+      await chargerStats().then(s => s && setStats(s)).catch(() => undefined)
     } catch (err) {
       setBaseError(apiErr(err, 'La correction a échoué.'))
     } finally {
@@ -1383,7 +1412,55 @@ export default function TableauModulePage() {
                 <h2 className={styles.sectionTitle}>Vue d'ensemble Commission Tableau</h2>
                 <p className={styles.sectionSubtitle}>Suivez la qualité de la base et accédez aux opérations courantes.</p>
               </div>
+              <div className={styles.dashboardFiltres} role="group" aria-label="Filtres du tableau de bord">
+                <div className={styles.filtreGroupe}>
+                  <span className={styles.filtreLibelle}>Personne</span>
+                  <div className={styles.segment}>
+                    {([['toutes', 'Toutes'], ['physique', 'Physiques'], ['morale', 'Morales']] as const).map(([valeur, libelle]) => (
+                      <button
+                        key={valeur}
+                        type="button"
+                        aria-pressed={filtreStats.personne === valeur}
+                        className={filtreStats.personne === valeur ? styles.segmentActif : undefined}
+                        onClick={() => setFiltreStats(f => ({ ...f, personne: valeur }))}
+                      >
+                        {libelle}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className={styles.filtreGroupe}>
+                  <span className={styles.filtreLibelle}>Statut</span>
+                  {/* Le statut « Actif » ne se dit que d'une personne physique. */}
+                  <div className={styles.segment} title={filtreStats.personne === 'morale' ? 'Sans objet pour les personnes morales' : undefined}>
+                    {([['tous', 'Tous'], ['oui', 'Actifs'], ['non', 'Non actifs'], ['inconnu', 'Non renseigné']] as const).map(([valeur, libelle]) => (
+                      <button
+                        key={valeur}
+                        type="button"
+                        disabled={filtreStats.personne === 'morale'}
+                        aria-pressed={filtreStats.personne !== 'morale' && filtreStats.actif === valeur}
+                        className={filtreStats.personne !== 'morale' && filtreStats.actif === valeur ? styles.segmentActif : undefined}
+                        onClick={() => setFiltreStats(f => ({ ...f, actif: valeur }))}
+                      >
+                        {libelle}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {(filtreStats.personne !== FILTRE_STATS_DEFAUT.personne || filtreStats.actif !== FILTRE_STATS_DEFAUT.actif) && (
+                  <button type="button" className={styles.filtreReset} onClick={() => setFiltreStats(FILTRE_STATS_DEFAUT)}>
+                    Revenir au défaut
+                  </button>
+                )}
+              </div>
             </div>
+            {stats && (
+              <p className={styles.filtrePortee}>
+                {stats.membres_base} membre{stats.membres_base === 1 ? '' : 's'} sur {stats.membres_total ?? stats.membres_base} dans la base
+                {filtreStats.personne === 'toutes' && filtreStats.actif !== 'tous' ? ' · le statut ne filtre que les personnes physiques' : ''}
+                {stats.hors_filtre_actif_inconnu ? ` · ${stats.hors_filtre_actif_inconnu} personne${stats.hors_filtre_actif_inconnu > 1 ? 's' : ''} physique${stats.hors_filtre_actif_inconnu > 1 ? 's' : ''} sans statut renseigné, hors du filtre` : ''}
+              </p>
+            )}
 
             <div className={styles.statsGrid}>
               <StatCard
@@ -2256,6 +2333,41 @@ export default function TableauModulePage() {
                       <option value="import">Fichier : {selectedImport.file_name}</option>
                     </select>
                   </label>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                    <label style={{ flex: 1, fontSize: '12px', color: '#4b5563' }}>
+                      Personne
+                      <select
+                        value={rapportPersonne}
+                        onChange={e => {
+                          const personne = e.target.value as StatsPersonne
+                          setRapportPersonne(personne)
+                          // Une catégorie sans rapport avec la personne viderait le rapport.
+                          if (personne === 'morale' && rapportCategorie && rapportCategorie !== 'Société') setRapportCategorie('')
+                          if (personne === 'physique' && rapportCategorie === 'Société') setRapportCategorie('')
+                        }}
+                        disabled={Boolean(actionLoading?.startsWith('rapport-'))}
+                        style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '100%', marginTop: '4px' }}
+                      >
+                        <option value="toutes">Toutes</option>
+                        <option value="physique">Personne physique</option>
+                        <option value="morale">Personne morale</option>
+                      </select>
+                    </label>
+                    <label style={{ flex: 1, fontSize: '12px', color: '#4b5563' }} title={rapportPersonne === 'morale' ? 'Sans objet pour les personnes morales' : undefined}>
+                      Statut
+                      <select
+                        value={rapportPersonne === 'morale' ? 'tous' : rapportActif}
+                        onChange={e => setRapportActif(e.target.value as StatsActif)}
+                        disabled={rapportPersonne === 'morale' || Boolean(actionLoading?.startsWith('rapport-'))}
+                        style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '100%', marginTop: '4px' }}
+                      >
+                        <option value="tous">Tous</option>
+                        <option value="oui">Actifs</option>
+                        <option value="non">Non actifs</option>
+                        <option value="inconnu">Non renseigné</option>
+                      </select>
+                    </label>
+                  </div>
                   <label style={{ display: 'block', fontSize: '12px', color: '#4b5563', marginBottom: '8px' }}>
                     Catégorie
                     <select
@@ -2266,7 +2378,22 @@ export default function TableauModulePage() {
                     >
                       <option value="">Toutes</option>
                       {/* Les stagiaires n'ont pas de critère automatique : ils restent hors du rapport par catégorie. */}
-                      {TABLEAU_CATEGORIES.filter(item => item !== 'Stagiaire').map(item => <option key={item} value={item}>{item}</option>)}
+                      {TABLEAU_CATEGORIES
+                        .filter(item => item !== 'Stagiaire')
+                        .filter(item => rapportPersonne === 'toutes' || (rapportPersonne === 'morale') === (item === 'Société'))
+                        .map(item => <option key={item} value={item}>{item}</option>)}
+                    </select>
+                  </label>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#4b5563', marginBottom: '8px' }}>
+                    Colonne NHV
+                    <select
+                      value={rapportFormation}
+                      onChange={e => setRapportFormation(e.target.value as 'heures' | 'oui_non')}
+                      disabled={Boolean(actionLoading?.startsWith('rapport-'))}
+                      style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '100%', marginTop: '4px' }}
+                    >
+                      <option value="heures">Heures validées (chiffres)</option>
+                      <option value="oui_non">OUI / NON</option>
                     </select>
                   </label>
                   <div style={{ display: 'flex', gap: '8px' }}>
