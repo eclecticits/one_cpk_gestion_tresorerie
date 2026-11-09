@@ -339,7 +339,7 @@ function ReglesParCategorie({
       <p style={{ fontSize: '12px', color: '#6b7280', margin: '4px 0 12px' }}>
         Chaque condition porte sur une colonne affichée pour la catégorie et se définit pour elle :
         ce qu'est être en règle avec la cotisation, le minimum d'heures de formation. Une donnée
-        manquante donne toujours « À délibérer ».
+        manquante donne toujours « Non en règle ».
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '12px' }}>
         {Object.entries(bareme).map(([categorie, criteres]) => {
@@ -1669,7 +1669,7 @@ export default function TableauModulePage() {
                     {base.total_a_completer} membre(s) viennent des fichiers personnes physiques ou morales, sans dossier
                     du classeur Tableau. Leur conclusion applique les règles de délibération à ce que l'on sait d'eux :
                     cotisation des notes de débit, déclarations d'assurance et de chiffre d'affaires, NHV. Une donnée
-                    absente donne « À délibérer » ; le motif s'affiche au survol de la conclusion.
+                    absente donne « Non en règle » ; le motif s'affiche au survol de la conclusion.
                   </div>
                 )}
 
@@ -2242,7 +2242,7 @@ export default function TableauModulePage() {
                 {canExport && <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', flex: 1, minWidth: '280px' }}>
                   <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Rapport complet (PDF et Excel)</h3>
                   <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
-                    Le tableau de bord en graphiques, puis la liste des membres.
+                    La liste des membres, puis les graphiques (en tête dans l'Excel).
                   </p>
                   <label style={{ display: 'block', fontSize: '12px', color: '#4b5563', marginBottom: '8px' }}>
                     Périmètre

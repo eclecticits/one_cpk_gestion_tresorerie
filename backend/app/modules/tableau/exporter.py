@@ -134,7 +134,7 @@ def build_workbook(dossiers: list[dict[str, Any]], exercice: str,
 
         ws.cell(1, 1, organisation).font = title_font
         ws.cell(2, 1, _SECTION_LABEL.get(cat, cat)).font = title_font
-        ws.cell(3, 1, f"Exercice {exercice} — formation minimale : {reglages.libelle_heures_min()}").font = Font(italic=True)
+        ws.cell(3, 1, f"Tableau {verdict_engine.annee_tableau(exercice)} — formation minimale : {reglages.libelle_heures_min()}").font = Font(italic=True)
 
         header_row = 5
         for c, (_key, label) in enumerate(layout, start=1):

@@ -445,6 +445,9 @@ export interface TableauReleveApercu {
   raison: string | null
   sujet: string
   corps: string
+  /** Passages modifiables avant l'envoi ; le reste du relevé est calculé. */
+  annonce: string
+  consigne: string
   emails: string[]
   telephone: string | null
   fonction_bureau: string | null
@@ -466,7 +469,14 @@ export const getTableauReleveApercu = (numeroOrdre: string, exercice?: string) =
   return apiRequest<TableauReleveApercu>('GET', `${BASE}/releves/apercu?${params}`)
 }
 
-export const envoyerTableauReleve = (payload: { numero_ordre: string; exercice?: string; canaux: CanalReleve[]; renvoyer?: boolean }) =>
+export const envoyerTableauReleve = (payload: {
+  numero_ordre: string
+  exercice?: string
+  canaux: CanalReleve[]
+  renvoyer?: boolean
+  annonce?: string
+  consigne?: string
+}) =>
   apiRequest<TableauReleveResultat>('POST', `${BASE}/releves`, payload)
 
 /** Les filtres de la Base, pour viser « tous les membres du filtre ». */

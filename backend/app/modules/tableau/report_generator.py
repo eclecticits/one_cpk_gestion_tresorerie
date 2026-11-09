@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from .verdict import annee_tableau
+
 
 def generate_analyse_report(
     exercice: str,
@@ -19,7 +21,7 @@ def generate_analyse_report(
     anomalies_basse = [a for a in anomalies if a.get("gravite") == "low"]
 
     lines = [
-        f"RAPPORT D'ANALYSE — TABLEAU {exercice}",
+        f"RAPPORT D'ANALYSE — TABLEAU {annee_tableau(exercice)}",
         f"Périmètre : {'base consolidée' if scope == 'base' else 'import sélectionné'}",
         f"Généré le : {now}",
         "",
@@ -93,13 +95,13 @@ def generate_pv(
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
 
     lines = [
-        f"PROCÈS-VERBAL DE LA COMMISSION TABLEAU — EXERCICE {exercice}",
+        f"PROCÈS-VERBAL DE LA COMMISSION TABLEAU — TABLEAU {annee_tableau(exercice)}",
         f"Périmètre examiné : {'base consolidée' if scope == 'base' else 'import sélectionné'}",
         f"Date de génération : {now}",
         "",
         "═" * 60,
         "La Commission Tableau s'est réunie",
-        f"pour examiner le tableau de l'exercice {exercice}.",
+        f"pour examiner le Tableau {annee_tableau(exercice)}.",
         "",
         "ORDRE DU JOUR :",
         "  1. Examen du tableau des experts-comptables",

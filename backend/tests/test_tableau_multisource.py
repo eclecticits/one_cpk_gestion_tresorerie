@@ -1085,8 +1085,8 @@ async def test_la_base_juge_les_membres_importes_sans_creer_de_dossier(db_sessio
     assert par_numero["EC/16.99802"]["signalements"] == ["Indépendant sans NIF"]
     assert par_numero["SEC/18.99803"]["categorie"] == "Société"
     # Les règles de délibération s'appliquent à la lecture : sans cotisation connue,
-    # le membre revient au conseil.
-    assert par_numero["EC/16.99801"]["conclusion"] == "À DÉLIBÉRER"
+    # le membre n'est pas en règle.
+    assert par_numero["EC/16.99801"]["conclusion"] == "NON INSCRIT"
     assert "cotisation" in par_numero["EC/16.99801"]["conclusion_motif"]
     # … et rien n'est écrit : aucun dossier n'a été créé.
     assert (await db_session.execute(select(TableauDossier).where(TableauDossier.organisation_id == admin_isole.organisation_id))).scalars().all() == []
@@ -1476,9 +1476,11 @@ async def test_la_base_se_filtre_sur_ce_que_calculent_les_regles(db_session, adm
         ["EC/16.99822", "FILTRE Marie", "indépendant", "A2X"],
         ["EC/16.99823", "FILTRE Paul", "indépendant", "A3X"],
     ])
-    a_deliberer = await _base(db_session, admin_isole, conclusion="À DÉLIBÉRER")
-    assert a_deliberer["total_membres"] == a_deliberer["total_a_completer"] == 3
-    assert {m["conclusion"] for m in a_deliberer["membres_a_completer"]} == {"À DÉLIBÉRER"}
+    # Sans information, non en règle : rien ne reste à délibérer.
+    non_en_regle = await _base(db_session, admin_isole, conclusion="NON INSCRIT")
+    assert non_en_regle["total_membres"] == non_en_regle["total_a_completer"] == 3
+    assert {m["conclusion"] for m in non_en_regle["membres_a_completer"]} == {"NON INSCRIT"}
+    assert (await _base(db_session, admin_isole, conclusion="À DÉLIBÉRER"))["total_membres"] == 0
     en_regle = await _base(db_session, admin_isole, conclusion="INSCRIT")
     assert en_regle["total_membres"] == 0 and en_regle["membres_a_completer"] == []
     # Sans note de débit, la cotisation est inconnue.

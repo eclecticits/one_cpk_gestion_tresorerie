@@ -1,8 +1,9 @@
-"""Rapport complet du Tableau (PDF et Excel) : le tableau de bord, puis la liste.
+"""Rapport Tableau (PDF et Excel) : les graphiques et la liste.
 
 Le tableau de bord reprend les graphiques de la page Tableau : conformité de la base,
-conformité par critère, conclusions par catégorie, profil des membres. Viennent ensuite
-les listes, une section par catégorie, comme le Tableau publié. Le rapport peut se
+conformité par critère, conclusions par catégorie, profil des membres. Les listes suivent
+le Tableau publié, une section par catégorie. Dans l'Excel, la feuille « Graphiques » vient
+en tête ; dans le PDF, les graphiques viennent après les listes, avant la signature. Le rapport peut se
 limiter à une catégorie : graphiques et liste ne portent alors que sur elle.
 
 Tout vient des dossiers analysés et des réglages de l'exercice : aucun chiffre, seuil ni
@@ -322,7 +323,7 @@ def construire_donnees(dossiers: list[dict[str, Any]], ctx: ContexteRapport) -> 
 
 
 def titre_rapport(ctx: ContexteRapport) -> str:
-    titre = f"Rapport complet du Tableau {ctx.exercice}"
+    titre = f"Rapport Tableau {verdict_engine.annee_tableau(ctx.exercice)}"
     return f"{titre} – {ctx.categorie}" if ctx.categorie else titre
 
 
@@ -367,7 +368,7 @@ def build_excel(d: dict[str, Any]) -> bytes:
         ws.page_setup.orientation = "landscape"
         ws.sheet_properties.pageSetUpPr.fitToPage = True
         ws.page_setup.fitToHeight = 0
-        ws.oddFooter.center.text = f"{ctx.organisation} · Tableau {ctx.exercice}"
+        ws.oddFooter.center.text = f"{ctx.organisation} · Tableau {verdict_engine.annee_tableau(ctx.exercice)}"
         ws.oddFooter.right.text = "Page &P / &N"
         return ws
 
@@ -424,7 +425,7 @@ def build_excel(d: dict[str, Any]) -> bytes:
     total = d["total"]
     comptes = d["conclusions"]
     ws = feuille(
-        "Tableau de bord", titre_rapport(ctx),
+        "Graphiques", titre_rapport(ctx),
         f"{ctx.organisation} · {ctx.source} · situation du {fdate(ctx.date_situation)} · généré le {fdate(ctx.genere_le)}",
     )
     largeurs = [34, 13, 13, 14, 15, 10]
@@ -433,7 +434,7 @@ def build_excel(d: dict[str, Any]) -> bytes:
 
     # 1. Conformité de la base
     ligne = 4
-    bloc(ws, ligne, "Conformité de la base", f"Exercice {ctx.exercice} · {total} membres")
+    bloc(ws, ligne, "Conformité de la base", f"Tableau {verdict_engine.annee_tableau(ctx.exercice)} · {total} membres")
     ws.cell(ligne + 2, 1, "Taux en règle").font = Font(bold=True, color=GRIS_TEXTE)
     taux = ws.cell(ligne + 2, 2, _part(comptes["en_regle"], total))
     taux.number_format = "0.0%"
@@ -720,26 +721,16 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     )
     S: list[Any] = [
         Spacer(1, 14 * mm),
-        Paragraph(escape(titre_rapport(ctx)), ParagraphStyle("t", fontName="Helvetica-Bold", fontSize=18, leading=22, textColor=marine, spaceAfter=4)),
-        Paragraph(f"{escape(ctx.source)} · situation du {fdate(ctx.date_situation)} · généré le {fdate(ctx.genere_le)}", petit),
+        # Titre centré et souligné, dans une police à empattements classique.
+        Paragraph(f"<u>{escape(titre_rapport(ctx))}</u>", ParagraphStyle("t", fontName="Times-Bold", fontSize=20, leading=26, textColor=marine, alignment=TA_CENTER, spaceAfter=6)),
+        Paragraph(f"{escape(ctx.source)} · situation du {fdate(ctx.date_situation)} · généré le {fdate(ctx.genere_le)}", ParagraphStyle("t_sous", parent=petit, alignment=TA_CENTER, spaceAfter=10)),
     ]
 
-    # Le tableau de bord, comme sur la page Tableau.
-    if total:
-        S.append(carte("Conformité de la base", f"Exercice {ctx.exercice} · {total} membres", carte_conformite()))
-        if d["criteres"]:
-            S.append(carte("Conformité par critère", "Part des membres soumis au critère qui le remplissent", carte_criteres()))
-        if len(d["par_categorie"]) > 1:
-            S.append(carte("Conclusions par catégorie", "Répartition en pourcentage ; le nombre de membres à droite", carte_categories()))
-        if d["profil"]:
-            S.append(carte("Profil des membres", "Qui compose la base de l'exercice", carte_profil()))
-    else:
-        S.append(Paragraph("Aucun membre dans ce périmètre.", corps))
-
-    # Ensuite, la liste.
+    # D'abord la liste ; la première section suit le titre, les autres ouvrent une page.
     tailles = {"N°": 7, "N° d'ordre": 20, "Actif": 10, "Ancienneté": 16, "Cotisation": 15, "Assurance valide": 15, "H.Formation": 17, "Chiffre d'affaires": 14, "Conclusion": 21, "NHV": 9, "NIF": 18}
-    for section in d["sections"]:
-        S.append(PageBreak())
+    for rang_section, section in enumerate(d["sections"]):
+        if rang_section:
+            S.append(PageBreak())
         S.append(Paragraph(escape(section["titre"]), h1))
         S.append(Paragraph(f"{section['total']} membres", petit))
         masque = {"N° téléphone", "E-mail", "Sexe", "Raison sociale", "Associé gérant", "Cabinet d'attache", "Employeur"} | ({"NIF"} if section["categorie"] != "EC Indépendant" else set())
@@ -752,6 +743,21 @@ def build_pdf(d: dict[str, Any]) -> bytes:
         lignes_liste = [["" if ligne[i] is None else (heures_txt(ligne[i]) if isinstance(ligne[i], float) else ligne[i]) for i in gardees] for ligne in section["lignes"]]
         S.append(liste([section["entetes"][i] for i in gardees], lignes_liste, tailles_pdf))
 
+    # Ensuite les graphiques, comme sur la page Tableau, sur leur propre page.
+    if total:
+        if d["sections"]:
+            S.append(PageBreak())
+        S.append(Paragraph("Graphiques", h1))
+        S.append(carte("Conformité de la base", f"Tableau {verdict_engine.annee_tableau(ctx.exercice)} · {total} membres", carte_conformite()))
+        if d["criteres"]:
+            S.append(carte("Conformité par critère", "Part des membres soumis au critère qui le remplissent", carte_criteres()))
+        if len(d["par_categorie"]) > 1:
+            S.append(carte("Conclusions par catégorie", "Répartition en pourcentage ; le nombre de membres à droite", carte_categories()))
+        if d["profil"]:
+            S.append(carte("Profil des membres", "Qui compose la base de l'exercice", carte_profil()))
+    else:
+        S.append(Paragraph("Aucun membre dans ce périmètre.", corps))
+
     if ctx.signature:
         signe = ParagraphStyle("signe", fontName="Helvetica-Bold", fontSize=9.5, leading=13, textColor=marine, alignment=TA_RIGHT)
         qualite = ParagraphStyle("qualite", parent=signe, fontName="Helvetica")
@@ -760,7 +766,7 @@ def build_pdf(d: dict[str, Any]) -> bytes:
             Spacer(1, 10 * mm),
             Paragraph(escape(commission), signe),
             Paragraph(escape(titre_president), qualite),
-            Spacer(1, 14 * mm),  # La place de la signature manuscrite.
+            Spacer(1, 14 * mm),  # La place de la signature, insérée plus tard.
             *[Paragraph(escape(n), signe) for n in nom],
         ]))
 

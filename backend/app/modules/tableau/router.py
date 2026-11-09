@@ -610,6 +610,9 @@ class TableauReleveEnvoiIn(BaseModel):
     exercice: str | None = Field(default=None, max_length=20)
     canaux: list[CanalReleve] = Field(default_factory=lambda: ["email", "whatsapp"])
     renvoyer: bool = Field(default=False, description="Renvoyer même si la même situation est déjà partie.")
+    # Passages repris à la main avant l'envoi ; absents, le texte calculé part tel quel.
+    annonce: str | None = Field(default=None, max_length=releves_service.MAX_TEXTE_MODIFIE)
+    consigne: str | None = Field(default=None, max_length=releves_service.MAX_TEXTE_MODIFIE)
 
 
 @router.get(
@@ -641,6 +644,7 @@ async def envoyer_releve(
         db, user, tenant_id,
         exercice=payload.exercice, numero_ordre=payload.numero_ordre,
         canaux=payload.canaux, renvoyer=payload.renvoyer,
+        annonce=payload.annonce, consigne=payload.consigne,
     )
 
 

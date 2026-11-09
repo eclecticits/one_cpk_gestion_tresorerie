@@ -112,9 +112,9 @@ def test_rapport_limite_a_une_categorie():
     assert donnees["conclusions"]["non_en_regle"] == 1
     assert [s["categorie"] for s in donnees["sections"]] == ["Société"]
     assert donnees["stagiaires"] == []
-    assert R.titre_rapport(donnees["ctx"]) == "Rapport complet du Tableau 2026 – Société"
-    assert openpyxl.load_workbook(io.BytesIO(R.build_excel(donnees))).sheetnames == ["Tableau de bord", "SOCIETES"]
-    assert "Rapport complet du Tableau 2026 – Société" in _texte_pdf(donnees)[0]
+    assert R.titre_rapport(donnees["ctx"]) == "Rapport Tableau 2027 – Société"
+    assert openpyxl.load_workbook(io.BytesIO(R.build_excel(donnees))).sheetnames == ["Graphiques", "SOCIETES"]
+    assert "Rapport Tableau 2027 – Société" in _texte_pdf(donnees)[0]
 
 
 def test_profil_des_membres_comme_sur_la_page_tableau():
@@ -138,8 +138,8 @@ def test_excel_tableau_de_bord_puis_la_liste():
         _dossier(2, "EC/16.00002"),
     ])
     wb = openpyxl.load_workbook(io.BytesIO(R.build_excel(donnees)))
-    assert wb.sheetnames == ["Tableau de bord", "EC EN CABINET"]
-    graphiques = wb["Tableau de bord"]._charts
+    assert wb.sheetnames == ["Graphiques", "EC EN CABINET"]
+    graphiques = wb["Graphiques"]._charts
     assert len(graphiques) == 2  # l'anneau des conclusions, les barres des critères
     barres = graphiques[1]
     assert barres.grouping == "percentStacked"
@@ -152,16 +152,18 @@ def test_excel_tableau_de_bord_puis_la_liste():
     assert not liste._charts
 
 
-def test_pdf_tableau_de_bord_puis_la_liste():
+def test_pdf_la_liste_puis_le_tableau_de_bord():
     donnees = _donnees([_dossier(1, "EC/16.00001"), _dossier(2, "EC/16.00002", V.NON_INSCRIT, heures_forco=10.0)])
     pages = _texte_pdf(donnees)
-    assert "Conformité de la base" in pages[0]
-    assert "Conformité par critère" in pages[0]
-    assert "50 %" in pages[0]
+    # La liste suit le titre, sur la première page ; les graphiques viennent à la fin.
     assert "10 janvier 2026" in pages[0]
+    assert "SECTION A1" in pages[0]
+    assert "Conformité de la base" not in pages[0]
+    assert pages[-1].lstrip().startswith("Graphiques")
+    assert "Conformité de la base" in pages[-1]
+    assert "Conformité par critère" in pages[-1]
+    assert "50 %" in pages[-1]
     assert "Synthèse" not in "\n".join(pages)
-    # La liste commence sur sa propre page, après le tableau de bord.
-    assert pages[1].lstrip().startswith("SECTION A1")
 
 
 def test_pdf_tolere_un_import_vide_et_des_caracteres_a_echapper():
@@ -185,7 +187,7 @@ class TestExportBoutEnBout:
         await run_analyse(db_session, test_admin_user, org, outcome.imp.id)
         pdf, nom_pdf = await export_rapport_complet(db_session, org, outcome.imp.id, "pdf")
         assert pdf.startswith(b"%PDF")
-        assert nom_pdf == f"Rapport_Tableau_2061_{outcome.imp.id}.pdf"
+        assert nom_pdf == f"Rapport_Tableau_2062_{outcome.imp.id}.pdf"
         excel, nom_excel = await export_rapport_complet(db_session, org, outcome.imp.id, "xlsx")
         assert excel.startswith(b"PK")
         assert nom_excel.endswith(".xlsx")
@@ -199,8 +201,8 @@ class TestExportBoutEnBout:
         )
         await run_analyse(db_session, test_admin_user, org, outcome.imp.id)
         contenu, nom = await export_rapport_complet(db_session, org, outcome.imp.id, "xlsx", categorie="EC Cabinet")
-        assert nom == f"Rapport_Tableau_2062_{outcome.imp.id}_EC_Cabinet.xlsx"
-        assert openpyxl.load_workbook(io.BytesIO(contenu)).sheetnames == ["Tableau de bord", "EC EN CABINET"]
+        assert nom == f"Rapport_Tableau_2063_{outcome.imp.id}_EC_Cabinet.xlsx"
+        assert openpyxl.load_workbook(io.BytesIO(contenu)).sheetnames == ["Graphiques", "EC EN CABINET"]
         with pytest.raises(HTTPException) as vide:
             await export_rapport_complet(db_session, org, outcome.imp.id, "pdf", categorie="Société")
         assert vide.value.status_code == 409
@@ -224,7 +226,7 @@ class TestExportBoutEnBout:
 
         await run_analyse_base(db_session, test_admin_user, org, "2039")
         contenu, nom = await export_rapport_complet(db_session, org, ancien.imp.id, "xlsx", scope="base")
-        assert nom == "Rapport_Tableau_2039_base.xlsx"
+        assert nom == "Rapport_Tableau_2040_base.xlsx"
         feuille = openpyxl.load_workbook(io.BytesIO(contenu))["EC EN CABINET"]
         assert {feuille.cell(ligne, 2).value for ligne in range(5, 7)} == {"EC/18.70063", "EC/18.70064"}
 
@@ -340,12 +342,12 @@ async def test_route_http_rend_le_pdf_et_exige_une_session(app_client, admin_acc
     reponse = await app_client.get(url, params={"format": "pdf"}, headers=session)
     assert reponse.status_code == 200
     assert reponse.headers["content-type"] == "application/pdf"
-    assert f"Rapport_Tableau_2029_{outcome.imp.id}.pdf" in reponse.headers["content-disposition"]
+    assert f"Rapport_Tableau_2030_{outcome.imp.id}.pdf" in reponse.headers["content-disposition"]
     assert reponse.content.startswith(b"%PDF")
 
     par_categorie = await app_client.get(url, params={"format": "pdf", "categorie": "EC Cabinet"}, headers=session)
     assert par_categorie.status_code == 200
-    assert f"Rapport_Tableau_2029_{outcome.imp.id}_EC_Cabinet.pdf" in par_categorie.headers["content-disposition"]
+    assert f"Rapport_Tableau_2030_{outcome.imp.id}_EC_Cabinet.pdf" in par_categorie.headers["content-disposition"]
     # Les stagiaires n'ont pas de rapport : leur catégorie n'est pas un choix.
     assert (await app_client.get(url, params={"categorie": "Stagiaire"}, headers=session)).status_code == 422
 
@@ -371,7 +373,7 @@ def test_membres_sans_dossier_sans_conclusion_inventee():
     assert donnees["conclusions"]["sans_conclusion"] == 2
     assert _critere(donnees, "cotisation")["inconnus"] == 2
     assert dict(next(parts for rubrique, _, parts in donnees["profil"] if rubrique == "Actifs"))["Actifs"] == 2
-    assert "Sans conclusion" in _texte_pdf(donnees)[0]
+    assert "Sans conclusion" in _texte_pdf(donnees)[-1]
     liste = openpyxl.load_workbook(io.BytesIO(R.build_excel(donnees)))["EC EN CABINET"]
     entetes = [c.value for c in liste[4]]
     assert liste.cell(5, entetes.index("Actif") + 1).value == "OUI"
@@ -404,7 +406,7 @@ def test_assurance_et_ca_reserves_aux_societes_et_aux_independants():
     assert feuille["A1"].value.startswith("SECTION A1")
     assert "Assurance valide" not in [c.value for c in feuille[4]]
     # Plusieurs catégories : le tableau de bord ajoute les conclusions par catégorie.
-    assert len(classeur["Tableau de bord"]._charts) == 3
+    assert len(classeur["Graphiques"]._charts) == 3
     assert R.build_pdf(donnees).startswith(b"%PDF")
 
 

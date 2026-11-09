@@ -65,7 +65,8 @@ def _releve(membre, fonction=None):
 def test_ec_cabinet_non_en_regle_sans_assurance_ni_montant():
     r = _releve(_membre())
     assert r.envoyable
-    assert r.sujet == "Votre situation au Tableau de l'Ordre – exercice 2026"
+    # L'exercice d'import 2026 prépare le Tableau 2027 : c'est lui que l'on nomme.
+    assert r.sujet == "Votre situation au Tableau de l'Ordre 2027"
     assert r.corps.startswith("Cher Expert-Comptable,\nMonsieur MUKENDI Patrick – N° d'ordre : EC/18.00245\n")
     assert "arrêtée au 05/11/2026 :" in r.corps
     assert "- Cotisation : non soldée" in r.corps
@@ -171,7 +172,7 @@ def test_fonction_accordee():
 def test_whatsapp_et_email_reprennent_la_mise_en_forme_existante():
     r = _releve(_membre())
     texte = templates.render_event(TABLEAU_SITUATION, variables_whatsapp(r))
-    assert texte.startswith("*ONEC-RDC – Conseil Provincial de Kinshasa* · ONEC Smart\n━━━━━━━━━━━━━━\n*SITUATION AU TABLEAU*\n_Exercice 2026 · N° d'ordre EC/18.00245_")
+    assert texte.startswith("*ONEC-RDC – Conseil Provincial de Kinshasa* · ONEC Smart\n━━━━━━━━━━━━━━\n*SITUATION AU TABLEAU*\n_Tableau 2027 · N° d'ordre EC/18.00245_")
     assert "Cher Expert-Comptable,\nMonsieur MUKENDI Patrick – N° d'ordre" in texte
     assert texte.endswith("_La Commission Tableau – ONEC-RDC – Conseil Provincial de Kinshasa_")
     assert "▸ *Cotisation :* non soldée" in texte
@@ -338,7 +339,7 @@ def test_appel_confraternel_et_libelle_de_l_ordre():
 def test_couleurs_de_l_email_selon_la_conclusion():
     non = html_releve(_releve(_membre()))
     assert "background:#7f1d2d" in non and "#1e40af" not in non.split("Votre situation")[0]
-    assert "Conclusion : NON EN RÈGLE – Exercice 2026" in non  # texte d'aperçu de la boîte de réception
+    assert "Conclusion : NON EN RÈGLE – Tableau 2027" in non  # texte d'aperçu de la boîte de réception
     oui = html_releve(_releve(_membre(conclusion="INSCRIT", cotisation_etat="payee", nhv=130.0, formation_etat="atteint")))
     assert "background:#1e40af" in oui and "#7f1d2d" not in oui
     assert "#0f7b62" not in non and "#0f7b62" not in oui
@@ -348,6 +349,10 @@ def test_conformite_de_chaque_critere():
     r = _releve(_membre(cotisation_etat=None))
     assert r.criteres == [("Cotisation", "-"), ("Formation (NHV)", "80 h validées sur 120 h requises")]
     assert r.conformites == [None, False]
+    # Aucune donnée inconnue n'est signalée comme manquante : un tiret, partout.
+    sans_nhv = _releve(_membre(cotisation_etat=None, nhv=None, formation_etat=None))
+    assert sans_nhv.criteres == [("Cotisation", "-"), ("Formation (NHV)", "-")]
+    assert "renseign" not in sans_nhv.corps.lower() and "manquant" not in sans_nhv.corps.lower()
 
 
 @pytest.mark.asyncio
@@ -379,3 +384,30 @@ async def test_panne_whatsapp_garde_l_email_parti_au_journal(monkeypatch):
     assert "passerelle injoignable" in journal[1].erreur
     assert [r["statut"] for r in resultats] == ["envoye", "echec"]
     assert db.annulations == 1
+
+
+def test_texte_modifie_avant_envoi_sans_toucher_a_la_situation():
+    from fastapi import HTTPException
+
+    from app.modules.tableau.releves import html_releve, personnaliser
+
+    r = _releve(_membre())
+    criteres, conclusion, empreinte = list(r.criteres), r.conclusion_libelle, r.empreinte
+    personnaliser(r, annonce="  Voici votre situation, mise à jour après la réunion du Bureau.  ", consigne="Passez au secrétariat.")
+    assert r.annonce == "Voici votre situation, mise à jour après la réunion du Bureau."
+    assert "mise à jour après la réunion du Bureau" in r.corps and "Passez au secrétariat." in r.corps
+    assert "Passez au secrétariat." in html_releve(r)
+    # La situation et la conclusion ne bougent pas, ni l'empreinte qui sert à repérer un doublon.
+    assert r.criteres == criteres and r.conclusion_libelle == conclusion and r.empreinte == empreinte
+    with pytest.raises(HTTPException):
+        personnaliser(r, annonce="   ")
+
+
+def test_l_exercice_d_import_prepare_le_tableau_suivant():
+    from app.modules.tableau.verdict import annee_tableau
+
+    # Aucune année en dur : l'exercice X prépare toujours le Tableau X+1.
+    assert annee_tableau("2026") == "2027"
+    assert annee_tableau("2027") == "2028"
+    assert annee_tableau(2030) == "2031"
+    assert annee_tableau("") == ""

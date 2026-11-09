@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Mail, MessageCircle, Send, X, XCircle, type LucideIcon } from 'lucide-react'
+import { useEffect, useState, type CSSProperties } from 'react'
+import { AlertTriangle, CheckCircle2, Mail, MessageCircle, RotateCcw, Send, X, XCircle, type LucideIcon } from 'lucide-react'
 import {
   CANAUX_RELEVE,
   envoyerTableauReleve,
@@ -34,6 +34,36 @@ export interface MembreReleve {
 
 const dateFr = (valeur: string) => new Date(valeur).toLocaleDateString('fr-FR')
 
+/** Passage modifiable, à sa place dans la lettre : même texte, cadre pointillé. */
+const champTexte: CSSProperties = {
+  display: 'block',
+  width: '100%',
+  boxSizing: 'border-box',
+  margin: '2px 0',
+  padding: '6px 8px',
+  border: '1px dashed #9ca3af',
+  borderRadius: '5px',
+  background: '#ffffff',
+  font: 'inherit',
+  fontSize: '13px',
+  lineHeight: 1.55,
+  resize: 'vertical',
+}
+
+/** Le corps calculé, découpé autour des deux passages modifiables. */
+function decouper(corps: string, annonce: string, consigne: string): string[] {
+  const i = corps.indexOf(annonce)
+  if (i < 0) return [corps]
+  const avant = corps.slice(0, i)
+  const reste = corps.slice(i + annonce.length)
+  const j = consigne ? reste.indexOf(consigne) : -1
+  if (j < 0) return [avant, reste]
+  return [avant, reste.slice(0, j), reste.slice(j + consigne.length)]
+}
+
+/** Retire les sauts de ligne en bordure : le cadre du champ en tient lieu. */
+const sansBords = (texte: string) => texte.replace(/^\n+|\n+$/g, '')
+
 const PRESENTATION_STATUT: Record<StatutEnvoiReleve, { couleur: string; Icone: LucideIcon }> = {
   envoye: { couleur: '#166534', Icone: CheckCircle2 },
   echec: { couleur: '#991b1b', Icone: XCircle },
@@ -62,6 +92,9 @@ export default function ReleveSituationModal({
   const [renvoyer, setRenvoyer] = useState(false)
   const [enCours, setEnCours] = useState(false)
   const [resultat, setResultat] = useState<TableauReleveResultat | null>(null)
+  // Passages repris à la main ; la situation et la conclusion, elles, ne se modifient pas.
+  const [annonce, setAnnonce] = useState('')
+  const [consigne, setConsigne] = useState('')
 
   useEffect(() => {
     let actif = true
@@ -69,6 +102,8 @@ export default function ReleveSituationModal({
       .then(donnees => {
         if (!actif) return
         setApercu(donnees)
+        setAnnonce(donnees.annonce)
+        setConsigne(donnees.consigne)
         setCanaux({
           email: donnees.emails.length > 0 && donnees.email_actif,
           whatsapp: !!donnees.telephone && donnees.whatsapp_actif,
@@ -93,7 +128,23 @@ export default function ReleveSituationModal({
 
   const choisis = CANAUX_RELEVE.filter(canal => canaux[canal] && !raisonIndisponible(canal))
   const dejaPartout = choisis.length > 0 && choisis.every(canal => apercu?.deja_envoye[canal])
-  const peutEnvoyer = choisis.length > 0 && !(dejaPartout && !renvoyer) && !enCours
+  const annonceModifiee = !!apercu && annonce.trim() !== apercu.annonce
+  const consigneModifiee = !!apercu && consigne.trim() !== apercu.consigne
+  const texteModifie = annonceModifiee || consigneModifiee
+  const peutEnvoyer = choisis.length > 0 && !(dejaPartout && !renvoyer) && !enCours && annonce.trim() !== ''
+  const morceaux = apercu ? decouper(apercu.corps, apercu.annonce, apercu.consigne) : []
+  const champ = (valeur: string, changer: (texte: string) => void, libelle: string) => (
+    <textarea
+      value={valeur}
+      onChange={event => changer(event.target.value)}
+      rows={Math.max(2, Math.ceil(valeur.length / 70))}
+      maxLength={1500}
+      disabled={enCours || !!resultat}
+      aria-label={libelle}
+      title="Texte modifiable"
+      style={champTexte}
+    />
+  )
 
   const envoyer = async () => {
     if (!apercu || !choisis.length) return
@@ -102,6 +153,8 @@ export default function ReleveSituationModal({
     try {
       const reponse = await envoyerTableauReleve({
         numero_ordre: membre.numero_ordre, exercice: apercu.exercice, canaux: choisis, renvoyer,
+        ...(annonceModifiee ? { annonce: annonce.trim() } : {}),
+        ...(consigneModifiee ? { consigne: consigne.trim() } : {}),
       })
       setResultat(reponse)
       if (reponse.resultats.some(r => r.statut === 'envoye')) onSent()
@@ -147,10 +200,42 @@ export default function ReleveSituationModal({
           {apercu?.envoyable && (
             <>
               <div>
-                <div style={{ fontSize: '12px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Objet : {apercu.sujet}</div>
-                <pre style={texteReleve}>
-                  {apercu.corps}
-                </pre>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#374151' }}>Objet : {apercu.sujet}</span>
+                  {texteModifie && !resultat && (
+                    <button
+                      type="button"
+                      style={bouton}
+                      onClick={() => { setAnnonce(apercu.annonce); setConsigne(apercu.consigne) }}
+                      disabled={enCours}
+                      title="Revenir au texte proposé"
+                    >
+                      <RotateCcw size={14} /> Texte d'origine
+                    </button>
+                  )}
+                </div>
+                {/* La lettre telle qu'elle partira : les passages en pointillé se modifient,
+                    la situation et la conclusion restent celles des règles. */}
+                <div style={texteReleve}>
+                  {morceaux.length === 1 ? (
+                    morceaux[0]
+                  ) : (
+                    <>
+                      {sansBords(morceaux[0])}
+                      {champ(annonce, setAnnonce, 'Message')}
+                      {sansBords(morceaux[1])}
+                      {morceaux.length === 3 && (
+                        <>
+                          {champ(consigne, setConsigne, 'Consigne au membre')}
+                          {sansBords(morceaux[2])}
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+                <p style={{ margin: '6px 0 0', fontSize: '12px', color: annonce.trim() ? '#6b7280' : '#991b1b' }}>
+                  {annonce.trim() ? 'Les passages en pointillé se modifient avant l\'envoi.' : 'Le message ne peut pas être vide.'}
+                </p>
               </div>
 
               <fieldset style={cadreCanaux}>

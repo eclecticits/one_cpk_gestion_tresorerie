@@ -205,14 +205,11 @@ def _date_fr(valeur: Any) -> str:
     return date.today().strftime("%d/%m/%Y")
 
 
-def _annee(exercice: str) -> str:
-    m = re.search(r"(20\d{2})", exercice or "")
-    return m.group(1) if m else (exercice or "")
-
-
 def criteres_releve(membre: dict[str, Any], reglages: verdict_engine.TableauReglages) -> list[tuple[str, str, bool | None]]:
     """Un critère de la catégorie par ligne, dans l'ordre des colonnes du Tableau :
-    libellé, valeur lue par le membre, et conformité (None quand on ne sait pas)."""
+    libellé, valeur lue par le membre, et conformité (None quand on ne sait pas).
+
+    Une donnée inconnue s'affiche « - » : le relevé ne parle pas de donnée manquante."""
     categorie = membre.get("categorie")
     lignes: list[tuple[str, str, bool | None]] = []
     for critere in verdict_engine.criteres_requis(categorie, reglages) or []:
@@ -235,14 +232,14 @@ def criteres_releve(membre: dict[str, Any], reglages: verdict_engine.TableauRegl
                 if conforme is None:
                     conforme = float(nhv) >= minimum
             else:
-                texte = {"atteint": "conforme", "insuffisant": "insuffisante"}.get(etat or "", "non renseignée")
+                texte = {"atteint": "conforme", "insuffisant": "insuffisante"}.get(etat or "", "-")
             lignes.append(("Formation (NHV)", texte, conforme))
         elif critere == "assurance":
             valeur = membre.get("assurance")
-            lignes.append(("Assurance", "non renseignée" if valeur is None else ("valide" if valeur else "non valide"), valeur))
+            lignes.append(("Assurance", "-" if valeur is None else ("valide" if valeur else "non valide"), valeur))
         elif critere == "chiffre_affaires":
             valeur = membre.get("chiffre_affaires")
-            lignes.append(("Chiffre d'affaires", "non renseigné" if valeur is None else ("déclaré" if valeur else "non déclaré"), valeur))
+            lignes.append(("Chiffre d'affaires", "-" if valeur is None else ("déclaré" if valeur else "non déclaré"), valeur))
     return lignes
 
 
@@ -321,7 +318,8 @@ def construire_releve(
     evalues = criteres_releve(membre, reglages)
     criteres = [(label, valeur) for label, valeur, _ in evalues]
     arretee = _date_fr(membre.get("date_situation"))
-    annee = _annee(exercice)
+    # Les données de l'exercice X préparent le Tableau X+1 : c'est lui que l'on nomme.
+    tableau = verdict_engine.annee_tableau(exercice)
     societe = est_morale(categorie)
     sexe = _sexe(membre.get("sexe"))
 
@@ -335,11 +333,11 @@ def construire_releve(
         entete.append(f"Société : {raison_sociale} – N° d'ordre : {numero}")
         appel = formule = "Madame, Monsieur"
         objet = "de la situation de votre société"
-        releve.sujet = f"Situation de votre société au Tableau de l'Ordre – exercice {annee}"
+        releve.sujet = f"Situation de votre société au Tableau de l'Ordre {tableau}"
     else:
         # Personne physique : on s'adresse au confrère, puis on le nomme.
         objet = "de votre situation"
-        releve.sujet = f"Votre situation au Tableau de l'Ordre – exercice {annee}"
+        releve.sujet = f"Votre situation au Tableau de l'Ordre {tableau}"
         appel = appel_confraternel(sexe, categorie).rstrip(",")
         civilite = {"M": "Monsieur ", "F": "Madame "}.get(sexe, "")
         if fonction_bureau and sexe:
@@ -353,10 +351,10 @@ def construire_releve(
             formule = {"M": "Monsieur", "F": "Madame"}.get(sexe, "Madame, Monsieur")
 
     annonce = "Nous avons le plaisir de vous informer" if en_regle else "Nous vous informons"
-    releve.reference = f"Exercice {annee} · N° d'ordre {numero}"
+    releve.reference = f"Tableau {tableau} · N° d'ordre {numero}"
     releve.entete = entete
     releve.appel = f"{appel},"
-    releve.annonce = f"{annonce} {objet} au Tableau de l'Ordre, arrêtée au {arretee} :"
+    releve.annonce = f"{annonce} {objet} au Tableau de l'Ordre {tableau}, arrêtée au {arretee} :"
     releve.criteres = criteres
     releve.conformites = [conforme for _, _, conforme in evalues]
     releve.conclusion_libelle = libelle
@@ -366,24 +364,51 @@ def construire_releve(
     organisation = libelle_organisation(organisation)
     releve.organisation = organisation
 
-    # Version texte : celle de l'e-mail sans mise en forme, et celle du journal.
+    releve.corps = composer_corps(releve)
     lignes = [f"{label} : {valeur}" for label, valeur in criteres]
-    if societe:
-        corps = [*entete, "", releve.appel, ""]
-    else:
-        corps = [releve.appel, *entete, ""]
-    corps += [releve.annonce, ""]
-    corps += [f"- {ligne}" for ligne in lignes]
-    corps += ["", f"Conclusion : {libelle}", ""]
-    if releve.consigne:
-        corps += [releve.consigne, ESPACE_MEMBRE_URL, ""]
-    corps += [releve.politesse, "", "La Commission Tableau", organisation]
-    releve.corps = "\n".join(corps)
     releve.empreinte = _empreinte(exercice, numero, verdict, lignes)
     if not releve.emails and not releve.telephone:
         releve.blocage = "sans_contact"
         releve.raison = "Ni e-mail ni téléphone au dossier : complétez la fiche du membre."
     return releve
+
+
+def composer_corps(releve: Releve) -> str:
+    """Version texte : celle de l'e-mail sans mise en forme, et celle du journal."""
+    if est_morale(releve.categorie):
+        corps = [*releve.entete, "", releve.appel, ""]
+    else:
+        corps = [releve.appel, *releve.entete, ""]
+    corps += [releve.annonce, ""]
+    corps += [f"- {label} : {valeur}" for label, valeur in releve.criteres]
+    corps += ["", f"Conclusion : {releve.conclusion_libelle}", ""]
+    if releve.consigne:
+        corps += [releve.consigne, ESPACE_MEMBRE_URL, ""]
+    corps += [releve.politesse, "", "La Commission Tableau", releve.organisation]
+    return "\n".join(corps)
+
+
+#: Longueur maximale d'un passage modifié à la main.
+MAX_TEXTE_MODIFIE = 1500
+
+
+def personnaliser(releve: Releve, annonce: str | None = None, consigne: str | None = None) -> None:
+    """Remplace, avant l'envoi, les passages rédigés que l'on peut reprendre à la main.
+
+    Seuls le message d'introduction et la consigne se modifient : la situation
+    (critères) et la conclusion restent celles que calculent les règles, et le
+    gabarit WhatsApp n'a de place libre que pour ces deux passages. L'empreinte
+    ne change pas : c'est la situation, pas sa formulation, qui dit si le
+    relevé a déjà été envoyé.
+    """
+    if annonce is not None:
+        texte = annonce.strip()
+        if not texte:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Le message ne peut pas être vide.")
+        releve.annonce = texte
+    if consigne is not None:
+        releve.consigne = consigne.strip()
+    releve.corps = composer_corps(releve)
 
 
 def html_releve(releve: Releve) -> str:
@@ -704,6 +729,9 @@ async def apercu(db: AsyncSession, organisation_id: int, exercice: str | None, n
         "raison": releve.raison,
         "sujet": releve.sujet,
         "corps": releve.corps,
+        # Les deux passages modifiables avant l'envoi (voir `personnaliser`).
+        "annonce": releve.annonce,
+        "consigne": releve.consigne,
         "emails": releve.emails,
         "telephone": releve.telephone,
         "fonction_bureau": releve.fonction_bureau,
@@ -848,11 +876,16 @@ async def envoyer(
     numero_ordre: str,
     canaux: list[str],
     renvoyer: bool = False,
+    annonce: str | None = None,
+    consigne: str | None = None,
 ) -> dict[str, Any]:
     voies = _voies(canaux)
     releve, exercice = await charger_releve(db, organisation_id, exercice, numero_ordre)
     if not releve.envoyable:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=releve.raison or "Relevé non envoyable.")
+    origine = (releve.annonce, releve.consigne)
+    personnaliser(releve, annonce, consigne)
+    texte_modifie = (releve.annonce, releve.consigne) != origine
 
     deja = _deja_envoye(await envois_du_membre(db, organisation_id, exercice, releve.numero_ordre), releve.empreinte)
     moyens = await _moyens(db, organisation_id, releve.organisation)
@@ -868,6 +901,7 @@ async def envoyer(
             status="success" if all(j.statut == "envoye" for j in journal) else "partial",
             metadata_json={
                 "exercice": exercice, "nom": releve.nom, "conclusion": releve.conclusion,
+                "texte_modifie": texte_modifie,
                 "envois": [{"canal": j.canal, "destinataire": j.destinataire, "statut": j.statut} for j in journal],
             },
         )

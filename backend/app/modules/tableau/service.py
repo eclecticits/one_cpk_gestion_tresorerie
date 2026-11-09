@@ -2739,7 +2739,8 @@ async def export_tableau(
     dossiers = [_dossier_pour_sortie(d, cotisations, reglages, couvertures, imp) for d in dossier_rows]
     content = build_workbook(dossiers, imp.exercice, reglages, exercice_annee, organisation_nom)
     suffixe = "base" if scope == "base" else str(import_id)
-    fname = f"Tableau_{imp.exercice}_{suffixe}.xlsx"
+    # Les données de l'exercice X préparent le Tableau X+1.
+    fname = f"Tableau_{verdict_engine.annee_tableau(imp.exercice)}_{suffixe}.xlsx"
     return content, fname
 
 
@@ -3031,7 +3032,8 @@ async def export_rapport_complet(
         signature=await signature_commission(db, organisation_id, identite.nom),
     )
     donnees = rapport_complet.construire_donnees(dossiers, contexte)
-    exercice = re.sub(r"[^0-9A-Za-z_-]+", "_", str(imp.exercice))
+    # Les données de l'exercice X préparent le Tableau X+1.
+    exercice = re.sub(r"[^0-9A-Za-z_-]+", "_", verdict_engine.annee_tableau(imp.exercice))
     suffixe = "base" if scope == "base" else str(import_id)
     if categorie:
         suffixe += "_" + re.sub(r"[^0-9A-Za-z]+", "_", unicodedata.normalize("NFKD", categorie).encode("ascii", "ignore").decode()).strip("_")

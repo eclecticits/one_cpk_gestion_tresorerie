@@ -10,8 +10,9 @@ il faut remplir les colonnes de situation affichées pour la catégorie :
 - EC Cabinet     : cotisation, formation
 - EC Salarié     : cotisation, formation (NHV)
 - Stagiaire      : cotisation
-Une cotisation partiellement réglée renvoie au conseil (À délibérer), comme
-toute donnée manquante.
+Une cotisation partiellement réglée renvoie au conseil (À délibérer) ou rend
+non en règle, selon la définition de la catégorie. Une donnée manquante rend
+non en règle : sans information, le membre n'a pas démontré qu'il est en règle.
 
 Exemptions de la formation continue :
 - Nouveau membre : inscrit depuis moins de N ans (année du N° d'ordre >=
@@ -379,6 +380,13 @@ def annee_ordre(numero_ordre: str | None) -> int | None:
 ANCIENNETE_A_VERIFIER = "À vérifier"
 
 
+def annee_tableau(exercice: Any) -> str:
+    """L'année du Tableau publié que prépare l'exercice : les données de l'exercice X
+    désignent ceux qui seront publiés au Tableau X+1 (exercice 2026 -> Tableau 2027)."""
+    m = re.search(r"(?:19|20)\d{2}", str(exercice or ""))
+    return str(int(m.group(0)) + 1) if m else str(exercice or "")
+
+
 def libelle_anciennete(numero_ordre: str | None, exercice_annee: int | None) -> str | None:
     """« Nouveau » si inscrit l'année de l'exercice traité, « Ancien » si avant.
 
@@ -481,9 +489,13 @@ def evaluer(dossier: dict[str, Any], exercice_annee: int | None = None,
             elif valeur is None:
                 motifs_manquants.append(_LIBELLE_MANQUANT.get(critere, _LIBELLE_CRITERE[critere]))
 
-    # 1) Échec « dur » (cotisation, assurance, CA) -> NON INSCRIT
-    if motifs_echec:
-        return {"conclusion": NON_INSCRIT, "motif": " ; ".join(motifs_echec), "exemptions": exemptions}
+    # 1) Échec « dur » (cotisation, assurance, CA) ou donnée manquante -> NON INSCRIT.
+    # Pas d'information vaut non en règle : le motif dit laquelle manque.
+    if motifs_echec or motifs_manquants:
+        motifs = list(motifs_echec)
+        if motifs_manquants:
+            motifs.append("Données manquantes : " + " ; ".join(motifs_manquants))
+        return {"conclusion": NON_INSCRIT, "motif": " ; ".join(motifs), "exemptions": exemptions}
 
     # 2) Formation insuffisante : exemption d'âge réglable, sinon NON INSCRIT
     if formation_insuffisante:
@@ -514,9 +526,5 @@ def evaluer(dossier: dict[str, Any], exercice_annee: int | None = None,
             "exemptions": exemptions,
         }
 
-    # 4) Données manquantes -> à délibérer
-    if motifs_manquants:
-        return {"conclusion": A_DELIBERER, "motif": "Données manquantes : " + " ; ".join(motifs_manquants), "exemptions": exemptions}
-
-    # 5) Tous les critères satisfaits
+    # 4) Tous les critères satisfaits
     return {"conclusion": INSCRIT, "motif": "Tous les critères sont satisfaits", "exemptions": exemptions}

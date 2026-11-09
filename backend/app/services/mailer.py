@@ -1506,8 +1506,8 @@ def send_rapport_bureau_email(
 #: Couleurs du relevé selon la conclusion : bordeaux pour « non en règle »,
 #: bleu pour « en règle ». Mêmes teintes dans le bandeau, l'encadré et le bouton.
 _PALETTES_RELEVE = {
-    True: {"fort": "#1e40af", "sombre": "#1e3a8a", "clair": "#eff6ff", "bord": "#bfdbfe", "texte": "#1e3a8a"},
-    False: {"fort": "#7f1d2d", "sombre": "#5c1420", "clair": "#fdf2f4", "bord": "#f1c5cf", "texte": "#7f1d2d"},
+    True: {"fort": "#1e40af", "clair": "#eff6ff", "bord": "#bfdbfe", "texte": "#1e3a8a"},
+    False: {"fort": "#7f1d2d", "clair": "#fdf2f4", "bord": "#f1c5cf", "texte": "#7f1d2d"},
 }
 _GRIS_RELEVE = "#6b7280"
 
@@ -1555,6 +1555,11 @@ def _releve_situation_html(
         if consigne and lien
         else ""
     )
+    # En-tête aux couleurs de la conclusion (le rouge dit « non en règle »). Sur
+    # téléphone, le texte blanc translucide et petit se lisait mal : blanc plein,
+    # plus grand et plus gras, couleur répétée sur chaque élément (certaines
+    # messageries ne l'héritent pas), et la conclusion sous le titre plutôt qu'à
+    # côté, où l'écran étroit écrasait le titre.
     # Texte d'aperçu : ce que la boîte de réception affiche à côté de l'objet.
     preheader = (
         f'<div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">{e(apercu_boite)}</div>'
@@ -1563,22 +1568,18 @@ def _releve_situation_html(
     )
     return f"""
     <html>
-      <body style="margin:0; padding:24px; background:#f5f7fa; font-family: Arial, sans-serif; color: #1f2937; line-height: 1.65;">
+      <body style="margin:0; padding:12px; background:#f5f7fa; font-family: Arial, sans-serif; color: #1f2937; line-height: 1.65;">
         {preheader}
         <div style="max-width:640px; margin:0 auto; border:1px solid {p['bord']}; border-radius:16px; overflow:hidden; background:#ffffff;">
-          <div style="padding:22px 24px; background:{p['fort']}; background-image:linear-gradient(135deg, {p['fort']}, {p['sombre']}); color:#ffffff;">
-            <table role="presentation" style="width:100%; border-collapse:collapse;"><tr>
-              <td style="vertical-align:top;">
-                <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; opacity:.86;">{e(brand_label)}</div>
-                <h2 style="margin:6px 0 0; font-size:21px; line-height:1.25;">{e(titre)}</h2>
-                <div style="margin-top:4px; font-size:13px; opacity:.9;">{e(reference)}</div>
-              </td>
-              <td style="vertical-align:top; text-align:right; white-space:nowrap; padding-left:12px;">
-                <span style="display:inline-block; padding:6px 12px; border-radius:999px; background:#ffffff; color:{p['texte']}; font-size:12px; font-weight:800; letter-spacing:.04em;">{e(conclusion)}</span>
-              </td>
-            </tr></table>
+          <div style="padding:20px; background-color:{p['fort']}; color:#ffffff;">
+            <div style="font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; line-height:1.4; color:#ffffff;">{e(brand_label)}</div>
+            <h2 style="margin:8px 0 0; font-size:22px; font-weight:800; line-height:1.3; color:#ffffff;">{e(titre)}</h2>
+            <div style="margin-top:6px; font-size:15px; font-weight:600; color:#ffffff;">{e(reference)}</div>
+            <div style="margin-top:14px;">
+              <span style="display:inline-block; padding:7px 14px; border-radius:999px; background-color:#ffffff; color:{p['texte']}; font-size:14px; font-weight:800; letter-spacing:.04em;">{e(conclusion)}</span>
+            </div>
           </div>
-          <div style="padding:22px 24px;">
+          <div style="padding:20px;">
             <p style="margin:0 0 6px; font-weight:700;">{e(appel)}</p>
             <div style="margin:0 0 16px; color:#4b5563; font-size:14px;">{lignes_entete}</div>
             <p style="margin:0 0 14px;">{e(annonce)}</p>
