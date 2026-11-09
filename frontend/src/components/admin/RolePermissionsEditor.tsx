@@ -125,6 +125,8 @@ function codesForLevel(
     // de menu qui est lui-même un droit de saisie — `compta.saisie` — doit bien
     // être accordé au niveau « Lecture + création ».
     if (task.code === menu.menuCode && task.kind === 'other') return
+    // Une action sensible ne s'accorde jamais en lot : « Complet » ou case à cocher.
+    if (task.sensitive) return
     if (task.kind === 'create' || task.kind === 'update' || task.kind === 'other') {
       codes.add(task.code)
     }
@@ -1224,6 +1226,14 @@ export default function RolePermissionsEditor({
                                     {task.label}
                                     {menu.menuCode === task.code && (
                                       <span className={styles.requiredPill}>requis</span>
+                                    )}
+                                    {task.sensitive && (
+                                      <span
+                                        className={styles.sensitivePill}
+                                        title="Action sensible : à réserver aux personnes habilitées. Le niveau « Lecture + création » ne l'accorde pas."
+                                      >
+                                        sensible
+                                      </span>
                                     )}
                                     {task.explicit && (
                                       <span

@@ -62,6 +62,12 @@ export interface PermissionTask {
    * la liste des sorties de fonds.
    */
   standalone?: boolean
+  /**
+   * true = action sensible (import de données, décision, envoi aux membres,
+   * règles) : signalée dans la matrice, et jamais accordée par le niveau
+   * « Lecture + création » ; seul « Complet » ou une case cochée à la main la donne.
+   */
+  sensitive?: boolean
 }
 
 export interface PermissionMenu {
@@ -603,7 +609,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
         label: 'Imports Excel',
         menuCode: 'tableau.import',
         tasks: [
-          { code: 'tableau.import', label: 'Importer un fichier Excel', kind: 'create' },
+          { code: 'tableau.import', label: 'Importer un fichier Excel', kind: 'create', sensitive: true },
         ],
       },
       {
@@ -611,10 +617,18 @@ export const PERMISSION_TREE: PermissionModule[] = [
         label: 'Analyse réglementaire',
         menuCode: 'tableau.analyze',
         tasks: [
-          { code: 'tableau.analyze', label: 'Lancer l\'analyse', kind: 'other' },
-          { code: 'tableau.decide', label: 'Enregistrer une décision', kind: 'manage' },
-          { code: 'tableau.correct', label: 'Corriger un dossier', kind: 'manage' },
-          { code: 'tableau.notify', label: 'Envoyer leur situation aux membres', kind: 'manage' },
+          { code: 'tableau.analyze', label: 'Lancer l\'analyse', kind: 'other', sensitive: true },
+          { code: 'tableau.decide', label: 'Enregistrer une décision', kind: 'manage', sensitive: true },
+          { code: 'tableau.correct', label: 'Corriger un dossier', kind: 'manage', sensitive: true },
+        ],
+      },
+      {
+        // À part : un message part chez le membre, il ne se rattrape pas.
+        key: 'tableau_envoi',
+        label: 'Envoi aux membres',
+        menuCode: 'tableau.notify',
+        tasks: [
+          { code: 'tableau.notify', label: 'Envoyer leur situation aux membres', kind: 'manage', sensitive: true },
         ],
       },
       {
@@ -633,7 +647,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
         label: 'Règles de délibération',
         menuCode: 'tableau.settings',
         tasks: [
-          { code: 'tableau.settings', label: 'Modifier les règles de délibération', kind: 'manage' },
+          { code: 'tableau.settings', label: 'Modifier les règles de délibération', kind: 'manage', sensitive: true },
         ],
       },
       {
