@@ -115,6 +115,9 @@
 
 .content {
   display: grid;
+  /* Colonne bornée à la largeur disponible : sans cela, la grille s'élargit
+     à la taille d'un tableau large et son défilement horizontal ne s'active pas. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   width: 100%;
   padding: 20px 22px 32px;
@@ -438,6 +441,9 @@
 
 .managerWorkspace {
   display: grid;
+  /* Colonne bornée à la largeur disponible : sans cela, la grille s'élargit
+     à la taille d'un tableau large et son défilement horizontal ne s'active pas. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   overflow: hidden;
   padding-bottom: 16px;
@@ -595,6 +601,24 @@
 /* Base Tableau : survol et sélection des lignes. */
 .baseRow > td {
   transition: background-color 120ms ease;
+}
+
+/* Colonne Action épinglée à droite : les vues par catégorie, plus larges que
+ * l'écran, la repoussaient hors de vue. */
+.baseActionCell {
+  position: sticky;
+  right: 0;
+  background-color: #ffffff;
+  box-shadow: inset 1px 0 0 #eef0f3;
+}
+
+thead .baseActionCell {
+  background-color: #f9fafb;
+}
+
+/* Lignes sorties ou signalées : la cellule épinglée garde la teinte de la ligne. */
+tr[style] > .baseActionCell {
+  background-color: inherit;
 }
 
 .baseRow:hover > td {

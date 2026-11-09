@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Send, Settings, Table2, UserX, X, XCircle } from 'lucide-react'
 import TableauAssistantChat from '../components/TableauAssistantChat'
@@ -11,6 +11,7 @@ import BackButton from '../components/BackButton'
 import { ApiError } from '../lib/apiClient'
 import { usePermissions } from '../hooks/usePermissions'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
+import { useEnteteFlottant } from '../hooks/useEnteteFlottant'
 import { useAuth } from '../contexts/AuthContext'
 import {
   compareTableauExercices,
@@ -711,7 +712,9 @@ export default function TableauModulePage() {
   const baseReglesCle = JSON.stringify(baseRegles)
   const [baseOrganisationId, setBaseOrganisationId] = useState('')
   const [basePage, setBasePage] = useState(1)
-  const [basePageSize, setBasePageSize] = useState(50)
+  const [basePageSize, setBasePageSize] = useState(15)
+  const baseCadreRef = useRef<HTMLDivElement>(null)
+  const baseEnteteRef = useRef<HTMLTableSectionElement>(null)
   const [baseRefresh, setBaseRefresh] = useState(0)
   // La base est consolidée à chaque requête : on n'interroge le serveur qu'une
   // fois la frappe stabilisée.
@@ -1245,6 +1248,8 @@ export default function TableauModulePage() {
   /** Le minimum d'heures de la catégorie, à défaut le minimum général. */
   const nhvMinimumDe = (categorie: string | null | undefined): number =>
     (categorie ? reglages.definitions_par_categorie?.[categorie]?.heures_formation_min : undefined) ?? nhvMinimum
+  // Hooks avant tout retour anticipé : le cadre n'existe qu'une fois la base chargée.
+  useEnteteFlottant(baseCadreRef, baseEnteteRef, activeTab === 'base' && !!base && base.total_membres > 0)
   const colonnesBase = (COLONNES_BASE_PAR_CATEGORIE[baseCategorie] || COLONNES_BASE_DEFAUT).filter(colonne => {
     if (colonne === 'conseil') return !!base?.national
     if (colonne === 'action') return (canCorrect || canNotify) && !baseNational
@@ -1327,7 +1332,7 @@ export default function TableauModulePage() {
           {ligne.date_situation ? new Date(`${ligne.date_situation}T00:00:00`).toLocaleDateString('fr-FR') : '—'}
         </td>
       ),
-      action: <td style={baseTdStyle}>{ligne.action}</td>,
+      action: <td style={baseTdStyle} className={styles.baseActionCell}>{ligne.action}</td>,
     }
   }
   const baseTotalPages = Math.max(1, Math.ceil((base?.total_membres || 0) / basePageSize))
@@ -1701,9 +1706,10 @@ export default function TableauModulePage() {
                     )}
                   </div>
                 )}
-                <div style={{ overflow: 'auto', maxHeight: 'min(72vh, 960px)', border: '1px solid #eef0f3', borderRadius: '6px' }}>
+                <div ref={baseCadreRef} style={{ overflow: 'auto', maxHeight: 'min(72vh, 960px)', border: '1px solid #eef0f3', borderRadius: '6px' }}>
                   <table style={baseTableStyle}>
-                    <thead>
+                    {/* Au-dessus des cellules épinglées (colonne Action) quand il flotte. */}
+                    <thead ref={baseEnteteRef} style={{ position: 'relative', zIndex: 3 }}>
                       <tr>
                         {selectionPossible && (
                           <th style={{ ...baseThStyle, width: '28px' }}>
@@ -1718,7 +1724,11 @@ export default function TableauModulePage() {
                           </th>
                         )}
                         {colonnesBase.map(colonne => (
-                          <th key={colonne} style={baseThStyle} title={colonne === 'nhv' || colonne === 'formation' ? "Nombre d'heures validées" : undefined}>
+                          <th
+                            key={colonne}
+                            style={colonne === 'action' ? { ...baseThStyle, right: 0, zIndex: 2 } : baseThStyle}
+                            className={colonne === 'action' ? styles.baseActionCell : undefined}
+                            title={colonne === 'nhv' || colonne === 'formation' ? "Nombre d'heures validées" : undefined}>
                             {LIBELLES_BASE_PAR_CATEGORIE[baseCategorie]?.[colonne] ?? LIBELLES_COLONNES_BASE[colonne]}
                           </th>
                         ))}
@@ -1840,7 +1850,7 @@ export default function TableauModulePage() {
                   <label style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     Lignes
                     <select value={basePageSize} onChange={event => setBasePageSize(Number(event.target.value))}>
-                      {[25, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+                      {[15, 25, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
                     </select>
                   </label>
                   <span style={{ fontSize: '12px', color: '#6b7280' }}>
