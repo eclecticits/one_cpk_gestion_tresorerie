@@ -747,9 +747,9 @@ def build_pdf(d: dict[str, Any]) -> bytes:
         return t
 
     def bloc_informations(paires: list[tuple[str, str]]) -> Table:
-        """Le bandeau d'Odoo sous le titre : libellé discret au-dessus, valeur en gras."""
-        etiquette = ParagraphStyle("info_lib", fontName="Helvetica-Bold", fontSize=6.8, leading=9, textColor=HexColor("#7A8691"))
-        valeur = ParagraphStyle("info_val", fontName="Helvetica", fontSize=9, leading=12, textColor=marine)
+        """Fiche d'identité du rapport : un tableau encadré, libellés sur fond pâle, valeurs dessous."""
+        etiquette = ParagraphStyle("info_lib", fontName="Helvetica-Bold", fontSize=6.8, leading=9, textColor=marque)
+        valeur = ParagraphStyle("info_val", fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=marine)
         t = Table(
             [[Paragraph(escape(libelle.upper()), etiquette) for libelle, _ in paires],
              [Paragraph(escape(contenu), valeur) for _, contenu in paires]],
@@ -757,11 +757,17 @@ def build_pdf(d: dict[str, Any]) -> bytes:
             colWidths=[utile * (2 if rang == 0 else 1) / (len(paires) + 1) for rang in range(len(paires))], hAlign="LEFT",
         )
         t.setStyle(TableStyle([
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BOX", (0, 0), (-1, -1), 0.8, filet),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, filet),
+            ("BACKGROUND", (0, 0), (-1, 0), piste),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.8, marque),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, 0), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
+            ("TOPPADDING", (0, 1), (-1, 1), 5),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 6),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
         return t
 
@@ -841,13 +847,14 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     ]
 
     # D'abord la liste ; la première section suit le titre, les autres ouvrent une page.
-    tailles = {"N°": 7, "N° d'ordre": 20, "Actif": 10, "Ancienneté": 16, "Cotisation": 15, "Assurance valide": 15, "Chiffre d'affaires": 14, "Conclusion": 21, "NHV": 12, "NIF": 18}
+    tailles = {"N°": 7, "N° d'ordre": 20, "Actif": 10, "Cotisation": 15, "Assurance valide": 15, "Chiffre d'affaires": 14, "Conclusion": 21, "NHV": 12, "NIF": 18}
     for rang_section, section in enumerate(d["sections"]):
         if rang_section:
             S.append(PageBreak())
         S.append(Paragraph(escape(section["titre"]), h1))
         S.append(Paragraph(f"{section['total']} membres", petit))
-        masque = {"N° téléphone", "E-mail", "Sexe", "Raison sociale", "Associé gérant", "Cabinet d'attache", "Employeur"} | ({"NIF"} if section["categorie"] != "EC Indépendant" else set())
+        # L'ancienneté reste dans l'Excel et dans les graphiques, pas dans la liste du PDF.
+        masque = {"N° téléphone", "E-mail", "Sexe", "Ancienneté", "Raison sociale", "Associé gérant", "Cabinet d'attache", "Employeur"} | ({"NIF"} if section["categorie"] != "EC Indépendant" else set())
         gardees = [
             i for i, entete_ in enumerate(section["entetes"])
             if entete_ not in masque and not (entete_ == "Cotisation" and not any(ligne[i] for ligne in section["lignes"]))

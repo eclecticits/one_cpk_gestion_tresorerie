@@ -479,3 +479,11 @@ def test_filtres_personne_et_statut_du_rapport():
     assert _donnees(dossiers, personne="morale", actif="oui")["total"] == 1
     assert _donnees(dossiers, personne="toutes", actif="non")["total"] == 2
     assert _donnees(dossiers, personne="physique", actif="inconnu")["total"] == 1
+
+
+def test_le_pdf_n_affiche_pas_la_colonne_anciennete():
+    donnees = _donnees([_dossier(1, "EC/16.00001")])
+    assert "Ancienneté" in donnees["sections"][0]["entetes"]  # l'Excel la garde
+    pages = _texte_pdf(donnees)
+    assert "Ancienneté" not in pages[0]
+    assert "Ancienneté" in pages[-1]  # le graphique du profil la garde
