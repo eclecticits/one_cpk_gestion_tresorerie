@@ -150,6 +150,10 @@ export default function ComptaExportsPanel({ canExport }: Props) {
             <span className={styles.eyebrow}>Contrat logiciel validé</span>
             <h3>Préparer un export comptable</h3>
             <p><code>Date&gt;</code> · Pièce · Compte · Libellé · Débit · Crédit</p>
+            <p>
+              Les deux exports partent du journal de trésorerie (caisse et banques). Chaque mouvement donne deux lignes,
+              la trésorerie et sa contrepartie ; un compte sans mapping ou une pièce sans numéro restent vides.
+            </p>
           </div>
           <button type="button" className={styles.refresh} onClick={() => apercuQuery.refetch()} disabled={apercuQuery.isFetching}>
             <RefreshCw size={15} /> Actualiser
@@ -254,7 +258,7 @@ export default function ComptaExportsPanel({ canExport }: Props) {
         <section className={styles.panel}>
           <div className={styles.heading}><div><span className={styles.eyebrow}>Aperçu</span><h3>Écritures retenues</h3></div></div>
           <div className={styles.tableWrap}><table><thead><tr><th>Date</th><th>Pièce</th><th>Compte</th><th>Libellé</th><th>Débit</th><th>Crédit</th></tr></thead>
-            <tbody>{apercu.lignes.slice(0, 100).map((ligne, index) => <tr key={`${ligne.ecriture_id}-${index}`}>
+            <tbody>{apercu.lignes.slice(0, 100).map((ligne, index) => <tr key={`${ligne.operation_id ?? 'mouvement'}-${index}`}>
               <td>{jour(ligne.date)}</td><td>{ligne.piece}</td><td className={styles.mono}>{ligne.compte}</td><td>{ligne.libelle}</td>
               <td className={styles.amount}>{toNumber(ligne.debit) ? montant(ligne.debit, '') : '—'}</td>
               <td className={styles.amount}>{toNumber(ligne.credit) ? montant(ligne.credit, '') : '—'}</td>

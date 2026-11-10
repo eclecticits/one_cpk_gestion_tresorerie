@@ -731,6 +731,7 @@ RUBRIQUE_PAIE_ORGANISMES_SOCIAUX = "PAIE_ORGANISMES_SOCIAUX"
 RUBRIQUE_PAIE_ETAT_IPR = "PAIE_ETAT_IPR"
 RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE = "PRODUIT_PAIEMENT_EN_LIGNE"
 RUBRIQUE_RECETTE_A_IDENTIFIER = "RECETTE_A_IDENTIFIER"
+RUBRIQUE_VIREMENTS_INTERNES = "VIREMENTS_INTERNES"
 
 RUBRIQUES_TECHNIQUES = (
     RUBRIQUE_PAIE_CHARGES_PERSONNEL,
@@ -739,6 +740,7 @@ RUBRIQUES_TECHNIQUES = (
     RUBRIQUE_PAIE_ETAT_IPR,
     RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
     RUBRIQUE_RECETTE_A_IDENTIFIER,
+    RUBRIQUE_VIREMENTS_INTERNES,
 )
 
 # Libellé et rôle de chaque rubrique, affichés dans l'écran de paramétrage :
@@ -768,6 +770,12 @@ RUBRIQUES_DESCRIPTIONS: dict[str, tuple[str, str]] = {
         "Compte d'attente — recettes à identifier",
         "Crédité d'un versement reçu en banque dont le payeur est inconnu, débité quand il est "
         "identifié et reclassé vers son produit (compte 47x).",
+    ),
+    RUBRIQUE_VIREMENTS_INTERNES: (
+        "Virements de fonds entre caisse et banque",
+        "Contrepartie, à l'export comptable, d'un approvisionnement de caisse, d'un versement "
+        "à la banque ou d'un transfert interne : chaque côté y passe, et le compte se solde "
+        "quand les deux sont enregistrés (compte 4713, virements de fonds).",
     ),
 }
 

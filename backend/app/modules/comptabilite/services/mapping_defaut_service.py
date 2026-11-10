@@ -32,6 +32,7 @@ from app.modules.comptabilite.models import (
     RUBRIQUE_PAIE_PERSONNEL_DU,
     RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
     RUBRIQUE_RECETTE_A_IDENTIFIER,
+    RUBRIQUE_VIREMENTS_INTERNES,
     ComptaCompte,
     ComptaMappingCompteBancaire,
     ComptaMappingPosteBudgetaire,
@@ -54,6 +55,7 @@ RUBRIQUES_DEFAUT: dict[str, str] = {
     RUBRIQUE_PAIE_ETAT_IPR: "447",            # État, impôts retenus à la source
     RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE: COMPTE_PRODUIT_DEFAUT_NUMERO,
     RUBRIQUE_RECETTE_A_IDENTIFIER: "4718",   # Recettes à identifier (compte d'attente)
+    RUBRIQUE_VIREMENTS_INTERNES: "4713",     # Virements de fonds entre caisse et banque
 }
 
 

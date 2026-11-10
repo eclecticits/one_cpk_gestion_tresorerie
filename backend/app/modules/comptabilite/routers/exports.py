@@ -63,10 +63,11 @@ LECTURE_BANQUE = [
 async def apercu_export_comptable(
     filtres: ExportComptableFiltres,
     tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ExportComptableApercuOut:
     selection = await preparer_export_comptable(
-        db, organisation_id=tenant_id, filtres=filtres
+        db, organisation_id=tenant_id, filtres=filtres, user=user
     )
     return selection.apercu
 
@@ -88,7 +89,7 @@ async def export_logiciel_comptable(
         {"namespace": 0x4F4E4543, "organisation_id": tenant_id},
     )
     selection = await preparer_export_comptable(
-        db, organisation_id=tenant_id, filtres=filtres
+        db, organisation_id=tenant_id, filtres=filtres, user=user
     )
     exiger_exportable(selection, filtres)
     # L'aperçu est volontairement plafonné à 500 lignes, mais le fichier doit

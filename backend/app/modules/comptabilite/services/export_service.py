@@ -20,19 +20,24 @@ from fastapi import HTTPException, status
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.models.compte_bancaire import CompteBancaire
+from app.models.encaissement import Encaissement
+from app.models.mouvement_budget_imputation import MouvementBudgetImputation
+from app.models.retour_caisse import RetourCaisse
+from app.models.sortie_fonds import SortieFonds
 from app.modules.comptabilite.models import (
     ComptaCompte,
     ComptaEcriture,
     ComptaExportEcriture,
     ComptaExportHistorique,
-    ComptaJournal,
-    ComptaLigneEcriture,
     ComptaMappingCompteBancaire,
+    ComptaMappingPosteBudgetaire,
+    ComptaMappingRubrique,
+    ComptaSociete,
+    RUBRIQUE_VIREMENTS_INTERNES,
 )
 from app.modules.comptabilite.schemas.exports import (
     ExportAnomalieOut,
@@ -40,7 +45,7 @@ from app.modules.comptabilite.schemas.exports import (
     ExportComptableFiltres,
     ExportLigneApercuOut,
 )
-from app.schemas.reports import ReportJournalResponse
+from app.schemas.reports import ReportJournalLine, ReportJournalResponse
 
 
 CENT = Decimal("0.01")
@@ -76,44 +81,187 @@ class SelectionComptable:
     premier_export_id: UUID | None
 
 
-async def _resoudre_compte_bancaire(
-    db: AsyncSession,
-    *,
-    organisation_id: int,
-    compte_bancaire_id: int,
-    devise: str,
-) -> tuple[CompteBancaire, int]:
-    compte = (
-        await db.execute(
-            select(CompteBancaire).where(
-                CompteBancaire.id == compte_bancaire_id,
-                CompteBancaire.organisation_id == organisation_id,
-                CompteBancaire.account_type == "BANK",
-                CompteBancaire.is_active.is_(True),
+async def _journaux_a_lire(
+    db: AsyncSession, *, organisation_id: int, filtres: ExportComptableFiltres
+) -> list[tuple[str, int | None]]:
+    """Les journaux de trésorerie couverts par la sélection : la caisse, et
+    chaque compte bancaire actif de la devise (ou le seul demandé)."""
+    journaux: list[tuple[str, int | None]] = []
+    if filtres.journal in ("CAISSE", "TOUS"):
+        journaux.append(("CAISSE", None))
+    if filtres.journal in ("BANQUE", "TOUS"):
+        if filtres.compte_bancaire_id is not None:
+            journaux.append(("BANQUE", filtres.compte_bancaire_id))
+        else:
+            ids = (
+                await db.execute(
+                    select(CompteBancaire.id)
+                    .where(
+                        CompteBancaire.organisation_id == organisation_id,
+                        CompteBancaire.account_type == "BANK",
+                        CompteBancaire.is_active.is_(True),
+                        CompteBancaire.devise == filtres.devise,
+                    )
+                    .order_by(CompteBancaire.id)
+                )
+            ).scalars().all()
+            journaux.extend(("BANQUE", compte_id) for compte_id in ids)
+    return journaux
+
+
+class _Comptes:
+    """Numéros de compte résolus par les mappings, mis en cache.
+
+    Un mapping absent ne bloque pas l'export : le numéro reste vide, et une
+    anomalie non bloquante le signale au comptable.
+    """
+
+    def __init__(self, db: AsyncSession, organisation_id: int) -> None:
+        self.db = db
+        self.organisation_id = organisation_id
+        self._postes: dict[int, str] = {}
+        self._tresorerie: dict[int | None, str] = {}
+        self._rubriques: dict[str, str] = {}
+
+    async def poste(self, budget_poste_id: int | None) -> str:
+        if budget_poste_id is None:
+            return ""
+        if budget_poste_id not in self._postes:
+            numero = (
+                await self.db.execute(
+                    select(ComptaCompte.numero)
+                    .join(ComptaMappingPosteBudgetaire, ComptaMappingPosteBudgetaire.compte_id == ComptaCompte.id)
+                    .where(
+                        ComptaMappingPosteBudgetaire.organisation_id == self.organisation_id,
+                        ComptaMappingPosteBudgetaire.budget_poste_id == budget_poste_id,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            self._postes[budget_poste_id] = (numero or "").strip()
+        return self._postes[budget_poste_id]
+
+    async def tresorerie(self, compte_bancaire_id: int | None) -> str:
+        """Compte de la banque mappée, ou de la caisse unique quand l'identifiant est absent."""
+        if compte_bancaire_id not in self._tresorerie:
+            if compte_bancaire_id is not None:
+                numero = (
+                    await self.db.execute(
+                        select(ComptaCompte.numero)
+                        .join(ComptaMappingCompteBancaire, ComptaMappingCompteBancaire.compte_id == ComptaCompte.id)
+                        .where(
+                            ComptaMappingCompteBancaire.organisation_id == self.organisation_id,
+                            ComptaMappingCompteBancaire.compte_bancaire_id == compte_bancaire_id,
+                        )
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+            else:
+                numero = (
+                    await self.db.execute(
+                        select(ComptaCompte.numero)
+                        .join(ComptaSociete, ComptaSociete.compte_caisse_defaut_id == ComptaCompte.id)
+                        .where(ComptaSociete.organisation_id == self.organisation_id)
+                        .order_by(ComptaSociete.id)
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+            self._tresorerie[compte_bancaire_id] = (numero or "").strip()
+        return self._tresorerie[compte_bancaire_id]
+
+    async def rubrique(self, code: str) -> str:
+        if code not in self._rubriques:
+            numero = (
+                await self.db.execute(
+                    select(ComptaCompte.numero)
+                    .join(ComptaMappingRubrique, ComptaMappingRubrique.compte_id == ComptaCompte.id)
+                    .where(
+                        ComptaMappingRubrique.organisation_id == self.organisation_id,
+                        ComptaMappingRubrique.code_rubrique == code,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            self._rubriques[code] = (numero or "").strip()
+        return self._rubriques[code]
+
+
+async def _postes_des_operations(
+    db: AsyncSession, *, organisation_id: int, lignes: list[ReportJournalLine]
+) -> dict[tuple[str, str], list[tuple[int, Decimal]]]:
+    """Poste(s) budgétaire(s) de chaque opération du journal.
+
+    Le poste porté par l'opération d'abord ; à défaut, ses imputations
+    budgétaires actives (une sortie multi-postes en a plusieurs, chacune avec
+    son montant). Un retour reprend le poste de la sortie d'origine.
+    """
+    ids: dict[str, set[UUID]] = {"ENCAISSEMENT": set(), "SORTIE": set(), "RETOUR": set()}
+    for ligne in lignes:
+        if ligne.transaction_id and ligne.type_operation in ids:
+            ids[ligne.type_operation].add(ligne.transaction_id)
+
+    postes: dict[tuple[str, str], list[tuple[int, Decimal]]] = {}
+    if ids["ENCAISSEMENT"]:
+        for enc_id, poste_id in (
+            await db.execute(
+                select(Encaissement.id, Encaissement.budget_poste_id).where(
+                    Encaissement.organisation_id == organisation_id,
+                    Encaissement.id.in_(ids["ENCAISSEMENT"]),
+                    Encaissement.budget_poste_id.is_not(None),
+                )
             )
-        )
-    ).scalar_one_or_none()
-    if compte is None:
-        raise HTTPException(status_code=400, detail="Compte bancaire introuvable ou inactif.")
-    if compte.devise != devise:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Le compte bancaire est tenu en {compte.devise}, pas en {devise}.",
-        )
-    mapping = (
-        await db.execute(
-            select(ComptaMappingCompteBancaire).where(
-                ComptaMappingCompteBancaire.organisation_id == organisation_id,
-                ComptaMappingCompteBancaire.compte_bancaire_id == compte_bancaire_id,
+        ).all():
+            postes[("ENCAISSEMENT", str(enc_id))] = [(poste_id, Decimal("0"))]
+    if ids["SORTIE"]:
+        for sortie_id, poste_id in (
+            await db.execute(
+                select(SortieFonds.id, SortieFonds.budget_poste_id).where(
+                    SortieFonds.organisation_id == organisation_id,
+                    SortieFonds.id.in_(ids["SORTIE"]),
+                    SortieFonds.budget_poste_id.is_not(None),
+                )
             )
-        )
-    ).scalar_one_or_none()
-    if mapping is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Ce compte bancaire n'a pas de compte comptable associé. Configurez son imputation avant l'export.",
-        )
-    return compte, mapping.compte_id
+        ).all():
+            postes[("SORTIE", str(sortie_id))] = [(poste_id, Decimal("0"))]
+    if ids["RETOUR"]:
+        for retour_id, poste_id in (
+            await db.execute(
+                select(RetourCaisse.id, func.coalesce(RetourCaisse.budget_poste_id, SortieFonds.budget_poste_id))
+                .join(SortieFonds, SortieFonds.id == RetourCaisse.sortie_fonds_id)
+                .where(
+                    RetourCaisse.organisation_id == organisation_id,
+                    RetourCaisse.id.in_(ids["RETOUR"]),
+                )
+            )
+        ).all():
+            if poste_id is not None:
+                postes[("RETOUR", str(retour_id))] = [(poste_id, Decimal("0"))]
+
+    # Sans poste sur l'opération : ses imputations actives, poste par poste.
+    colonnes = {
+        "ENCAISSEMENT": MouvementBudgetImputation.encaissement_id,
+        "SORTIE": MouvementBudgetImputation.sortie_fonds_id,
+        "RETOUR": MouvementBudgetImputation.retour_caisse_id,
+    }
+    for type_operation, colonne in colonnes.items():
+        restants = {i for i in ids[type_operation] if (type_operation, str(i)) not in postes}
+        if not restants:
+            continue
+        rows = (
+            await db.execute(
+                select(colonne, MouvementBudgetImputation.budget_poste_id, func.sum(MouvementBudgetImputation.montant_mouvement))
+                .where(
+                    MouvementBudgetImputation.organisation_id == organisation_id,
+                    MouvementBudgetImputation.statut == "ACTIVE",
+                    colonne.in_(restants),
+                )
+                .group_by(colonne, MouvementBudgetImputation.budget_poste_id)
+                .order_by(colonne, MouvementBudgetImputation.budget_poste_id)
+            )
+        ).all()
+        for operation_id, poste_id, montant in rows:
+            postes.setdefault((type_operation, str(operation_id)), []).append((poste_id, _q(montant)))
+    return postes
 
 
 async def preparer_export_comptable(
@@ -121,260 +269,161 @@ async def preparer_export_comptable(
     *,
     organisation_id: int,
     filtres: ExportComptableFiltres,
+    user=None,
 ) -> SelectionComptable:
-    """Charge et contrôle toutes les écritures correspondant aux filtres."""
+    """Construit l'export pour le logiciel comptable à partir de la trésorerie.
 
-    compte_comptable_banque_id: int | None = None
+    Même source que le journal de contrôle : chaque mouvement du journal de
+    trésorerie de la période (caisse, banques) donne deux lignes, la
+    trésorerie et sa contrepartie. Les montants sont ceux de la trésorerie ;
+    les numéros de compte viennent des mappings (poste budgétaire, compte
+    bancaire, caisse, rubrique des virements internes). Un numéro introuvable
+    reste vide, de même qu'une pièce sans numéro : rien ne bloque l'export,
+    les anomalies non bloquantes disent où compléter.
+    """
+    # Import local : le module des rapports importe déjà la comptabilité.
+    from app.api.v1.endpoints.reports import journal_tresorerie
+
     if filtres.compte_bancaire_id is not None:
-        _, compte_comptable_banque_id = await _resoudre_compte_bancaire(
-            db,
-            organisation_id=organisation_id,
-            compte_bancaire_id=filtres.compte_bancaire_id,
-            devise=filtres.devise,
-        )
-
-    stmt = (
-        select(ComptaEcriture)
-        .join(ComptaJournal, ComptaJournal.id == ComptaEcriture.journal_id)
-        .options(selectinload(ComptaEcriture.lignes))
-        .where(
-            ComptaEcriture.organisation_id == organisation_id,
-            ComptaEcriture.statut.in_(STATUTS_EXPORTABLES),
-            ComptaEcriture.date_ecriture >= filtres.date_debut,
-            ComptaEcriture.date_ecriture <= filtres.date_fin,
-            ComptaEcriture.devise == filtres.devise,
-        )
-    )
-    if filtres.journal == "CAISSE":
-        stmt = stmt.where(ComptaJournal.type_journal == "CA")
-    elif filtres.journal == "BANQUE":
-        stmt = stmt.where(ComptaJournal.type_journal == "BQ")
-    else:
-        stmt = stmt.where(ComptaJournal.type_journal.in_(("CA", "BQ")))
-    if compte_comptable_banque_id is not None:
-        stmt = stmt.where(
-            ComptaEcriture.lignes.any(ComptaLigneEcriture.compte_id == compte_comptable_banque_id)
-        )
-    stmt = stmt.order_by(ComptaEcriture.date_ecriture, ComptaEcriture.numero, ComptaEcriture.id)
-    ecritures = list((await db.execute(stmt)).scalars().unique().all())
-
-    compte_ids = {ligne.compte_id for ecriture in ecritures for ligne in (ecriture.lignes or [])}
-    comptes: dict[int, ComptaCompte] = {}
-    if compte_ids:
-        comptes = {
-            compte.id: compte
-            for compte in (
-                await db.execute(
-                    select(ComptaCompte).where(
-                        ComptaCompte.organisation_id == organisation_id,
-                        ComptaCompte.id.in_(compte_ids),
-                    )
-                )
-            ).scalars().all()
-        }
-
-    deja_exportees: dict[UUID, UUID] = {}
-    if ecritures:
-        hist_rows = (
+        compte = (
             await db.execute(
-                select(ComptaExportEcriture.ecriture_id, ComptaExportEcriture.export_id)
-                .join(ComptaExportHistorique, ComptaExportHistorique.id == ComptaExportEcriture.export_id)
-                .where(
-                    ComptaExportEcriture.organisation_id == organisation_id,
-                    ComptaExportHistorique.type_export == "LOGICIEL_COMPTABLE",
-                    ComptaExportEcriture.ecriture_id.in_([e.id for e in ecritures]),
+                select(CompteBancaire).where(
+                    CompteBancaire.id == filtres.compte_bancaire_id,
+                    CompteBancaire.organisation_id == organisation_id,
+                    CompteBancaire.account_type == "BANK",
+                    CompteBancaire.is_active.is_(True),
                 )
-                .order_by(ComptaExportHistorique.created_at)
             )
-        ).all()
-        deja_exportees = {ecriture_id: export_id for ecriture_id, export_id in hist_rows}
+        ).scalar_one_or_none()
+        if compte is None:
+            raise HTTPException(status_code=400, detail="Compte bancaire introuvable ou inactif.")
+        if compte.devise != filtres.devise:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Le compte bancaire est tenu en {compte.devise}, pas en {filtres.devise}.",
+            )
+
+    comptes = _Comptes(db, organisation_id)
+    mouvements: list[tuple[str, int | None, ReportJournalLine]] = []
+    for canal, compte_bancaire_id in await _journaux_a_lire(db, organisation_id=organisation_id, filtres=filtres):
+        journal = await journal_tresorerie(
+            canal=canal,
+            devise=filtres.devise,
+            compte_bancaire_id=compte_bancaire_id,
+            date_debut=filtres.date_debut.isoformat(),
+            date_fin=filtres.date_fin.isoformat(),
+            user=user,
+            db=db,
+            tenant_id=organisation_id,
+        )
+        mouvements.extend((canal, compte_bancaire_id, ligne) for ligne in journal.lignes)
+    mouvements.sort(key=lambda item: (_jour(item[2].date), item[2].reference or "", item[0], item[1] or 0))
+
+    postes = await _postes_des_operations(
+        db, organisation_id=organisation_id, lignes=[ligne for *_, ligne in mouvements]
+    )
 
     anomalies: list[ExportAnomalieOut] = []
     apercu_lignes: list[ExportLigneApercuOut] = []
     total_debit = Decimal("0")
     total_credit = Decimal("0")
-    origines_vues: dict[tuple[str, str, str], UUID] = {}
 
-    if not ecritures:
+    if not mouvements:
         anomalies.append(
             ExportAnomalieOut(
-                code="AUCUNE_ECRITURE",
-                message="Aucune écriture validée ou clôturée ne correspond à cette sélection.",
+                code="AUCUN_MOUVEMENT",
+                message="Aucun mouvement de trésorerie ne correspond à cette sélection.",
             )
         )
 
-    for ecriture in ecritures:
-        numero = ecriture.numero or None
-        piece = (ecriture.reference_piece or numero or "").strip()
-        if not numero:
-            anomalies.append(
-                ExportAnomalieOut(
-                    code="NUMERO_MANQUANT",
-                    message="L'écriture validée ne possède pas de numéro comptable.",
-                    ecriture_id=ecriture.id,
-                )
-            )
-        if not piece:
-            anomalies.append(
-                ExportAnomalieOut(
-                    code="PIECE_MANQUANTE",
-                    message="La référence de pièce est absente.",
-                    ecriture_id=ecriture.id,
-                    numero=numero,
-                )
-            )
-        if not ecriture.libelle.strip():
-            anomalies.append(
-                ExportAnomalieOut(
-                    code="LIBELLE_MANQUANT",
-                    message="Le libellé de l'écriture est vide.",
-                    ecriture_id=ecriture.id,
-                    numero=numero,
-                )
-            )
-        if ecriture.id in deja_exportees:
-            anomalies.append(
-                ExportAnomalieOut(
-                    code="DEJA_EXPORTEE",
-                    message=f"Cette écriture figure déjà dans l'export {deja_exportees[ecriture.id]}.",
-                    bloquante=not filtres.autoriser_reexport,
-                    ecriture_id=ecriture.id,
-                    numero=numero,
-                )
-            )
-        if ecriture.module_origine and ecriture.type_origine and ecriture.objet_origine_id:
-            cle_origine = (ecriture.module_origine, ecriture.type_origine, ecriture.objet_origine_id)
-            precedente = origines_vues.get(cle_origine)
-            if precedente and precedente != ecriture.id:
-                anomalies.append(
-                    ExportAnomalieOut(
-                        code="ORIGINE_DUPLIQUEE",
-                        message="Deux écritures actives portent la même origine métier.",
-                        ecriture_id=ecriture.id,
-                        numero=numero,
-                    )
-                )
-            origines_vues[cle_origine] = ecriture.id
+    for canal, compte_bancaire_id, mouvement in mouvements:
+        entree = _q(mouvement.entree)
+        sortie = _q(mouvement.sortie)
+        montant = entree or sortie
+        if montant <= 0:
+            continue
+        jour = _jour(mouvement.date)
+        piece = (mouvement.reference or "").strip()
+        libelle = (mouvement.libelle or "").strip()
+        operation = str(mouvement.transaction_id) if mouvement.transaction_id else None
+        reperes = piece or f"{jour:%d/%m/%Y} · {libelle[:40]}"
 
-        lignes = sorted(ecriture.lignes or [], key=lambda ligne: ligne.ordre)
-        if len(lignes) < 2:
-            anomalies.append(
-                ExportAnomalieOut(
-                    code="ECRITURE_INCOMPLETE",
-                    message="Une écriture doit comporter au moins deux lignes.",
-                    ecriture_id=ecriture.id,
-                    numero=numero,
-                )
-            )
+        compte_tresorerie = await comptes.tresorerie(compte_bancaire_id)
+        # Contrepartie : le poste budgétaire de l'opération ; pour un mouvement
+        # entre la caisse et une banque, le compte des virements internes, qui
+        # se solde quand les deux côtés sont passés (pas de double comptage).
+        if mouvement.type_operation in ("APPROVISIONNEMENT", "VERSEMENT", "TRANSFERT_ENTREE", "TRANSFERT_SORTIE") or (
+            mouvement.transaction_type == "TRANSFERT"
+        ):
+            contreparties = [(await comptes.rubrique(RUBRIQUE_VIREMENTS_INTERNES), montant)]
+        else:
+            imputations = postes.get((mouvement.type_operation or "", operation or ""), [])
+            if len(imputations) == 1:
+                contreparties = [(await comptes.poste(imputations[0][0]), montant)]
+            elif imputations and sum((m for _, m in imputations), Decimal("0")) == montant:
+                contreparties = [(await comptes.poste(poste_id), m) for poste_id, m in imputations]
+            else:
+                contreparties = [("", montant)]
 
-        debit_ecriture = Decimal("0")
-        credit_ecriture = Decimal("0")
-        for ligne in lignes:
-            debit = _q(ligne.debit)
-            credit = _q(ligne.credit)
-            debit_ecriture += debit
-            credit_ecriture += credit
-            compte = comptes.get(ligne.compte_id)
-            compte_numero = (compte.numero if compte else "").strip()
-            if compte is None:
+        # Entrée : la trésorerie au débit, la contrepartie au crédit ; une
+        # sortie, l'inverse.
+        tresorerie_au_debit = entree > 0
+        lignes_mouvement = [(compte_tresorerie, montant if tresorerie_au_debit else Decimal("0"), Decimal("0") if tresorerie_au_debit else montant)]
+        lignes_mouvement.extend(
+            (numero, Decimal("0") if tresorerie_au_debit else m, m if tresorerie_au_debit else Decimal("0"))
+            for numero, m in contreparties
+        )
+
+        for numero, debit, credit in lignes_mouvement:
+            if not numero:
                 anomalies.append(
                     ExportAnomalieOut(
-                        code="COMPTE_INTROUVABLE",
-                        message=f"Le compte #{ligne.compte_id} est introuvable dans l'organisation.",
-                        ecriture_id=ecriture.id,
-                        numero=numero,
+                        code="COMPTE_VIDE",
+                        message="Aucun compte comptable n'est associé à ce mouvement : la colonne Compte reste vide.",
+                        bloquante=False,
+                        numero=reperes,
                     )
                 )
-            elif not compte.actif:
-                anomalies.append(
-                    ExportAnomalieOut(
-                        code="COMPTE_INACTIF",
-                        message=f"Le compte {compte.numero} est inactif.",
-                        ecriture_id=ecriture.id,
-                        numero=numero,
-                    )
-                )
-            if not compte_numero.isdigit():
-                anomalies.append(
-                    ExportAnomalieOut(
-                        code="COMPTE_NON_NUMERIQUE",
-                        message=f"Le compte « {compte_numero or ligne.compte_id} » n'est pas numérique et ne respecte pas le modèle cible.",
-                        ecriture_id=ecriture.id,
-                        numero=numero,
-                    )
-                )
-            elif compte_numero.startswith("0") or len(compte_numero) > 15:
+            elif not numero.isdigit() or numero.startswith("0") or len(numero) > 15:
                 anomalies.append(
                     ExportAnomalieOut(
                         code="COMPTE_NON_REPRESENTABLE",
-                        message=f"Le compte {compte_numero} ne peut pas être écrit comme nombre Excel sans perte.",
-                        ecriture_id=ecriture.id,
-                        numero=numero,
+                        message=f"Le compte « {numero} » ne s'écrit pas comme un nombre Excel : il est repris tel quel.",
+                        bloquante=False,
+                        numero=reperes,
                     )
                 )
-            if ligne.devise != filtres.devise:
-                anomalies.append(
-                    ExportAnomalieOut(
-                        code="DEVISE_INCOHERENTE",
-                        message=f"La ligne est en {ligne.devise}, la sélection en {filtres.devise}.",
-                        ecriture_id=ecriture.id,
-                        numero=numero,
-                    )
-                )
-            if debit < 0 or credit < 0 or (debit > 0 and credit > 0) or (debit == 0 and credit == 0):
-                anomalies.append(
-                    ExportAnomalieOut(
-                        code="MONTANT_INVALIDE",
-                        message="Une ligne doit porter un débit ou un crédit positif, jamais les deux.",
-                        ecriture_id=ecriture.id,
-                        numero=numero,
-                    )
-                )
+            total_debit += debit
+            total_credit += credit
             apercu_lignes.append(
                 ExportLigneApercuOut(
-                    ecriture_id=ecriture.id,
-                    date=ecriture.date_ecriture,
+                    operation_id=operation,
+                    date=jour,
                     piece=piece,
-                    compte=compte_numero,
-                    libelle=(ligne.libelle or ecriture.libelle).strip(),
+                    compte=numero,
+                    libelle=libelle,
                     debit=debit,
                     credit=credit,
-                )
-            )
-
-        debit_ecriture = _q(debit_ecriture)
-        credit_ecriture = _q(credit_ecriture)
-        total_debit += debit_ecriture
-        total_credit += credit_ecriture
-        if debit_ecriture != credit_ecriture:
-            anomalies.append(
-                ExportAnomalieOut(
-                    code="ECRITURE_DESEQUILIBREE",
-                    message=f"Débit {debit_ecriture} ≠ crédit {credit_ecriture}.",
-                    ecriture_id=ecriture.id,
-                    numero=numero,
                 )
             )
 
     total_debit = _q(total_debit)
     total_credit = _q(total_credit)
     ecart = _q(total_debit - total_credit)
-    if ecritures and ecart != 0:
-        anomalies.append(
-            ExportAnomalieOut(
-                code="SELECTION_DESEQUILIBREE",
-                message=f"La sélection est déséquilibrée de {ecart} {filtres.devise}.",
-            )
-        )
+    nombre_operations = sum(1 for *_, m in mouvements if _q(m.entree) or _q(m.sortie))
 
     empreinte_payload = {
+        "source": "TRESORERIE",
         "organisation_id": organisation_id,
         "date_debut": filtres.date_debut.isoformat(),
         "date_fin": filtres.date_fin.isoformat(),
         "journal": filtres.journal,
         "compte_bancaire_id": filtres.compte_bancaire_id,
         "devise": filtres.devise,
-        "ecritures": [(str(e.id), e.version) for e in ecritures],
+        "lignes": [
+            (l.date.isoformat(), l.piece, l.compte, l.libelle, str(l.debit), str(l.credit), l.operation_id)
+            for l in apercu_lignes
+        ],
     }
     empreinte = _sha256(json.dumps(empreinte_payload, sort_keys=True).encode("utf-8"))
     exact_export = (
@@ -389,6 +438,15 @@ async def preparer_export_comptable(
             .limit(1)
         )
     ).scalar_one_or_none()
+    if exact_export is not None:
+        anomalies.insert(
+            0,
+            ExportAnomalieOut(
+                code="DEJA_EXPORTEE",
+                message=f"Cette sélection, à l'identique, figure déjà dans l'export {exact_export}.",
+                bloquante=not filtres.autoriser_reexport,
+            ),
+        )
 
     apercu = ExportComptableApercuOut(
         date_debut=filtres.date_debut,
@@ -396,22 +454,22 @@ async def preparer_export_comptable(
         journal=filtres.journal,
         compte_bancaire_id=filtres.compte_bancaire_id,
         devise=filtres.devise,
-        nombre_ecritures=len(ecritures),
+        nombre_ecritures=nombre_operations,
         nombre_lignes=len(apercu_lignes),
         total_debit=total_debit,
         total_credit=total_credit,
         ecart=ecart,
         equilibre=ecart == 0,
-        exportable=bool(ecritures) and not any(a.bloquante for a in anomalies),
-        nombre_deja_exportees=len(deja_exportees),
+        exportable=bool(apercu_lignes) and not any(a.bloquante for a in anomalies),
+        nombre_deja_exportees=nombre_operations if exact_export is not None else 0,
         lignes=apercu_lignes[:500],
         anomalies=anomalies,
     )
     return SelectionComptable(
         apercu=apercu,
         lignes_export=apercu_lignes,
-        ecritures=ecritures,
-        comptes=comptes,
+        ecritures=[],
+        comptes={},
         empreinte=empreinte,
         premier_export_id=exact_export,
     )
@@ -431,7 +489,12 @@ def creer_xlsx_logiciel(lignes: list[ExportLigneApercuOut]) -> bytes:
     for row, ligne in enumerate(lignes, start=2):
         ws.cell(row, 1, datetime.combine(ligne.date, datetime.min.time())).number_format = "mm-dd-yy"
         ws.cell(row, 2, ligne.piece)
-        ws.cell(row, 3, int(ligne.compte)).number_format = "0"
+        # Un compte numérique part en nombre, comme le modèle l'exige ; un
+        # compte absent laisse la cellule vide.
+        if ligne.compte.isdigit() and not ligne.compte.startswith("0") and len(ligne.compte) <= 15:
+            ws.cell(row, 3, int(ligne.compte)).number_format = "0"
+        elif ligne.compte:
+            ws.cell(row, 3, ligne.compte)
         ws.cell(row, 4, ligne.libelle)
         if ligne.debit:
             ws.cell(row, 5, float(ligne.debit)).number_format = "0.00"

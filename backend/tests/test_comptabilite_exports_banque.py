@@ -15,16 +15,21 @@ import app.db.session  # noqa: F401 — active le cloisonnement tenant
 from app.core.tenant_context import set_current_tenant_id
 from app.models.compte_bancaire import CompteBancaire
 from app.models.organisation import Organisation
+import app.api.v1.endpoints.reports as reports
 from app.modules.comptabilite.models import (
+    RUBRIQUE_VIREMENTS_INTERNES,
     ComptaCompte,
     ComptaEcriture,
     ComptaExercice,
     ComptaJournal,
     ComptaLigneEcriture,
+    ComptaMappingCompteBancaire,
+    ComptaMappingRubrique,
     ComptaReferentiel,
     ComptaSociete,
 )
 from app.modules.comptabilite.schemas.exports import ExportComptableFiltres
+from app.schemas.reports import ReportJournalLine, ReportJournalResponse
 from app.modules.comptabilite.services.export_service import (
     ENTETE_LOGICIEL,
     creer_xlsx_logiciel,
@@ -176,120 +181,133 @@ async def _ecriture(
     return ecriture
 
 
-async def test_export_excel_strict_filtre_statuts_devises_et_reexport(db_session):
+def _journal_simule(lignes_par_compte: dict[int | None, list[ReportJournalLine]]):
+    """Remplace le journal de trésorerie : l'export en reprend les lignes telles quelles."""
+
+    async def journal(*, canal, devise, compte_bancaire_id=None, **_):
+        lignes = lignes_par_compte.get(compte_bancaire_id if canal == "BANQUE" else None, [])
+        return ReportJournalResponse(canal=canal, devise=devise, compte_bancaire_id=compte_bancaire_id, lignes=lignes)
+
+    return journal
+
+
+async def _mapper_banque(db, organisation_id: int, compte_bancaire: CompteBancaire, compte: ComptaCompte):
+    db.add(ComptaMappingCompteBancaire(
+        organisation_id=organisation_id, compte_bancaire_id=compte_bancaire.id, compte_id=compte.id,
+    ))
+    await db.flush()
+
+
+async def test_export_logiciel_vient_de_la_tresorerie(db_session, monkeypatch):
     set_current_tenant_id(None)
     org = _org()
     db_session.add(org)
     await db_session.flush()
     set_current_tenant_id(org.id)
-    societe, banque, produit, journal, exercice, _ = await _setup(db_session, org.id)
-    active = await _ecriture(
-        db_session,
-        organisation_id=org.id,
-        societe=societe,
-        banque=banque,
-        produit=produit,
-        journal=journal,
-        exercice=exercice,
-        numero="BQ-2026-00001",
+    societe, banque, produit, journal, exercice, compte_bancaire = await _setup(db_session, org.id)
+    await _mapper_banque(db_session, org.id, compte_bancaire, banque)
+    virements = ComptaCompte(
+        organisation_id=org.id, referentiel_id=banque.referentiel_id, numero="5850000001",
+        libelle="Virements de fonds", nature="ACTIF", sens_normal="DEBIT",
     )
+    db_session.add(virements)
+    await db_session.flush()
+    db_session.add(ComptaMappingRubrique(
+        organisation_id=org.id, code_rubrique=RUBRIQUE_VIREMENTS_INTERNES, compte_id=virements.id,
+    ))
+    # Une écriture validée existe, mais ce n'est plus elle qui fait l'export.
     await _ecriture(
-        db_session,
-        organisation_id=org.id,
-        societe=societe,
-        banque=banque,
-        produit=produit,
-        journal=journal,
-        exercice=exercice,
-        numero="BQ-2026-00002",
-        devise="CDF",
+        db_session, organisation_id=org.id, societe=societe, banque=banque, produit=produit,
+        journal=journal, exercice=exercice, numero="BQ-2026-00001",
     )
-    await _ecriture(
-        db_session,
-        organisation_id=org.id,
-        societe=societe,
-        banque=banque,
-        produit=produit,
-        journal=journal,
-        exercice=exercice,
-        numero="BQ-2026-00003",
-        statut="ANNULEE",
-    )
+    await db_session.flush()
+
+    quand = datetime(2026, 10, 15, 9, tzinfo=timezone.utc)
+    monkeypatch.setattr(reports, "journal_tresorerie", _journal_simule({
+        compte_bancaire.id: [
+            # Encaissement sans poste budgétaire connu : contrepartie vide.
+            ReportJournalLine(
+                date=quand, libelle="Cotisation octobre", reference="REC-001", entree=Decimal("125.40"),
+                type_operation="ENCAISSEMENT", transaction_id=uuid.uuid4(), transaction_type="ENCAISSEMENT",
+            ),
+            # Versement de la caisse, sans numéro de pièce : la pièce reste vide.
+            ReportJournalLine(
+                date=quand, libelle="Versement à la banque", reference=None, entree=Decimal("50"),
+                type_operation="VERSEMENT", transaction_id=uuid.uuid4(), transaction_type="SORTIE",
+            ),
+        ],
+    }))
+
     filtres = ExportComptableFiltres(
-        date_debut=date(2026, 10, 1),
-        date_fin=date(2026, 10, 31),
-        journal="BANQUE",
-        devise="USD",
-        format="XLSX",
+        date_debut=date(2026, 10, 1), date_fin=date(2026, 10, 31), journal="BANQUE",
+        compte_bancaire_id=compte_bancaire.id, devise="USD", format="XLSX",
     )
     selection = await preparer_export_comptable(db_session, organisation_id=org.id, filtres=filtres)
-    assert selection.apercu.exportable is True
-    assert selection.apercu.nombre_ecritures == 1
-    assert selection.apercu.nombre_lignes == 2
-    assert selection.apercu.total_debit == selection.apercu.total_credit == Decimal("125.40")
+    apercu = selection.apercu
+    assert apercu.exportable is True
+    assert apercu.nombre_ecritures == 2
+    assert apercu.nombre_lignes == 4
+    assert apercu.total_debit == apercu.total_credit == Decimal("175.40")
+    lignes = [(l.piece, l.compte, l.debit, l.credit) for l in selection.lignes_export]
+    assert ("REC-001", "5210000001", Decimal("125.40"), Decimal("0")) in lignes
+    assert ("REC-001", "", Decimal("0"), Decimal("125.40")) in lignes
+    assert ("", "5210000001", Decimal("50.00"), Decimal("0")) in lignes
+    assert ("", "5850000001", Decimal("0"), Decimal("50.00")) in lignes
+    # Le compte vide se signale sans bloquer.
+    vides = [a for a in apercu.anomalies if a.code == "COMPTE_VIDE"]
+    assert len(vides) == 1 and vides[0].bloquante is False
 
     contenu = creer_xlsx_logiciel(selection.lignes_export)
     feuille = load_workbook(io.BytesIO(contenu), data_only=True).active
     assert tuple(cell.value for cell in feuille[1]) == ENTETE_LOGICIEL
-    assert feuille.max_column == 6
-    assert feuille.max_row == 3
+    assert feuille.max_row == 5
     assert isinstance(feuille["A2"].value, datetime)
-    assert feuille["A2"].number_format == "mm-dd-yy"
-    assert isinstance(feuille["C2"].value, int)
-    assert feuille["C2"].number_format == "0"
-    assert isinstance(feuille["E2"].value, (int, float))
-    assert feuille["F2"].value is None
+    comptes_excel = [feuille.cell(row, 3).value for row in range(2, 6)]
+    assert None in comptes_excel
+    assert all(isinstance(v, int) for v in comptes_excel if v is not None)
 
     await historiser_export(
-        db_session,
-        organisation_id=org.id,
-        user_id=None,
-        type_export="LOGICIEL_COMPTABLE",
-        filtres=filtres,
-        nom_fichier="import.xlsx",
-        contenu=contenu,
-        empreinte_selection=selection.empreinte,
-        nombre_ecritures=1,
-        nombre_lignes=2,
-        total_debit=Decimal("125.40"),
-        total_credit=Decimal("125.40"),
-        ecriture_ids=[active.id],
+        db_session, organisation_id=org.id, user_id=None, type_export="LOGICIEL_COMPTABLE",
+        filtres=filtres, nom_fichier="import.xlsx", contenu=contenu,
+        empreinte_selection=selection.empreinte, nombre_ecritures=2, nombre_lignes=4,
+        total_debit=Decimal("175.40"), total_credit=Decimal("175.40"), ecriture_ids=[],
     )
     await db_session.flush()
-    seconde_selection = await preparer_export_comptable(
-        db_session, organisation_id=org.id, filtres=filtres
-    )
-    assert seconde_selection.apercu.exportable is False
-    assert seconde_selection.apercu.nombre_deja_exportees == 1
-    assert "DEJA_EXPORTEE" in {item.code for item in seconde_selection.apercu.anomalies}
-
-    filtres_reexport = filtres.model_copy(update={"autoriser_reexport": True})
+    seconde = await preparer_export_comptable(db_session, organisation_id=org.id, filtres=filtres)
+    assert seconde.apercu.exportable is False
+    assert "DEJA_EXPORTEE" in {a.code for a in seconde.apercu.anomalies}
     reexport = await preparer_export_comptable(
-        db_session, organisation_id=org.id, filtres=filtres_reexport
+        db_session, organisation_id=org.id, filtres=filtres.model_copy(update={"autoriser_reexport": True})
     )
     assert reexport.apercu.exportable is True
     assert reexport.premier_export_id is not None
     set_current_tenant_id(None)
 
 
-async def test_filtre_compte_bancaire_refuse_un_mapping_absent(db_session):
+async def test_banque_sans_mapping_laisse_le_compte_vide(db_session, monkeypatch):
     set_current_tenant_id(None)
     org = _org()
     db_session.add(org)
     await db_session.flush()
     set_current_tenant_id(org.id)
     *_, compte_bancaire = await _setup(db_session, org.id)
+    monkeypatch.setattr(reports, "journal_tresorerie", _journal_simule({
+        compte_bancaire.id: [
+            ReportJournalLine(
+                date=datetime(2026, 10, 3, tzinfo=timezone.utc), libelle="Frais", reference="BS-9",
+                sortie=Decimal("12"), type_operation="SORTIE", transaction_id=uuid.uuid4(), transaction_type="SORTIE",
+            ),
+        ],
+    }))
     filtres = ExportComptableFiltres(
-        date_debut=date(2026, 10, 1),
-        date_fin=date(2026, 10, 31),
-        journal="BANQUE",
-        compte_bancaire_id=compte_bancaire.id,
-        devise="USD",
+        date_debut=date(2026, 10, 1), date_fin=date(2026, 10, 31), journal="BANQUE",
+        compte_bancaire_id=compte_bancaire.id, devise="USD",
     )
-    with pytest.raises(HTTPException) as exc_info:
-        await preparer_export_comptable(db_session, organisation_id=org.id, filtres=filtres)
-    assert exc_info.value.status_code == 400
-    assert "compte comptable associé" in exc_info.value.detail
+    selection = await preparer_export_comptable(db_session, organisation_id=org.id, filtres=filtres)
+    assert selection.apercu.exportable is True
+    assert [l.compte for l in selection.lignes_export] == ["", ""]
+    # Une sortie : la contrepartie au débit, la trésorerie au crédit.
+    assert sum(l.debit for l in selection.lignes_export) == Decimal("12.00")
     set_current_tenant_id(None)
 
 

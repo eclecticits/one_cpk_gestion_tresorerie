@@ -41,7 +41,9 @@ class ExportAnomalieOut(DecimalBaseModel):
 
 
 class ExportLigneApercuOut(DecimalBaseModel):
-    ecriture_id: UUID
+    #: L'opération de trésorerie d'où vient la ligne (encaissement, sortie,
+    #: retour) ; vide pour un transfert interne, qui n'a pas d'identifiant.
+    operation_id: str | None = None
     date: date
     piece: str
     compte: str

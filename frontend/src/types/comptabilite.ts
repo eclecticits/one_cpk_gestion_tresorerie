@@ -485,7 +485,8 @@ export interface ComptaExportAnomalie {
 }
 
 export interface ComptaExportLigneApercu {
-  ecriture_id: string
+  /** Opération de trésorerie d'origine ; absente pour un transfert interne. */
+  operation_id: string | null
   date: string
   piece: string
   compte: string
