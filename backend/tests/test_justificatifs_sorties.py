@@ -345,3 +345,24 @@ async def test_un_utilisateur_de_l_application_se_retrouve_et_s_identifie(db_ses
     assert identifie.utilisateur_id == user.id
     assert identifie.email == user.email
     assert identifie.telephone == "243810000003"
+
+
+@pytest.mark.asyncio
+async def test_le_numero_du_compte_utilisateur_sert_au_whatsapp(db_session):
+    """Sans numéro saisi, celui du compte est repris, comme l'e-mail : sinon le
+    bénéficiaire recevait l'e-mail de remise et jamais le WhatsApp."""
+    db = db_session
+    org = await _org(db)
+    user = await _admin(db, org)
+    user.prenom, user.nom, user.telephone = "Nicole", "Muswamba", "243810000044"
+    await db.commit()
+
+    trouve = [s for s in await beneficiaires.rechercher(db, org.id, "muswamba") if s["type"] == "UTILISATEUR"]
+    assert trouve[0]["telephone"] == "243810000044"
+
+    identifie = await beneficiaires.identifier(
+        db, org.id, nom="Nicole Muswamba", type_beneficiaire="UTILISATEUR",
+        reference_id=trouve[0]["id"], email=None, telephone=None,
+    )
+    assert identifie.email == user.email
+    assert identifie.telephone == "243810000044"

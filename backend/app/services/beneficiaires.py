@@ -189,7 +189,7 @@ async def rechercher(
                 "nom": nom_utilisateur(utilisateur),
                 "detail": "Utilisateur de l'application",
                 "email": _texte(utilisateur.email),
-                "telephone": None,
+                "telephone": _texte(utilisateur.telephone),
             }
         )
 
@@ -357,7 +357,9 @@ async def identifier(
             nom=nom_utilisateur(utilisateur),
             utilisateur_id=utilisateur.id,
             email=email_saisi or _texte(utilisateur.email),
-            telephone=telephone_saisi,
+            # Le numéro du compte, comme l'e-mail : sans lui, le bénéficiaire
+            # recevait le message par e-mail et jamais par WhatsApp.
+            telephone=telephone_saisi or normalize_phone(utilisateur.telephone),
         )
 
     externe: BeneficiaireExterne | None = None
