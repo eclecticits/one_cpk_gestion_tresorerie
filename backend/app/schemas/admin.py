@@ -33,6 +33,8 @@ class UserUpdateRequest(BaseModel):
     role: str | None = None
     service_id: int | None = None
     service_ids: list[int] | None = None
+    # Absent : inchangé. Chaîne vide : on suit l'ordre de l'organisation.
+    module_accueil: str | None = None
 
 
 class ToggleStatusRequest(BaseModel):
@@ -66,6 +68,7 @@ class UserOut(BaseModel):
     role_id: int | None = None
     service_id: int | None = None
     service_ids: list[int] = []
+    module_accueil: str | None = None
     active: bool
     must_change_password: bool
     is_first_login: bool

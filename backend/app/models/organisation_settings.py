@@ -55,6 +55,9 @@ class OrganisationSettings(Base):
 
     # Configuration détaillée par module métier (JSONB)
     modules_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    #: Ordre dans lequel on essaie les modules à la connexion (clés de
+    #: `modules_config`). NULL : ordre par défaut (`services.modules_accueil`).
+    modules_priorite: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     # Configuration du circuit de validation des réquisitions / sorties de fonds
     # (JSONB). Null => circuit complet par défaut (voir app.services.workflow_config).

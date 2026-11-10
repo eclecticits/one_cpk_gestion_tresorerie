@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Suspense, useEffect } from 'react'
 import { lazyWithRetry } from './utils/lazyWithRetry'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -6,7 +6,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { OrganisationSettingsProvider, useOrganisationSettings } from './contexts/OrganisationSettingsContext'
 import { NotificationProvider, useNotification } from './contexts/NotificationContext'
 import { ConfirmProvider } from './contexts/ConfirmContext'
-import { AppProvider } from './contexts/AppContext'
+import { AppProvider, useApp } from './contexts/AppContext'
 import { PermissionsProvider } from './contexts/PermissionsContext'
 import { usePermissions } from './hooks/usePermissions'
 import { isAdminHost } from './utils/tenant'
@@ -82,13 +82,16 @@ function AdminBlocked() {
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
+  const location = useLocation()
 
   if (loading) {
     return <PageLoader label="Vérification de la session..." />
   }
 
   if (!user) {
-    return <Navigate to="/login" />
+    // Un lien précis (relance par e-mail, par exemple) est rouvert après la
+    // connexion, plutôt que la page d'accueil.
+    return <Navigate to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }} />
   }
 
   if (isAdminHost() && (user.role || '').toLowerCase() !== 'super_admin') {
@@ -188,20 +191,36 @@ function ModuleRoute({ children, permission, moduleKey }: { children: React.Reac
   return <>{children}</>
 }
 
-function ServiceAwareDashboard() {
-  const { user, loading } = useAuth()
-  const { hasPermission, loading: permissionsLoading } = usePermissions()
+const AUCUN_MODULE =
+  "Votre compte n'a encore accès à aucun module. Demandez à votre administrateur de vous attribuer un rôle."
 
-  if (loading || permissionsLoading) {
+/**
+ * Arrivée après la connexion : le module d'accueil de l'utilisateur, sinon le
+ * premier module de l'ordre de l'organisation qu'il peut ouvrir (voir
+ * AppContext). Jamais un refus tant qu'une page lui est ouverte.
+ */
+function Accueil() {
+  const { loading } = useAuth()
+  const { appsLoading, cheminAccueil } = useApp()
+
+  if (loading || appsLoading) {
+    return <PageLoader label="Préparation de votre espace..." />
+  }
+  if (cheminAccueil) {
+    return <Navigate to={cheminAccueil} replace />
+  }
+  return <AccessDeniedState message={AUCUN_MODULE} />
+}
+
+/** Le tableau de bord de la Trésorerie ; qui ne l'a pas entre par une autre page. */
+function ServiceAwareDashboard() {
+  const { loading } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
+  const { cheminEntree, appsLoading } = useApp()
+
+  if (loading || permissionsLoading || appsLoading) {
     return <PageLoader label="Préparation du tableau de bord..." />
   }
-
-  const serviceIds =
-    user?.service_ids && user.service_ids.length > 0
-      ? user.service_ids
-      : user?.service_id
-        ? [user.service_id]
-        : []
 
   if (hasPermission('dashboard')) {
     return (
@@ -211,16 +230,12 @@ function ServiceAwareDashboard() {
     )
   }
 
-  if (serviceIds.length === 1) {
-    return <Navigate to={`/services/mon-espace/${serviceIds[0]}`} replace />
+  const entree = cheminEntree('TREASURY')
+  if (entree && entree !== '/dashboard') {
+    return <Navigate to={entree} replace />
   }
-  if (serviceIds.length > 1) {
-    return <Navigate to="/services" replace />
-  }
-
-  return (
-    <AccessDeniedState message="Vous n'avez pas les permissions nécessaires pour accéder au tableau de bord." />
-  )
+  // Rien d'ouvert en Trésorerie : on le conduit à son module d'accueil.
+  return <Accueil />
 }
 
 function SessionExpiryHandler() {
@@ -292,7 +307,7 @@ function AppRoutes() {
       <Route path="/audit/sortie" element={<Suspense fallback={<LoadingFallback />}><AuditSortie /></Suspense>} />
       <Route path="/change-password" element={<PrivateRoute><Suspense fallback={<LoadingFallback />}><ChangePassword required={true} /></Suspense></PrivateRoute>} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
-        <Route index element={<ServiceAwareDashboard />} />
+        <Route index element={<Accueil />} />
         <Route path="dashboard" element={<ServiceAwareDashboard />} />
         <Route path="services/mon-espace" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense></ProtectedRoute>} />
         <Route path="services/mon-espace/:serviceId" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense></ProtectedRoute>} />

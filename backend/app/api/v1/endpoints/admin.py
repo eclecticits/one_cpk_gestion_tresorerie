@@ -41,6 +41,7 @@ from app.models.user_service import user_services
 from app.models.user_role import UserRole
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import _send_email_message, send_in_thread, send_security_code
+from app.services.modules_accueil import normaliser_module_accueil
 from app.services.notifications.phone import format_phone_display, normalize_phone
 from app.services.email_config import normalize_smtp_password, resolve_smtp_config
 from app.services.system_settings_service import consolidate_system_settings
@@ -105,6 +106,7 @@ def _user_out(u: User) -> UserOut:
         role_id=u.role_id,
         service_id=getattr(u, "service_id", None),
         service_ids=service_ids,
+        module_accueil=getattr(u, "module_accueil", None),
         active=u.active,
         must_change_password=u.must_change_password,
         is_first_login=u.is_first_login,
@@ -563,6 +565,7 @@ async def create_user(
         role_id=u.role_id,
         service_id=getattr(u, "service_id", None),
         service_ids=service_ids_out,
+        module_accueil=getattr(u, "module_accueil", None),
         active=u.active,
         must_change_password=u.must_change_password,
         is_first_login=u.is_first_login,
@@ -605,6 +608,7 @@ async def update_user(
             "role_id": u.role_id,
             "service_id": getattr(u, "service_id", None),
             "service_ids": [s.id for s in getattr(u, "services", [])],
+            "module_accueil": u.module_accueil,
         }
 
         if payload.email is not None:
@@ -617,6 +621,11 @@ async def update_user(
             u.telephone = _normalize_user_phone(payload.telephone)
         if payload.sexe is not None:
             u.sexe = payload.sexe
+        if "module_accueil" in payload.model_fields_set:
+            try:
+                u.module_accueil = normaliser_module_accueil(payload.module_accueil)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         if payload.role is not None:
             resolved_role = await _resolve_role(db, payload.role)
             u.role = resolved_role.code
@@ -655,6 +664,7 @@ async def update_user(
                 "role_id": u.role_id,
                 "service_id": u.service_id,
                 "service_ids": resolved_service_ids if resolved_service_ids is not None else old_values.get("service_ids", []),
+                "module_accueil": u.module_accueil,
             },
             ip_address=get_request_ip(request),
         )

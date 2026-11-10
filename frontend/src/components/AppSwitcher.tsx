@@ -32,7 +32,7 @@ function AppTile({ app, isActive, onSelect }: { app: AppDefinition; isActive: bo
 }
 
 export default function AppSwitcher() {
-  const { activeApp, setActiveApp, availableApps, activeAppDef } = useApp()
+  const { activeApp, setActiveApp, availableApps, activeAppDef, cheminEntree } = useApp()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -71,7 +71,7 @@ export default function AppSwitcher() {
   const handleSelect = (app: AppDefinition) => {
     setActiveApp(app.id)
     setOpen(false)
-    navigate(app.entryPath)
+    navigate(cheminEntree(app.id) ?? app.entryPath)
   }
 
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {

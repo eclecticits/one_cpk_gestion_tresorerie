@@ -808,6 +808,7 @@ async def me(
         role=user.role,
         service_id=getattr(user, "service_id", None),
         service_ids=service_ids,
+        module_accueil=getattr(user, "module_accueil", None),
         active=user.active,
         must_change_password=user.must_change_password,
         is_email_verified=user.is_email_verified,

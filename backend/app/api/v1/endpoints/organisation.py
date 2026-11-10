@@ -19,6 +19,7 @@ from app.schemas.organisation_settings import (
 from app.modules.comptabilite.services.integration_mode import normalize_accounting_integration_mode
 from app.services import workflow_config as wf
 from app.services.audit_service import log_action
+from app.services.modules_accueil import normaliser_priorite
 from app.schemas.organisation import OrganisationOptionOut, OrganisationOut, OrganisationPublicOut, OrganisationUpdate
 
 router = APIRouter()
@@ -289,6 +290,20 @@ async def update_organisation_settings(
         settings.collation_plafond_total_usd = data["collation_plafond_total_usd"]
     if "collation_plafond_24h_usd" in data and data["collation_plafond_24h_usd"] is not None:
         settings.collation_plafond_24h_usd = data["collation_plafond_24h_usd"]
+    if "modules_priorite" in data and data["modules_priorite"] is not None:
+        ancien = normaliser_priorite(settings.modules_priorite)
+        nouveau = normaliser_priorite(data["modules_priorite"])
+        if ancien != nouveau:
+            settings.modules_priorite = nouveau
+            await log_action(
+                db,
+                user_id=user.id if user else None,
+                action="update_modules_priorite",
+                target_table="organisation_settings",
+                target_id=str(settings.organisation_id),
+                old_value={"modules_priorite": ancien},
+                new_value={"modules_priorite": nouveau},
+            )
     if settings.collation_plafond_par_personne_usd > settings.collation_plafond_total_usd:
         raise HTTPException(
             status_code=400,
@@ -359,5 +374,6 @@ def _settings_out(settings: OrganisationSettings) -> OrganisationSettingsPublicO
         collation_plafond_total_usd=settings.collation_plafond_total_usd,
         collation_plafond_24h_usd=settings.collation_plafond_24h_usd,
         modules_config=settings.modules_config,
+        modules_priorite=normaliser_priorite(settings.modules_priorite),
         workflow_config=wf.normalize_config(settings.workflow_config),
     )

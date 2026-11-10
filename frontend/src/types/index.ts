@@ -17,6 +17,8 @@ export interface User {
   role_id?: number | null
   service_id?: number | null
   service_ids?: number[]
+  /** Module où arriver à la connexion (clé de module) ; null : ordre de l'organisation. */
+  module_accueil?: string | null
   active: boolean
   must_change_password: boolean
   is_email_verified: boolean

@@ -23,7 +23,7 @@ export default function ForgotPassword() {
 
   useEffect(() => {
     if (user && !success) {
-      navigate('/dashboard', { replace: true })
+      navigate('/', { replace: true })
     }
   }, [user, success, navigate])
 
@@ -82,7 +82,7 @@ export default function ForgotPassword() {
       await confirmPasswordChange({ email, new_password: newPassword, otp_code: otpCode.trim() })
       setSuccess(true)
       await reloadProfile()
-      window.setTimeout(() => navigate('/dashboard', { replace: true }), 650)
+      window.setTimeout(() => navigate('/', { replace: true }), 650)
     } catch (err: any) {
       setError(err?.message || 'Code invalide.')
     } finally {

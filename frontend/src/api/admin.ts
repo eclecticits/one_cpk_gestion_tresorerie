@@ -31,7 +31,7 @@ export async function adminCreateUser(input: { email: string; nom: string; preno
   return apiRequest('POST', '/admin/users', input)
 }
 
-export async function adminUpdateUser(userId: string, input: { email?: string; nom?: string; prenom?: string; telephone?: string | null; sexe?: 'M' | 'F' | null; role?: string; service_id?: number | null; service_ids?: number[] | null }): Promise<User> {
+export async function adminUpdateUser(userId: string, input: { email?: string; nom?: string; prenom?: string; telephone?: string | null; sexe?: 'M' | 'F' | null; role?: string; service_id?: number | null; service_ids?: number[] | null; module_accueil?: string | null }): Promise<User> {
   return apiRequest('PATCH', `/admin/users/${userId}`, input)
 }
 

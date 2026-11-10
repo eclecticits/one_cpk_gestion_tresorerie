@@ -22,7 +22,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     id: 'TREASURY',
     label: 'Trésorerie',
     subtitle: 'Module financier',
-    entryPath: '/',
+    entryPath: '/dashboard',
     accessPermissions: ['dashboard', 'encaissements', 'requisitions', 'validation', 'sorties_fonds', 'budget', 'rapports'],
     color: '#1f4d45',
     bgColor: 'rgba(31, 77, 69, 0.12)',
@@ -77,6 +77,37 @@ export const APP_DEFINITIONS: AppDefinition[] = [
   },
 ]
 
+/** Clés de module, dans l'ordre par défaut (repris de `services.modules_accueil`). */
+export const MODULES_ORDRE_DEFAUT = ['tresorerie', 'tableau', 'comptabilite', 'rh', 'secretariat']
+
+const COMPTA_PERMISSIONS = ['compta.lecture', 'compta.saisie', 'compta.validation', 'compta.cloture', 'compta.parametrage', 'compta.export']
+
+/**
+ * Les pages par lesquelles on peut entrer dans un module, avec la permission
+ * que leur route exige. La première est le tableau de bord du module ; les
+ * suivantes servent à qui n'a pas ce tableau de bord, plutôt qu'un refus.
+ */
+const PAGES_ENTREE: Record<AppId, { path: string; permissions: string[] }[]> = {
+  TREASURY: [
+    { path: '/dashboard', permissions: ['dashboard'] },
+    { path: '/encaissements', permissions: ['encaissements'] },
+    { path: '/requisitions', permissions: ['requisitions'] },
+    { path: '/validation', permissions: ['validation'] },
+    { path: '/sorties-fonds', permissions: ['sorties_fonds'] },
+    { path: '/budget', permissions: ['budget'] },
+    { path: '/rapports/synthese', permissions: ['rapports'] },
+  ],
+  HR: [
+    { path: '/rh/vue-ensemble', permissions: ['rh.dashboard.view'] },
+    { path: '/rh/employes', permissions: ['rh.employees.view'] },
+    { path: '/rh/contrats', permissions: ['rh.contracts.view'] },
+    { path: '/rh/presences', permissions: ['rh.attendance.view'] },
+  ],
+  SECRETARIAT: [{ path: '/secretariat', permissions: ['secretariat.view'] }],
+  TABLEAU: [{ path: '/tableau', permissions: ['tableau.view'] }],
+  COMPTABILITE: [{ path: '/comptabilite', permissions: COMPTA_PERMISSIONS }],
+}
+
 const ROUTE_TO_APP: { prefix: string; app: AppId }[] = [
   { prefix: '/rh', app: 'HR' },
   { prefix: '/secretariat', app: 'SECRETARIAT' },
@@ -101,6 +132,10 @@ interface AppContextValue {
   availableApps: AppDefinition[]
   activeAppDef: AppDefinition
   appsLoading: boolean
+  /** Première page du module que l'utilisateur peut ouvrir, ou null. */
+  cheminEntree: (app: AppId) => string | null
+  /** Où arriver après la connexion ; null : aucun module accessible. */
+  cheminAccueil: string | null
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -158,9 +193,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const activeAppDef =
     APP_DEFINITIONS.find(a => a.id === activeApp) || APP_DEFINITIONS[0]
 
+  const serviceIds = useMemo(
+    () => (user?.service_ids?.length ? user.service_ids : user?.service_id ? [user.service_id] : []),
+    [user?.service_ids, user?.service_id],
+  )
+
+  const cheminEntree = useCallback(
+    (app: AppId): string | null => {
+      const pages = PAGES_ENTREE[app] ?? []
+      const [tableauDeBord, ...autres] = pages
+      if (tableauDeBord && tableauDeBord.permissions.some(p => hasPermission(p))) return tableauDeBord.path
+      // Sans le tableau de bord de la Trésorerie, l'agent d'un service arrive
+      // dans l'espace de son service, comme avant.
+      if (app === 'TREASURY' && serviceIds.length > 0) {
+        return serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
+      }
+      return autres.find(page => page.permissions.some(p => hasPermission(p)))?.path ?? null
+    },
+    [hasPermission, serviceIds],
+  )
+
+  // Le module d'accueil choisi pour l'utilisateur d'abord, puis l'ordre de
+  // l'organisation ; un module qu'il ne peut pas ouvrir est simplement passé.
+  const cheminAccueil = useMemo(() => {
+    if (loading) return null
+    const choisi = availableApps.find(app => app.moduleKey && app.moduleKey === user?.module_accueil)
+    const cheminChoisi = choisi ? cheminEntree(choisi.id) : null
+    if (cheminChoisi) return cheminChoisi
+    const ordre = [...(orgSettings?.modules_priorite ?? []), ...MODULES_ORDRE_DEFAUT]
+    const rang = (app: AppDefinition) => {
+      const index = app.moduleKey ? ordre.indexOf(app.moduleKey) : -1
+      return index === -1 ? ordre.length : index
+    }
+    const parPriorite = [...availableApps].sort((a, b) => rang(a) - rang(b))
+    // Un module dont on a le tableau de bord passe avant un module où l'on
+    // n'ouvre qu'une page intérieure.
+    const avecTableauDeBord = parPriorite.find(app => {
+      const tableauDeBord = PAGES_ENTREE[app.id]?.[0]
+      return tableauDeBord?.permissions.some(p => hasPermission(p))
+    })
+    if (avecTableauDeBord) return PAGES_ENTREE[avecTableauDeBord.id][0].path
+    for (const app of parPriorite) {
+      const chemin = cheminEntree(app.id)
+      if (chemin) return chemin
+    }
+    if (serviceIds.length > 0) {
+      return serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
+    }
+    return null
+  }, [loading, user?.module_accueil, orgSettings?.modules_priorite, availableApps, hasPermission, cheminEntree, serviceIds])
+
   const value = useMemo(
-    () => ({ activeApp, setActiveApp, availableApps, activeAppDef, appsLoading: loading }),
-    [activeApp, setActiveApp, availableApps, activeAppDef, loading],
+    () => ({ activeApp, setActiveApp, availableApps, activeAppDef, appsLoading: loading, cheminEntree, cheminAccueil }),
+    [activeApp, setActiveApp, availableApps, activeAppDef, loading, cheminEntree, cheminAccueil],
   )
 
   return (

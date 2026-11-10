@@ -40,6 +40,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="reception")
     role_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("roles.id"), nullable=True, index=True)
     service_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("services.id"), nullable=True, index=True)
+    #: Module où l'utilisateur arrive à la connexion, s'il y a accès. Passe
+    #: avant l'ordre de l'organisation ; NULL : on suit cet ordre.
+    module_accueil: Mapped[str | None] = mapped_column(String(20), nullable=True)
     organisation_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("organisations.id", ondelete="RESTRICT"),

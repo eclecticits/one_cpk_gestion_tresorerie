@@ -65,6 +65,8 @@ import type { RequisitionApprover } from '../api/admin'
 import BankSettings from '../components/settings/BankSettings'
 import ProjectActivitySettings from '../components/settings/ProjectActivitySettings'
 import { useAuth } from '../contexts/AuthContext'
+import { APP_DEFINITIONS } from '../contexts/AppContext'
+import ModulesPrioriteSettings from '../components/settings/ModulesPrioriteSettings'
 import { useNotification } from '../contexts/NotificationContext'
 import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 import { apiRequest } from '../lib/apiClient'
@@ -245,6 +247,7 @@ export default function Settings() {
     sexe: '' as '' | 'M' | 'F',
     role: 'reception',
     service_ids: [] as number[],
+    module_accueil: '',
   })
 
   const [roles, setRoles] = useState<RoleInfo[]>([])
@@ -899,6 +902,7 @@ export default function Settings() {
         : userToEdit.service_id
           ? [userToEdit.service_id]
           : [],
+      module_accueil: userToEdit.module_accueil || '',
     })
     setEditPasswordTouched(false)
 
@@ -978,6 +982,8 @@ export default function Settings() {
         ...(editUserForm.sexe ? { sexe: editUserForm.sexe } : {}),
         role: normalizedEditedRole,
         service_ids: editUserForm.service_ids,
+        // Chaîne vide : on suit l'ordre de l'organisation.
+        module_accueil: editUserForm.module_accueil,
       })
 
       if (passwordToSubmit) {
@@ -999,6 +1005,7 @@ export default function Settings() {
         sexe: '',
         role: 'reception',
         service_ids: [],
+        module_accueil: '',
       })
       setEditPasswordTouched(false)
       loadData()
@@ -1754,6 +1761,22 @@ export default function Settings() {
               </div>
 
               <div className={styles.field}>
+                <label>Module d'accueil</label>
+                <select
+                  value={editUserForm.module_accueil}
+                  onChange={(e) => setEditUserForm({ ...editUserForm, module_accueil: e.target.value })}
+                >
+                  <option value="">Selon l'ordre de l'organisation</option>
+                  {APP_DEFINITIONS.filter((app) => app.moduleKey).map((app) => (
+                    <option key={app.id} value={app.moduleKey}>{app.label}</option>
+                  ))}
+                </select>
+                <small style={{color: '#6b7280', fontSize: '12px'}}>
+                  Le module où il arrive à la connexion. S'il n'y a pas accès, on suit l'ordre de l'organisation.
+                </small>
+              </div>
+
+              <div className={styles.field}>
                 <label>Services (optionnel)</label>
                 <div className={styles.serviceActions}>
                   <button
@@ -2228,6 +2251,9 @@ export default function Settings() {
                   )}
                   {permissionsSubTab === 'permissions' && (
                     <div className={styles.section} style={{ marginTop: '24px' }}>
+                      <div style={{ marginBottom: '24px' }}>
+                        <ModulesPrioriteSettings />
+                      </div>
                       <RolePermissionsEditor
                         roles={roles}
                         permissions={permissions}

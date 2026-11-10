@@ -71,6 +71,8 @@ export type OrganisationSettings = {
    *  petites salles successives, chacune dans les clous. */
   collation_plafond_24h_usd: number | string
   modules_config: Record<string, { enabled?: boolean }> | null
+  /** Ordre dans lequel on essaie les modules à la connexion ; toujours complet. */
+  modules_priorite?: string[]
   workflow_config: WorkflowConfig | null
 }
 
@@ -137,6 +139,7 @@ export async function updateOrganisationSettings(
       | 'collation_plafond_par_personne_usd'
       | 'collation_plafond_total_usd'
       | 'collation_plafond_24h_usd'
+      | 'modules_priorite'
     >
   > & { accounting_integration_change_motif?: string | null }
 ): Promise<OrganisationSettings> {

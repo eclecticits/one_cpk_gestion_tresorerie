@@ -32,6 +32,8 @@ class OrganisationSettingsPublicOut(BaseModel):
     collation_plafond_total_usd: Decimal = Decimal("100")
     collation_plafond_24h_usd: Decimal = Decimal("400")
     modules_config: dict[str, Any] | None = None
+    #: Toujours complet : un module absent de l'ordre enregistré est ajouté à la fin.
+    modules_priorite: list[str] = []
     workflow_config: dict[str, Any] | None = None
 
 
@@ -55,3 +57,4 @@ class OrganisationSettingsUpdate(BaseModel):
     collation_plafond_par_personne_usd: Decimal | None = Field(default=None, gt=0)
     collation_plafond_total_usd: Decimal | None = Field(default=None, gt=0)
     collation_plafond_24h_usd: Decimal | None = Field(default=None, gt=0)
+    modules_priorite: list[str] | None = None

@@ -38,6 +38,10 @@ export default function Login() {
   const location = useLocation()
   
   const adminBlocked = Boolean((location.state as any)?.adminBlocked) || isAdminHost()
+  // La page demandée avant la connexion, sinon l'accueil (le module calculé
+  // selon l'ordre de priorité, voir AppContext).
+  const demandee = (location.state as { from?: unknown } | null)?.from
+  const destination = typeof demandee === 'string' && demandee.startsWith('/') && !demandee.startsWith('/login') ? demandee : '/'
   const loginLockStorageKey = `onec-login-lock:${tenantSlug || 'portal'}:${email.trim().toLowerCase() || 'anonymous'}`
 
   const formatLoginLockTime = (seconds: number) => {
@@ -129,7 +133,7 @@ export default function Login() {
     try {
       await confirmPasswordChange({ email, new_password: newPassword, otp_code: otpCode.trim() })
       await reloadProfile()
-      navigate('/dashboard', { replace: true })
+      navigate(destination, { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Code invalide.')
     } finally { setVerifyingOtp(false) }
@@ -145,9 +149,9 @@ export default function Login() {
 
   useEffect(() => {
     if (user && !deferUserRedirect) {
-      navigate('/dashboard', { replace: true })
+      navigate(destination, { replace: true })
     }
-  }, [user, deferUserRedirect, navigate])
+  }, [user, deferUserRedirect, navigate, destination])
 
   useEffect(() => {
     const slug = getTenantSlug()
@@ -230,7 +234,7 @@ export default function Login() {
       } else {
         setLoginSuccess(true)
         window.setTimeout(() => {
-          navigate('/dashboard', { replace: true })
+          navigate(destination, { replace: true })
         }, 650)
       }
     } catch (err) {
