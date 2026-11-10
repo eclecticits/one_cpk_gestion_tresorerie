@@ -103,6 +103,7 @@ from app.services.notifications import (
     notify_whatsapp,
 )
 from app.services.notifications import templates as wa_templates
+from app.services.notifications.providers.base import defaut_cle_api
 from app.services.system_settings_service import consolidate_system_settings, get_system_settings
 from app.utils.hierarchie_fonctions import rang_fonction
 
@@ -564,6 +565,15 @@ async def update_whatsapp_settings(
         _assign(row, "whatsapp_api_key", "")
         touched.append("api_key:cleared")
     elif (payload.api_key or "").strip():
+        if defaut := defaut_cle_api(payload.api_key.strip()):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Clé refusée : elle contient un accent ou une espace, ce que n'a aucune clé de "
+                    "fournisseur. Si le navigateur a rempli le champ avec un mot de passe, "
+                    "effacez-le et collez la clé fournie par le fournisseur."
+                ),
+            )
         _assign(row, "whatsapp_api_key_encrypted", encrypt_secret(payload.api_key.strip()))
         # Reprise annoncée par `settings_loader` : après une sauvegarde, la clé
         # ne vit plus qu'en chiffré.

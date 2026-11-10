@@ -22,7 +22,7 @@ import logging
 import httpx
 
 from ..templates import AUTOMATIC_MESSAGE_NOTICE
-from .base import ProviderConfig, ProviderResult, WhatsAppProvider
+from .base import ProviderConfig, ProviderResult, WhatsAppProvider, defaut_cle_api
 
 logger = logging.getLogger("onec_cpk_api.notifications.meta")
 
@@ -64,6 +64,8 @@ class MetaWhatsAppProvider(WhatsAppProvider):
     def is_configured(self) -> tuple[bool, str]:
         if not self.config.api_key:
             return False, "Jeton d'accès Meta non renseigné."
+        if defaut := defaut_cle_api(self.config.api_key):
+            return False, defaut
         if not self.config.phone_number_id:
             return False, "Identifiant du numéro émetteur (phone_number_id) non renseigné."
         return True, ""

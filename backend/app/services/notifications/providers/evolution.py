@@ -12,7 +12,7 @@ import logging
 
 import httpx
 
-from .base import ProviderResult, WhatsAppProvider
+from .base import ProviderResult, WhatsAppProvider, defaut_cle_api
 
 logger = logging.getLogger("onec_cpk_api.notifications.evolution")
 
@@ -28,6 +28,8 @@ class EvolutionWhatsAppProvider(WhatsAppProvider):
             return False, "URL Evolution non renseignée."
         if not self.config.api_key:
             return False, "Clé API Evolution non renseignée."
+        if defaut := defaut_cle_api(self.config.api_key):
+            return False, defaut
         return True, ""
 
     async def send_message(self, *, to: str, text: str) -> ProviderResult:

@@ -107,6 +107,22 @@ async def test_evolution_sans_cle_ne_tente_aucun_appel(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cle", ["Ma clé secrète", "EAAG abc"])
+async def test_meta_cle_avec_accent_ou_espace_echoue_proprement(monkeypatch, cle):
+    """Un accent dans la clé faisait planter httpx (en-tête ASCII) : l'envoi
+    doit échouer avec une raison lisible, sans tenter d'appel."""
+    capture = _Capture().install(monkeypatch)
+    provider = MetaWhatsAppProvider(ProviderConfig(api_key=cle, phone_number_id="123456"))
+
+    result = await provider.send_message(to="243810123456", text="Bonjour")
+
+    assert not result.ok
+    assert "accent ou une espace" in (result.error or "")
+    assert capture.request is None
+
+
+
+@pytest.mark.asyncio
 async def test_meta_envoie_un_texte_libre_sans_gabarit(monkeypatch):
     capture = _Capture(payload={"messages": [{"id": "wamid.XX"}]}).install(monkeypatch)
     provider = MetaWhatsAppProvider(

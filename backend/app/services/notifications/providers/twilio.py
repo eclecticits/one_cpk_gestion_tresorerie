@@ -17,7 +17,7 @@ import logging
 
 import httpx
 
-from .base import ProviderConfig, ProviderResult, WhatsAppProvider
+from .base import ProviderConfig, ProviderResult, WhatsAppProvider, defaut_cle_api
 
 logger = logging.getLogger("onec_cpk_api.notifications.twilio")
 
@@ -37,6 +37,8 @@ class TwilioWhatsAppProvider(WhatsAppProvider):
             return False, "Account SID Twilio non renseigné."
         if not self.config.api_key:
             return False, "Auth Token Twilio non renseigné."
+        if defaut := defaut_cle_api(self.config.api_key):
+            return False, defaut
         if not self.config.sender:
             return False, "Numéro émetteur Twilio non renseigné."
         return True, ""

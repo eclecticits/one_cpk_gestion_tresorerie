@@ -85,3 +85,22 @@ class WhatsAppProvider(abc.ABC):
             "sender": self.config.sender or self.config.phone_number_id,
             "has_key": "oui" if self.config.api_key else "non",
         }
+
+
+def defaut_cle_api(cle: str | None) -> str | None:
+    """Pourquoi une clé enregistrée ne peut pas être une clé de fournisseur, ou None.
+
+    Une clé part dans un en-tête HTTP, qui n'admet que de l'ASCII : un accent y
+    fait planter l'envoi avant même qu'il parte. Les clés Meta, Evolution et
+    Twilio n'ont ni accent ni espace ; un texte qui en a est presque toujours
+    autre chose — un mot de passe proposé par le navigateur dans le champ, par
+    exemple.
+    """
+    if not cle:
+        return None
+    if not cle.isascii() or any(c.isspace() for c in cle):
+        return (
+            "La clé API enregistrée contient un accent ou une espace : ce n'est pas une clé de "
+            "fournisseur. Collez la clé fournie par le fournisseur dans Paramètres > WhatsApp."
+        )
+    return None
