@@ -334,18 +334,19 @@ export function construireRapportProjet(
     autoTable(doc, {
       ...styleTableau(VERT),
       startY: y,
-      head: [['N°', 'Date', 'Reçu', 'Payeur', 'Canal', 'Montant perçu', 'Équivalent USD']],
+      head: [['N°', 'Date', 'Reçu', 'Payeur', 'Libellé', 'Canal', 'Montant perçu', 'Équivalent USD']],
       body: m.entrees.map((e, index) => [
         index + 1,
         dateCourte(e.date),
         e.numero || '—',
         e.tiers || '—',
+        e.libelle || '—',
         MODES[e.canal] || e.canal,
         `${formatAmount(e.montant_percu)} ${e.devise_perception}`,
         `${formatAmount(e.montant_usd)} USD`,
       ]),
       foot: [[
-        { content: 'TOTAL DES ENTRÉES', colSpan: 6, styles: { halign: 'right' } },
+        { content: 'TOTAL DES ENTRÉES', colSpan: 7, styles: { halign: 'right' } },
         {
           content: `${formatAmount(m.totaux.entrees_usd)} USD`,
           styles: { halign: 'right', textColor: VERT },
@@ -354,13 +355,14 @@ export function construireRapportProjet(
       columnStyles: {
         0: { cellWidth: 9, halign: 'center', textColor: GRIS },
         1: { cellWidth: 20 },
-        2: { cellWidth: 30 },
-        4: { cellWidth: 22 },
-        5: { cellWidth: 38, halign: 'right' },
-        6: { cellWidth: 36, halign: 'right', fontStyle: 'bold', textColor: VERT },
+        2: { cellWidth: 29 },
+        3: { cellWidth: 42 },
+        5: { cellWidth: 22 },
+        6: { cellWidth: 35, halign: 'right' },
+        7: { cellWidth: 36, halign: 'right', fontStyle: 'bold', textColor: VERT },
       },
       didParseCell: (data) => {
-        if (data.section === 'head' && [5, 6].includes(data.column.index)) data.cell.styles.halign = 'right'
+        if (data.section === 'head' && [6, 7].includes(data.column.index)) data.cell.styles.halign = 'right'
         if (data.section === 'head' && data.column.index === 0) data.cell.styles.halign = 'center'
       },
     })
@@ -481,21 +483,23 @@ export async function exporterProjetExcel(m: MouvementsProjet, periode: PeriodeP
       title: 'ENTRÉES',
       organisation,
       subtitle: `${titre} · ${libellePeriode(periode)}`,
-      headers: ['Date', 'Reçu', 'Payeur', 'Canal', 'Montant perçu', 'Devise perçue', 'Montant (USD)'],
+      headers: ['Date', 'Reçu', 'Payeur', 'Libellé', 'Canal', 'Montant perçu', 'Devise perçue', 'Montant (USD)'],
       rows: m.entrees.map((e) => [
         jourExcel(e.date),
         e.numero || '',
         e.tiers || '',
+        e.libelle || '',
         MODES[e.canal] || e.canal,
         toNumber(e.montant_percu),
         e.devise_perception,
         toNumber(e.montant_usd),
       ]),
-      widths: [12, 18, 36, 10, 16, 10, 16],
-      moneyColumns: [4, 6],
+      widths: [12, 18, 28, 40, 10, 16, 10, 16],
+      moneyColumns: [5, 7],
       dateColumns: [0],
-      centerColumns: [3, 5],
-      footerRow: ['TOTAL', '', '', '', '', '', toNumber(m.totaux.entrees_usd)],
+      centerColumns: [4, 6],
+      wrapColumns: [3],
+      footerRow: ['TOTAL', '', '', '', '', '', '', toNumber(m.totaux.entrees_usd)],
     }),
     'Entrées',
   )

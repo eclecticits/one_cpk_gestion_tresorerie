@@ -231,6 +231,7 @@ async def mouvements_projet_activite(
             "date": enc.date_paiement or enc.date_encaissement,
             "numero": enc.numero_recu,
             "tiers": nom_expert or enc.client_nom or enc.type_client,
+            "libelle": enc.libelle,
             "montant_usd": enc.montant_paye,
             "montant_percu": enc.montant_percu,
             "devise_perception": enc.devise_perception,

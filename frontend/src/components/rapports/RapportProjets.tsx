@@ -43,7 +43,7 @@ const normaliser = (texte: string) => texte.normalize('NFD').replace(/[\u0300-\u
 
 /**
  * Le rapport réduit aux mouvements dont un libellé contient `filtre` : reçu,
- * payeur, canal pour les entrées ; bon, bénéficiaire, motif, réquisition pour
+ * payeur, libellé, canal pour les entrées ; bon, bénéficiaire, motif, réquisition pour
  * les sorties. Les totaux sont recalculés sur ce qui reste — c'est ce rapport-là
  * qui s'affiche, s'exporte et part au Bureau.
  */
@@ -51,7 +51,7 @@ function filtrerRapport(m: MouvementsProjet | null, filtre: string): MouvementsP
   const aiguille = normaliser(filtre.trim())
   if (!m || !aiguille) return m
   const garde = (...champs: (string | null | undefined)[]) => normaliser(champs.filter(Boolean).join(' ')).includes(aiguille)
-  const entrees = m.entrees.filter((e) => garde(e.numero, e.tiers, e.canal === 'BANQUE' ? 'Banque' : 'Caisse'))
+  const entrees = m.entrees.filter((e) => garde(e.numero, e.tiers, e.libelle, e.canal === 'BANQUE' ? 'Banque' : 'Caisse'))
   const sorties = m.sorties.filter((s) => garde(s.numero, s.beneficiaire, s.motif, s.requisition || 'Sortie directe'))
   const totalEntrees = entrees.reduce((t, e) => t + toNumber(e.montant_usd), 0)
   const parDevise: Record<string, number> = {}
@@ -478,12 +478,13 @@ export default function RapportProjets() {
                   {ongletRapport === 'entrees' ? (
                     rapport.entrees.length === 0 ? <div className={styles.empty}>{filtreActif ? 'Aucune entrée ne correspond au filtre.' : 'Aucune entrée sur la période.'}</div> : (
                       <table className={styles.table}>
-                        <thead><tr><th>Date</th><th>Reçu</th><th>Payeur</th><th>Canal</th><th className={styles.num}>Perçu</th><th className={styles.num}>Montant (USD)</th></tr></thead>
+                        <thead><tr><th>Date</th><th>Reçu</th><th>Payeur</th><th>Libellé</th><th>Canal</th><th className={styles.num}>Perçu</th><th className={styles.num}>Montant (USD)</th></tr></thead>
                         <tbody>{rapport.entrees.map((e) => (
                           <tr key={e.id}>
                             <td data-label="Date">{dateCourte(e.date)}</td>
                             <td data-label="Reçu">{e.numero || '—'}</td>
                             <td data-label="Payeur">{e.tiers || '—'}</td>
+                            <td data-label="Libellé">{e.libelle || '—'}</td>
                             <td data-label="Canal">{e.canal === 'BANQUE' ? 'Banque' : 'Caisse'}</td>
                             <td data-label="Perçu" className={styles.num}>{formatAmount(e.montant_percu)} {e.devise_perception}</td>
                             <td data-label="Montant (USD)" className={`${styles.num} ${styles.entree}`}>{formatAmount(e.montant_usd)}</td>

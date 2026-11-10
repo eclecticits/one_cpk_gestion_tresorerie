@@ -75,6 +75,8 @@ async def test_mouvements_projet_entrees_sorties_et_exclusions(db_session):
 
     m = await mouvements_projet_activite(item_id=a.id, date_debut=None, date_fin=None, user=user, tenant_id=org.id, db=db)
     assert m["totaux"]["entrees_usd"] == Decimal("500")
+    # Le libellé de l'encaissement identifie la ligne, comme le motif d'une sortie.
+    assert [e["libelle"] for e in m["entrees"]] == ["Cotisation"]
     assert m["totaux"]["sorties"] == {"USD": Decimal("120"), "CDF": Decimal("50000")}
     # Le solde ne retire que les sorties en USD : on n'additionne pas deux devises.
     assert m["totaux"]["solde_usd"] == Decimal("380")

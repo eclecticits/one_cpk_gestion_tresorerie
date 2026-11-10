@@ -52,6 +52,7 @@ export interface EntreeProjet {
   date: string | null
   numero: string | null
   tiers: string | null
+  libelle: string | null
   montant_usd: string
   montant_percu: string
   devise_perception: string
