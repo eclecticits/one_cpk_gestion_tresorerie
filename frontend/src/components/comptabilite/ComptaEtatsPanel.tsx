@@ -433,7 +433,12 @@ export default function ComptaEtatsPanel({ comptes, journaux, exercices, canVali
                       <td>{m.date_ecriture}</td>
                       <td className={styles.mono}>{m.numero || '(brouillon)'}</td>
                       <td className={styles.mono}>{m.journal_code}</td>
-                      <td>{m.libelle}</td>
+                      <td>
+                        {m.libelle}
+                        {m.lettrage && (
+                          <span className={styles.mono} title="Ligne lettrée"> · {m.lettrage}</span>
+                        )}
+                      </td>
                       <td className={styles.right}>{formatMontant(m.debit)}</td>
                       <td className={styles.right}>{formatMontant(m.credit)}</td>
                       <td className={styles.right}>{formatMontant(m.solde_cumule)}</td>

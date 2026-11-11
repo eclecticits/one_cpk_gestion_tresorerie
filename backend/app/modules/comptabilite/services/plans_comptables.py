@@ -252,6 +252,8 @@ async def seeder_referentiel(
             sens_normal=item.sens_normal,
             is_collectif=item.is_collectif,
             is_auxiliaire=item.is_auxiliaire,
+            # Les comptes de tiers (classe 4) se lettrent ; les autres non.
+            lettrable=item.numero.startswith("4"),
         )
         db.add(compte)
         comptes_par_numero[item.numero] = compte

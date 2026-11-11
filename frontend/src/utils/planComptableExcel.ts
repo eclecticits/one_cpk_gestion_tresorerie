@@ -9,7 +9,7 @@ import type { ComptaCompte, ComptaLignePlanInput, ComptaLignePlanResult } from '
  * la simulation affichée soit exactement ce que l'import fera.
  */
 
-export type ChampPlan = 'numero' | 'libelle' | 'nature' | 'sens' | 'parent' | 'collectif' | 'auxiliaire' | 'actif'
+export type ChampPlan = 'numero' | 'libelle' | 'nature' | 'sens' | 'parent' | 'collectif' | 'auxiliaire' | 'actif' | 'lettrable'
 
 export const CHAMPS_PLAN: { champ: ChampPlan; entete: string; obligatoire: boolean }[] = [
   { champ: 'numero', entete: 'Numéro', obligatoire: true },
@@ -20,6 +20,7 @@ export const CHAMPS_PLAN: { champ: ChampPlan; entete: string; obligatoire: boole
   { champ: 'collectif', entete: 'Collectif', obligatoire: false },
   { champ: 'auxiliaire', entete: 'Auxiliaire', obligatoire: false },
   { champ: 'actif', entete: 'Actif', obligatoire: false },
+  { champ: 'lettrable', entete: 'Lettrable', obligatoire: false },
 ]
 
 // Intitulés rencontrés dans les exports des logiciels comptables courants.
@@ -57,6 +58,8 @@ const ALIAS: Record<string, ChampPlan> = {
   collectif: 'collectif',
   auxiliaire: 'auxiliaire',
   actif: 'actif',
+  lettrable: 'lettrable',
+  lettrage: 'lettrable',
 }
 
 const normaliser = (raw: unknown): string =>
@@ -146,7 +149,7 @@ export function lireFeuille(nom: string, worksheet: XLSX.WorkSheet): FeuillePlan
       return
     }
     const ligne: ComptaLignePlanInput = { ligne: debut + offset + 1, numero, libelle }
-    for (const champ of ['nature', 'sens', 'parent', 'collectif', 'auxiliaire', 'actif'] as const) {
+    for (const champ of ['nature', 'sens', 'parent', 'collectif', 'auxiliaire', 'actif', 'lettrable'] as const) {
       const valeur = lire(champ)
       if (valeur) ligne[champ] = valeur
     }
@@ -172,7 +175,7 @@ const STYLE_ENTETE = {
   alignment: { vertical: 'center' },
 }
 
-const LARGEURS = [14, 48, 13, 10, 15, 11, 11, 9]
+const LARGEURS = [14, 48, 13, 10, 15, 11, 11, 9, 11]
 
 const NATURE_LIBELLE: Record<string, string> = {
   ACTIF: 'Actif',
@@ -216,6 +219,7 @@ const AIDE = [
   ['Collectif', 'Non', 'Oui / Non', 'Non pour un nouveau compte ; inchangé sinon.'],
   ['Auxiliaire', 'Non', 'Oui / Non', 'Non pour un nouveau compte ; inchangé sinon.'],
   ['Actif', 'Non', 'Oui / Non', 'Oui pour un nouveau compte ; inchangé sinon.'],
+  ['Lettrable', 'Non', 'Oui / Non', 'Oui pour un nouveau compte de tiers (classe 4), Non pour les autres ; inchangé sinon.'],
   [],
   ['Règles', '', '', ''],
   ['Aucun compte n’est supprimé : un compte absent du fichier reste dans le plan.', '', '', ''],
@@ -238,9 +242,9 @@ const ENTETES = CHAMPS_PLAN.map(c => c.entete)
 
 export function telechargerModelePlan() {
   const exemples: (string | number)[][] = [
-    ['6011', 'Achats de marchandises — fournisseurs locaux', 'Charge', 'Débit', '601', 'Non', 'Non', 'Oui'],
-    ['605100', 'Fournitures de bureau', '', '', '', '', '', ''],
-    ['4011', 'Fournisseurs locaux', 'Passif', 'Crédit', '401', 'Oui', 'Non', 'Oui'],
+    ['6011', 'Achats de marchandises — fournisseurs locaux', 'Charge', 'Débit', '601', 'Non', 'Non', 'Oui', 'Non'],
+    ['605100', 'Fournitures de bureau', '', '', '', '', '', '', ''],
+    ['4011', 'Fournisseurs locaux', 'Passif', 'Crédit', '401', 'Oui', 'Non', 'Oui', 'Oui'],
   ]
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, feuilleDepuisLignes(ENTETES, exemples, LARGEURS), 'Plan comptable')
@@ -260,6 +264,7 @@ export function exporterPlanActuel(comptes: ComptaCompte[]) {
     ouiNon(c.is_collectif),
     ouiNon(c.is_auxiliaire),
     ouiNon(c.actif),
+    ouiNon(c.lettrable),
   ])
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, feuilleDepuisLignes(ENTETES, lignes, LARGEURS), 'Plan comptable')

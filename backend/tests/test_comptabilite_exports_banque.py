@@ -372,3 +372,43 @@ async def test_import_releve_ne_valide_jamais_seul_et_bloque_fichier_duplique(db
         )
     assert exc_info.value.status_code == 409
     set_current_tenant_id(None)
+
+
+async def test_export_logiciel_signale_les_longueurs_que_le_logiciel_tronque(db_session, monkeypatch):
+    """Le logiciel cible garde 50 caractères de libellé et 16 de pièce : au-delà
+    il coupe sans prévenir. L'export le signale, sans bloquer ni tronquer."""
+    set_current_tenant_id(None)
+    org = _org()
+    db_session.add(org)
+    await db_session.flush()
+    set_current_tenant_id(org.id)
+    societe, banque, produit, journal, exercice, compte_bancaire = await _setup(db_session, org.id)
+    await _mapper_banque(db_session, org.id, compte_bancaire, banque)
+
+    quand = datetime(2026, 10, 15, 9, tzinfo=timezone.utc)
+    libelle_long = "Cotisation annuelle 2026 de l'expert-comptable — règlement partiel du solde"
+    monkeypatch.setattr(reports, "journal_tresorerie", _journal_simule({
+        compte_bancaire.id: [
+            ReportJournalLine(
+                date=quand, libelle=libelle_long, reference="REC-2026-10-000123456", entree=Decimal("10"),
+                type_operation="ENCAISSEMENT", transaction_id=uuid.uuid4(), transaction_type="ENCAISSEMENT",
+            ),
+            ReportJournalLine(
+                date=quand, libelle="Cotisation", reference="REC-002", entree=Decimal("10"),
+                type_operation="ENCAISSEMENT", transaction_id=uuid.uuid4(), transaction_type="ENCAISSEMENT",
+            ),
+        ],
+    }))
+    filtres = ExportComptableFiltres(
+        date_debut=date(2026, 10, 1), date_fin=date(2026, 10, 31), journal="BANQUE",
+        compte_bancaire_id=compte_bancaire.id, devise="USD", format="XLSX",
+    )
+    selection = await preparer_export_comptable(db_session, organisation_id=org.id, filtres=filtres)
+
+    codes = [a.code for a in selection.apercu.anomalies]
+    assert codes.count("LIBELLE_TROP_LONG") == 1
+    assert codes.count("PIECE_TROP_LONGUE") == 1
+    assert all(not a.bloquante for a in selection.apercu.anomalies)
+    assert selection.apercu.exportable is True
+    # Rien n'est coupé dans le fichier : c'est au comptable de reformuler.
+    assert libelle_long in [l.libelle for l in selection.lignes_export]

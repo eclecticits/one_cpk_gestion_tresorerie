@@ -42,7 +42,9 @@ import {
   FolderOpen,
   Inbox,
   GitCompare,
+  Hourglass,
   Landmark,
+  Link2,
   Layers,
   LayoutDashboard,
   LayoutList,
@@ -335,6 +337,8 @@ const COMPTABILITE_NAV: NavItem[] = [
   },
   { path: '/comptabilite?tab=a-comptabiliser', label: 'À imputer', permission: COMPTA_ANY_PERMISSION, icon: <Inbox size={18} /> },
   { path: '/comptabilite?tab=banques', label: 'Banques', permission: COMPTA_ANY_PERMISSION, icon: <Landmark size={18} /> },
+  { path: '/comptabilite?tab=lettrage', label: 'Lettrage', permission: COMPTA_ANY_PERMISSION, icon: <Link2 size={18} /> },
+  { path: '/comptabilite?tab=balance-agee', label: 'Balance âgée', permission: COMPTA_ANY_PERMISSION, icon: <Hourglass size={18} /> },
   { path: '/comptabilite?tab=exports', label: 'Exports comptables', permission: 'compta.export', icon: <Download size={18} /> },
   {
     path: '/comptabilite?tab=etats&etat=balance',

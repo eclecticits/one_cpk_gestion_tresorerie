@@ -15,6 +15,7 @@ import { exporterPlanActuel } from '../../utils/planComptableExcel'
 import CompteSelect from './CompteSelect'
 import ImportPlanComptableModal from './ImportPlanComptableModal'
 import TauxChangeSection from './TauxChangeSection'
+import CreancesSection from './CreancesSection'
 import styles from './ComptaMappingsPanel.module.css'
 
 interface Props {
@@ -376,6 +377,7 @@ export default function ComptaMappingsPanel({ comptes, canParametrer }: Props) {
         </table>
       </section>
       <TauxChangeSection canParametrer={canParametrer} />
+      <CreancesSection comptes={comptes} canParametrer={canParametrer} />
 
       {importOuvert && (
         <ImportPlanComptableModal

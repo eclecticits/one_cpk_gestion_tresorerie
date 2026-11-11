@@ -4,24 +4,42 @@
   padding: 0 16px 32px;
 }
 
+.controlPanel {
+  position: relative;
+  overflow: hidden;
+  padding: 17px 18px 0;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-top: 3px solid var(--tenant-primary, #1f6b5c);
+  border-radius: var(--radius-md, 12px);
+  background: var(--color-surface, #fff);
+  box-shadow: var(--shadow-xs);
+}
+
+.controlPanel > header {
+  margin-bottom: 13px;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 /* Validation en lot : action secondaire, en retrait de « Nouvelle écriture »
    — elle est puissante et irréversible, elle ne doit pas être le geste
    réflexe de la page. */
 .validerLotBtn {
-  padding: 10px 16px;
-  border-radius: var(--radius-sm, 8px);
-  border: 1px solid var(--color-border, #dbe3ee);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: var(--control-h, 36px);
+  padding: 0 13px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  border-radius: 7px;
   background: var(--color-surface, #ffffff);
   color: var(--color-title, #0f172a);
-  font-weight: 600;
-  font-size: 0.88rem;
-  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -31,14 +49,17 @@
 }
 
 .newEcritureBtn {
-  padding: 10px 18px;
-  border-radius: var(--radius-sm, 8px);
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: var(--control-h, 36px);
+  padding: 0 14px;
+  border: 1px solid var(--tenant-primary, #1f6b5c);
+  border-radius: 7px;
   background: var(--tenant-primary, #1f6b5c);
   color: var(--tenant-button-text, #ffffff);
   font-weight: 700;
-  font-size: 0.9rem;
-  cursor: pointer;
+  font-size: 0.8rem;
   white-space: nowrap;
 }
 
@@ -48,30 +69,90 @@
 
 .tabs {
   display: flex;
-  gap: 4px;
-  margin-top: 18px;
-  border-bottom: 1px solid var(--color-border, #dbe3ee);
+  gap: 2px;
+  margin: 0 -18px;
+  padding: 0 14px;
+  overflow-x: auto;
+  border-top: 1px solid var(--color-border, #dbe3ee);
+  background: color-mix(in srgb, var(--color-bg-muted, #f8fafc) 72%, var(--color-surface, #fff));
+  scrollbar-width: thin;
+}
+
+.tabGroup {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  flex: 0 0 auto;
+  padding-top: 15px;
+}
+
+.tabGroup + .tabGroup {
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 1px solid var(--color-border, #dbe3ee);
+}
+
+.tabGroupLabel {
+  position: absolute;
+  top: 2px;
+  left: 8px;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.54rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.tabGroup + .tabGroup .tabGroupLabel {
+  left: 18px;
+}
+
+.tabGroupItems {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
 }
 
 .tab {
-  padding: 10px 18px;
-  border: none;
-  background: none;
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: var(--color-text-muted, #64748b);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
   margin-bottom: -1px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.75rem;
+  font-weight: 650;
+  white-space: nowrap;
 }
 
 .tab:hover {
   color: var(--color-title, #0f172a);
+  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 5%, transparent);
 }
 
 .tabActive {
+  background: var(--color-surface, #fff);
   color: var(--tenant-primary, #1f6b5c);
   border-bottom-color: var(--tenant-primary, #1f6b5c);
+}
+
+.tabCount {
+  display: inline-grid;
+  min-width: 19px;
+  min-height: 19px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--color-warning-bg, #fff4dd);
+  color: var(--color-warning-text, #9a3412);
+  font-size: 0.6rem;
 }
 
 .filtersBar {
@@ -79,8 +160,8 @@
   flex-wrap: wrap;
   align-items: end;
   gap: 14px;
-  margin: 20px 0;
-  padding: 16px;
+  margin: 16px 0 10px;
+  padding: 12px 14px;
   background: var(--color-surface, #ffffff);
   border: 1px solid var(--color-border, #dbe3ee);
   border-radius: var(--radius-md, 12px);
@@ -88,7 +169,7 @@
 
 .filterField label {
   display: block;
-  font-size: 0.72rem;
+  font-size: 0.65rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -97,10 +178,11 @@
 }
 
 .filterField select {
-  padding: 8px 10px;
-  border: 1px solid var(--color-border, #dbe3ee);
-  border-radius: var(--radius-sm, 8px);
-  font-size: 0.85rem;
+  min-height: var(--control-h, 36px);
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  border-radius: 7px;
+  font-size: 0.78rem;
   min-width: 160px;
   background: var(--color-surface, #ffffff);
   color: var(--color-title, #0f172a);
@@ -108,21 +190,26 @@
 
 .resultCount {
   margin-left: auto;
-  font-size: 0.85rem;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--color-bg-muted, #f1f5f9);
+  font-size: 0.75rem;
+  font-weight: 700;
   color: var(--color-text-muted, #64748b);
 }
 
 .tableWrap {
   background: var(--color-surface, #ffffff);
   border: 1px solid var(--color-border, #dbe3ee);
-  border-radius: var(--radius-md, 12px);
+  border-radius: 9px;
   overflow-x: auto;
+  box-shadow: var(--shadow-xs);
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.87rem;
+  font-size: 0.8rem;
 }
 
 .table th {
@@ -130,7 +217,7 @@
   padding: 10px 14px;
   background: var(--color-bg-muted, #f1f5f9);
   color: var(--color-text-muted, #64748b);
-  font-size: 0.7rem;
+  font-size: 0.64rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-weight: 700;
@@ -138,7 +225,7 @@
 }
 
 .table td {
-  padding: 10px 14px;
+  padding: 9px 14px;
   border-top: 1px solid var(--color-border, #dbe3ee);
   color: var(--color-title, #0f172a);
   white-space: nowrap;
@@ -244,4 +331,94 @@
   align-items: center;
   min-height: 300px;
   color: var(--color-text-muted, #64748b);
+}
+
+@media (max-width: 900px) {
+  .controlPanel {
+    padding-top: 15px;
+  }
+
+  .filtersBar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filterField select {
+    min-width: 0;
+  }
+
+  .resultCount {
+    width: max-content;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  .container {
+    padding: 0 10px 24px;
+  }
+
+  .controlPanel {
+    padding-right: 13px;
+    padding-left: 13px;
+  }
+
+  .tabs {
+    margin-right: -13px;
+    margin-left: -13px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .tabGroupLabel {
+    display: none;
+  }
+
+  .tabGroup,
+  .tabGroup + .tabGroup {
+    margin-left: 0;
+    padding-top: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .tabGroup + .tabGroup::before {
+    width: 1px;
+    height: 22px;
+    margin: 0 4px;
+    background: var(--color-border, #dbe3ee);
+    content: '';
+  }
+
+  .tab {
+    min-height: 44px;
+  }
+
+  .toolbar,
+  .validerLotBtn,
+  .newEcritureBtn {
+    width: 100%;
+  }
+
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .filtersBar {
+    grid-template-columns: 1fr;
+  }
+
+  .filterField select {
+    width: 100%;
+  }
+
+  .pagination {
+    gap: 8px;
+  }
+
+  .pageBtn {
+    padding: 0 10px;
+    font-size: 0.75rem;
+  }
 }

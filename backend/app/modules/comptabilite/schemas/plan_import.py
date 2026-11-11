@@ -28,6 +28,7 @@ class LignePlanIn(BaseModel):
     collectif: str | None = None
     auxiliaire: str | None = None
     actif: str | None = None
+    lettrable: str | None = None
 
 
 class ImportPlanIn(BaseModel):
@@ -49,6 +50,7 @@ class LignePlanOut(BaseModel):
     is_collectif: bool | None = None
     is_auxiliaire: bool | None = None
     actif: bool | None = None
+    lettrable: bool | None = None
     # Champs que le fichier ne donnait pas et que l'import a déduits du numéro.
     deduits: list[str] = []
     # Champs qui changent sur un compte existant.

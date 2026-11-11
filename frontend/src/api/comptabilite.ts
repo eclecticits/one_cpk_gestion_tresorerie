@@ -37,6 +37,13 @@ import type {
   ComptaReleveImport,
   ComptaReleveLigne,
   ComptaValidationLotInput,
+  ComptaCompteALettrer,
+  ComptaLignesCompte,
+  ComptaLettrageResult,
+  ComptaLettrageAutoResult,
+  ComptaCreancesParametres,
+  ComptaBalanceAgee,
+  ComptaRepriseCreances,
   ComptaValidationLotResult,
 } from '../types/comptabilite'
 
@@ -320,4 +327,65 @@ export async function deciderComptaRapprochement(
   input: { decision: 'RAPPROCHER' | 'IGNORER' | 'ANNULER'; operation_type?: string; operation_id?: string }
 ): Promise<ComptaReleveLigne> {
   return apiRequest<ComptaReleveLigne>('PATCH', `/comptabilite/banques/releves/lignes/${ligneId}`, input)
+}
+
+// ── Lettrage ────────────────────────────────────────────────────────────────
+
+export async function getComptaComptesALettrer(): Promise<ComptaCompteALettrer[]> {
+  return apiRequest<ComptaCompteALettrer[]>('GET', '/comptabilite/lettrage/comptes')
+}
+
+export async function getComptaLignesALettrer(
+  compteId: number,
+  inclureLettrees: boolean
+): Promise<ComptaLignesCompte> {
+  return apiRequest<ComptaLignesCompte>('GET', '/comptabilite/lettrage/lignes', {
+    params: { compte_id: compteId, inclure_lettrees: inclureLettrees },
+  })
+}
+
+export async function lettrerComptaLignes(ligneIds: string[]): Promise<ComptaLettrageResult> {
+  return apiRequest<ComptaLettrageResult>('POST', '/comptabilite/lettrage', { ligne_ids: ligneIds })
+}
+
+export async function delettrerCompta(compteId: number, code: string): Promise<ComptaLettrageResult> {
+  return apiRequest<ComptaLettrageResult>('POST', '/comptabilite/lettrage/delettrer', {
+    compte_id: compteId,
+    code,
+  })
+}
+
+export async function lettrageAutomatiqueCompta(input: {
+  compte_id?: number | null
+  simulation: boolean
+}): Promise<ComptaLettrageAutoResult> {
+  return apiRequest<ComptaLettrageAutoResult>('POST', '/comptabilite/lettrage/automatique', input)
+}
+
+// ── Créances ────────────────────────────────────────────────────
+
+export async function getComptaCreancesParametres(): Promise<ComptaCreancesParametres> {
+  return apiRequest<ComptaCreancesParametres>('GET', '/comptabilite/creances/parametres')
+}
+
+export async function enregistrerComptaCreancesParametres(input: {
+  actif: boolean
+  compte_racine_id: number | null
+  compte_racine_clients_id?: number | null
+  libelle_tiers?: string
+  libelle_journal?: string
+}): Promise<ComptaCreancesParametres> {
+  return apiRequest<ComptaCreancesParametres>('PUT', '/comptabilite/creances/parametres', input)
+}
+
+export async function reprendreComptaCreances(simulation: boolean): Promise<ComptaRepriseCreances> {
+  return apiRequest<ComptaRepriseCreances>('POST', '/comptabilite/creances/reprise', { simulation })
+}
+
+export async function getComptaBalanceAgee(params: {
+  date_arret: string
+  sens: 'CREANCES' | 'DETTES'
+  prefixe?: string
+}): Promise<ComptaBalanceAgee> {
+  return apiRequest<ComptaBalanceAgee>('GET', '/comptabilite/balance-agee', { params })
 }

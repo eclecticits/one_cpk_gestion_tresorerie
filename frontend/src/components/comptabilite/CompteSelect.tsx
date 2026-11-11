@@ -7,6 +7,7 @@ interface Props {
   comptes: ComptaCompte[]
   value: number | null
   disabled?: boolean
+  allowCollectif?: boolean
   onChange: (compteId: number) => void
 }
 
@@ -16,15 +17,23 @@ interface Props {
  * Un plan de démarrage compte déjà ~60 lignes et un plan réel plusieurs
  * centaines : un `<select>` nu devient inutilisable. Le champ de recherche
  * filtre sur le numéro ET le libellé, un comptable connaissant souvent l'un
- * ou l'autre. Les comptes collectifs sont exclus — le backend les refuse
- * (ils exigent un auxiliaire par écriture), autant ne pas les proposer.
+ * ou l'autre. Les comptes collectifs sont exclus par défaut — les mappings
+ * d'écriture les refusent — mais restent autorisables pour le choix d'une
+ * racine de comptes individuels (par exemple 411 pour les créances).
  */
-export default function CompteSelect({ id, comptes, value, disabled, onChange }: Props) {
+export default function CompteSelect({
+  id,
+  comptes,
+  value,
+  disabled,
+  allowCollectif = false,
+  onChange,
+}: Props) {
   const [recherche, setRecherche] = useState('')
 
   const selectionnables = useMemo(
-    () => comptes.filter(c => c.actif && !c.is_collectif),
-    [comptes]
+    () => comptes.filter(c => c.actif && (allowCollectif || !c.is_collectif)),
+    [allowCollectif, comptes]
   )
 
   const filtres = useMemo(() => {

@@ -2295,6 +2295,7 @@ async def importer(
     # serait laisser l'import diverger du formulaire au premier correctif.
     from app.api.v1.endpoints.encaissements import _add_encaissement_articles, _valider_postes_articles
     from app.core.horodatage import resoudre_date_operation
+    from app.modules.comptabilite.services.creances_service import synchroniser_creance_note
 
     user_id = getattr(user, "id", None)
     analyse = await analyser(
@@ -2577,6 +2578,8 @@ async def importer(
                 ) from exc
             raise
         _add_encaissement_articles(db, note, tenant_id, articles)
+        await db.flush()
+        await synchroniser_creance_note(db, organisation_id=tenant_id, encaissement_id=note.id, user_id=user_id)
         if ecarts:
             await log_action(
                 db,
@@ -2677,6 +2680,10 @@ async def importer(
             note.budget_poste_id = poste_entete.id
             note.budget_poste_code = poste_entete.code
             note.budget_poste_libelle = poste_entete.libelle
+        # La créance suit la note : l'ancienne écriture est annulée ou
+        # contre-passée, une nouvelle la remplace.
+        await db.flush()
+        await synchroniser_creance_note(db, organisation_id=tenant_id, encaissement_id=note.id, user_id=user_id)
         await log_action(
             db,
             user_id=user_id,

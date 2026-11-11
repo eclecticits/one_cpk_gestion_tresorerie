@@ -27,6 +27,7 @@ class CompteOut(BaseModel):
     is_collectif: bool
     is_auxiliaire: bool
     actif: bool
+    lettrable: bool = False
     parent_id: int | None
 
     class Config:

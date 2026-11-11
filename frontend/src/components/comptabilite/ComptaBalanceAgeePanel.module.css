@@ -1,0 +1,488 @@
+.workspace {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+  --balance-soft: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 8%, white);
+  --balance-border: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 20%, var(--color-border, #dbe3ee));
+}
+
+.controlPanel,
+.listPanel,
+.totalCard,
+.ageCards {
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-md, 12px);
+  background: var(--color-surface, #fff);
+  box-shadow: var(--shadow-xs);
+}
+
+.controlPanel {
+  overflow: hidden;
+}
+
+.heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 17px 18px 14px;
+}
+
+.heading h2 {
+  margin: 2px 0 4px;
+  font-size: 1.08rem;
+}
+
+.heading p {
+  margin: 0;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.8rem;
+}
+
+.eyebrow {
+  display: block;
+  color: var(--tenant-primary, #1f6b5c);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.actions {
+  display: flex;
+  gap: 7px;
+}
+
+.iconButton,
+.exportButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-h, 36px);
+  border-radius: 7px;
+}
+
+.iconButton {
+  width: var(--control-h, 36px);
+  min-width: var(--control-h, 36px);
+  padding: 0;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  background: var(--color-surface, #fff);
+  color: var(--color-text-muted, #64748b);
+}
+
+.iconButton:hover:not(:disabled) {
+  border-color: var(--tenant-primary, #1f6b5c);
+  color: var(--tenant-primary, #1f6b5c);
+}
+
+.exportButton {
+  gap: 7px;
+  padding: 0 13px;
+  border: 1px solid var(--tenant-primary, #1f6b5c);
+  background: var(--tenant-primary, #1f6b5c);
+  color: var(--tenant-button-text, #fff);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(160px, 210px) minmax(180px, 240px);
+  align-items: end;
+  gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--color-border, #dbe3ee);
+  background: var(--color-bg-muted, #f8fafc);
+}
+
+.segmented {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+}
+
+.segmented button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.segmented button:hover:not(.segmentActive) {
+  background: var(--color-bg-muted, #f8fafc);
+  color: var(--color-title, #0f172a);
+}
+
+.segmented .segmentActive {
+  background: var(--tenant-primary, #1f6b5c);
+  color: var(--tenant-button-text, #fff);
+  box-shadow: var(--shadow-xs);
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+}
+
+.field > span {
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.field input {
+  min-height: var(--control-h, 36px);
+  border-color: var(--color-border-strong, #cbd5e1);
+  font-size: 0.78rem;
+}
+
+.searchField > div {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.searchField svg {
+  position: absolute;
+  left: 10px;
+  color: var(--color-text-muted, #64748b);
+  pointer-events: none;
+}
+
+.searchField input {
+  padding-left: 32px;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: minmax(185px, 0.75fr) minmax(0, 3fr);
+  gap: 12px;
+}
+
+.totalCard {
+  display: grid;
+  align-content: center;
+  min-height: 116px;
+  padding: 16px 18px;
+  border-color: var(--balance-border);
+  border-left: 4px solid var(--tenant-primary, #1f6b5c);
+  background: linear-gradient(135deg, var(--balance-soft), var(--color-surface, #fff));
+}
+
+.totalCard > span {
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.totalCard strong {
+  margin: 3px 0 1px;
+  color: var(--color-title, #0f172a);
+  font-size: clamp(1.2rem, 2vw, 1.55rem);
+  font-variant-numeric: tabular-nums;
+}
+
+.totalCard small {
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.7rem;
+}
+
+.ageCards {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  overflow: hidden;
+}
+
+.ageCard {
+  display: grid;
+  align-content: space-between;
+  min-height: 114px;
+  padding: 13px 12px 11px;
+  gap: 8px;
+  --age-color: var(--tenant-primary, #1f6b5c);
+}
+
+.ageCard + .ageCard {
+  border-left: 1px solid var(--color-border, #dbe3ee);
+}
+
+.ageCard > div:first-child {
+  display: grid;
+  gap: 1px;
+}
+
+.ageCard span {
+  color: var(--color-title, #0f172a);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.ageCard small {
+  color: var(--age-color);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.ageCard strong {
+  color: var(--color-title, #0f172a);
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ageCard.future { --age-color: #64748b; }
+.ageCard.fresh { --age-color: #15803d; }
+.ageCard.watch { --age-color: #a16207; }
+.ageCard.late { --age-color: #c2410c; }
+.ageCard.critical { --age-color: #b42318; }
+
+.progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-bg-muted, #f1f5f9);
+}
+
+.progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--age-color);
+  transition: width var(--transition-slow, 300ms ease);
+}
+
+.listPanel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.listHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 11px;
+}
+
+.listHeader h3 {
+  margin: 2px 0 0;
+  font-size: 0.94rem;
+}
+
+.updating {
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.72rem;
+}
+
+.tableWrap {
+  max-height: 58vh;
+  overflow: auto;
+  border-top: 1px solid var(--color-border, #dbe3ee);
+}
+
+.tableWrap table {
+  min-width: 1040px;
+  font-size: 0.76rem;
+}
+
+.tableWrap th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 9px 10px;
+  background: var(--color-bg-muted, #f8fafc);
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+.tableWrap td {
+  padding: 8px 10px;
+  border-top: 1px solid var(--color-border, #e2e8f0);
+  color: var(--color-title, #0f172a);
+}
+
+.tableWrap tbody tr:hover td {
+  background: color-mix(in srgb, var(--color-bg-muted, #f8fafc) 76%, transparent);
+}
+
+.tableWrap tfoot td {
+  position: sticky;
+  bottom: 0;
+  border-top: 2px solid var(--color-border-strong, #cbd5e1);
+  background: var(--color-surface, #fff);
+}
+
+.accountNumber {
+  color: var(--tenant-primary, #1f6b5c) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 750;
+}
+
+.accountName {
+  min-width: 190px;
+}
+
+.amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.center {
+  text-align: center;
+}
+
+.lineCount {
+  display: inline-grid;
+  min-width: 25px;
+  min-height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--color-bg-muted, #f1f5f9);
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.66rem;
+  font-weight: 750;
+}
+
+.balance {
+  border-left: 1px solid var(--color-border, #dbe3ee);
+  background: color-mix(in srgb, var(--balance-soft) 55%, transparent);
+}
+
+.state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 210px;
+  padding: 28px;
+  flex-direction: column;
+  gap: 7px;
+  border-top: 1px solid var(--color-border, #dbe3ee);
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.state strong {
+  color: var(--color-title, #0f172a);
+  font-size: 0.86rem;
+}
+
+.errorState {
+  color: var(--color-danger-text, #b42318);
+}
+
+.errorState button {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: currentColor;
+  font-size: 0.74rem;
+}
+
+.footnote {
+  margin: -3px 2px 0;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.72rem;
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 1100px) {
+  .toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .segmented {
+    grid-column: 1 / -1;
+  }
+
+  .summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .ageCards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .ageCard + .ageCard {
+    border-left: 0;
+  }
+
+  .ageCard:nth-child(even) {
+    border-left: 1px solid var(--color-border, #dbe3ee);
+  }
+
+  .ageCard:nth-child(n + 3) {
+    border-top: 1px solid var(--color-border, #dbe3ee);
+  }
+
+  .ageCard:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actions,
+  .exportButton {
+    width: 100%;
+  }
+
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .segmented {
+    grid-column: auto;
+  }
+
+  .segmented button {
+    padding: 0 7px;
+    font-size: 0.7rem;
+  }
+
+  .ageCards {
+    grid-template-columns: 1fr;
+  }
+
+  .ageCard:nth-child(even),
+  .ageCard:last-child {
+    grid-column: auto;
+    border-left: 0;
+  }
+
+  .ageCard + .ageCard {
+    border-top: 1px solid var(--color-border, #dbe3ee);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

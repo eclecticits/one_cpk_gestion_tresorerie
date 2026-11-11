@@ -43,6 +43,7 @@ from app.models.projet_activite import ProjetActivite
 from app.services.projets_activites import resoudre_projet_activite
 from app.models.rbac import Permission, role_permissions
 from app.modules.comptabilite.models import ComptaEcriture
+from app.modules.comptabilite.services.creances_service import synchroniser_creance_note
 from app.modules.comptabilite.services.generation_service import annuler_ecriture_operation
 from app.modules.comptabilite.services.integration_mode import is_accounting_automatic  # compatibility for existing tests
 from app.schemas.client import TYPES_CLIENT, TYPES_CLIENT_AVEC_SEXE, TYPES_CLIENT_EXPERT
@@ -2530,6 +2531,17 @@ async def create_encaissement(
                     target_id=str(encaissement.id),
                     new_value={"ecarts": ecarts_tarifaires},
                 )
+            # Note d'un tiers identifié qui laisse un reste dû : sa créance est constatée
+            # (si la société le fait), avant le premier versement qui la soldera.
+            if (
+                (encaissement.expert_comptable_id is not None or encaissement.client_id is not None)
+                and not encaissement.est_proforma
+                and initial_montant_paye < montant_total
+            ):
+                await db.flush()
+                await synchroniser_creance_note(
+                    db, organisation_id=tenant_id, encaissement_id=encaissement.id, user_id=current_user_id
+                )
             if initial_montant_paye > 0:
                 notes_paiement = None
                 if payload.notes_paiement and payload.notes_paiement.strip():
@@ -3592,6 +3604,11 @@ async def cancel_encaissement_operation(
     encaissement.annulation_ip = get_request_ip(request)
     if (getattr(encaissement, "nature_mouvement", "") or "BUDGETAIRE").upper() != "BUDGETAIRE":
         encaissement.hors_budget_status = "ANNULE"
+    # Une note annulée ne laisse pas de créance au compte du membre.
+    await db.flush()
+    await synchroniser_creance_note(
+        db, organisation_id=tenant_id, encaissement_id=encaissement.id, user_id=user.id
+    )
 
     await log_action(
         db,

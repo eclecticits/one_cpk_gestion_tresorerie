@@ -102,6 +102,26 @@ class ComptaSociete(Base):
     compte_caisse_defaut_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("compta_comptes.id", ondelete="SET NULL"), nullable=True
     )
+    # Créances constatées à l'émission des notes de débit (droits constatés),
+    # et compte sous lequel s'ouvrent les comptes individuels des membres.
+    creances_actives: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    compte_creances_racine_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("compta_comptes.id", ondelete="SET NULL"), nullable=True
+    )
+    # Racine des comptes des clients non membres ; NULL = même racine.
+    compte_creances_clients_racine_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("compta_comptes.id", ondelete="SET NULL"), nullable=True
+    )
+    # Vocabulaire de l'organisation, repris par les écrans : « membre »,
+    # « adhérent », « client »… et le nom du journal des créances.
+    libelle_tiers: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="membre", server_default="membre"
+    )
+    libelle_journal_creances: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="Adhérents", server_default="Adhérents"
+    )
     actif: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
@@ -212,6 +232,14 @@ class ComptaCompte(Base):
     actif: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     analytique_obligatoire: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     lettrable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Compte individuel d'un membre (un compte par expert ou société d'expertise).
+    tiers_expert_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("experts_comptables.id", ondelete="SET NULL"), nullable=True
+    )
+    # … ou d'un client qui n'est pas membre (fiche du référentiel clients).
+    tiers_client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True
+    )
     # NULL = toutes devises autorisées.
     devise_autorisee: Mapped[str | None] = mapped_column(String(3), nullable=True)
 
@@ -498,6 +526,7 @@ class ComptaLigneEcriture(Base):
         CheckConstraint("NOT (debit > 0 AND credit > 0)", name="ck_compta_ligne_sens_exclusif"),
         CheckConstraint("(debit + credit) > 0", name="ck_compta_ligne_non_nulle"),
         Index("ix_compta_ligne_soc_compte", "organisation_id", "societe_id", "compte_id"),
+        Index("ix_compta_ligne_compte_lettrage", "organisation_id", "compte_id", "lettrage"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -534,6 +563,10 @@ class ComptaLigneEcriture(Base):
 
     # Lettrage (rapprochement des comptes de tiers) et échéance.
     lettrage: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    # Lettrage : la date est celle de la pièce la plus récente du groupe — c'est
+    # elle qui dit depuis quand le compte est soldé pour une balance âgée.
+    date_lettrage: Mapped[date | None] = mapped_column(Date, nullable=True)
+    lettre_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     date_echeance: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

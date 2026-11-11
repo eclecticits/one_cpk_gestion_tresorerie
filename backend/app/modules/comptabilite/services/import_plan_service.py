@@ -143,6 +143,7 @@ class _Ligne:
     collectif: bool | None = None
     auxiliaire: bool | None = None
     actif: bool | None = None
+    lettrable: bool | None = None
     erreurs: list[str] = field(default_factory=list)
 
 
@@ -177,7 +178,12 @@ def _lire_ligne(source: LignePlanIn) -> _Ligne:
     parent = normaliser_numero(source.parent)
     lue.parent_explicite = parent or None
 
-    for nom, attribut in (("Collectif", "collectif"), ("Auxiliaire", "auxiliaire"), ("Actif", "actif")):
+    for nom, attribut in (
+        ("Collectif", "collectif"),
+        ("Auxiliaire", "auxiliaire"),
+        ("Actif", "actif"),
+        ("Lettrable", "lettrable"),
+    ):
         valeur, reconnue = _booleen(getattr(source, attribut))
         if not reconnue:
             lue.erreurs.append(f"{nom} : « {getattr(source, attribut)} » n'est ni Oui ni Non.")
@@ -185,6 +191,13 @@ def _lire_ligne(source: LignePlanIn) -> _Ligne:
     if lue.collectif and lue.auxiliaire:
         lue.erreurs.append("Un compte ne peut pas être à la fois collectif et auxiliaire.")
     return lue
+
+
+def _lettrable_par_defaut(lue: _Ligne) -> bool:
+    """Sans indication du fichier, un compte de tiers (classe 4) est lettrable."""
+    if lue.lettrable is not None:
+        return lue.lettrable
+    return lue.numero.startswith("4")
 
 
 def _parent_deduit(numero: str, connus: set[str]) -> str | None:
@@ -350,6 +363,7 @@ async def importer_plan_comptable(
                     is_collectif=bool(lue.collectif),
                     is_auxiliaire=bool(lue.auxiliaire),
                     actif=True if lue.actif is None else lue.actif,
+                    lettrable=_lettrable_par_defaut(lue),
                     deduits=deduits,
                 )
             )
@@ -380,6 +394,7 @@ async def importer_plan_comptable(
             "is_collectif": existant.is_collectif if lue.collectif is None else lue.collectif,
             "is_auxiliaire": existant.is_auxiliaire if lue.auxiliaire is None else lue.auxiliaire,
             "actif": existant.actif if lue.actif is None else lue.actif,
+            "lettrable": existant.lettrable if lue.lettrable is None else lue.lettrable,
         }
         actuels = {
             "libelle": existant.libelle,
@@ -389,6 +404,7 @@ async def importer_plan_comptable(
             "is_collectif": existant.is_collectif,
             "is_auxiliaire": existant.is_auxiliaire,
             "actif": existant.actif,
+            "lettrable": existant.lettrable,
         }
         changements = [cle for cle in cibles if cibles[cle] != actuels[cle]]
         if parent_deduit.get(lue.numero) and "parent_numero" in changements:
@@ -414,6 +430,7 @@ async def importer_plan_comptable(
             "is_collectif": cibles["is_collectif"],
             "is_auxiliaire": cibles["is_auxiliaire"],
             "actif": cibles["actif"],
+            "lettrable": cibles["lettrable"],
             "deduits": deduits,
             "changements": changements,
         }
@@ -445,6 +462,7 @@ async def importer_plan_comptable(
                 is_collectif=bool(lue.collectif),
                 is_auxiliaire=bool(lue.auxiliaire),
                 actif=True if lue.actif is None else lue.actif,
+                lettrable=_lettrable_par_defaut(lue),
             )
             db.add(nouveau)
             nouveaux[lue.numero] = nouveau
@@ -461,6 +479,7 @@ async def importer_plan_comptable(
             existant.is_collectif = cibles["is_collectif"]
             existant.is_auxiliaire = cibles["is_auxiliaire"]
             existant.actif = cibles["actif"]
+            existant.lettrable = cibles["lettrable"]
             parent = cibles["parent_numero"]
             existant.parent_id = par_numero[parent].id if parent else None
             existant.updated_at = utcnow()

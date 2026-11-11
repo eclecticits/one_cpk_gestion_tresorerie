@@ -50,6 +50,7 @@ class MouvementGrandLivreOut(DecimalBaseModel):
     credit: Decimal
     statut: str
     solde_cumule: Decimal
+    lettrage: str | None = None
 
 
 class GrandLivreOut(DecimalBaseModel):

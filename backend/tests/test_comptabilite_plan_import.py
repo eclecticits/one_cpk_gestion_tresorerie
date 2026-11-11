@@ -284,3 +284,29 @@ async def _activer_org(db) -> Organisation:
     org = await _org(db)
     await _activer(db, org)
     return org
+
+
+@pytest.mark.asyncio
+async def test_colonne_lettrable_reprise_ou_deduite_de_la_classe(db_session):
+    """Le logiciel comptable en place marque ses comptes de tiers lettrables :
+    l'import reprend la colonne, et à défaut rend lettrable la classe 4."""
+    db = db_session
+    org = await _activer_org(db)
+
+    out = await _importer(db, org, [
+        _ligne(2, "4111010001", "Adhérent A"),
+        _ligne(3, "4711010000", "Compte d'attente", lettrable="Non"),
+        _ligne(4, "6053010000", "Carburant"),
+        _ligne(5, "5215011000", "Banque USD", lettrable="Oui"),
+    ])
+
+    assert out.erreurs == 0 and out.crees == 4
+    assert (await _compte(db, org, "4111010001")).lettrable is True
+    assert (await _compte(db, org, "4711010000")).lettrable is False
+    assert (await _compte(db, org, "6053010000")).lettrable is False
+    assert (await _compte(db, org, "5215011000")).lettrable is True
+
+    # Colonne absente au réimport : le choix fait n'est pas écrasé.
+    out = await _importer(db, org, [_ligne(2, "4711010000", "Compte d'attente")])
+    assert out.inchanges == 1
+    assert (await _compte(db, org, "4711010000")).lettrable is False

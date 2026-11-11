@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { CheckCheck, Plus } from 'lucide-react'
+import {
+  BookOpenCheck,
+  CheckCheck,
+  Download,
+  FileBarChart2,
+  FileText,
+  Hourglass,
+  Inbox,
+  Landmark,
+  Link2,
+  Plus,
+  Settings2,
+  type LucideIcon,
+} from 'lucide-react'
 import {
   getComptaComptes,
   getComptaEcritures,
@@ -21,6 +34,8 @@ import ComptaEtatsFinanciersPanel from '../components/comptabilite/ComptaEtatsFi
 import ComptaMappingsPanel from '../components/comptabilite/ComptaMappingsPanel'
 import ComptaExportsPanel from '../components/comptabilite/ComptaExportsPanel'
 import ComptaBanquesPanel from '../components/comptabilite/ComptaBanquesPanel'
+import ComptaLettragePanel from '../components/comptabilite/ComptaLettragePanel'
+import ComptaBalanceAgeePanel from '../components/comptabilite/ComptaBalanceAgeePanel'
 import EcritureFormModal from '../components/comptabilite/EcritureFormModal'
 import EcritureDetailModal from '../components/comptabilite/EcritureDetailModal'
 import ValidationLotModal from '../components/comptabilite/ValidationLotModal'
@@ -29,19 +44,53 @@ import styles from './Comptabilite.module.css'
 
 const STATUTS = ['BROUILLON', 'VALIDEE', 'CLOTUREE', 'ANNULEE']
 
-type Onglet = 'ecritures' | 'a-comptabiliser' | 'banques' | 'exports' | 'etats' | 'etats-financiers' | 'parametrage'
+type Onglet = 'ecritures' | 'a-comptabiliser' | 'banques' | 'lettrage' | 'balance-agee' | 'exports' | 'etats' | 'etats-financiers' | 'parametrage'
 
-const ONGLETS: [Onglet, string][] = [
-  ['ecritures', 'Écritures'],
-  ['a-comptabiliser', 'À imputer'],
-  ['banques', 'Banques'],
-  ['exports', 'Exports'],
-  ['etats', 'Grand Livre'],
-  ['etats-financiers', 'États financiers'],
-  ['parametrage', 'Paramétrage'],
+interface OngletDefinition {
+  cle: Onglet
+  libelle: string
+  icon: LucideIcon
+  permission?: string
+}
+
+interface GroupeOnglets {
+  libelle: string
+  onglets: OngletDefinition[]
+}
+
+const GROUPES_ONGLETS: GroupeOnglets[] = [
+  {
+    libelle: 'Opérations',
+    onglets: [
+      { cle: 'ecritures', libelle: 'Écritures', icon: BookOpenCheck },
+      { cle: 'a-comptabiliser', libelle: 'À imputer', icon: Inbox },
+      { cle: 'banques', libelle: 'Banques', icon: Landmark },
+    ],
+  },
+  {
+    libelle: 'Rapprochement',
+    onglets: [
+      { cle: 'lettrage', libelle: 'Lettrage', icon: Link2 },
+      { cle: 'balance-agee', libelle: 'Balance âgée', icon: Hourglass },
+    ],
+  },
+  {
+    libelle: 'Restitution',
+    onglets: [
+      { cle: 'etats', libelle: 'Grand Livre', icon: FileBarChart2 },
+      { cle: 'etats-financiers', libelle: 'États financiers', icon: FileText },
+      { cle: 'exports', libelle: 'Exports', icon: Download, permission: 'compta.export' },
+    ],
+  },
+  {
+    libelle: 'Configuration',
+    onglets: [
+      { cle: 'parametrage', libelle: 'Paramétrage', icon: Settings2, permission: 'compta.parametrage' },
+    ],
+  },
 ]
 
-const ONGLET_KEYS = new Set<Onglet>(ONGLETS.map(([cle]) => cle))
+const ONGLET_KEYS = new Set<Onglet>(GROUPES_ONGLETS.flatMap(groupe => groupe.onglets.map(onglet => onglet.cle)))
 
 function parseOnglet(value: string | null): Onglet {
   return value && ONGLET_KEYS.has(value as Onglet) ? (value as Onglet) : 'ecritures'
@@ -51,6 +100,8 @@ const SOUS_TITRES: Record<Onglet, string> = {
   ecritures: 'Écritures comptables',
   'a-comptabiliser': 'Opérations incomplètes en attente d’imputation comptable',
   banques: 'Comptes, mouvements et rapprochements bancaires',
+  lettrage: 'Rapprochement des comptes de tiers : ce qui reste sans lettre reste dû',
+  'balance-agee': 'Reste dû par tiers, rangé par ancienneté',
   exports: 'Exports comptables contrôlés et traçables',
   etats: 'Grand Livre, Journal et Balance',
   'etats-financiers': 'Bilan, Résultat, SIG et clôture',
@@ -87,6 +138,20 @@ export default function Comptabilite() {
   const canExport = hasPermission('compta.export')
   const canEncaisser = hasPermission('encaissements')
   const canDecaisser = hasPermission('sorties_fonds')
+
+  const groupesOnglets = useMemo(
+    () => GROUPES_ONGLETS
+      .map(groupe => ({
+        ...groupe,
+        onglets: groupe.onglets.filter(item => !item.permission || hasPermission(item.permission)),
+      }))
+      .filter(groupe => groupe.onglets.length > 0),
+    [hasPermission],
+  )
+  const ongletsVisibles = useMemo(
+    () => new Set(groupesOnglets.flatMap(groupe => groupe.onglets.map(item => item.cle))),
+    [groupesOnglets],
+  )
 
   const [setupSubmitting, setSetupSubmitting] = useState(false)
   const [setupError, setSetupError] = useState<string | null>(null)
@@ -222,6 +287,12 @@ export default function Comptabilite() {
     setOnglet(prev => (prev === nextOnglet ? prev : nextOnglet))
   }, [searchParams])
 
+  useEffect(() => {
+    if (permissionsLoading || ongletsVisibles.has(onglet)) return
+    setOnglet('ecritures')
+    setSearchParams({ tab: 'ecritures' })
+  }, [onglet, ongletsVisibles, permissionsLoading, setSearchParams])
+
   const handleOngletChange = (nextOnglet: Onglet) => {
     setOnglet(nextOnglet)
     // On repart d'une URL propre : un `etat` laissé par l'onglet Grand Livre
@@ -249,46 +320,59 @@ export default function Comptabilite() {
 
   return (
     <div className={styles.container}>
-      <PageHeader
-        title="Comptabilité"
-        subtitle={SOUS_TITRES[onglet]}
-        actions={
-          onglet === 'ecritures' || onglet === 'a-comptabiliser' ? (
-            <div className={styles.toolbar}>
-              {onglet === 'ecritures' && canValider && (
-                <button
-                  type="button"
-                  className={styles.validerLotBtn}
-                  onClick={() => setShowValidationLot(true)}
-                >
-                  <CheckCheck size={16} style={{ verticalAlign: '-3px', marginRight: '4px' }} />
-                  Valider les brouillons
-                </button>
-              )}
-              {canSaisir && (
-                <button type="button" className={styles.newEcritureBtn} onClick={() => setShowForm(true)}>
-                  <Plus size={16} style={{ verticalAlign: '-3px', marginRight: '4px' }} />
-                  Nouvelle écriture
-                </button>
-              )}
-            </div>
-          ) : undefined
-        }
-      />
+      <div className={styles.controlPanel}>
+        <PageHeader
+          title="Comptabilité"
+          subtitle={SOUS_TITRES[onglet]}
+          actions={
+            onglet === 'ecritures' || onglet === 'a-comptabiliser' ? (
+              <div className={styles.toolbar}>
+                {onglet === 'ecritures' && canValider && (
+                  <button
+                    type="button"
+                    className={styles.validerLotBtn}
+                    onClick={() => setShowValidationLot(true)}
+                  >
+                    <CheckCheck size={16} />
+                    Valider les brouillons
+                  </button>
+                )}
+                {canSaisir && (
+                  <button type="button" className={styles.newEcritureBtn} onClick={() => setShowForm(true)}>
+                    <Plus size={16} />
+                    Nouvelle écriture
+                  </button>
+                )}
+              </div>
+            ) : undefined
+          }
+        />
 
-      <div className={styles.tabs} role="tablist">
-        {ONGLETS.map(([cle, libelle]) => (
-          <button
-            key={cle}
-            type="button"
-            role="tab"
-            aria-selected={onglet === cle}
-            className={`${styles.tab} ${onglet === cle ? styles.tabActive : ''}`}
-            onClick={() => handleOngletChange(cle)}
-          >
-            {libelle}
-          </button>
-        ))}
+        <nav className={styles.tabs} aria-label="Vues de la comptabilité">
+          {groupesOnglets.map(groupe => (
+            <div key={groupe.libelle} className={styles.tabGroup} role="group" aria-label={groupe.libelle}>
+              <span className={styles.tabGroupLabel}>{groupe.libelle}</span>
+              <div className={styles.tabGroupItems} role="tablist">
+                {groupe.onglets.map(({ cle, libelle, icon: Icon }) => (
+                  <button
+                    key={cle}
+                    type="button"
+                    role="tab"
+                    aria-selected={onglet === cle}
+                    className={`${styles.tab} ${onglet === cle ? styles.tabActive : ''}`}
+                    onClick={() => handleOngletChange(cle)}
+                  >
+                    <Icon size={15} aria-hidden="true" />
+                    <span>{libelle}</span>
+                    {cle === 'a-comptabiliser' && operationsManuelles.length > 0 && (
+                      <b className={styles.tabCount}>{operationsManuelles.length}</b>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
       </div>
 
       {onglet === 'exports' ? (
@@ -300,6 +384,10 @@ export default function Comptabilite() {
           canEncaisser={canEncaisser}
           canDecaisser={canDecaisser}
         />
+      ) : onglet === 'lettrage' ? (
+        <ComptaLettragePanel canLettrer={canSaisir || canValider} />
+      ) : onglet === 'balance-agee' ? (
+        <ComptaBalanceAgeePanel />
       ) : onglet === 'parametrage' ? (
         <ComptaMappingsPanel comptes={comptes} canParametrer={canParametrer} />
       ) : onglet === 'etats-financiers' ? (

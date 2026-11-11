@@ -116,6 +116,7 @@ class MouvementGrandLivre:
     credit: Decimal
     statut: str
     solde_cumule: Decimal
+    lettrage: str | None = None
 
 
 @dataclass
@@ -362,6 +363,7 @@ async def grand_livre(
             ComptaLigneEcriture.libelle.label("ligne_libelle"),
             ComptaLigneEcriture.debit_tenue,
             ComptaLigneEcriture.credit_tenue,
+            ComptaLigneEcriture.lettrage,
             ComptaEcriture.id.label("ecriture_id"),
             ComptaEcriture.numero,
             ComptaEcriture.date_ecriture,
@@ -446,6 +448,7 @@ async def grand_livre(
                 credit=credit,
                 statut=row.statut,
                 solde_cumule=solde,
+                lettrage=row.lettrage,
             )
         )
 

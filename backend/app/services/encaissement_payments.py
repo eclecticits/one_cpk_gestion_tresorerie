@@ -541,6 +541,13 @@ async def record_encaissement_payment(
         encaissement.statut_comptabilisation = "A_COMPTABILISER_MANUELLEMENT"
         encaissement.message_comptabilisation = payment.message_comptabilisation
     elif integration_mode == "automatic" and impact_budgetaire:
+        # Créance déjà constatée à l'émission de la note : le produit est au
+        # résultat, le règlement solde le compte du membre.
+        from app.modules.comptabilite.services.creances_service import compte_creance_de_la_note
+
+        compte_membre_id = await compte_creance_de_la_note(
+            db, organisation_id=organisation_id, encaissement_id=encaissement.id
+        )
         await generer_ecriture_encaissement(
             db,
             organisation_id=organisation_id,
@@ -561,6 +568,11 @@ async def record_encaissement_payment(
             # Une recette répartie porte un produit par poste : l'écriture suit
             # la même répartition que le budget, sinon les deux se contrediraient.
             imputations=parts_devise if len(parts_devise) > 1 else None,
+            **(
+                {"compte_credit_id": compte_membre_id, "reference_piece": encaissement.numero_recu}
+                if compte_membre_id is not None
+                else {}
+            ),
             **({"rubrique_contrepartie": RUBRIQUE_RECETTE_A_IDENTIFIER} if source is not None else {}),
         )
         payment.statut_comptabilisation = PAYMENT_COMPTA_RECORDED

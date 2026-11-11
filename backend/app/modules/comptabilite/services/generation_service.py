@@ -329,6 +329,8 @@ async def generer_ecriture_encaissement(
     objet_origine_id: str | None = None,
     imputations: list[tuple[int, Decimal]] | None = None,
     rubrique_contrepartie: str | None = None,
+    compte_credit_id: int | None = None,
+    reference_piece: str | None = None,
 ) -> ComptaEcriture:
     """Débit Trésorerie / Crédit Produit — cf. catalogue §4.5 du dossier d'architecture.
 
@@ -352,12 +354,20 @@ async def generer_ecriture_encaissement(
     recette identifiée : l'argent est entré en banque à sa réception, sur le
     compte d'attente ; l'identifier solde ce compte d'attente vers le produit,
     sans repasser par la banque.
+
+    `compte_credit_id` : compte crédité À LA PLACE des produits, pour tout le
+    montant. Sert au règlement d'une note dont la créance a déjà été constatée
+    (cf. `creances_service`) : le produit est déjà au résultat, le règlement
+    solde le compte du membre. `reference_piece` porte alors le numéro de la
+    note, pour que créance et règlement se lettrent par la pièce.
     """
     origine_id = objet_origine_id or encaissement_id
     existing = await _find_existing_ecriture(db, organisation_id, "encaissements", type_origine, origine_id)
     if existing is not None:
         return existing
 
+    if compte_credit_id is not None:
+        imputations = None
     if imputations:
         total_impute = sum((m for _, m in imputations), Decimal("0"))
         if total_impute != montant:
@@ -368,7 +378,7 @@ async def generer_ecriture_encaissement(
                     f"({total_impute}) différente du montant encaissé ({montant})."
                 ),
             )
-    elif budget_poste_id is None and rubrique_produit_defaut is None:
+    elif compte_credit_id is None and budget_poste_id is None and rubrique_produit_defaut is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Encaissement sans poste budgétaire : impossible de résoudre le compte de produit.",
@@ -388,7 +398,9 @@ async def generer_ecriture_encaissement(
         else await resolve_compte_tresorerie(db, organisation_id, societe, canal, compte_bancaire_id)
     )
     lignes_produit: list[tuple[int, Decimal]] = []
-    if imputations:
+    if compte_credit_id is not None:
+        lignes_produit.append((compte_credit_id, montant))
+    elif imputations:
         for poste_id, montant_ligne in imputations:
             compte = await resolve_compte_poste_budgetaire(db, organisation_id, poste_id)
             lignes_produit.append((compte.id, montant_ligne))
@@ -412,6 +424,7 @@ async def generer_ecriture_encaissement(
         journal_id=journal.id,
         numero=None,
         date_ecriture=date_operation,
+        reference_piece=reference_piece,
         libelle=libelle,
         statut="BROUILLON",
         devise=devise,

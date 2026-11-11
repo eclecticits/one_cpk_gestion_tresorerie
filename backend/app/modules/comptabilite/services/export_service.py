@@ -51,6 +51,11 @@ from app.schemas.reports import ReportJournalLine, ReportJournalResponse
 CENT = Decimal("0.01")
 STATUTS_EXPORTABLES = ("VALIDEE", "CLOTUREE")
 ENTETE_LOGICIEL = ("Date>", "Pièce", "Compte", "Libellé", "Débit", "Crédit")
+# Limites du logiciel comptable cible (ACD CDWCompta) : au-delà, il tronque à
+# l'import sans prévenir. Le fichier n'est pas tronqué ici — couper un libellé
+# est un choix de rédaction — mais le comptable est prévenu avant l'export.
+LONGUEUR_LIBELLE_LOGICIEL = 50
+LONGUEUR_PIECE_LOGICIEL = 16
 ENTETE_CONTROLE = (
     "Date d'opération",
     "Date de valeur",
@@ -347,6 +352,30 @@ async def preparer_export_comptable(
         libelle = (mouvement.libelle or "").strip()
         operation = str(mouvement.transaction_id) if mouvement.transaction_id else None
         reperes = piece or f"{jour:%d/%m/%Y} · {libelle[:40]}"
+        if len(libelle) > LONGUEUR_LIBELLE_LOGICIEL:
+            anomalies.append(
+                ExportAnomalieOut(
+                    code="LIBELLE_TROP_LONG",
+                    message=(
+                        f"Libellé de {len(libelle)} caractères : le logiciel comptable n'en garde que "
+                        f"{LONGUEUR_LIBELLE_LOGICIEL} (« {libelle[:LONGUEUR_LIBELLE_LOGICIEL]} »)."
+                    ),
+                    bloquante=False,
+                    numero=reperes,
+                )
+            )
+        if len(piece) > LONGUEUR_PIECE_LOGICIEL:
+            anomalies.append(
+                ExportAnomalieOut(
+                    code="PIECE_TROP_LONGUE",
+                    message=(
+                        f"Numéro de pièce de {len(piece)} caractères : le logiciel comptable n'en garde que "
+                        f"{LONGUEUR_PIECE_LOGICIEL}."
+                    ),
+                    bloquante=False,
+                    numero=reperes,
+                )
+            )
 
         compte_tresorerie = await comptes.tresorerie(compte_bancaire_id)
         # Contrepartie : le poste budgétaire de l'opération ; pour un mouvement

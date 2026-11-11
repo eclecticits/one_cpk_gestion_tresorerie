@@ -16,6 +16,7 @@ export interface ComptaCompte {
   is_collectif: boolean
   is_auxiliaire: boolean
   actif: boolean
+  lettrable: boolean
   parent_id: number | null
 }
 
@@ -294,6 +295,7 @@ export interface ComptaMouvementGrandLivre {
   credit: string
   statut: StatutEcriture
   solde_cumule: string
+  lettrage: string | null
 }
 
 export interface ComptaGrandLivre {
@@ -423,6 +425,7 @@ export interface ComptaLignePlanInput {
   collectif?: string
   auxiliaire?: string
   actif?: string
+  lettrable?: string
 }
 
 export interface ComptaImportPlanInput {
@@ -443,6 +446,7 @@ export interface ComptaLignePlanResult {
   is_collectif: boolean | null
   is_auxiliaire: boolean | null
   actif: boolean | null
+  lettrable: boolean | null
   deduits: string[]
   changements: string[]
   message: string | null
@@ -584,4 +588,112 @@ export interface ComptaReleveImport {
   importe_par?: string | null
   created_at: string
   lignes: ComptaReleveLigne[]
+}
+
+// ── Lettrage des comptes de tiers ───────────────────────────────────────────
+
+export interface ComptaCompteALettrer {
+  compte_id: number
+  numero: string
+  libelle: string
+  lignes_non_lettrees: number
+  debit_non_lettre: string
+  credit_non_lettre: string
+  solde_non_lettre: string
+}
+
+export interface ComptaLigneLettrable {
+  ligne_id: string
+  ecriture_id: string
+  numero: string | null
+  date_ecriture: string
+  journal_code: string
+  libelle: string | null
+  reference_piece: string | null
+  debit: string
+  credit: string
+  compte_auxiliaire_id: number | null
+  lettrage: string | null
+  date_lettrage: string | null
+}
+
+export interface ComptaLignesCompte {
+  compte_id: number
+  compte_numero: string
+  compte_libelle: string
+  lignes: ComptaLigneLettrable[]
+  debit_non_lettre: string
+  credit_non_lettre: string
+  solde_non_lettre: string
+}
+
+export interface ComptaLettrageResult {
+  code: string
+  lignes: number
+}
+
+export interface ComptaGroupeLettrage {
+  compte_id: number
+  compte_numero: string
+  motif: 'REFERENCE' | 'MONTANT'
+  montant: string
+  code: string | null
+  lignes: ComptaLigneLettrable[]
+}
+
+export interface ComptaLettrageAutoResult {
+  simulation: boolean
+  comptes_examines: number
+  groupes_lettres: number
+  lignes_lettrees: number
+  groupes: ComptaGroupeLettrage[]
+}
+
+// ── Créances ────────────────────────────────────────────────────
+
+export interface ComptaCreancesParametres {
+  actif: boolean
+  mode_automatique: boolean
+  compte_racine_id: number | null
+  compte_racine_numero: string | null
+  compte_racine_libelle: string | null
+  compte_racine_clients_id: number | null
+  comptes_tiers: number
+  libelle_tiers: string
+  libelle_journal: string
+  notes_sans_creance: number
+}
+
+export interface ComptaRepriseCreances {
+  simulation: boolean
+  constatees: number
+  montant: string
+  deja_reglees_en_partie: number
+  echecs: { numero: string; motif: string }[]
+}
+
+// ── Balance âgée ────────────────────────────────────────────────────────────
+
+interface ComptaTranchesAge {
+  non_echu: string
+  j0_30: string
+  j31_60: string
+  j61_90: string
+  plus_90: string
+}
+
+export interface ComptaLigneBalanceAgee extends ComptaTranchesAge {
+  compte_id: number
+  compte_numero: string
+  compte_libelle: string
+  lignes: number
+  plus_ancienne: string | null
+  solde: string
+}
+
+export interface ComptaBalanceAgee extends ComptaTranchesAge {
+  date_arret: string
+  sens: 'CREANCES' | 'DETTES'
+  lignes: ComptaLigneBalanceAgee[]
+  total: string
 }

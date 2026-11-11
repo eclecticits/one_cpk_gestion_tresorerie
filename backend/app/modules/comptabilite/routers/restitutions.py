@@ -155,6 +155,7 @@ async def get_grand_livre(
                 credit=m.credit,
                 statut=m.statut,
                 solde_cumule=m.solde_cumule,
+                lettrage=m.lettrage,
             )
             for m in livre.mouvements
         ],

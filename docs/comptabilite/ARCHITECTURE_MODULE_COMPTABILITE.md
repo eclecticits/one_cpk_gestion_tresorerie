@@ -387,6 +387,64 @@ Convertir ligne à ligne puis arrondir au centime peut déséquilibrer une écri
 
 Inverser un taux déjà arrondi ne redonne pas l'original : 1 / 0,00035714 = 2800,0224, pas 2800. Mieux vaut saisir le sens réellement utilisé par l'organisation. Un test fige ce comportement pour qu'il ne soit pas pris pour un défaut.
 
+## 7 decies. Alignement sur le logiciel comptable en production — lettrage (11/11/2026)
+
+Le logiciel en place à l'ONEC (ACD CDWCompta, six dossiers) a servi de référence : ses bases ont été lues en copie pour voir ce qu'un comptable y fait réellement. Premier lot de rattrapage.
+
+### Lettrage des comptes de tiers
+
+`services/lettrage_service.py`, `routers/lettrage.py`, onglet « Lettrage », migration `20261111_compta_lettrage`.
+
+- **Un groupe lettré se solde** (débit = crédit en devise de tenue), sur un seul compte et un seul tiers, entre écritures validées ou clôturées. Pas de lettrage partiel : il masquerait un reste dû.
+- **Lettres par compte** : AA, AB … ZZ, AAA. La date de lettrage est celle de la pièce la plus récente du groupe, pas le jour du pointage — c'est elle qui servira à une balance âgée.
+- **Lettrage automatique limité à l'évident** : même référence de pièce soldée, puis débit et crédit de même montant pris dans l'ordre des dates. Aucune recherche de combinaison de montants. Simulation par défaut.
+- **Le trigger d'immuabilité des lignes a dû évoluer** : il refusait toute modification d'une écriture validée, donc tout lettrage. Il compare désormais la ligne entière privée des trois colonnes de lettrage : une colonne ajoutée plus tard reste figée d'office. Un test charge le trigger réel.
+- Les comptes de classe 4 sont lettrables par défaut (plan de démarrage, import, et comptes existants par la migration) ; `PUT /comptabilite/comptes/{id}/lettrable` permet de régler le reste.
+
+### Import du plan et export vers le logiciel
+
+- L'import du plan lit une colonne **Lettrable**. Les plans des dossiers Kinshasa (818 comptes) et Conseil national (275) ont été extraits au format d'import, numéros sur 10 chiffres.
+- L'export « fichier logiciel » signale, sans bloquer ni tronquer, un **libellé de plus de 50 caractères** et une **pièce de plus de 16** : le logiciel cible coupe au-delà sans prévenir.
+
+### Limites assumées
+
+- Les à-nouveaux reprennent le **solde** d'un compte de tiers, pas le détail de ses lignes non lettrées : après une clôture, on lettre contre une seule ligne de report.
+- Le lettrage ne sert pleinement qu'une fois les **créances constatées** (appel de cotisation au débit du compte du membre). Aujourd'hui le moteur passe directement trésorerie contre produit ; ce point reste à trancher avec le métier.
+
+## 7 undecies. Créances constatées à l'émission (11/11/2026)
+
+`services/creances_service.py`, `routers/creances.py`, section « Créances » du paramétrage, migration `20261111b_compta_creances`. Décisions du métier : constater à l'émission de la note de débit, **un compte par membre**, et contre-passer quand une note est actualisée.
+
+| Moment | Journal | Débit | Crédit |
+|---|---|---|---|
+| Émission de la note | ADR (Adhérents) | Compte du tiers | Produits, par poste budgétaire des lignes |
+| Règlement | CA / BQ | Trésorerie | Compte du tiers |
+
+- **Vocabulaire réglable par société** : le nom donné aux tiers (« membre » par défaut) et celui du journal (« Adhérents » par défaut) se changent au paramétrage, pour qu'une autre institution y retrouve ses mots.
+- **Choix de la société, éteint par défaut** (`creances_actives`) : l'allumer change la date d'entrée d'un produit au résultat. Il suppose le mode de génération automatique.
+- **Pas de double comptage** : le règlement ne crédite le compte du membre que si la note a une écriture de créance en vie. Une note émise avant la bascule reste réglée trésorerie contre produit.
+- **Compte du membre** ouvert à la première créance sous le compte racine : les zéros de fin de la racine sont la place du numéro d'ordre (4111010000 → 4111010001), une racine courte reçoit quatre chiffres. Un compte du plan importé portant le nom du membre est rattaché plutôt que doublé (`tiers_expert_id`).
+- **Tous les clients ne sont pas des membres** : une note à un client du référentiel (`client_id`) constate aussi sa créance, sur un compte à son nom (`tiers_client_id`), sous la racine des clients si elle est réglée. Une note sans tiers identifié — un simple nom — reste comptabilisée à l'encaissement.
+- **Actualisation** : l'écriture n'est jamais modifiée. Brouillon → annulé ; validée → contre-passée ; une nouvelle version est générée, la clé d'idempotence portant le rang (`{note}:2`). Une note inchangée garde son écriture.
+- **Report d'un versement entre deux notes du même membre** : neutre, les deux notes vivent sur le même compte.
+- **Reprise** (`POST /comptabilite/creances/reprise`, simulation par défaut) : constate les notes antérieures encore vierges. Une note déjà réglée en partie est laissée en comptabilité de caisse — son règlement est déjà passé en produit.
+- Créance et règlement portent le numéro de la note en référence : le lettrage automatique les rapproche par la pièce.
+
+### Limites assumées
+
+- **Arriérés** : une note impayée reste ouverte et son reste dû est seulement reporté sur le poste d'arriérés de l'exercice suivant (`report_creances`). C'est la même note, donc la même créance au compte du tiers : rien n'est constaté deux fois, et ses règlements soldent ce compte quel que soit le poste. Seul cas à surveiller : un fichier d'import qui reprendrait en colonne « Arriérés » une dette déjà portée par une note ouverte.
+- **Deux racines au plus** : celle des membres (experts et sociétés d'expertise confondus) et, facultative, celle des autres clients ; le logiciel en place en distingue davantage.
+- **Exercice clôturé** : une note dont la créance validée appartient à un exercice clôturé ne peut plus être actualisée ni annulée (la contre-passation y est refusée).
+
+## 7 duodecies. Balance âgée des tiers (11/11/2026)
+
+`services/balance_agee_service.py`, `GET /comptabilite/balance-agee`, onglet « Balance âgée » avec export Excel.
+
+- Elle ne compte que les lignes **sans lettre** des comptes lettrables : c'est le lettrage qui la rend juste.
+- L'âge part de l'**échéance** de la ligne (la créance d'une note reprend l'échéance de la note), sinon de la date de l'écriture. Tranches : non échu, 0–30, 31–60, 61–90, plus de 90 jours.
+- **Rééditable à une date passée** : une ligne lettrée après la date d'arrêt compte encore, puisqu'elle n'était pas soldée à cette date.
+- Créances et dettes se lisent séparément : un tiers créditeur ne vient jamais en déduction de ce que doivent les autres.
+
 ## 7 ter. Design UI/UX — cohérence avec l'existant
 
 Un spécialiste design a analysé le design system réel. Points structurants :
