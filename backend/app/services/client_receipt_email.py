@@ -185,14 +185,14 @@ async def schedule_client_payment_email(
 
         if relance:
             title = "Rappel de solde restant"
-            subject = f"Rappel - Note de débit {numero} : solde restant de {_fmt_usd(reste)}"
+            subject = f"Rappel - {numero} : solde restant de {_fmt_usd(reste)}"
             body_lines = [
                 *salutation,
                 "",
-                "Sauf erreur de notre part, un solde reste dû sur votre note de débit.",
+                "Sauf erreur de notre part, un solde reste dû de votre part.",
                 "",
                 *([f"Objet : {objet}"] if objet else []),
-                f"Note de débit N° : {numero}",
+                f"N° : {numero}",
                 f"Montant total : {_fmt_usd(total)}",
                 f"Montant déjà payé : {_fmt_usd(paye)}",
                 f"Reste à payer : {_fmt_usd(reste)}",
@@ -220,7 +220,7 @@ async def schedule_client_payment_email(
                 "",
                 f"Nous avons reçu{compte_txt} un virement{date_txt} dont le libellé ne permettait pas d'en "
                 "identifier l'auteur. Nos services l'ont rapproché de votre dossier : il est désormais "
-                "affecté à votre note de débit.",
+                "affecté à votre compte.",
                 "",
                 "Virement identifié",
                 *([f"Date de valeur : {date_valeur.strftime('%d/%m/%Y')}"] if date_valeur else []),
@@ -230,25 +230,24 @@ async def schedule_client_payment_email(
                 "",
                 "Affectation",
                 *([f"Objet : {objet}"] if objet else []),
-                f"Note de débit N° : {numero}",
-                f"Montant total de la note : {_fmt_usd(total)}",
+                f"N° : {numero}",
+                f"Montant total : {_fmt_usd(total)}",
                 f"Total payé à ce jour : {_fmt_usd(paye)}",
             ]
             if reste > 0.009:
                 title = "Virement identifié — solde restant"
-                subject = f"Votre virement{date_txt} a été identifié – Note de débit {numero} – reste {_fmt_usd(reste)}"
+                subject = f"Votre virement{date_txt} a été identifié – {numero} – reste {_fmt_usd(reste)}"
                 body_lines += [f"Reste à payer : {_fmt_usd(reste)}"]
             else:
-                title = "Virement identifié — note soldée"
-                subject = f"Votre virement{date_txt} a été identifié – Note de débit {numero} – soldée"
-                body_lines += ["", "Votre note de débit est entièrement réglée."]
+                title = "Virement identifié"
+                subject = f"Votre virement{date_txt} a été identifié – {numero}"
             body_lines += [
                 "",
                 "Aucun nouveau paiement n'est attendu de votre part pour ce montant : il s'agit de l'argent "
                 "déjà viré, et non d'un second versement.",
                 "",
                 "Pour que vos prochains virements soient affectés sans délai, merci d'indiquer dans leur "
-                "libellé votre nom (ou votre numéro d'ordre) et le numéro de la note de débit réglée.",
+                "libellé votre nom (ou votre numéro d'ordre) et la référence de la pièce réglée.",
                 "Si ce virement n'est pas le vôtre, merci de nous le signaler en réponse à ce message.",
                 "",
                 *signature,
@@ -269,23 +268,22 @@ async def schedule_client_payment_email(
                 + (f" du {date_paiement.strftime('%d/%m/%Y')}." if date_paiement else "."),
                 "",
                 *([f"Objet : {objet}"] if objet else []),
-                f"Note de débit N° : {numero}",
+                f"N° : {numero}",
                 *recu_ligne,
-                f"Montant total de la note : {_fmt_usd(total)}",
+                f"Montant total : {_fmt_usd(total)}",
                 f"Total payé à ce jour : {_fmt_usd(paye)}",
             ]
             if reste > 0.009:
                 title = "Paiement reçu — solde restant"
-                subject = f"Paiement reçu – Note de débit {numero} – reste {_fmt_usd(reste)}"
+                subject = f"Paiement reçu – {numero} – reste {_fmt_usd(reste)}"
                 body_lines += [
                     f"Reste à payer : {_fmt_usd(reste)}",
                     "",
                     "Nous vous invitons à régler le solde à votre meilleure convenance.",
                 ]
             else:
-                title = "Paiement reçu — soldé"
-                subject = f"Paiement reçu – Note de débit {numero} – soldée"
-                body_lines += ["", "Votre note de débit est entièrement réglée."]
+                title = "Paiement reçu"
+                subject = f"Paiement reçu – {numero}"
             body_lines += ["", *signature]
 
         email_kwargs = dict(

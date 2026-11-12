@@ -105,7 +105,7 @@ async def test_complement_annonce_le_versement_du_jour_et_salue_la_sec(monkeypat
     assert email == "contact@beta.cd"
     kwargs = tasks.tasks[0].kwargs
     lignes = kwargs["body_lines"]
-    assert kwargs["subject"] == "Paiement reçu – Note de débit REC-0142 – reste 150,00 $"
+    assert kwargs["subject"] == "Paiement reçu – REC-0142 – reste 150,00 $"
     assert lignes[:2] == ["Madame, Monsieur,", "À l'attention de J. DUPONT, associé gérant de Cabinet Beta SARL."]
     assert "Nous accusons réception de votre paiement du 30/09/2026." in lignes
     assert "Montant reçu : 100,00 $ (espèces)" in lignes
@@ -213,8 +213,8 @@ async def test_identification_dit_que_le_virement_a_ete_reconnu(monkeypatch):
 
     kwargs = tasks.tasks[0].kwargs
     lignes = kwargs["body_lines"]
-    assert kwargs["subject"] == "Votre virement du 02/10/2026 a été identifié – Note de débit REC-0300 – soldée"
-    assert kwargs["title"] == "Virement identifié — note soldée"
+    assert kwargs["subject"] == "Votre virement du 02/10/2026 a été identifié – REC-0300"
+    assert kwargs["title"] == "Virement identifié"
     assert any("sur notre compte Rawbank USD un virement du 02/10/2026" in ligne for ligne in lignes)
     assert "Référence bancaire : FT26275XYZ" in lignes
     assert "Montant affecté : 100,00 $" in lignes
