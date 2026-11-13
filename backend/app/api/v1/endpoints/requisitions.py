@@ -2488,7 +2488,7 @@ async def reimputer(
 
 
 class ChangementCanalIn(BaseModel):
-    """Nouveau canal d'une réquisition validée et non payée."""
+    """Nouveau canal d'une réquisition validée, pour ce qui reste à payer."""
     mode_paiement: str = Field(min_length=1, max_length=50)
     compte_bancaire_id: int | None = None
     motif: str = Field(min_length=3, max_length=500)
@@ -2496,8 +2496,7 @@ class ChangementCanalIn(BaseModel):
 
 @router.post(
     "/{requisition_id}/canal-paiement",
-    summary="Changer le canal de paiement d'une réquisition validée et non payée",
-    dependencies=[Depends(has_permission("treso.requisitions.changer_canal"))],
+    summary="Changer le canal de paiement d'une réquisition validée",
 )
 async def changer_canal_paiement(
     requisition_id: str,
@@ -2511,9 +2510,28 @@ async def changer_canal_paiement(
 
     Refusé dès que l'argent est sorti ou en train de sortir (sortie de fonds,
     ordre de décaissement, statut en décaissement ou payée) : le canal d'une
-    pièce payée est celui par lequel elle l'a été.
+    pièce payée est celui par lequel elle l'a été. Une réquisition à
+    décaissement progressif fait exception tant qu'elle n'est pas soldée : ses
+    tranches payées gardent leur canal, le reste suit le nouveau.
+
+    Ouvert au titulaire du droit, et à l'initiateur pour ses seules
+    réquisitions à décaissement progressif : c'est lui qui en autorise les
+    tranches, donc lui qui sait par où le reste doit sortir.
     """
     req = await _requisition_pour_reimputation(db, requisition_id, tenant_id)
+    est_initiateur = (
+        bool(req.decaissement_progressif)
+        and req.created_by is not None
+        and req.created_by == user.id
+    )
+    if not est_initiateur and not await user_has_permission(db, user, "treso.requisitions.changer_canal"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Accès refusé : seul un compte habilité, ou l'initiateur d'une réquisition "
+                "à décaissement progressif, peut en changer le canal de paiement."
+            ),
+        )
     req = (
         await db.execute(select(Requisition).where(Requisition.id == req.id).with_for_update())
     ).scalar_one()
@@ -2533,7 +2551,13 @@ async def changer_canal_paiement(
         target_table="requisitions",
         target_id=str(req.id),
         old_value={**resultat["avant"], "statut": req.status, "examen": req.examen_status},
-        new_value={**resultat["apres"], "motif": payload.motif.strip()},
+        new_value={
+            **resultat["apres"],
+            "motif": payload.motif.strip(),
+            # À quel titre le changement a été fait : par l'initiateur sur sa
+            # propre pièce, ou par un compte qui en tient le droit.
+            "par_initiateur": est_initiateur,
+        },
         ip_address=get_request_ip(request),
     )
     await db.commit()

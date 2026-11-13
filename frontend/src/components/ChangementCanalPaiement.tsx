@@ -13,6 +13,10 @@ interface Props {
   modeActuel: string
   compteActuelId: number | null
   comptesBancaires: CompteBancaire[]
+  /** L'utilisateur a rédigé la réquisition : si elle est à décaissement progressif, il en change le canal sans droit particulier. */
+  estInitiateur?: boolean
+  /** Décaissement progressif : le canal du reste à payer se change encore entre deux tranches. */
+  decaissementProgressif?: boolean
   onChange?: (canal: { mode_paiement: string; compte_bancaire_id: number | null }) => void
 }
 
@@ -24,6 +28,9 @@ const STATUTS_FIGES = new Set(['PAYEE', 'EN_DECAISSEMENT', 'REJETEE', 'ANNULEE']
  * réquisition déjà examinée ou validée, tant qu'elle n'est pas payée. La pièce
  * et toutes ses lignes passent sur le canal choisi ; le serveur refuse dès
  * qu'une sortie de fonds ou un ordre de décaissement existe.
+ *
+ * Une réquisition à décaissement progressif reste ouverte une fois entamée :
+ * ses tranches payées gardent leur canal, le reste à payer suit le nouveau.
  */
 export default function ChangementCanalPaiement({
   requisitionId,
@@ -31,6 +38,8 @@ export default function ChangementCanalPaiement({
   modeActuel,
   compteActuelId,
   comptesBancaires,
+  estInitiateur = false,
+  decaissementProgressif = false,
   onChange,
 }: Props) {
   const { hasPermission } = usePermissions()
@@ -42,8 +51,12 @@ export default function ChangementCanalPaiement({
   const [erreur, setErreur] = useState<string | null>(null)
   const [enCours, setEnCours] = useState(false)
 
-  if (!hasPermission('treso.requisitions.changer_canal')) return null
-  if (STATUTS_FIGES.has(String(statut || '').toUpperCase())) return null
+  const statutNormalise = String(statut || '').toUpperCase()
+  // Entamée mais pas soldée : seul le reste à payer change de canal.
+  const entamee = decaissementProgressif && statutNormalise === 'EN_DECAISSEMENT'
+
+  if (!(estInitiateur && decaissementProgressif) && !hasPermission('treso.requisitions.changer_canal')) return null
+  if (STATUTS_FIGES.has(statutNormalise) && !entamee) return null
 
   const ouvrir = () => {
     const banque = modeActuel === 'virement'
@@ -74,8 +87,10 @@ export default function ChangementCanalPaiement({
       showSuccess(
         'Canal de paiement modifié',
         mode === 'cash'
-          ? 'La réquisition sera payée par la caisse.'
-          : `La réquisition sera payée par la banque${compte ? ` : ${compte.banque?.nom || 'Banque'} - ${compte.intitule}` : ''}.`,
+          ? entamee
+            ? 'Le reste de la réquisition sera payé par la caisse.'
+            : 'La réquisition sera payée par la caisse.'
+          : `${entamee ? 'Le reste de la réquisition sera payé' : 'La réquisition sera payée'} par la banque${compte ? ` : ${compte.banque?.nom || 'Banque'} - ${compte.intitule}` : ''}.`,
       )
       setOuvert(false)
       onChange?.({ mode_paiement: res.mode_paiement, compte_bancaire_id: res.compte_bancaire_id })
@@ -92,7 +107,11 @@ export default function ChangementCanalPaiement({
         type="button"
         className={styles.declencheur}
         onClick={ouvrir}
-        title="Changer le canal de paiement de cette réquisition (avant paiement)"
+        title={
+          entamee
+            ? 'Changer le canal de paiement de ce qui reste à payer'
+            : 'Changer le canal de paiement de cette réquisition (avant paiement)'
+        }
       >
         <Landmark size={15} aria-hidden="true" />
         Changer le canal de paiement
@@ -111,7 +130,11 @@ export default function ChangementCanalPaiement({
               <div>
                 <h2 id="canal-titre" className={styles.title}>Changer le canal de paiement</h2>
                 <p className={styles.subtitle}>
-                  La réquisition et toutes ses lignes passent sur le canal choisi. Impossible une fois le paiement engagé.
+                  {entamee
+                    ? 'Les tranches déjà payées gardent leur canal. Ce qui reste à payer passe sur le canal choisi ; aucune tranche ne doit être en attente de paiement.'
+                    : decaissementProgressif
+                      ? 'La réquisition et toutes ses lignes passent sur le canal choisi. Aucune tranche ne doit être en attente de paiement.'
+                      : 'La réquisition et toutes ses lignes passent sur le canal choisi. Impossible une fois le paiement engagé.'}
                 </p>
               </div>
               <button type="button" onClick={() => setOuvert(false)} aria-label="Fermer" className={styles.close}>

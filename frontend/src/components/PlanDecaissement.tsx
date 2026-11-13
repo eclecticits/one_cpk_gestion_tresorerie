@@ -6,6 +6,7 @@ import type { OrdreDecaissement, Requisition, VoletReglement } from '../types'
 import type { CompteBancaire } from '../types/banque'
 import { toNumber } from '../utils/amount'
 import { useToast } from '../hooks/useToast'
+import ChangementCanalPaiement from './ChangementCanalPaiement'
 import BeneficiaireIdentification, { BENEFICIAIRE_VIDE, payloadBeneficiaire, type BeneficiaireSaisie } from './BeneficiaireIdentification'
 
 interface PlanDecaissementProps {
@@ -14,6 +15,8 @@ interface PlanDecaissementProps {
   canAuthorize: boolean
   isAdmin?: boolean
   onChanged?: () => void
+  /** Le canal du reste à payer a changé : l'écran appelant relit la réquisition et ses lignes. */
+  onCanalChange?: (canal: { mode_paiement: string; compte_bancaire_id: number | null }) => void
 }
 
 const fmtUsd = (v: unknown) =>
@@ -154,7 +157,7 @@ function LigneTranche({ libelle, beneficiaire, reste, valeur, proposition, onCha
   )
 }
 
-export default function PlanDecaissement({ requisition, currentUserId, canAuthorize, isAdmin = false, onChanged }: PlanDecaissementProps) {
+export default function PlanDecaissement({ requisition, currentUserId, canAuthorize, isAdmin = false, onChanged, onCanalChange }: PlanDecaissementProps) {
   const { notifySuccess, notifyError, notifyWarning } = useToast()
   const [ordres, setOrdres] = useState<OrdreDecaissement[]>([])
   const [loading, setLoading] = useState(false)
@@ -220,17 +223,31 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
   // Déjà engagé (autorisé + payé) volet par volet : le plafond d'un volet lui
   // est propre, une tranche caisse ne consomme pas l'enveloppe de la banque.
   const engagePerVolet = useMemo(() => {
-    const acc: Record<string, { paye: number; autorise: number }> = {}
+    const acc: Record<string, { paye: number; autorise: number; mode_paiement: unknown; compte_bancaire_id: number | null }> = {}
     for (const o of ordres) {
       if (o.statut !== 'AUTORISE' && o.statut !== 'PAYE') continue
       const cle = cleVolet(o.mode_paiement, o.compte_bancaire_id)
-      const bucket = acc[cle] || { paye: 0, autorise: 0 }
+      const bucket = acc[cle] || { paye: 0, autorise: 0, mode_paiement: o.mode_paiement, compte_bancaire_id: o.compte_bancaire_id ?? null }
       if (o.statut === 'PAYE') bucket.paye += toNumber(o.montant)
       else bucket.autorise += toNumber(o.montant)
       acc[cle] = bucket
     }
     return acc
   }, [ordres])
+
+  // Tranches réglées par un canal que la réquisition a quitté depuis (canal
+  // changé en cours de décaissement). Elles ont consommé l'enveloppe des lignes
+  // passées sur le volet actuel : son reliquat les déduit, comme le serveur.
+  const anciensCanaux = useMemo(() => {
+    const actuels = new Set(volets.map((v) => cleVolet(v.mode_paiement, v.compte_bancaire_id)))
+    return Object.entries(engagePerVolet)
+      .filter(([cle]) => !actuels.has(cle))
+      .map(([cle, engage]) => ({ cle, ...engage }))
+  }, [volets, engagePerVolet])
+  const engageAnciensCanaux = useMemo(
+    () => anciensCanaux.reduce((s, a) => s + a.paye + a.autorise, 0),
+    [anciensCanaux]
+  )
 
   const modesDisponibles = useMemo(() => {
     const modes = Array.from(new Set(volets.map((v) => normaliserMode(v.mode_paiement)))).filter(Boolean)
@@ -258,8 +275,8 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
   const reliquatVolet = useMemo(() => {
     if (!voletCible) return null
     const engage = engagePerVolet[cleVolet(voletCible.mode_paiement, voletCible.compte_bancaire_id)]
-    return toNumber(voletCible.montant_total) - (engage?.paye || 0) - (engage?.autorise || 0)
-  }, [voletCible, engagePerVolet])
+    return toNumber(voletCible.montant_total) - (engage?.paye || 0) - (engage?.autorise || 0) - engageAnciensCanaux
+  }, [voletCible, engagePerVolet, engageAnciensCanaux])
 
   // Postes budgétaires de la réquisition (enveloppe par poste).
   const postes = useMemo(() => {
@@ -329,6 +346,10 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
   const toutRetenir = () =>
     setMontantsPoste(Object.fromEntries(postesOuverts.map((p) => [p.id, enMontant(restePoste(p.id, p.enveloppe))])))
 
+  const comptesBanque = useMemo(
+    () => comptes.filter((c) => String(c.account_type || 'BANK').toUpperCase() === 'BANK' && c.is_active !== false),
+    [comptes]
+  )
   const reqStatus = String((requisition as any).status ?? requisition.statut ?? '').toUpperCase()
   const isCreator = !!currentUserId && String(requisition.created_by) === String(currentUserId)
   const peutAutoriser = canAuthorize && (isCreator || isAdmin) && ['APPROUVEE', 'EN_DECAISSEMENT'].includes(reqStatus)
@@ -380,12 +401,12 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
     const ouvert =
       volets.find((v) => {
         const engage = engagePerVolet[cleVolet(v.mode_paiement, v.compte_bancaire_id)]
-        return toNumber(v.montant_total) - (engage?.paye || 0) - (engage?.autorise || 0) > 0.001
+        return toNumber(v.montant_total) - (engage?.paye || 0) - (engage?.autorise || 0) - engageAnciensCanaux > 0.001
       }) || volets[0]
     const mode = normaliserMode(ouvert?.mode_paiement) || normaliserMode(requisition.mode_paiement) || 'cash'
     setModeTranche(modesDisponibles.includes(mode) ? mode : modesDisponibles[0])
     setCompteTranche(ouvert?.compte_bancaire_id != null ? String(ouvert.compte_bancaire_id) : '')
-  }, [volets, modesDisponibles, engagePerVolet, modeTranche, requisition.mode_paiement])
+  }, [volets, modesDisponibles, engagePerVolet, engageAnciensCanaux, modeTranche, requisition.mode_paiement])
 
   // Le compte suit le mode : changer de mode invalide le compte du volet
   // précédent, on retombe sur l'unique compte du nouveau mode quand il n'y a
@@ -506,6 +527,26 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
     <div style={{ background: '#eef2ff', borderLeft: '4px solid #6366f1', borderRadius: '8px', padding: '16px', marginTop: '16px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
         <h3 style={{ color: '#4338ca', margin: 0 }}>Plan de décaissement progressif</h3>
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+        {/* L'initiateur redirige ici ce qui reste à payer : les tranches déjà
+            réglées gardent leur canal. Le composant se masque de lui-même hors
+            droit et sur une pièce soldée ou close. */}
+        <ChangementCanalPaiement
+          requisitionId={String(requisition.id)}
+          statut={reqStatus}
+          modeActuel={normaliserMode(requisition.mode_paiement)}
+          compteActuelId={requisition.compte_bancaire_id ?? null}
+          comptesBancaires={comptesBanque}
+          estInitiateur={isCreator}
+          decaissementProgressif
+          onChange={(canal) => {
+            setModeTranche('')
+            setCompteTranche('')
+            void load()
+            if (onCanalChange) onCanalChange(canal)
+            else onChanged?.()
+          }}
+        />
         {peutAutoriser && (
           <button
             type="button"
@@ -523,6 +564,7 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
             {showAddForm ? 'Fermer' : '+ Autoriser une tranche'}
           </button>
         )}
+        </div>
       </div>
 
       {/* Barre de progression */}
@@ -596,7 +638,7 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
                 const engage = engagePerVolet[cle]
                 const paye = engage?.paye || 0
                 const autorise = engage?.autorise || 0
-                const reste = toNumber(v.montant_total) - paye - autorise
+                const reste = toNumber(v.montant_total) - paye - autorise - engageAnciensCanaux
                 return (
                   <tr key={cle} style={{ borderTop: '1px solid #e5e7eb' }}>
                     <td style={{ padding: '6px 8px' }}>
@@ -610,6 +652,21 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
                   </tr>
                 )
               })}
+              {/* Tranches sorties par un canal quitté depuis : elles restent
+                  lisibles ici, sans enveloppe propre — elles ont entamé celle
+                  du volet actuel. */}
+              {anciensCanaux.map((a) => (
+                <tr key={`ancien-${a.cle}`} style={{ borderTop: '1px solid #e5e7eb', color: '#6b7280' }}>
+                  <td style={{ padding: '6px 8px' }}>
+                    {voletLabel(a)}
+                    <span style={{ fontSize: '11px' }}> — canal précédent, tranches déjà réglées</span>
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>—</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#16a34a' }}>{fmtUsd(a.paye)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#4f46e5' }}>{fmtUsd(a.autorise)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>—</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

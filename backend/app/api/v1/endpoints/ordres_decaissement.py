@@ -930,15 +930,22 @@ async def create_ordre_decaissement(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Ce mode de paiement ne correspond à aucun volet de la réquisition.",
             )
-        engage_volet = (await _montants_engages_par_volet(db, req.id)).get(
-            (mode_ordre, compte_ordre), Decimal("0")
+        engages = await _montants_engages_par_volet(db, req.id)
+        engage_volet = engages.get((mode_ordre, compte_ordre), Decimal("0"))
+        # Tranches réglées par un canal que la réquisition a quitté depuis
+        # (changement de canal en cours de décaissement) : elles ont consommé
+        # l'enveloppe des lignes passées sur le volet actuel, pas une autre.
+        cles_volets = {(v.mode_paiement, v.compte_bancaire_id) for v in volets}
+        engage_ancien_canal = sum(
+            (montant for cle, montant in engages.items() if cle not in cles_volets),
+            Decimal("0"),
         )
-        if engage_volet + Decimal(payload.montant) > volet_cible.montant_total:
+        if engage_volet + engage_ancien_canal + Decimal(payload.montant) > volet_cible.montant_total:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
                     f"Plafond du volet dépassé : enveloppe {volet_cible.montant_total}, "
-                    f"déjà engagé {engage_volet}, demandé {Decimal(payload.montant)}."
+                    f"déjà engagé {engage_volet + engage_ancien_canal}, demandé {Decimal(payload.montant)}."
                 ),
             )
 

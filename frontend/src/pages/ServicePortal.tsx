@@ -2061,6 +2061,9 @@ export default function ServicePortal() {
                   canAuthorize={hasPermission('can_authorize_disbursement')}
                   isAdmin={isAdmin}
                   onChanged={() => viewDetails(selectedRequisition)}
+                  onCanalChange={(canal) =>
+                    viewDetails({ ...(selectedRequisition as any), ...canal, volets_reglement: undefined })
+                  }
                 />
               )}
             </div>

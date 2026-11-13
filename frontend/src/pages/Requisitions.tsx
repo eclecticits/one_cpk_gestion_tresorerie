@@ -4092,7 +4092,10 @@ export default function Requisitions() {
                   onReimpute={() => void viewDetails(selectedRequisition)}
                 />
                 {/* Même logique : la pièce est verrouillée, mais le canal se
-                    corrige encore tant qu'elle n'est pas payée. */}
+                    corrige encore tant qu'elle n'est pas payée. Une réquisition
+                    à décaissement progressif porte ce bouton dans son plan, où
+                    il reste ouvert entre deux tranches. */}
+                {!(selectedRequisition as any).decaissement_progressif && (
                 <ChangementCanalPaiement
                   requisitionId={String(selectedRequisition.id)}
                   statut={String((selectedRequisition as any).status ?? (selectedRequisition as any).statut ?? '')}
@@ -4105,6 +4108,7 @@ export default function Requisitions() {
                     void refetchRequisitions()
                   }}
                 />
+                )}
                 {/* Plus étroit que le canal : le compte d'un volet bancaire se change
                     encore en décaissement, tant que ce volet n'a rien décaissé. */}
                 <ChangementCompteVolet
@@ -4231,6 +4235,13 @@ export default function Requisitions() {
                   canAuthorize={hasPermission('can_authorize_disbursement')}
                   isAdmin={isAdmin}
                   onChanged={() => refetchRequisitions()}
+                  onCanalChange={(canal) => {
+                    // Les volets mémorisés décrivent l'ancien canal : on les
+                    // écarte, le plan les relit des lignes rechargées.
+                    const corrigee = { ...selectedRequisition, ...canal, volets_reglement: undefined } as Requisition
+                    void viewDetails(corrigee)
+                    void refetchRequisitions()
+                  }}
                 />
               )}
 

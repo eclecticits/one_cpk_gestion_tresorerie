@@ -1,4 +1,4 @@
-"""Changement du canal de paiement d'une réquisition validée et non payée.
+"""Changement du canal de paiement d'une réquisition validée.
 
 Le canal (caisse ou banque, et le compte) se décide à la rédaction, mais il
 arrive qu'on apprenne après la validation qu'il faut payer autrement : la
@@ -11,8 +11,12 @@ Ce service est la seule porte, et elle est étroite :
   - jamais après un paiement : dès qu'une sortie de fonds ou un ordre de
     décaissement existe, ou que la pièce est en décaissement ou payée, le canal
     est celui par lequel l'argent est sorti, et il le reste ;
+  - sauf pour une réquisition à décaissement progressif, tant qu'elle n'est
+    pas soldée : ses tranches payées gardent le canal de leur ordre, et le
+    reste à payer suit le nouveau (aucune tranche ne doit être en attente) ;
   - les déclencheurs ne laissent passer l'écriture que sous le drapeau de
-    session `onec.changement_canal` (cf. migration 20261008_changement_canal).
+    session `onec.changement_canal` (cf. migrations 20261008_changement_canal
+    et 20261113_canal_progressif).
 """
 
 from __future__ import annotations
@@ -44,9 +48,18 @@ STATUTS_PAYES = {"PAYEE", "EN_DECAISSEMENT"}
 STATUTS_CLOS = {"REJETEE", "ANNULEE"}
 
 
+def canal_modifiable_en_decaissement(req: Requisition) -> bool:
+    """Une réquisition à décaissement progressif se paie tranche par tranche,
+    et chaque tranche porte son propre canal, fixé à son autorisation. Changer
+    le canal de la pièce en cours de route ne réécrit donc rien de ce qui est
+    déjà sorti : seul le reste à payer suit le nouveau canal."""
+    return bool(getattr(req, "decaissement_progressif", False))
+
+
 async def verifier_changement_canal_possible(db: AsyncSession, req: Requisition) -> None:
     statut = (req.status or "").upper()
-    if statut in STATUTS_PAYES:
+    progressif = canal_modifiable_en_decaissement(req)
+    if statut == "PAYEE" or (statut in STATUTS_PAYES and not progressif):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Réquisition déjà payée ou en cours de paiement : le canal de paiement ne change plus.",
@@ -56,6 +69,28 @@ async def verifier_changement_canal_possible(db: AsyncSession, req: Requisition)
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Réquisition {statut.lower()} : aucun canal à modifier.",
         )
+
+    if progressif:
+        # Les tranches payées gardent leur canal. Une tranche autorisée mais
+        # pas encore payée attend, elle, à un guichet précis : la laisser en
+        # place sous un autre canal la désaccorderait de la pièce.
+        en_attente = await db.scalar(
+            select(func.count())
+            .select_from(OrdreDecaissement)
+            .where(
+                OrdreDecaissement.requisition_id == req.id,
+                func.upper(OrdreDecaissement.statut) == "AUTORISE",
+            )
+        )
+        if en_attente:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Une tranche autorisée attend encore son paiement : faites-la payer "
+                    "ou annulez-la avant de changer le canal de paiement."
+                ),
+            )
+        return
 
     sorties = await db.scalar(
         select(func.count())
@@ -126,7 +161,8 @@ async def changer_canal_requisition(
         )
 
     # Ne vaut que pour cette transaction ; les déclencheurs ne l'honorent que si
-    # seuls le mode et le compte changent, et jamais sur une pièce payée.
+    # seuls le mode et le compte changent, jamais sur une pièce payée, et en
+    # décaissement seulement si la pièce est à décaissement progressif.
     await db.execute(text("SET LOCAL onec.changement_canal = 'on'"))
 
     for ligne in lignes:
