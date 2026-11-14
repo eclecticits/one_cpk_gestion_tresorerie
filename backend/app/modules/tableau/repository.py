@@ -17,8 +17,9 @@ from sqlalchemy import (
     select,
     union_all,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from .excel_import import _strip_accents
 from .models import (
@@ -458,6 +459,44 @@ async def list_base_tableau(
     return list(res.scalars().all())
 
 
+def _ligne_bilan_forco(organisation_id, numero_ordre, exercice: str, valeur):
+    """Une valeur de la ligne du membre dans le dernier bilan Forco de l'exercice.
+
+    Le bilan n'est conservé que tel qu'importé : la ligne source se rattache par
+    le N° d'ordre. `valeur` reçoit cette ligne et rend l'expression à lire.
+    Absent de tout bilan, la sous-requête ne rend rien.
+    """
+    ligne = aliased(TableauSourceRow)
+    imp = aliased(TableauImport)
+    return (
+        select(valeur(ligne))
+        .join(imp, imp.id == ligne.import_id)
+        .where(
+            imp.source_type == "bilan_forco",
+            imp.exercice == exercice,
+            ligne.organisation_id == organisation_id,
+            func.coalesce(func.trim(numero_ordre), "") != "",
+            func.upper(func.replace(ligne.business_key_candidate, " ", "")) == numero_ordre,
+        )
+        .order_by(imp.date_situation.desc(), imp.created_at.desc(), imp.id.desc(), ligne.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
+def _nhv_bilan_forco(organisation_id, numero_ordre, exercice: str):
+    """Heures validées d'un membre : la colonne « Σ » du dernier bilan Forco.
+
+    Un membre que le bilan liste sans cumul n'a rien validé : zéro, pas
+    « inconnu ». Absent de tout bilan, l'appelant garde sa valeur de repli.
+    """
+    def cumul(ligne):
+        texte = func.replace(func.trim(ligne.raw_data["Σ"].astext), ",", ".")
+        return case((texte.op("~")(r"^\d+(\.\d+)?$"), cast(texte, Numeric(8, 2))), else_=literal(0))
+
+    return _ligne_bilan_forco(organisation_id, numero_ordre, exercice, cumul)
+
+
 def _membres_a_completer(
     organisation_ids: list[int],
     exercice: str,
@@ -475,12 +514,13 @@ def _membres_a_completer(
     """Membres des fichiers personnes physiques et morales encore sans dossier.
 
     Lecture seule, sans verdict : ces fichiers ne disent rien de la cotisation ni du CA.
-    Le NHV affiché est la colonne « % 120 FOR » du fichier des personnes physiques, telle
-    qu'importée. Un dossier du même exercice prime toujours. Une ligne non rattachée
+    Le NHV affiché est le cumul « Σ » des heures validées du dernier bilan Forco de
+    l'exercice ; pour un membre absent de tout bilan, la colonne « % 120 FOR » du fichier
+    des personnes physiques, telle qu'importée. Un dossier du même exercice prime toujours. Une ligne non rattachée
     n'a pas de clé qui la relie à un import suivant : seul le dernier fichier de sa
     source la fait donc foi, sinon chaque réimport la dupliquerait.
     """
-    def lignes(model, genre: str, nom, categorie_expr, nif, cabinet, sexe_expr, nhv, actif, gerant, raison_sociale):
+    def lignes(model, genre: str, nom, categorie_expr, nif, cabinet, sexe_expr, nhv, actif, gerant, raison_sociale, heures_bilan):
         cle = case(
             (model.identity_id.is_(None), func.concat(genre, "#", cast(model.id, String))),
             else_=model.numero_ordre,
@@ -504,6 +544,8 @@ def _membres_a_completer(
                 model.assure_synthetique.label("assurance"),
                 sexe_expr.label("sexe"),
                 nhv.label("nhv"),
+                # La ligne du bilan Forco, pour juger les heures année par année.
+                heures_bilan.label("heures_bilan"),
                 actif.label("actif"),
                 gerant.label("gerant"),
                 raison_sociale.label("raison_sociale"),
@@ -531,10 +573,14 @@ def _membres_a_completer(
             func.coalesce(pp.nif, pp.numero_impot),
             func.coalesce(pp.cabinet_attache, pp.nom_employeur),
             pp.sexe,
-            pp.pourcentage_120_for,
+            func.coalesce(
+                _nhv_bilan_forco(pp.organisation_id, pp.numero_ordre, exercice),
+                pp.pourcentage_120_for,
+            ),
             pp.actif,
             cast(literal(None), String),
             cast(literal(None), String),
+            _ligne_bilan_forco(pp.organisation_id, pp.numero_ordre, exercice, lambda ligne: ligne.raw_data),
         ),
         lignes(
             pm, "PM", pm.societe, literal("Société"), pm.numero_impot,
@@ -542,6 +588,7 @@ def _membres_a_completer(
             cast(literal(None), Boolean),
             pm.associe_gerant,
             pm.raison_sociale,
+            cast(literal(None), JSONB),
         ),
     ).subquery()
 

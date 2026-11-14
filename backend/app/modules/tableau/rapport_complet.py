@@ -158,6 +158,7 @@ def membre_en_dossier(ligne: Any, ca_par_numero: dict[str, bool], assurance_par_
         "assurance": assurance,
         "chiffre_affaires": chiffre_affaires,
         "heures_forco": float(ligne.nhv) if ligne.nhv is not None else None,
+        "heures_bilan": ligne.heures_bilan,
         "sexe": ligne.sexe,
         "age": None,
         "nif": ligne.nif,
@@ -192,7 +193,7 @@ def _etat_critere(dossier: dict[str, Any], critere: str, ctx: ContexteRapport) -
     nouveau = verdict_engine.est_nouveau(evaluation, ctx.exercice_annee, ctx.reglages)
     if critere == "formation" and nouveau:
         return "exempte"
-    valeur = verdict_engine._critere_ok(critere, evaluation, nouveau, ctx.reglages)
+    valeur = verdict_engine._critere_ok(critere, evaluation, nouveau, ctx.reglages, ctx.exercice_annee)
     return "inconnu" if valeur is None else ("conforme" if valeur else "defaut")
 
 

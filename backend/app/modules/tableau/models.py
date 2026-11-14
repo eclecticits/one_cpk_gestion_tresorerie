@@ -43,7 +43,7 @@ class TableauImport(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "source_type IN ('personnes_physiques', 'personnes_morales', 'chiffres_affaires', 'assurances', 'tableau')",
+            "source_type IN ('personnes_physiques', 'personnes_morales', 'chiffres_affaires', 'assurances', 'bilan_forco', 'tableau')",
             name="ck_tableau_import_source_type",
         ),
     )

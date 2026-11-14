@@ -1393,9 +1393,9 @@ async def test_un_numero_posterieur_a_l_exercice_est_a_verifier(db_session, admi
     moteur = tableau_service.verdict_engine
     assert moteur.libelle_anciennete("SEC/99.99999", 2026) == moteur.ANCIENNETE_A_VERIFIER
     assert moteur.est_nouveau({"numero_ordre": "EC/99.99999"}, 2026) is False
-    # Le réglage d'exemption reste, lui, inchangé : 2024 à 2026 pour trois ans.
-    assert moteur.est_nouveau({"numero_ordre": "EC/24.00001"}, 2026) is True
-    assert moteur.est_nouveau({"numero_ordre": "EC/23.00001"}, 2026) is False
+    # La formation n'est non applicable qu'à l'inscrit de l'année (palier 0).
+    assert moteur.est_nouveau({"numero_ordre": "EC/26.00001"}, 2026) is True
+    assert moteur.est_nouveau({"numero_ordre": "EC/25.00001"}, 2026) is False
 
     outcome = await import_source_snapshot(
         db_session, admin_isole, admin_isole.organisation_id, "pm-provisoire.xlsx",
@@ -1432,6 +1432,96 @@ async def test_le_nhv_de_la_base_reprend_la_colonne_120_for(db_session, admin_is
     base = await _base(db_session, admin_isole)
     nhv = {m["nom"]: m["nhv"] for m in base["membres_a_completer"]}
     assert nhv == {"AVEC NHV": 82.0, "NHV ZERO": 0.0, "SANS NHV": None, "SOCIETE NHV": None}
+
+
+@pytest.mark.asyncio
+async def test_le_nhv_de_la_base_vient_du_cumul_du_bilan_forco(db_session, admin_isole):
+    """Σ du dernier bilan Forco fait foi ; « % 120 FOR » ne sert qu'aux absents du bilan."""
+    org = admin_isole.organisation_id
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pp-forco.xlsx",
+        _xlsx(
+            ["N°Ordrre", "Nom", "Statut", "% 120 FOR"],
+            [
+                ["EC/19.99881", "DANS LE BILAN", "en cabinet", 82],
+                ["EC/19.99882", "BILAN SANS CUMUL", "en cabinet", 50],
+                ["EC/19.99883", "HORS BILAN", "en cabinet", 40],
+                ["EC/19.99884", "BILAN CORRIGE", "en cabinet", 10],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+    colonnes = ["N° ordre", "Membre", "Province", "Hv4", "Σ", "%120H"]
+    await import_source_snapshot(
+        db_session, admin_isole, org, "forco-1.xlsx",
+        _xlsx(colonnes, [
+            ["EC/19.99881", "DANS LE BILAN", "KINSHASA", 6, 128.5, 107],
+            ["EC/19.99882", "BILAN SANS CUMUL", "KINSHASA", None, None, None],
+            ["EC/19.99884", "BILAN CORRIGE", "KINSHASA", 6, 60, 50],
+        ]),
+        "bilan_forco", "2026", date(2026, 10, 31),
+    )
+    # Un bilan plus récent remplace le cumul du membre qu'il reprend.
+    await import_source_snapshot(
+        db_session, admin_isole, org, "forco-2.xlsx",
+        _xlsx(colonnes, [["ec/19.99884 ", "BILAN CORRIGE", "KINSHASA", 12, 96, 80]]),
+        "bilan_forco", "2026", date(2026, 11, 13),
+    )
+    # Le bilan d'un autre exercice ne compte pas.
+    await import_source_snapshot(
+        db_session, admin_isole, org, "forco-2025.xlsx",
+        _xlsx(colonnes, [["EC/19.99883", "HORS BILAN", "KINSHASA", 1, 999, 100]]),
+        "bilan_forco", "2025", date(2025, 11, 13),
+    )
+
+    base = await _base(db_session, admin_isole)
+    nhv = {m["nom"]: m["nhv"] for m in base["membres_a_completer"]}
+    assert nhv == {
+        "DANS LE BILAN": 128.5,
+        "BILAN SANS CUMUL": 0.0,
+        "HORS BILAN": 40.0,
+        "BILAN CORRIGE": 96.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_la_formation_de_la_base_suit_les_paliers_d_anciennete(db_session, admin_isole):
+    """Chaque ancienneté est jugée sur ses colonnes du bilan ; le NHV affiché reste le Σ du fichier."""
+    org = admin_isole.organisation_id
+    await import_source_snapshot(
+        db_session, admin_isole, org, "pp-paliers.xlsx",
+        _xlsx(
+            ["N°Ordrre", "Nom", "Statut"],
+            [
+                ["EC/26.99871", "INSCRIT CETTE ANNEE", "en cabinet"],
+                ["EC/25.99872", "UN AN", "en cabinet"],
+                ["EC/19.99873", "QUATRE ANS COMPTES", "en cabinet"],
+                ["EC/19.99874", "TROIS ANS PLEINS", "en cabinet"],
+            ],
+        ),
+        "personnes_physiques", "2026", date(2026, 10, 31),
+    )
+    await import_source_snapshot(
+        db_session, admin_isole, org, "forco-paliers.xlsx",
+        _xlsx(["N° ordre", "Membre", "Hv1", "Hv2", "Hv3", "Hv4", "Σ"], [
+            ["EC/26.99871", "INSCRIT CETTE ANNEE", None, None, None, None, None],
+            ["EC/25.99872", "UN AN", None, None, None, 25, 25],
+            # 128,5 h sur quatre ans, 108,5 h sur les trois dernières.
+            ["EC/19.99873", "QUATRE ANS COMPTES", 20, 40, 50, 18.5, 128.5],
+            ["EC/19.99874", "TROIS ANS PLEINS", 0, 40, 40, 40, 120],
+        ]),
+        "bilan_forco", "2026", date(2026, 10, 31),
+    )
+
+    base = await _base(db_session, admin_isole)
+    membres = {m["nom"]: m for m in base["membres_a_completer"]}
+    assert {nom: m["formation_etat"] for nom, m in membres.items()} == {
+        "INSCRIT CETTE ANNEE": "non_requis",
+        "UN AN": "atteint",
+        "QUATRE ANS COMPTES": "insuffisant",
+        "TROIS ANS PLEINS": "atteint",
+    }
+    assert membres["QUATRE ANS COMPTES"]["nhv"] == 128.5
 
 
 @pytest.mark.asyncio
@@ -1491,3 +1581,46 @@ async def test_la_base_se_filtre_sur_ce_que_calculent_les_regles(db_session, adm
         db_session, [admin_isole.organisation_id], exercice="2026", limit=2, offset=2, cotisation="inconnue",
     )
     assert page["total_membres"] == 3 and len(page["membres_a_completer"]) == 1
+
+
+# --- BilanForco : synthèse des bilans de formation sur quatre ans -------------
+
+_FORCO_COLONNES = [
+    "N° ordre", "Membre", "Province", "N1", "Hd1", "Hv1", "N2", "Hd2", "Hv2",
+    "N3", "Hd3", "Hv3", "N4", "Hd4", "Hv4", "Σ", "%120H",
+]
+_FORCO_LIGNES = [
+    ["EC/16.00001", "ABEDI Assad", "KINSHASA", 0, None, None, 2, 6.0, 4.5, 6, 111.0, 109.5, 2, 6.0, 6.0, 120.0, 100],
+    ["EC/17.00002", "ABISA Lydie", "KINSHASA", 0, None, None, 3, 87.0, 58.0, 5, 40.0, 40.0, 4, 24.0, 24.0, 122.0, 102],
+]
+
+
+def test_bilan_forco_garde_les_colonnes_du_fichier():
+    """Comme les autres sources : les colonnes telles que le fichier les porte."""
+    result = parse_source_excel(_xlsx(_FORCO_COLONNES, _FORCO_LIGNES), "bilan_forco")
+
+    assert result.errors == []
+    assert [list(row.raw_data) for row in result.rows] == [_FORCO_COLONNES] * 2
+    assert result.rows[0].business_key_candidate == "EC/16.00001"
+    assert result.rows[0].raw_data["Hv3"] == 109.5
+    assert result.rows[1].raw_data["%120H"] == 102
+
+
+@pytest.mark.asyncio
+async def test_bilan_forco_s_importe_comme_une_source(db_session, test_admin_user):
+    outcome = await import_source_snapshot(
+        db=db_session,
+        user=test_admin_user,
+        organisation_id=test_admin_user.organisation_id,
+        file_name="Synthèse bilans Forco CN 4 ans.xlsx",
+        content=_xlsx(_FORCO_COLONNES, _FORCO_LIGNES),
+        source_type="bilan_forco",
+        exercice="2026",
+        date_situation=date(2026, 6, 2),
+    )
+
+    assert outcome.imp.source_type == "bilan_forco"
+    assert outcome.imp.status == "completed"
+    assert outcome.total == 2 and outcome.imported == 2
+    colonnes = next(iter(outcome.imp.metadata_json["colonnes_source"].values()))
+    assert colonnes == _FORCO_COLONNES

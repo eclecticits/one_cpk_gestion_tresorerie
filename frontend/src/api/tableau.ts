@@ -34,8 +34,21 @@ export interface TableauReglages {
   /** Barème d'origine, renvoyé par le serveur (lecture seule). */
   /** Ce que veut dire chaque condition, par catégorie (écarts aux définitions par défaut). */
   definitions_par_categorie?: Record<string, DefinitionsCategorie>
+  /** Formation exigée selon l'ancienneté ; liste vide = exemption « nouveau membre » seule. */
+  formation_paliers?: PalierFormation[]
   /** Seules les colonnes de situation de la catégorie y figurent. */
   bareme?: Record<string, Partial<Record<CritereTableau, ModeCritere>>>
+}
+
+export interface PalierFormation {
+  /** Ancienneté en années (exercice − année du N° d'ordre) à partir de laquelle la ligne vaut. */
+  anciennete: number
+  /** Colonnes d'heures validées du bilan Forco jugées ; aucune = non applicable. */
+  colonnes: string[]
+  /** Minimum exigé de chacune des colonnes. */
+  par_an_min: number | null
+  /** Exiger de leur somme le minimum d'heures de formation. */
+  cumul: boolean
 }
 
 export interface DefinitionsCategorie {
@@ -59,7 +72,7 @@ export interface TableauImport {
   id: number
   exercice: string
   date_situation: string
-  source_type: 'personnes_physiques' | 'personnes_morales' | 'chiffres_affaires' | 'assurances' | 'tableau'
+  source_type: 'personnes_physiques' | 'personnes_morales' | 'chiffres_affaires' | 'assurances' | 'bilan_forco' | 'tableau'
   file_name: string
   file_sha256: string | null
   file_size: number | null

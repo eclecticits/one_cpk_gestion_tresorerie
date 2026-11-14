@@ -15,8 +15,11 @@ non en règle, selon la définition de la catégorie. Une donnée manquante rend
 non en règle : sans information, le membre n'a pas démontré qu'il est en règle.
 
 Exemptions de la formation continue :
-- Nouveau membre : inscrit depuis moins de N ans (année du N° d'ordre >=
-  exercice - (N-1)) ou ancienneté « Nouveau » -> formation NON REQUISE.
+- Paliers d'ancienneté (`formation_paliers`, réglables) : l'ancienneté tirée du
+  N° d'ordre désigne les colonnes du bilan Forco à juger, le minimum par an et
+  le cumul exigé. Un palier sans colonne -> formation NON REQUISE.
+- Sans palier (liste vide ou N° d'ordre sans année) : inscrit depuis moins de
+  N ans ou ancienneté « Nouveau » -> formation NON REQUISE.
 - Âge supérieur au seuil réglable -> action configurable (par défaut
   « À DÉLIBÉRER », ou validation directe en INSCRIT selon les réglages).
 
@@ -35,6 +38,20 @@ DEFAULT_HEURES_FORMATION_MIN = 120.0
 DEFAULT_AGE_SEUIL = 60
 DEFAULT_AGE_ACTION = "a_deliberer"   # "a_deliberer" | "inscrit" | "aucune"
 DEFAULT_NOUVEAU_ANS = 3
+
+# Formation continue selon l'ancienneté (exercice - année du N° d'ordre). Un
+# palier vaut pour son ancienneté et au-delà, jusqu'au palier suivant ; il nomme
+# les colonnes d'heures validées du bilan Forco qu'il juge. Sans colonne, la
+# formation est non applicable. `par_an_min` s'exige de chaque colonne ; `cumul`
+# exige de leur somme le minimum d'heures de la catégorie (`heures_min`).
+# Réglable ; une liste vide rend la main à `nouveau_anciennete_ans`.
+COLONNES_BILAN_FORCO: tuple[str, ...] = ("Hv1", "Hv2", "Hv3", "Hv4")
+DEFAULT_FORMATION_PALIERS: list[dict[str, Any]] = [
+    {"anciennete": 0, "colonnes": [], "par_an_min": None, "cumul": False},
+    {"anciennete": 1, "colonnes": ["Hv4"], "par_an_min": 20.0, "cumul": False},
+    {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": 20.0, "cumul": False},
+    {"anciennete": 3, "colonnes": ["Hv2", "Hv3", "Hv4"], "par_an_min": 20.0, "cumul": True},
+]
 
 # Rétro-compatibilité (constantes lues ailleurs)
 HEURES_FORMATION_MIN = DEFAULT_HEURES_FORMATION_MIN
@@ -128,6 +145,8 @@ class TableauReglages:
     # Ce que veut dire chaque condition, par catégorie (voir `DEFINITIONS`) :
     # {"EC Cabinet": {"heures_formation_min": 60, "cotisation_arrieres": False}}.
     definitions_par_categorie: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Exigence de formation par ancienneté (voir `DEFAULT_FORMATION_PALIERS`).
+    formation_paliers: list[dict[str, Any]] = field(default_factory=lambda: [dict(p) for p in DEFAULT_FORMATION_PALIERS])
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TableauReglages":
@@ -137,7 +156,34 @@ class TableauReglages:
         valeurs = {k: v for k, v in data.items() if k in allowed and v is not None}
         valeurs["criteres_par_categorie"] = _criteres_valides(valeurs.get("criteres_par_categorie"))
         valeurs["definitions_par_categorie"] = _definitions_valides(valeurs.get("definitions_par_categorie"))
+        if "formation_paliers" in valeurs:
+            valeurs["formation_paliers"] = _paliers_valides(valeurs["formation_paliers"])
         return cls(**valeurs)
+
+    def palier_formation(self, numero_ordre: str | None, exercice_annee: int | None) -> dict[str, Any] | None:
+        """Le palier de l'ancienneté du membre ; None si elle est inconnue ou sans palier."""
+        annee = annee_ordre(numero_ordre)
+        if annee is None or exercice_annee is None:
+            return None
+        anciennete = exercice_annee - annee
+        atteints = [p for p in self.formation_paliers if p["anciennete"] <= anciennete]
+        return atteints[-1] if atteints and anciennete >= 0 else None
+
+    def total_palier(self, palier: dict[str, Any], categorie: str | None) -> float | None:
+        """Cumul exigé par le palier : le minimum d'heures de la catégorie, s'il l'exige."""
+        return self.heures_min(categorie) if palier.get("cumul") else None
+
+    def minimum_palier(self, palier: dict[str, Any], categorie: str | None) -> float:
+        """Heures qu'il faut au moins pour satisfaire le palier, toutes colonnes réunies."""
+        par_an = float(palier.get("par_an_min") or 0) * len(palier["colonnes"])
+        return max(self.total_palier(palier, categorie) or 0.0, par_an)
+
+    def seuil_formation(self, dossier: dict[str, Any], exercice_annee: int | None) -> float:
+        """Le minimum d'heures opposable à ce membre : celui de son palier, sinon de sa catégorie."""
+        palier = self.palier_formation(dossier.get("numero_ordre"), exercice_annee)
+        if palier and palier["colonnes"]:
+            return self.minimum_palier(palier, dossier.get("categorie"))
+        return self.heures_min(dossier.get("categorie"))
 
     def _definition(self, categorie: str | None, cle: str) -> Any:
         categorie = "Société" if categorie == "SEC" else (categorie or "")
@@ -180,6 +226,31 @@ DEFINITIONS: dict[str, Any] = {
     # compte ; absente = toute déclaration de l'exercice (pas de condition de date).
     "ca_declaration_min": None,
 }
+
+
+def _paliers_valides(data: Any) -> list[dict[str, Any]]:
+    """Paliers lisibles, un par ancienneté, du plus jeune au plus ancien."""
+    def heures(valeur: Any) -> float | None:
+        if isinstance(valeur, (int, float)) and not isinstance(valeur, bool) and 0 < valeur <= 10_000:
+            return float(valeur)
+        return None
+
+    paliers: dict[int, dict[str, Any]] = {}
+    for brut in data if isinstance(data, list) else []:
+        if not isinstance(brut, dict):
+            continue
+        anciennete = brut.get("anciennete")
+        if not isinstance(anciennete, int) or isinstance(anciennete, bool) or not 0 <= anciennete <= 100:
+            continue
+        choisies = brut.get("colonnes") if isinstance(brut.get("colonnes"), list) else []
+        colonnes = [c for c in COLONNES_BILAN_FORCO if c in choisies]
+        paliers[anciennete] = {
+            "anciennete": anciennete,
+            "colonnes": colonnes,
+            "par_an_min": heures(brut.get("par_an_min")) if colonnes else None,
+            "cumul": bool(colonnes) and brut.get("cumul") is True,
+        }
+    return [paliers[a] for a in sorted(paliers)]
 
 
 def _definitions_valides(data: Any) -> dict[str, dict[str, Any]]:
@@ -286,7 +357,7 @@ def etat_formation(dossier: dict[str, Any], exercice_annee: int | None, reglages
     nouveau = est_nouveau(dossier, exercice_annee, reglages)
     if nouveau:
         return "non_requis"
-    valeur = _formation_ok(dossier, nouveau, reglages)
+    valeur = _formation_ok(dossier, nouveau, reglages, exercice_annee)
     return "inconnu" if valeur is None else ("atteint" if valeur else "insuffisant")
 
 
@@ -409,6 +480,10 @@ def est_nouveau(dossier: dict[str, Any], exercice_annee: int | None,
     reglages = reglages or TableauReglages()
     if not reglages.exempter_nouveaux:
         return False
+    palier = reglages.palier_formation(dossier.get("numero_ordre"), exercice_annee)
+    if palier is not None:
+        # Le palier de son ancienneté décide : sans colonne à juger, non applicable.
+        return not palier["colonnes"]
     anciennete = str(dossier.get("anciennete") or "").strip().lower()
     if "nouveau" in anciennete:
         return True
@@ -419,18 +494,58 @@ def est_nouveau(dossier: dict[str, Any], exercice_annee: int | None,
     return False
 
 
-def _formation_ok(dossier: dict[str, Any], nouveau: bool, reglages: TableauReglages) -> bool | None:
-    """True = satisfaite/exemptée, False = insuffisante, None = inconnu."""
+def _heures_colonne(valeur: Any) -> float:
+    """Une cellule du bilan Forco en heures ; vide ou illisible = aucune heure validée."""
+    try:
+        return float(str(valeur).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _formation_ok(dossier: dict[str, Any], nouveau: bool, reglages: TableauReglages,
+                  exercice_annee: int | None = None) -> bool | None:
+    """True = satisfaite/exemptée, False = insuffisante, None = inconnu.
+
+    `heures_bilan` : la ligne du membre dans le bilan Forco ({"Hv2": 40, ...}).
+    Le palier de son ancienneté y juge chaque année puis leur cumul. Sans
+    bilan, le NHV global se compare au minimum du palier.
+    """
     if nouveau:
         return True
+    categorie = dossier.get("categorie")
+    palier = reglages.palier_formation(dossier.get("numero_ordre"), exercice_annee)
+    palier = palier if palier and palier["colonnes"] else None
+    bilan = dossier.get("heures_bilan")
+    if palier and isinstance(bilan, dict):
+        heures_par_an = [_heures_colonne(bilan.get(colonne)) for colonne in palier["colonnes"]]
+        if palier["par_an_min"] is not None and min(heures_par_an) < palier["par_an_min"]:
+            return False
+        total = reglages.total_palier(palier, categorie)
+        return total is None or sum(heures_par_an) >= total
     heures = dossier.get("heures_forco")
     if heures is not None:
-        return float(heures) >= reglages.heures_min(dossier.get("categorie"))
+        minimum = reglages.minimum_palier(palier, categorie) if palier else reglages.heures_min(categorie)
+        return float(heures) >= minimum
     hf = dossier.get("hformation")
     return hf if hf is not None else None
 
 
-def _critere_ok(nom: str, dossier: dict[str, Any], nouveau: bool, reglages: TableauReglages) -> bool | None:
+def libelle_palier(palier: dict[str, Any], reglages: TableauReglages, categorie: str | None) -> str:
+    """« 20 h par an, 120 h sur 3 ans » : ce que le palier exige, en clair."""
+    def h(valeur: float) -> str:
+        return f"{int(valeur) if float(valeur).is_integer() else valeur} h"
+    annees = len(palier["colonnes"])
+    morceaux = []
+    if palier["par_an_min"] is not None:
+        morceaux.append(f"{h(palier['par_an_min'])} par an")
+    total = reglages.total_palier(palier, categorie)
+    if total is not None:
+        morceaux.append(f"{h(total)} sur {annees} an{'s' if annees > 1 else ''}")
+    return ", ".join(morceaux)
+
+
+def _critere_ok(nom: str, dossier: dict[str, Any], nouveau: bool, reglages: TableauReglages,
+                exercice_annee: int | None = None) -> bool | None:
     if nom == "cotisation":
         return dossier.get("cotisation_payee")
     if nom == "assurance":
@@ -438,7 +553,7 @@ def _critere_ok(nom: str, dossier: dict[str, Any], nouveau: bool, reglages: Tabl
     if nom == "chiffre_affaires":
         return dossier.get("chiffre_affaires")
     if nom == "formation":
-        return _formation_ok(dossier, nouveau, reglages)
+        return _formation_ok(dossier, nouveau, reglages, exercice_annee)
     return None
 
 
@@ -462,7 +577,10 @@ def evaluer(dossier: dict[str, Any], exercice_annee: int | None = None,
     nouveau = est_nouveau(dossier, exercice_annee, reglages)
     age = dossier.get("age")
     exemptions: list[str] = []
-    if nouveau:
+    palier = reglages.palier_formation(dossier.get("numero_ordre"), exercice_annee)
+    if nouveau and palier is not None:
+        exemptions.append("nouveau membre : formation non requise")
+    elif nouveau:
         exemptions.append(f"nouveau membre (< {reglages.nouveau_anciennete_ans} ans) : formation non requise")
 
     motifs_echec: list[str] = []
@@ -471,7 +589,7 @@ def evaluer(dossier: dict[str, Any], exercice_annee: int | None = None,
     formation_insuffisante = False
 
     for critere in criteres:
-        valeur = _critere_ok(critere, dossier, nouveau, reglages)
+        valeur = _critere_ok(critere, dossier, nouveau, reglages, exercice_annee)
         if critere == "formation":
             if valeur is False:
                 formation_insuffisante = True
@@ -500,7 +618,10 @@ def evaluer(dossier: dict[str, Any], exercice_annee: int | None = None,
     # 2) Formation insuffisante : exemption d'âge réglable, sinon NON INSCRIT
     if formation_insuffisante:
         depasse_age = age is not None and reglages.age_seuil is not None and age > reglages.age_seuil
-        seuil_h = int(reglages.heures_min(categorie))
+        seuil_h = int(reglages.seuil_formation(dossier, exercice_annee))
+        insuffisante = f"heures de formation < {seuil_h}h"
+        if palier and palier["colonnes"] and isinstance(dossier.get("heures_bilan"), dict):
+            insuffisante = f"heures de formation insuffisantes ({libelle_palier(palier, reglages, categorie)})"
         if depasse_age and reglages.age_action != "aucune":
             if reglages.age_action == "inscrit":
                 return {
@@ -514,9 +635,9 @@ def evaluer(dossier: dict[str, Any], exercice_annee: int | None = None,
                 "exemptions": exemptions + [f"âge > {reglages.age_seuil} ans"],
             }
         if regles["formation"] == A_DELIBERER_MODE:
-            motifs_a_deliberer.append(f"heures de formation < {seuil_h}h")
+            motifs_a_deliberer.append(insuffisante)
         else:
-            return {"conclusion": NON_INSCRIT, "motif": f"heures de formation < {seuil_h}h", "exemptions": exemptions}
+            return {"conclusion": NON_INSCRIT, "motif": insuffisante, "exemptions": exemptions}
 
     # 3) Défaut d'un critère que les réglages renvoient au conseil
     if motifs_a_deliberer:

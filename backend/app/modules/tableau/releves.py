@@ -205,7 +205,9 @@ def _date_fr(valeur: Any) -> str:
     return date.today().strftime("%d/%m/%Y")
 
 
-def criteres_releve(membre: dict[str, Any], reglages: verdict_engine.TableauReglages) -> list[tuple[str, str, bool | None]]:
+def criteres_releve(
+    membre: dict[str, Any], reglages: verdict_engine.TableauReglages, exercice_annee: int | None = None,
+) -> list[tuple[str, str, bool | None]]:
     """Un critère de la catégorie par ligne, dans l'ordre des colonnes du Tableau :
     libellé, valeur lue par le membre, et conformité (None quand on ne sait pas).
 
@@ -223,7 +225,8 @@ def criteres_releve(membre: dict[str, Any], reglages: verdict_engine.TableauRegl
         elif critere == "formation":
             etat = membre.get("formation_etat")
             nhv = membre.get("nhv")
-            minimum = reglages.heures_min(categorie)
+            # Le minimum opposable au membre : celui du palier de son ancienneté.
+            minimum = reglages.seuil_formation(membre, exercice_annee)
             conforme = {"atteint": True, "non_requis": True, "insuffisant": False}.get(etat or "")
             if etat == "non_requis":
                 texte = "non requise (nouveau membre)"
@@ -315,7 +318,8 @@ def construire_releve(
 
     libelle = CONCLUSIONS_ENVOYABLES[verdict]
     en_regle = verdict == verdict_engine.INSCRIT
-    evalues = criteres_releve(membre, reglages)
+    annee = re.search(r"(?:19|20)\d{2}", str(exercice or ""))
+    evalues = criteres_releve(membre, reglages, int(annee.group(0)) if annee else None)
     criteres = [(label, valeur) for label, valeur, _ in evalues]
     arretee = _date_fr(membre.get("date_situation"))
     # Les données de l'exercice X préparent le Tableau X+1 : c'est lui que l'on nomme.

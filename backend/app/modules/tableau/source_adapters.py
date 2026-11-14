@@ -21,6 +21,7 @@ SOURCE_TYPES = {
     "personnes_morales",
     "chiffres_affaires",
     "assurances",
+    "bilan_forco",
     "tableau",
 }
 
@@ -195,6 +196,18 @@ class AssurancesAdapter(SourceAdapter):
     required_any = ({"numero_ordre", "membre"},)
 
 
+class BilanForcoAdapter(SourceAdapter):
+    """Synthèse des bilans de formation continue sur quatre ans.
+
+    Par membre : nombre de formations (N), heures déclarées (Hd) et heures
+    validées (Hv) de chacune des quatre années, leur cumul (Σ) et le taux
+    d'atteinte des 120 heures (%120H). Les colonnes sont conservées telles
+    quelles ; seule l'identification du membre est exigée.
+    """
+
+    required_any = ({"numero_ordre"}, {"membre"})
+
+
 class TableauSourceAdapter(SourceAdapter):
     required_any = ({"numero_ordre", "membre"},)
 
@@ -204,6 +217,7 @@ ADAPTERS = {
     "personnes_morales": PersonnesMoralesAdapter("personnes_morales"),
     "chiffres_affaires": ChiffresAffairesAdapter("chiffres_affaires"),
     "assurances": AssurancesAdapter("assurances"),
+    "bilan_forco": BilanForcoAdapter("bilan_forco"),
     "tableau": TableauSourceAdapter("tableau"),
 }
 

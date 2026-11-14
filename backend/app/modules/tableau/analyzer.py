@@ -82,7 +82,7 @@ def detect_anomalies(
 
         # Formation (uniquement si requise et non exemptée)
         if "formation" in criteres and not nouveau:
-            minimum = reglages.heures_min(d.get("categorie"))
+            minimum = reglages.seuil_formation(d, exercice_annee)
             heures = d.get("heures_forco")
             if heures is not None and heures < minimum:
                 age = d.get("age")

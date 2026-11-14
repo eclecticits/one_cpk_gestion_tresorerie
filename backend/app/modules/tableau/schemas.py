@@ -410,6 +410,9 @@ class TableauReglagesIn(BaseModel):
     criteres_par_categorie: dict[str, dict[str, Literal["bloquant", "a_deliberer", "ignore"]]] | None = None
     # {"EC Cabinet": {"heures_formation_min": 60, "cotisation_arrieres": false, "cotisation_partielle": "bloquant"}}
     definitions_par_categorie: dict[str, dict[str, Any]] | None = None
+    # Formation par ancienneté : [{"anciennete": 3, "colonnes": ["Hv2", "Hv3", "Hv4"], "par_an_min": 20, "cumul": true}].
+    # Une liste vide revient à l'exemption « nouveau membre » et au minimum général.
+    formation_paliers: list[dict[str, Any]] | None = Field(default=None, max_length=20)
 
 
 class TableauAssistantIn(BaseModel):

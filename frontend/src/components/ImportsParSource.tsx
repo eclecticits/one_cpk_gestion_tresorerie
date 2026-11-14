@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  BarChart2, Bot, Building2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, Search, ShieldCheck, Table2, Upload, User, X,
+  BarChart2, Bot, Building2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, GraduationCap, Search, ShieldCheck, Table2, Upload, User, X,
 } from 'lucide-react'
 import {
   downloadTableauImportAnnote,
@@ -22,6 +22,7 @@ const SOURCES: Array<{ type: SourceType; label: string; aide: string; icon: Reac
   { type: 'personnes_morales', label: 'Personnes morales', aide: 'Fiches des sociétés', icon: <Building2 size={16} /> },
   { type: 'chiffres_affaires', label: "Chiffres d'affaires", aide: 'Déclarations par année et devise', icon: <BarChart2 size={16} /> },
   { type: 'assurances', label: 'Assurances', aide: 'Déclarations et couvertures', icon: <ShieldCheck size={16} /> },
+  { type: 'bilan_forco', label: 'BilanForco', aide: 'Heures de formation sur 4 ans', icon: <GraduationCap size={16} /> },
 ]
 
 const TAILLES = [25, 50, 100, 200]

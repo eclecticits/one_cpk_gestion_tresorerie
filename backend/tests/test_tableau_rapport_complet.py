@@ -71,7 +71,7 @@ def test_les_exemptes_de_formation_sortent_du_taux_du_critere():
     donnees = _donnees([
         _dossier(1, "EC/16.00001", heures_forco=120.0),
         _dossier(2, "EC/16.00002", V.NON_INSCRIT, heures_forco=0.0),
-        _dossier(3, "EC/25.00003", heures_forco=0.0, anciennete="Nouveau"),
+        _dossier(3, "EC/26.00003", heures_forco=0.0, anciennete="Nouveau"),
     ])
     formation = _critere(donnees, "formation")
     assert (formation["conformes"], formation["defauts"], formation["soumis"]) == (1, 1, 2)
@@ -357,7 +357,7 @@ def _ligne_membre(id_: int, categorie: str = "EC Cabinet", **overrides):
     valeurs = {
         "genre": "PP", "id": id_, "numero_ordre": f"EC/16.{id_:05d}", "nom": f"MEMBRE {id_}", "categorie": categorie,
         "nif": None, "cabinet": "CABINET A", "email": f"m{id_}@example.cd", "telephone": f"+24381{id_:07d}",
-        "assurance": None, "sexe": "F", "nhv": 130, "actif": True, "province": "KINSHASA", "erreurs": [],
+        "assurance": None, "sexe": "F", "nhv": 130, "heures_bilan": None, "actif": True, "province": "KINSHASA", "erreurs": [],
     }
     return SimpleNamespace(**{**valeurs, **overrides})
 

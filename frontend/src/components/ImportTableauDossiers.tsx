@@ -11,7 +11,7 @@ interface ImportTableauDossiersProps {
   source?: SourceType
 }
 
-export type SourceType = 'tableau' | 'personnes_physiques' | 'personnes_morales' | 'chiffres_affaires' | 'assurances'
+export type SourceType = 'tableau' | 'personnes_physiques' | 'personnes_morales' | 'chiffres_affaires' | 'assurances' | 'bilan_forco'
 
 // Contrat d'import — miroir des adaptateurs serveur (`source_adapters.py`).
 const SOURCES: Record<SourceType, {
@@ -71,7 +71,25 @@ const SOURCES: Record<SourceType, {
     required: ["Membre (N° d'ordre puis nom)"],
     optional: ['Déclaré', 'Souscrit', 'Fin couverture', 'Année de souscription', 'Assureur', 'Période'],
   },
+  bilan_forco: {
+    shortTitle: 'BilanForco',
+    title: 'Source détaillée — BilanForco',
+    description: 'Synthèse des bilans Forco sur 4 ans : formations, heures déclarées et validées.',
+    accent: 'expertAccentSec',
+    required: ['N° ordre', 'Membre'],
+    optional: [
+      'Province', 'N1', 'Hd1', 'Hv1', 'N2', 'Hd2', 'Hv2', 'N3', 'Hd3', 'Hv3',
+      'N4', 'Hd4', 'Hv4', 'Σ', '%120H',
+    ],
+  },
 }
+
+// Colonnes du bilan Forco, telles que la synthèse les porte. Par
+// année : N = nombre de formations, Hd = heures déclarées, Hv = heures validées.
+const COLONNES_BILAN_FORCO = [
+  'N° ordre', 'Membre', 'Province', 'N1', 'Hd1', 'Hv1', 'N2', 'Hd2', 'Hv2',
+  'N3', 'Hd3', 'Hv3', 'N4', 'Hd4', 'Hv4', 'Σ', '%120H',
+]
 
 const CATEGORIES = ['Société', 'EC Cabinet', 'EC Indépendant', 'EC Salarié', 'Stagiaire']
 
@@ -255,6 +273,15 @@ export default function ImportTableauDossiers({ exercice, onExerciceChange, onIm
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
       XLSX.writeFile(wb, 'Declarations_assurance_gestionnaire_CP.xlsx')
+      return
+    }
+
+    if (sourceType === 'bilan_forco') {
+      const exemple = ['EC/19.99005', 'EXEMPLE Jean', 'KINSHASA', 1, 8, 8, 4, 23, 23, 8, 43, 35, 5, 66, 62.5, 128.5, 107]
+      const ws = XLSX.utils.aoa_to_sheet([COLONNES_BILAN_FORCO, exemple])
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
+      XLSX.writeFile(wb, 'Synthese_bilans_Forco.xlsx')
       return
     }
 

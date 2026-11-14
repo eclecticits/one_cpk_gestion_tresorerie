@@ -1945,6 +1945,7 @@ async def get_base_tableau(
             "assurance": assurance,
             "chiffre_affaires": verdict_engine.ca_declare(ligne.categorie, ca_par_conseil[ligne.organisation_id].get(cle), reglages),
             "heures_forco": float(ligne.nhv) if ligne.nhv is not None else None,
+            "heures_bilan": ligne.heures_bilan,
             "anciennete": verdict_engine.libelle_anciennete(ligne.numero_ordre, annee_exercice),
             "age": None,
         }
@@ -2040,7 +2041,7 @@ async def get_base_tableau(
         )
         membre["formation_etat"] = verdict_engine.etat_formation(
             {"categorie": ligne.categorie, "numero_ordre": ligne.numero_ordre, "heures_forco": membre["nhv"],
-             "anciennete": membre["anciennete_libelle"]},
+             "heures_bilan": ligne.heures_bilan, "anciennete": membre["anciennete_libelle"]},
             annee_exercice, reglages_par_conseil[ligne.organisation_id],
         )
         membres_a_completer.append(membre)

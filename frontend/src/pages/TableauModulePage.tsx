@@ -6,6 +6,7 @@ import SortieMembreModal, { type MembreSortie } from '../components/SortieMembre
 import ReleveSituationModal, { type MembreReleve } from '../components/ReleveSituationModal'
 import RelevesLotModal from '../components/RelevesLotModal'
 import ImportsParSource from '../components/ImportsParSource'
+import PaliersFormation, { PALIERS_PAR_DEFAUT } from '../components/PaliersFormation'
 import TableauDashboardCharts from '../components/TableauDashboardCharts'
 import BackButton from '../components/BackButton'
 import { ApiError } from '../lib/apiClient'
@@ -2660,6 +2661,13 @@ export default function TableauModulePage() {
                   reglages={reglages}
                   modifiable={canSettings}
                   onChange={modif => setReglages(r => ({ ...r, ...modif }))}
+                />
+
+                <PaliersFormation
+                  paliers={reglages.formation_paliers ?? PALIERS_PAR_DEFAUT}
+                  heuresMin={reglages.heures_formation_min ?? 120}
+                  modifiable={canSettings}
+                  onChange={formation_paliers => setReglages(r => ({ ...r, formation_paliers }))}
                 />
 
                 <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '14px' }}>

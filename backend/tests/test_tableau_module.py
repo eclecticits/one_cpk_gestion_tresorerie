@@ -155,9 +155,59 @@ class TestVerdict:
         assert V.evaluer(d)["conclusion"] == V.INSCRIT
 
     def test_nouveau_membre_par_numero_ordre(self):
-        # exercice 2026, ordre 2025 -> nouveau -> exempté formation
-        d = _dossier(numero_ordre="EC/25.00604", anciennete="Ancien", heures_forco=0.0)
+        # exercice 2026, inscrit en 2026 -> formation non applicable
+        d = _dossier(numero_ordre="EC/26.00604", anciennete="Ancien", heures_forco=0.0)
         assert V.evaluer(d, 2026)["conclusion"] == V.INSCRIT
+
+    def test_un_an_d_anciennete_doit_vingt_heures(self):
+        d = _dossier(numero_ordre="EC/25.00604", heures_forco=0.0)
+        assert V.evaluer(d, 2026)["conclusion"] == V.NON_INSCRIT
+        assert V.evaluer({**d, "heures_forco": 20.0}, 2026)["conclusion"] == V.INSCRIT
+        # Deux ans : vingt heures pour chacune des deux années.
+        deux_ans = _dossier(numero_ordre="EC/24.00604", heures_forco=39.0)
+        assert V.evaluer(deux_ans, 2026)["conclusion"] == V.NON_INSCRIT
+        assert V.evaluer({**deux_ans, "heures_forco": 40.0}, 2026)["conclusion"] == V.INSCRIT
+
+    def test_les_paliers_jugent_les_colonnes_du_bilan_forco(self):
+        def conclusion(numero, bilan, reglages=None):
+            d = _dossier(numero_ordre=numero, heures_forco=999.0, heures_bilan=bilan)
+            return V.evaluer(d, 2026, reglages)
+
+        # Un an : seule la dernière année compte, quoi que dise le cumul.
+        assert conclusion("EC/25.00001", {"Hv3": 90, "Hv4": 19.5})["conclusion"] == V.NON_INSCRIT
+        assert conclusion("EC/25.00001", {"Hv4": "20,5"})["conclusion"] == V.INSCRIT
+        # Deux ans : chacune des deux dernières années.
+        assert conclusion("EC/24.00001", {"Hv3": 60, "Hv4": None})["conclusion"] == V.NON_INSCRIT
+        assert conclusion("EC/24.00001", {"Hv3": 20, "Hv4": 20})["conclusion"] == V.INSCRIT
+        # Trois ans et plus : 120 h sur les trois dernières années, l'année 1 ne compte pas.
+        assert conclusion("EC/19.00001", {"Hv1": 80, "Hv2": 40, "Hv3": 40, "Hv4": 39})["conclusion"] == V.NON_INSCRIT
+        assert conclusion("EC/19.00001", {"Hv2": 40, "Hv3": 40, "Hv4": 40})["conclusion"] == V.INSCRIT
+        # ... et vingt heures chaque année, même le cumul atteint.
+        court = conclusion("EC/19.00001", {"Hv2": 100, "Hv3": 10, "Hv4": 40})
+        assert court["conclusion"] == V.NON_INSCRIT
+        assert court["motif"] == "heures de formation insuffisantes (20 h par an, 120 h sur 3 ans)"
+        # Le cumul exigé suit le minimum d'heures réglé.
+        reglages = V.TableauReglages(heures_formation_min=90)
+        assert conclusion("EC/19.00001", {"Hv2": 30, "Hv3": 30, "Hv4": 30}, reglages)["conclusion"] == V.INSCRIT
+
+    def test_les_paliers_de_formation_sont_reglables(self):
+        reglages = V.TableauReglages.from_dict({"formation_paliers": [
+            {"anciennete": 2, "colonnes": ["Hv4", "Hv3", "Hd1"], "par_an_min": 10, "cumul": True},
+            {"anciennete": 0, "colonnes": [], "par_an_min": 20, "cumul": True},
+            {"anciennete": "x", "colonnes": ["Hv4"]},
+        ]})
+        assert reglages.formation_paliers == [
+            {"anciennete": 0, "colonnes": [], "par_an_min": None, "cumul": False},
+            {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": 10.0, "cumul": True},
+        ]
+        # Un an d'ancienneté retombe sur le palier 0 : non applicable.
+        assert V.est_nouveau({"numero_ordre": "EC/25.00001"}, 2026, reglages) is True
+        assert V.est_nouveau({"numero_ordre": "EC/24.00001"}, 2026, reglages) is False
+        # Liste vide : l'exemption « nouveau membre » de trois ans reprend la main.
+        sans = V.TableauReglages.from_dict({"formation_paliers": []})
+        assert V.est_nouveau({"numero_ordre": "EC/24.00001"}, 2026, sans) is True
+        # Réglages enregistrés avant les paliers : ceux par défaut s'appliquent.
+        assert V.TableauReglages.from_dict({"age_seuil": 70}).formation_paliers == V.DEFAULT_FORMATION_PALIERS
 
     def test_stagiaire_soumis_a_la_cotisation_seulement(self):
         assert V.evaluer(_dossier(categorie="Stagiaire", heures_forco=0.0))["conclusion"] == V.INSCRIT
