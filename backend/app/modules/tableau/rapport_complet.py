@@ -372,10 +372,16 @@ def _part(valeur: int, total: int) -> float:
 def build_excel(d: dict[str, Any]) -> bytes:
     from openpyxl import Workbook
     from openpyxl.chart import BarChart, DoughnutChart, Reference
-    from openpyxl.chart.label import DataLabelList
+    from openpyxl.chart.axis import ChartLines
+    from openpyxl.chart.label import DataLabel, DataLabelList
     from openpyxl.chart.marker import DataPoint
+    from openpyxl.chart.shapes import GraphicalProperties
+    from openpyxl.chart.text import RichText
+    from openpyxl.drawing.line import LineProperties
+    from openpyxl.drawing.text import CharacterProperties, Paragraph, ParagraphProperties
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.pagebreak import Break
     from openpyxl.worksheet.table import Table, TableStyleInfo
 
     ctx: ContexteRapport = d["ctx"]
@@ -434,28 +440,75 @@ def build_excel(d: dict[str, Any]) -> bytes:
             ws.freeze_panes = ws.cell(ligne + 1, 1)
         return fin
 
-    def barres_100(ws, ligne_entete: int, nombre: int, colonnes: int, couleurs: list[str], ancre: str, hauteur_cm: float):
-        """Barres horizontales empilées à 100 %, une par ligne, les nombres écrits dessus."""
+    # ── Graphiques : sans cadre, une seule valeur par étiquette, axes discrets ──
+    sans_trait = LineProperties(noFill=True)
+
+    def texte(taille: float, couleur: str, gras: bool = False) -> RichText:
+        police = CharacterProperties(sz=int(taille * 100), b=gras, solidFill=couleur)
+        return RichText(p=[Paragraph(pPr=ParagraphProperties(defRPr=police), endParaRPr=police)])
+
+    def etiquettes(encre: str, masquees: list[int]) -> DataLabelList:
+        """La valeur seule, dans l'encre lisible sur la couleur. Excel ajoute sinon le nom de
+        la série, la catégorie et le pourcentage. `masquees` : les points sans étiquette."""
+        seule = {"showSerName": False, "showCatName": False, "showLegendKey": False, "showPercent": False, "showBubbleSize": False}
+        return DataLabelList(
+            showVal=True, showLeaderLines=False, txPr=texte(9, encre, gras=True), **seule,
+            dLbl=[DataLabel(idx=index, showVal=False, **seule) for index in masquees],
+        )
+
+    def sans_cadre(graphique) -> None:
+        graphique.roundedCorners = False
+        graphique.graphical_properties = GraphicalProperties(noFill=True, ln=sans_trait)
+        graphique.legend.txPr = texte(9, GRIS_TEXTE)
+        # Sans cela, Excel pose la légende par-dessus le tracé.
+        graphique.legend.overlay = False
+
+    def rangs(hauteur_cm: float) -> int:
+        """Lignes de feuille (0,53 cm chacune) que couvre un graphique, plus une de marge."""
+        return int(hauteur_cm / 0.53) + 2
+
+    def barres_100(ws, ligne_entete: int, valeurs: list[list[int]], couleurs: list[tuple[str, str]], ancre: str) -> float:
+        """Barres horizontales empilées à 100 %, une par ligne, les nombres écrits dessus.
+
+        `valeurs` : les nombres de chaque ligne, série par série ; `couleurs` : (fond, encre)
+        de chaque série. Renvoie la hauteur du graphique en centimètres.
+        """
+        nombre, colonnes = len(valeurs), len(couleurs)
+        hauteur_cm = 2.4 + 1.1 * nombre
         graphique = BarChart()
         graphique.type = "bar"
         graphique.grouping = "percentStacked"
         graphique.overlap = 100
-        graphique.gapWidth = 60
+        graphique.gapWidth = 55
         graphique.height, graphique.width = hauteur_cm, 18
+        sans_cadre(graphique)
+        graphique.legend.position = "t"
         graphique.x_axis.delete = graphique.y_axis.delete = False
+        # Les catégories de haut en bas, dans l'ordre du tableau ; l'échelle reste en bas.
         graphique.x_axis.scaling.orientation = "maxMin"
+        graphique.x_axis.majorTickMark = "none"
+        graphique.x_axis.graphicalProperties = GraphicalProperties(ln=LineProperties(solidFill=GRIS_MOYEN))
+        graphique.x_axis.txPr = texte(9, GRIS_TEXTE)
+        graphique.y_axis.crosses = "max"
         graphique.y_axis.numFmt = "0%"
-        graphique.y_axis.majorGridlines = None
-        graphique.legend.position = "b"
+        graphique.y_axis.majorUnit = 0.25
+        graphique.y_axis.majorTickMark = "none"
+        graphique.y_axis.majorGridlines = ChartLines(spPr=GraphicalProperties(ln=LineProperties(solidFill="E9EDF1")))
+        graphique.y_axis.graphicalProperties = GraphicalProperties(ln=sans_trait)
+        graphique.y_axis.txPr = texte(8, "7A8794")
         graphique.add_data(Reference(ws, min_col=2, max_col=1 + colonnes, min_row=ligne_entete, max_row=ligne_entete + nombre), titles_from_data=True)
         graphique.set_categories(Reference(ws, min_col=1, min_row=ligne_entete + 1, max_row=ligne_entete + nombre))
-        for serie, couleur in zip(graphique.series, couleurs):
-            serie.graphicalProperties.solidFill = couleur
+        for index, (serie, (fond, encre)) in enumerate(zip(graphique.series, couleurs)):
+            serie.graphicalProperties.solidFill = fond
             serie.graphicalProperties.line.solidFill = "FFFFFF"
-        graphique.dataLabels = DataLabelList()
-        graphique.dataLabels.showVal = True
-        graphique.dataLabels.numFmt = "0;;;"  # Masque les zéros, qui encombreraient les barres.
+            # Pas d'étiquette sur un zéro ni sur un segment trop étroit pour son nombre :
+            # elle déborderait sur le voisin. Le tableau d'à côté donne toujours la valeur.
+            serie.dLbls = etiquettes(encre, [
+                rang for rang, ligne_valeurs in enumerate(valeurs)
+                if _part(ligne_valeurs[index], sum(ligne_valeurs)) < 0.02 + 0.015 * len(str(ligne_valeurs[index]))
+            ])
         ws.add_chart(graphique, ancre)
+        return hauteur_cm
 
     total = d["total"]
     comptes = d["conclusions"]
@@ -478,9 +531,9 @@ def build_excel(d: dict[str, Any]) -> bytes:
     lignes = [[libelle, comptes[cle], _part(comptes[cle], total)] for cle, libelle, _, _ in ETATS_CONCLUSION if cle != "sans_conclusion" or comptes[cle]]
     fin = matrice(ws, debut, ["Conclusion", "Membres", "Part"], lignes + [["Total", total, 1 if total else 0]], formats={3: "0.0%"})
     ws.cell(fin, 1).font = ws.cell(fin, 2).font = Font(bold=True)
-    anneau = DoughnutChart(holeSize=60)
-    anneau.title = "Conclusions"
-    anneau.height, anneau.width = 7, 9
+    anneau = DoughnutChart(holeSize=62)
+    anneau.height, anneau.width = 6.5, 11
+    sans_cadre(anneau)
     anneau.add_data(Reference(ws, min_col=2, min_row=debut, max_row=debut + len(lignes)), titles_from_data=True)
     anneau.set_categories(Reference(ws, min_col=1, min_row=debut + 1, max_row=debut + len(lignes)))
     couleurs = {libelle: couleur for _, libelle, couleur, _ in ETATS_CONCLUSION}
@@ -489,11 +542,15 @@ def build_excel(d: dict[str, Any]) -> bytes:
         point.graphicalProperties.solidFill = couleurs[libelle]
         point.graphicalProperties.line.solidFill = "FFFFFF"
         anneau.series[0].dPt.append(point)
-    anneau.dataLabels = DataLabelList()
-    anneau.dataLabels.showVal = True
+    # Une part trop mince n'a pas la place de son nombre ; chaque part porte son encre.
+    encres = {libelle: encre for _, libelle, _, encre in ETATS_CONCLUSION}
+    anneau.series[0].dLbls = etiquettes("FFFFFF", [index for index, (_, nombre_, part) in enumerate(lignes) if part < 0.06])
+    for index, (libelle, _, part) in enumerate(lignes):
+        if part >= 0.06 and encres[libelle] != "FFFFFF":
+            anneau.series[0].dLbls.dLbl.append(DataLabel(idx=index, showVal=True, showSerName=False, showCatName=False, showLegendKey=False, showPercent=False, txPr=texte(9, encres[libelle], gras=True)))
     anneau.legend.position = "r"
     ws.add_chart(anneau, f"H{ligne}")
-    ligne = max(fin, ligne + 14) + 2
+    ligne = max(fin, ligne + rangs(anneau.height)) + 2
 
     # 2. Conformité par critère
     if d["criteres"]:
@@ -501,18 +558,20 @@ def build_excel(d: dict[str, Any]) -> bytes:
         debut = ligne + 2
         lignes = [[c["libelle"], c["conformes"], c["defauts"], c["inconnus"], _part(c["conformes"], c["soumis"])] for c in d["criteres"]]
         fin = matrice(ws, debut, ["Critère", "Remplis", "Non remplis", "Non renseignés", "Taux"], lignes, formats={5: "0.0%"})
-        barres_100(ws, debut, len(lignes), 3, ["0CA30C", "D03B3B", "C3C2B7"], f"H{ligne}", 2.2 + 1.2 * len(lignes))
-        ligne = max(fin, ligne + 4 + int(2 * len(lignes))) + 3
+        hauteur = barres_100(ws, debut, [l[1:4] for l in lignes], [("0CA30C", "FFFFFF"), ("D03B3B", "FFFFFF"), ("C3C2B7", "0B0B0B")], f"H{ligne}")
+        ligne = max(fin, ligne + rangs(hauteur)) + 2
 
     # 3. Conclusions par catégorie
     if len(d["par_categorie"]) > 1:
+        # À l'impression, ce bloc ouvre une page : son graphique ne se coupe pas en deux.
+        ws.row_breaks.append(Break(id=ligne - 1))
         bloc(ws, ligne, "Conclusions par catégorie", "Répartition en pourcentage ; le nombre de membres en dernière colonne")
         debut = ligne + 2
-        etats = [(cle, libelle, couleur) for cle, libelle, couleur, _ in ETATS_CONCLUSION if cle != "sans_conclusion" or comptes[cle]]
-        lignes = [[l["categorie"], *(l[cle] for cle, _, _ in etats), l["total"]] for l in d["par_categorie"]]
-        fin = matrice(ws, debut, ["Catégorie", *(libelle for _, libelle, _ in etats), "Total"], lignes)
-        barres_100(ws, debut, len(lignes), len(etats), [couleur for _, _, couleur in etats], f"H{ligne}", 2.2 + 1.2 * len(lignes))
-        ligne = max(fin, ligne + 4 + int(2 * len(lignes))) + 3
+        etats = [(cle, libelle, couleur, encre) for cle, libelle, couleur, encre in ETATS_CONCLUSION if cle != "sans_conclusion" or comptes[cle]]
+        lignes = [[l["categorie"], *(l[cle] for cle, _, _, _ in etats), l["total"]] for l in d["par_categorie"]]
+        fin = matrice(ws, debut, ["Catégorie", *(libelle for _, libelle, _, _ in etats), "Total"], lignes)
+        hauteur = barres_100(ws, debut, [l[1:-1] for l in lignes], [(couleur, encre) for _, _, couleur, encre in etats], f"H{ligne}")
+        ligne = max(fin, ligne + rangs(hauteur)) + 2
 
     # 4. Profil des membres
     if d["profil"]:
