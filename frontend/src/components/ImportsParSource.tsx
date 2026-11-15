@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  BarChart2, Bot, Building2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, GraduationCap, Search, ShieldCheck, Table2, Upload, User, X,
+  BarChart2, Building2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, GraduationCap, Search, ShieldCheck, Upload, User, X,
 } from 'lucide-react'
 import {
   downloadTableauImportAnnote,
@@ -17,7 +17,6 @@ import styles from './ImportsParSource.module.css'
 const ImportTableauDossiers = lazyWithRetry(() => import('./ImportTableauDossiers'))
 
 const SOURCES: Array<{ type: SourceType; label: string; aide: string; icon: React.ReactNode }> = [
-  { type: 'tableau', label: 'Tableau', aide: 'Classeur complet par section', icon: <Table2 size={16} /> },
   { type: 'personnes_physiques', label: 'Personnes physiques', aide: 'Fiches des experts-comptables', icon: <User size={16} /> },
   { type: 'personnes_morales', label: 'Personnes morales', aide: 'Fiches des sociétés', icon: <Building2 size={16} /> },
   { type: 'chiffres_affaires', label: "Chiffres d'affaires", aide: 'Déclarations par année et devise', icon: <BarChart2 size={16} /> },
@@ -43,22 +42,16 @@ export default function ImportsParSource({
   imports,
   canImport,
   canExport,
-  canAnalyze,
   exercice,
   onExerciceChange,
   onImported,
-  onAnalyse,
-  analyseEnCours,
 }: {
   imports: TableauImport[]
   canImport: boolean
   canExport: boolean
-  canAnalyze: boolean
   exercice: string
   onExerciceChange: (value: string) => void
   onImported: (importId: number | null) => Promise<void> | void
-  onAnalyse: (imp: TableauImport) => void
-  analyseEnCours: boolean
 }) {
   const [params, setParams] = useSearchParams()
   const parType = useMemo(() => {
@@ -76,7 +69,7 @@ export default function ImportsParSource({
   const sourceAdresse = params.get('source') as SourceType | null
   const source: SourceType = SOURCES.some(s => s.type === sourceAdresse)
     ? sourceAdresse!
-    : SOURCES.find(s => parType.has(s.type))?.type ?? 'tableau'
+    : SOURCES.find(s => parType.has(s.type))?.type ?? SOURCES[0].type
   const importsSource = parType.get(source) || []
 
   const [importChoisiId, setImportChoisiId] = useState<number | null>(null)
@@ -215,11 +208,6 @@ export default function ImportsParSource({
                 title="Le fichier importé, lignes signalées en rouge"
               >
                 <Download size={15} /> Fichier annoté
-              </button>
-            )}
-            {importVu && source === 'tableau' && canAnalyze && (
-              <button type="button" className={styles.button} onClick={() => onAnalyse(importVu)} disabled={analyseEnCours}>
-                <Bot size={15} /> {analyseEnCours ? 'Analyse...' : 'Analyser cet import'}
               </button>
             )}
             {canImport && (

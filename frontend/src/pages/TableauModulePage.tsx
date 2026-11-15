@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Send, Settings, Table2, UserX, X, XCircle } from 'lucide-react'
+import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Columns3, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Send, Settings, Table2, UserX, X, XCircle } from 'lucide-react'
 import TableauAssistantChat from '../components/TableauAssistantChat'
 import SortieMembreModal, { type MembreSortie } from '../components/SortieMembreModal'
 import ReleveSituationModal, { type MembreReleve } from '../components/ReleveSituationModal'
@@ -190,9 +190,35 @@ const LIBELLES_COLONNES_BASE: Record<ColonneBase, string> = {
 }
 
 const COLONNES_BASE_DEFAUT: ColonneBase[] = [
-  'numero_ordre', 'nom', 'conseil', 'categorie', 'province', 'sexe', 'actif',
+  'rang', 'numero_ordre', 'nom', 'conseil', 'categorie', 'province', 'sexe', 'actif',
   'anciennete', 'nhv', 'cotisation', 'assurance', 'conclusion', 'situation', 'action',
 ]
+
+// Colonnes que l'utilisateur peut masquer ; l'identité du membre et l'action restent.
+const COLONNES_BASE_FIXES: ColonneBase[] = ['numero_ordre', 'nom', 'action']
+// Masquées tant que l'utilisateur n'a rien choisi ; son choix est gardé par navigateur,
+// vue par vue. « Toutes » (clé vide) reste courte : identité, sexe, actif, ancienneté et
+// conclusion. Une vue de catégorie garde ses colonnes de situation.
+const COLONNES_BASE_MASQUEES_TOUTES: ColonneBase[] = ['conseil', 'province', 'nhv', 'cotisation', 'assurance', 'situation']
+const COLONNES_BASE_MASQUEES_CATEGORIE: ColonneBase[] = ['sexe', 'actif', 'telephone', 'email', 'cabinet', 'anciennete']
+const CLE_COLONNES_BASE_MASQUEES = 'tableau.base.colonnesMasqueesParVue'
+
+const colonnesMasqueesDefaut = (vue: string): ColonneBase[] =>
+  vue ? COLONNES_BASE_MASQUEES_CATEGORIE : COLONNES_BASE_MASQUEES_TOUTES
+
+function lireColonnesBaseMasquees(): Record<string, ColonneBase[]> {
+  const choix: Record<string, ColonneBase[]> = {}
+  try {
+    const lu = JSON.parse(localStorage.getItem(CLE_COLONNES_BASE_MASQUEES) || 'null')
+    if (lu && typeof lu === 'object' && !Array.isArray(lu)) {
+      for (const [vue, colonnes] of Object.entries(lu)) {
+        if (!Array.isArray(colonnes)) continue
+        choix[vue] = colonnes.filter((c): c is ColonneBase => c in LIBELLES_COLONNES_BASE && !COLONNES_BASE_FIXES.includes(c))
+      }
+    }
+  } catch { /* préférence illisible : les colonnes par défaut */ }
+  return choix
+}
 
 /**
  * Vues de la base propres à une catégorie : seules ces colonnes s'affichent
@@ -702,6 +728,14 @@ export default function TableauModulePage() {
   const [baseActif, setBaseActif] = useState('')
   // Par défaut, les membres sortis du Tableau (décès, cessation…) sont écartés.
   const [baseSituation, setBaseSituation] = useState('en_exercice')
+  const [colonnesMasqueesParVue, setColonnesMasqueesParVue] = useState(lireColonnesBaseMasquees)
+  const [menuColonnesOuvert, setMenuColonnesOuvert] = useState(false)
+  const colonnesMasquees = colonnesMasqueesParVue[baseCategorie] ?? colonnesMasqueesDefaut(baseCategorie)
+  const choisirColonnesMasquees = (masquees: ColonneBase[]) => {
+    const suivant = { ...colonnesMasqueesParVue, [baseCategorie]: masquees }
+    setColonnesMasqueesParVue(suivant)
+    try { localStorage.setItem(CLE_COLONNES_BASE_MASQUEES, JSON.stringify(suivant)) } catch { /* sans effet */ }
+  }
   const [sortieMembre, setSortieMembre] = useState<MembreSortie | null>(null)
   const [releveMembre, setReleveMembre] = useState<MembreReleve | null>(null)
   const [derniersReleves, setDerniersReleves] = useState<Record<string, TableauDernierReleve>>({})
@@ -1280,11 +1314,16 @@ export default function TableauModulePage() {
     (categorie ? reglages.definitions_par_categorie?.[categorie]?.heures_formation_min : undefined) ?? nhvMinimum
   // Hooks avant tout retour anticipé : le cadre n'existe qu'une fois la base chargée.
   useEnteteFlottant(baseCadreRef, baseEnteteRef, activeTab === 'base' && !!base && base.total_membres > 0)
-  const colonnesBase = (COLONNES_BASE_PAR_CATEGORIE[baseCategorie] || COLONNES_BASE_DEFAUT).filter(colonne => {
+  const colonnesVue = (COLONNES_BASE_PAR_CATEGORIE[baseCategorie] || COLONNES_BASE_DEFAUT).filter(colonne => {
     if (colonne === 'conseil') return !!base?.national
     if (colonne === 'action') return (canCorrect || canNotify) && !baseNational
     return true
   })
+  const colonnesMasquables = colonnesVue.filter(colonne => !COLONNES_BASE_FIXES.includes(colonne))
+  const colonnesBase = colonnesVue.filter(colonne => !colonnesMasquees.includes(colonne))
+  const nbColonnesMasquees = colonnesVue.length - colonnesBase.length
+  const libelleColonneBase = (colonne: ColonneBase) =>
+    LIBELLES_BASE_PAR_CATEGORIE[baseCategorie]?.[colonne] ?? LIBELLES_COLONNES_BASE[colonne]
   const cellulesBase = (ligne: {
     rang: number
     numero_ordre: string | null
@@ -1751,11 +1790,60 @@ export default function TableauModulePage() {
                   </div>
                 )}
 
-                <p style={{ color: '#6b7280', fontSize: '12px', margin: '0 0 8px' }}>
-                  NHV : <strong style={{ color: COULEUR_NHV_ATTEINT }}>bleu</strong> à partir du minimum de la catégorie
-                  ({nhvMinimum} h par défaut),{' '}
-                  <strong style={{ color: COULEUR_NHV_FAIBLE }}>rouge</strong> sous 60 % de ce minimum, N/A pour les nouveaux, — pour les sociétés.
-                </p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                  <p style={{ color: '#6b7280', fontSize: '12px', margin: 0 }}>
+                    NHV : <strong style={{ color: COULEUR_NHV_ATTEINT }}>bleu</strong> à partir du minimum de la catégorie
+                    ({nhvMinimum} h par défaut),{' '}
+                    <strong style={{ color: COULEUR_NHV_FAIBLE }}>rouge</strong> sous 60 % de ce minimum, N/A pour les nouveaux, — pour les sociétés.
+                  </p>
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      onClick={() => setMenuColonnesOuvert(ouvert => !ouvert)}
+                      aria-expanded={menuColonnesOuvert}
+                      aria-haspopup="true"
+                      title="Choisir les colonnes affichées"
+                    >
+                      <Columns3 size={14} /> Colonnes{nbColonnesMasquees > 0 ? ` (${nbColonnesMasquees} masquée${nbColonnesMasquees > 1 ? 's' : ''})` : ''}
+                    </button>
+                    {menuColonnesOuvert && (
+                      <>
+                        {/* Un clic en dehors referme le menu. */}
+                        <div onClick={() => setMenuColonnesOuvert(false)} style={{ position: 'fixed', inset: 0, zIndex: 9 }} />
+                        <div
+                          role="group"
+                          aria-label="Colonnes affichées"
+                          onKeyDown={event => { if (event.key === 'Escape') setMenuColonnesOuvert(false) }}
+                          style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 10, minWidth: '220px', maxHeight: '60vh', overflowY: 'auto', padding: '8px 10px', background: '#ffffff', border: '1px solid #c9ccd2', borderRadius: '6px', boxShadow: '0 6px 18px rgba(15, 23, 42, 0.12)', fontSize: '13px' }}
+                        >
+                          {colonnesMasquables.map(colonne => (
+                            <label key={colonne} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 2px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                              <input
+                                type="checkbox"
+                                checked={!colonnesMasquees.includes(colonne)}
+                                onChange={event => choisirColonnesMasquees(
+                                  event.target.checked
+                                    ? colonnesMasquees.filter(c => c !== colonne)
+                                    : [...colonnesMasquees, colonne],
+                                )}
+                              />
+                              {libelleColonneBase(colonne)}
+                            </label>
+                          ))}
+                          <div style={{ display: 'flex', gap: '12px', marginTop: '6px', paddingTop: '8px', borderTop: '1px solid #eef0f3' }}>
+                            <button type="button" onClick={() => choisirColonnesMasquees([])} style={{ background: 'none', border: 'none', padding: 0, color: '#0f7b62', cursor: 'pointer', fontSize: '12px' }}>
+                              Tout afficher
+                            </button>
+                            <button type="button" onClick={() => choisirColonnesMasquees(colonnesMasqueesDefaut(baseCategorie))} style={{ background: 'none', border: 'none', padding: 0, color: '#0f7b62', cursor: 'pointer', fontSize: '12px' }}>
+                              Par défaut
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
                 {selectionPossible && base.total_membres > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 12px', marginBottom: '8px', border: '1px solid #d9eee7', borderRadius: '6px', background: '#f2fbf8', fontSize: '13px' }}>
                     <span style={{ fontWeight: 600 }} aria-live="polite">
@@ -1807,7 +1895,7 @@ export default function TableauModulePage() {
                             style={colonne === 'action' ? { ...baseThStyle, right: 0, zIndex: 2 } : baseThStyle}
                             className={colonne === 'action' ? styles.baseActionCell : undefined}
                             title={colonne === 'nhv' || colonne === 'formation' ? "Nombre d'heures validées" : undefined}>
-                            {LIBELLES_BASE_PAR_CATEGORIE[baseCategorie]?.[colonne] ?? LIBELLES_COLONNES_BASE[colonne]}
+                            {libelleColonneBase(colonne)}
                           </th>
                         ))}
                       </tr>
@@ -1957,12 +2045,9 @@ export default function TableauModulePage() {
             imports={imports}
             canImport={canImport}
             canExport={canExport}
-            canAnalyze={canAnalyze}
             exercice={exercice}
             onExerciceChange={setExercice}
             onImported={handleImported}
-            onAnalyse={imp => void handleAnalyse(imp)}
-            analyseEnCours={actionLoading === 'analyse'}
           />
         )}
 
