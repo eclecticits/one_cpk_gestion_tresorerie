@@ -26,6 +26,7 @@ from app.models.organisation import Organisation
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
+from app.modules.tableau.models import TableauDossier, TableauImport  # la situation lit la base du Tableau
 from app.services.notes_debit_import import (
     analyser,
     cle_numero_ordre,
@@ -744,7 +745,180 @@ async def test_la_regularite_distingue_en_regle_debiteur_et_sans_note(db_session
     assert membres[str(experts["sec"].id)]["statut"] == "sans_note"
 
 
-# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_la_situation_reprend_les_membres_du_tableau_sans_note(db_session):
+    from app.api.v1.endpoints.notes_debit import situation_membres
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    contenu = _classeur([["N° d'ordre", "Nom", "Cotisation 2026"], [experts["ec"].numero_ordre, "KABONGO", 600]])
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    await importer(
+        db, tenant_id=org.id, user=user, fichier="t.xlsx", contenu=contenu, service_id=service.id,
+        postes={analyse.colonnes[0]["cle"]: postes["cot"].id},
+    )
+
+    async def situation(**filtres):
+        return await situation_membres(
+            **{"annee": 2026, "q": None, "type_client": None, "statut": "toutes", "attestation": None, **filtres},
+            limit=25, offset=0, tenant_id=org.id, user=user, db=db,
+        )
+
+    # Sans base au Tableau, la situation reste celle des seules notes.
+    assert (await situation())["total"] == 1
+
+    imp = TableauImport(
+        organisation_id=org.id, user_id=user.id, exercice="2026", date_situation=date(2026, 9, 1),
+        source_type="tableau", file_name="base.xlsx", status="completed",
+    )
+    db.add(imp)
+    await db.flush()
+    db.add_all(
+        TableauDossier(
+            organisation_id=org.id, import_id=imp.id, exercice="2026", numero_ordre=numero, nom=nom, categorie=categorie
+        )
+        for numero, nom, categorie in (
+            (experts["ec"].numero_ordre, "KABONGO", "EC Cabinet"),
+            (experts["sec"].numero_ordre, "CABINET", "Société"),
+            ("EC/99.09999", "INCONNU AU REFERENTIEL", "EC Salarié"),
+        )
+    )
+    await db.flush()
+
+    reponse = await situation()
+    assert reponse["total"] == 3
+    par_numero = {i["expert"]["numero_ordre"]: i for i in reponse["items"]}
+    # Celui qui a une note garde sa situation de caisse, une seule fois.
+    assert par_numero[experts["ec"].numero_ordre]["statut"] == "en_retard"
+    sec = par_numero[experts["sec"].numero_ordre]
+    assert sec["statut"] == "sans_note" and sec["expert"]["id"] == str(experts["sec"].id)
+    assert sec["total_creances"] == "0.00" and sec["reste_du"] == "0.00" and sec["type_client"] == "sec"
+    # Au Tableau mais sans fiche au référentiel : listé, sans identifiant.
+    assert par_numero["EC/99.09999"]["expert"]["id"] is None
+    # Aucun montant n'entre dans les totaux.
+    assert reponse["totaux"]["reste_du"] == "600.00"
+
+    assert (await situation(statut="sans_note"))["total"] == 2
+    assert (await situation(statut="en_regle"))["total"] == 0
+    assert (await situation(type_client="sec"))["total"] == 1
+    assert (await situation(q="inconnu referentiel"))["total"] == 1
+    assert (await situation(q="9999"))["items"][0]["expert"]["numero_ordre"] == "EC/99.09999"
+
+
+@pytest.mark.asyncio
+async def test_l_attestation_comptable_met_en_ordre_sans_toucher_aux_montants(db_session):
+    from app.api.v1.endpoints.notes_debit import (
+        AttestationsIn,
+        attester_cotisations,
+        regularite_membres,
+        situation_membres,
+    )
+    from app.modules.tableau import verdict as V
+    from app.services.notes_debit_situation import cotisations_par_numero
+
+    db = db_session
+    org, user, service, postes, experts = await _contexte(db)
+    await _avec_caisse(db, org)
+    contenu = _classeur(
+        [
+            ["N° d'ordre", "Nom", "Cotisation 2026", "Pénalité AG"],
+            [experts["ec"].numero_ordre, "KABONGO", 600, None],
+            [experts["sal"].numero_ordre, "LUBAMBA", 450, 100],
+        ]
+    )
+    analyse = await analyser(db, tenant_id=org.id, user=user, contenu=contenu, service_id=service.id)
+    resultat = await importer(
+        db, tenant_id=org.id, user=user, fichier="a.xlsx", contenu=contenu, service_id=service.id,
+        postes={analyse.colonnes[0]["cle"]: postes["cot"].id, analyse.colonnes[1]["cle"]: postes["pen"].id},
+    )
+    cle = cle_numero_ordre(experts["ec"].numero_ordre)
+    cle_sec = cle_numero_ordre(experts["sec"].numero_ordre)
+
+    async def situation(attestation=None):
+        return await situation_membres(
+            annee=2026, q=None, type_client=None, statut="toutes", attestation=attestation, limit=25, offset=0,
+            tenant_id=org.id, user=user, db=db,
+        )
+
+    avant = await cotisations_par_numero(db, org.id, 2026)
+    assert avant[cle]["etat"] == "non_payee"
+    assert cle_sec not in avant
+
+    # La comptabilité atteste : un membre avec une note impayée, un autre sans note.
+    reponse = await attester_cotisations(
+        AttestationsIn(expert_ids=[experts["ec"].id, experts["sec"].id], annee=2026),
+        tenant_id=org.id, user=user, db=db,
+    )
+    assert reponse["modifies"] == 2
+
+    cotisations = await cotisations_par_numero(db, org.id, 2026)
+    assert cotisations[cle]["payee"] is True and cotisations[cle]["attestee"] is True
+    # Les montants restent ceux des notes : rien n'est soldé artificiellement.
+    assert cotisations[cle]["reste_n"] == "600.00"
+    assert V.etat_cotisation("EC Cabinet", cotisations[cle], False) == "payee"
+    assert cotisations[cle_sec]["payee"] is True and cotisations[cle_sec]["nb_notes"] == 0
+    # L'attestation vaut pour son exercice seulement.
+    assert not (await cotisations_par_numero(db, org.id, 2027)).get(cle, {}).get("attestee")
+
+    ligne = (await situation())["items"][0]
+    assert ligne["statut"] == "en_retard" and ligne["reste_du"] == "600.00"
+    assert ligne["attestation"]["par"]
+    # L'attestation n'ajoute rien à la situation de caisse : le membre attesté
+    # sans note n'y entre pas.
+    assert (await situation("attestes"))["total"] == 1
+    assert (await situation("non_attestes"))["total"] == 1
+    assert str(experts["sec"].id) not in [i["expert"]["id"] for i in (await situation())["items"]]
+
+    ids = ",".join(str(experts[k].id) for k in ("ec", "sal"))
+    membres = (await regularite_membres(expert_ids=ids, annee=2026, tenant_id=org.id, user=user, db=db))["membres"]
+    assert membres[str(experts["ec"].id)]["statut"] == "en_regle"
+    assert membres[str(experts["ec"].id)]["atteste"] is True
+    assert membres[str(experts["sal"].id)]["atteste"] is False
+
+    # Attester deux fois ne crée rien de plus.
+    encore = await attester_cotisations(
+        AttestationsIn(expert_ids=[experts["ec"].id], annee=2026), tenant_id=org.id, user=user, db=db
+    )
+    assert encore["modifies"] == 0
+
+    # La caisse encaisse : l'attestation disparaît, la situation des notes fait foi.
+    await _payer(db, org, user, resultat["notes"][0]["id"], 200)
+    ligne = next(i for i in (await situation())["items"] if i["expert"]["id"] == str(experts["ec"].id))
+    assert ligne["reglements"] == "200.00" and ligne["reste_du"] == "400.00"
+    assert ligne["statut"] == "partiel" and ligne["attestation"] is None
+    assert (await situation("attestes"))["total"] == 0
+    apres = await cotisations_par_numero(db, org.id, 2026)
+    assert "attestee" not in apres[cle] and apres[cle]["etat"] == "partielle"
+    membres = (await regularite_membres(expert_ids=ids, annee=2026, tenant_id=org.id, user=user, db=db))["membres"]
+    assert membres[str(experts["ec"].id)]["atteste"] is False
+    assert membres[str(experts["ec"].id)]["statut"] == "non_en_regle"
+    # Le membre sans note n'a rien encaissé : son attestation tient.
+    assert apres[cle_sec]["attestee"] is True
+
+    # Retirer l'attestation à la main rend aussi la main au calcul des notes.
+    retrait = await attester_cotisations(
+        AttestationsIn(expert_ids=[experts["ec"].id, experts["sec"].id], annee=2026, en_ordre=False),
+        tenant_id=org.id, user=user, db=db,
+    )
+    assert retrait["modifies"] == 1
+    assert cle_sec not in await cotisations_par_numero(db, org.id, 2026)
+
+    # L'attestation couvre tout : une pénalité impayée n'empêche pas d'être en règle
+    # pour le Tableau, et la caisse garde son reste dû tel quel.
+    avant_sal = (await regularite_membres(expert_ids=str(experts["sal"].id), annee=2026, tenant_id=org.id, user=user, db=db))
+    assert avant_sal["membres"][str(experts["sal"].id)]["reste_du"] == "550.00"
+    await attester_cotisations(
+        AttestationsIn(expert_ids=[experts["sal"].id], annee=2026), tenant_id=org.id, user=user, db=db
+    )
+    sal = (await regularite_membres(expert_ids=str(experts["sal"].id), annee=2026, tenant_id=org.id, user=user, db=db))[
+        "membres"
+    ][str(experts["sal"].id)]
+    assert sal["atteste"] is True and sal["statut"] == "en_regle"
+    assert sal["reste_du"] == "550.00" and sal["nb_notes_dues"] == 1
+    ligne_sal = next(i for i in (await situation())["items"] if i["expert"]["id"] == str(experts["sal"].id))
+    assert ligne_sal["statut"] == "en_retard" and ligne_sal["reste_du"] == "550.00"
+
+
 # Catégories d'import (onglets, comme l'import national des experts)
 # ---------------------------------------------------------------------------
 

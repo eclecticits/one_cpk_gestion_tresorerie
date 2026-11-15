@@ -2,6 +2,8 @@ import { apiRequest } from '../lib/apiClient'
 
 /** Importer des notes de débit : émettre des créances en nombre. */
 export const PERMISSION_IMPORT_NOTES_DEBIT = 'treso.experts_comptables.import_notes_debit'
+/** Déclarer un membre en ordre de cotisation, sans attendre la saisie de la caisse. */
+export const PERMISSION_ATTESTER_COTISATION = 'treso.experts_comptables.attester_cotisation'
 
 export type StatutNotes = 'impayees' | 'soldees' | 'toutes'
 
@@ -44,10 +46,21 @@ export interface ListeNotesDebit {
   totaux: { montant_total: string; montant_paye: string; reste_du: string }
 }
 
-export type StatutSituationMembre = 'toutes' | 'en_retard' | 'partiel' | 'en_regle' | 'en_avance'
+/** `sans_note` : membre au Tableau à qui aucune note n'a été émise. */
+export type StatutSituationMembre = 'toutes' | 'en_retard' | 'partiel' | 'en_regle' | 'en_avance' | 'sans_note'
+
+/** `attestes` : les seuls membres attestés en ordre par la comptabilité ; `non_attestes` : les autres. */
+export type FiltreAttestation = '' | 'attestes' | 'non_attestes'
+
+/** La comptabilité déclare le membre en ordre de cotisation pour l'exercice — sans montant. */
+export interface AttestationCotisation {
+  le: string
+  par: string | null
+}
 
 export interface SituationMembre {
-  expert: NoteDebitExpert['expert']
+  /** `id` vide : membre du Tableau sans fiche au référentiel des experts. */
+  expert: Omit<NoteDebitExpert['expert'], 'id'> & { id: string | null }
   type_client: 'expert_comptable' | 'sec'
   cotisations_anterieures: string
   penalites_anterieures: string
@@ -60,6 +73,7 @@ export interface SituationMembre {
   avance_n_plus_1: string
   nb_notes: number
   statut: Exclude<StatutSituationMembre, 'toutes'>
+  attestation?: AttestationCotisation | null
   autres_details: {
     libelle: string
     exercice: number
@@ -111,7 +125,7 @@ export interface SituationNotesDebit {
   total: number
   totaux: Omit<
     SituationMembre,
-    'expert' | 'type_client' | 'nb_notes' | 'statut' | 'autres_details'
+    'expert' | 'type_client' | 'nb_notes' | 'statut' | 'attestation' | 'autres_details'
   >
 }
 
@@ -120,6 +134,7 @@ export const situationNotesDebit = (params: {
   q?: string
   type_client?: string
   statut?: StatutSituationMembre
+  attestation?: FiltreAttestation
   limit?: number
   offset?: number
 }) =>
@@ -127,6 +142,14 @@ export const situationNotesDebit = (params: {
     params: Object.fromEntries(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== '' && v !== null),
     ),
+  })
+
+/** Attester (ou retirer) « en ordre de cotisation » pour l'exercice, un membre ou plusieurs. */
+export const attesterCotisations = (expertIds: string[], annee: number, enOrdre: boolean) =>
+  apiRequest<{ annee: number; en_ordre: boolean; modifies: number }>('POST', '/notes-debit/attestations', {
+    expert_ids: expertIds,
+    annee,
+    en_ordre: enOrdre,
   })
 
 export const listerNotesDebit = (params: {
@@ -169,6 +192,7 @@ export async function situationCompleteNotesDebit(params: {
   q?: string
   type_client?: string
   statut?: StatutSituationMembre
+  attestation?: FiltreAttestation
 }): Promise<SituationNotesDebit> {
   const PAGE = 200
   const premiere = await situationNotesDebit({ ...params, limit: PAGE, offset: 0 })
@@ -516,7 +540,17 @@ export type StatutRegularite = 'en_regle' | 'non_en_regle' | 'sans_note'
 export interface RegulariteMembres {
   annee: number
   tableau: number
-  membres: Record<string, { statut: StatutRegularite; reste_du: string; nb_notes_dues: number; nb_notes_annee: number }>
+  membres: Record<
+    string,
+    {
+      statut: StatutRegularite
+      reste_du: string
+      nb_notes_dues: number
+      nb_notes_annee: number
+      /** En règle par attestation comptable ; `reste_du` et `nb_notes_dues` restent ceux de la caisse. */
+      atteste?: boolean
+    }
+  >
 }
 
 export const regulariteMembres = (expertIds: string[], annee?: number) =>

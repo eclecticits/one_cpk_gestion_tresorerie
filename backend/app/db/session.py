@@ -58,6 +58,7 @@ from app.models.regularisation_budgetaire import RegularisationBudgetaire
 from app.models.report_creance import ReportCreance
 from app.models.note_debit_import import NoteDebitImport
 from app.models.note_debit_rattachement import NoteDebitRattachement
+from app.models.cotisation_attestation import CotisationAttestation
 from app.models.hr import HRAttendance, HRAttendanceAgent, HRAttendanceAgentCommand, HRAttendanceAgentEnrollment, HRAttendanceAgentRelease, HRAttendanceDevice, HRAttendanceDeviceEmployeeMapping, HRAttendancePunch, HRAttendanceUnmappedPunch, HRContract, HRDocument, HREmployee, HRFunction, HRLeave, HRReference, HRService
 from app.modules.secretariat.models import (
     OAuthConnection,

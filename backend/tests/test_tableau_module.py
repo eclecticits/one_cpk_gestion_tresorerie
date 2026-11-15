@@ -2343,6 +2343,8 @@ def test_chaque_categorie_definit_ce_qu_est_etre_en_regle_avec_la_cotisation():
     # Sans note de débit, l'import décide.
     assert V.etat_cotisation("EC Cabinet", None, False, par_defaut) == "non_payee"
     assert V.etat_cotisation("EC Cabinet", None, None, par_defaut) is None
+    # Attestée par la comptabilité : réglée, quel que soit le reste des notes.
+    assert V.etat_cotisation("EC Cabinet", {**notes, "attestee": True}, False, par_defaut) == "payee"
 
 
 def test_une_cotisation_partielle_peut_etre_rendue_bloquante_par_categorie():

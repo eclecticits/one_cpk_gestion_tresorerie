@@ -376,6 +376,10 @@ def etat_cotisation(
     reglages = reglages or TableauReglages()
     if not notes:
         return None if valeur_import is None else ("payee" if valeur_import else "non_payee")
+    if notes.get("attestee"):
+        # La comptabilité atteste le paiement (régularisation antérieure, banque
+        # pas encore saisie en caisse) : la cotisation est réglée, arriérés compris.
+        return "payee"
     from decimal import Decimal
 
     def nombre(cle: str) -> Decimal:

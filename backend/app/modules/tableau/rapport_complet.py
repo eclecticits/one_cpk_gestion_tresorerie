@@ -1,9 +1,9 @@
-"""Rapport Tableau (PDF et Excel) : les graphiques et la liste.
+"""Rapport Tableau (PDF et Excel) : la synthèse graphique et la liste.
 
 Le tableau de bord reprend les graphiques de la page Tableau : conformité de la base,
 conformité par critère, conclusions par catégorie, profil des membres. Les listes suivent
-le Tableau publié, une section par catégorie. Dans l'Excel, la feuille « Graphiques » vient
-en tête ; dans le PDF, les graphiques viennent après les listes, avant la signature. Le rapport peut se
+le Tableau publié, une section par catégorie. La synthèse graphique ouvre le rapport :
+première feuille de l'Excel, première page du PDF, avant les listes. Le rapport peut se
 limiter à une catégorie : graphiques et liste ne portent alors que sur elle.
 
 Tout vient des dossiers analysés et des réglages de l'exercice : aucun chiffre, seuil ni
@@ -56,6 +56,8 @@ ETATS_CONCLUSION = [
     ("sans_conclusion", "Sans conclusion", "C3C2B7", "0B0B0B"),
 ]
 MARQUE, MARQUE_PISTE = "1F6B5C", "E4EDEB"
+# Le nom de la partie graphique : titre dans le PDF, feuille dans l'Excel.
+TITRE_SYNTHESE = "Synthèse graphique"
 # Profil : la marque, une teinte moyenne, puis le gris des non renseignés. Validé pour les
 # daltonismes (ΔE ≥ 12) ; les valeurs sont toujours écrites à côté.
 TEINTES_PROFIL = ["1F6B5C", "5FA392", "C3C2B7"]
@@ -458,7 +460,7 @@ def build_excel(d: dict[str, Any]) -> bytes:
     total = d["total"]
     comptes = d["conclusions"]
     ws = feuille(
-        "Graphiques", titre_rapport(ctx),
+        TITRE_SYNTHESE, titre_rapport(ctx),
         " · ".join(filter(None, [ctx.organisation, ctx.source, libelle_filtre(ctx), f"situation du {fdate(ctx.date_situation)}", f"généré le {fdate(ctx.genere_le)}"])),
     )
     largeurs = [34, 13, 13, 14, 15, 10]
@@ -570,6 +572,9 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     ctx: ContexteRapport = d["ctx"]
     largeur, hauteur = A4
     utile = 180 * mm
+    # Les graphiques vivent dans des cartes encadrées : leur largeur est celle de l'intérieur.
+    marge_carte = 5 * mm
+    large = utile - 2 * marge_carte
     gris = HexColor(f"#{GRIS_TEXTE}")
     marine = HexColor(f"#{MARINE}")
     marque = HexColor(f"#{MARQUE}")
@@ -577,8 +582,9 @@ def build_pdf(d: dict[str, Any]) -> bytes:
     filet = HexColor(f"#{GRIS_MOYEN}")
     corps = ParagraphStyle("corps", fontName="Helvetica", fontSize=9, leading=13, textColor=gris, spaceAfter=6)
     h1 = ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=13, leading=17, textColor=marque, spaceBefore=4, spaceAfter=1, keepWithNext=1)
-    h2 = ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=marine, spaceBefore=8, spaceAfter=0, keepWithNext=1)
     petit = ParagraphStyle("petit", fontName="Helvetica", fontSize=7.5, leading=10, textColor=gris, spaceAfter=4)
+    titre_carte = ParagraphStyle("titre_carte", fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=marine)
+    aide_carte = ParagraphStyle("aide_carte", fontName="Helvetica", fontSize=7.5, leading=10, textColor=gris, alignment=TA_RIGHT)
     cellule = ParagraphStyle("cellule", fontName="Helvetica", fontSize=7.5, leading=9.5, textColor=gris)
     cellule_centree = ParagraphStyle("cellule_c", parent=cellule, alignment=TA_CENTER)
     entete = ParagraphStyle("entete", fontName="Helvetica-Bold", fontSize=6.8, leading=8.5, textColor=marine)
@@ -629,31 +635,32 @@ def build_pdf(d: dict[str, Any]) -> bytes:
                 y -= pas
 
     def carte_conformite() -> Drawing:
-        dessin = Drawing(utile, 46 * mm)
+        dessin = Drawing(large, 38 * mm)
         part = _part(comptes["en_regle"], total)
-        anneau(dessin, 22 * mm, 23 * mm, 21 * mm, 4.5 * mm, part)
-        texte(dessin, 22 * mm, 23.5 * mm, fmt_pct(part), 16, True, marine, "middle")
-        texte(dessin, 22 * mm, 18.5 * mm, "en règle", 8, False, gris, "middle")
-        x = 52 * mm
-        texte(dessin, x, 37 * mm, f"{total}", 20, True, marine)
-        texte(dessin, x + stringWidth(str(total), "Helvetica-Bold", 20) + 2 * mm, 37.5 * mm, "membres analysés selon les règles de délibération", 8.5)
-        barre(dessin, x, 20 * mm, utile - x, 10 * mm, [(comptes[cle], couleur, encre) for cle, _, couleur, encre in etats], total, True)
-        legende(dessin, x, 11 * mm, [(libelle, couleur, str(comptes[cle])) for cle, libelle, couleur, _ in etats])
+        anneau(dessin, 19 * mm, 19 * mm, 18.5 * mm, 4.2 * mm, part)
+        texte(dessin, 19 * mm, 19.4 * mm, fmt_pct(part), 15, True, marine, "middle")
+        texte(dessin, 19 * mm, 14.8 * mm, "en règle", 8, False, gris, "middle")
+        x = 46 * mm
+        texte(dessin, x, 29.5 * mm, f"{total}", 20, True, marine)
+        texte(dessin, x + stringWidth(str(total), "Helvetica-Bold", 20) + 2 * mm, 30 * mm, "membres analysés selon les règles de délibération", 8.5)
+        barre(dessin, x, 14.5 * mm, large - x, 9.5 * mm, [(comptes[cle], couleur, encre) for cle, _, couleur, encre in etats], total, True)
+        # La part suit le nombre : la barre montre les proportions, la légende les chiffre.
+        legende(dessin, x, 6 * mm, [(libelle, couleur, f"{comptes[cle]} · {fmt_pct(_part(comptes[cle], total))}") for cle, libelle, couleur, _ in etats])
         return dessin
 
     def carte_criteres() -> Drawing:
         criteres = d["criteres"]
-        colonne = utile / max(len(criteres), 4)
+        colonne = large / max(len(criteres), 4)
         # Moins de quatre critères (une seule catégorie) : les anneaux restent centrés.
-        marge = (utile - colonne * len(criteres)) / 2
-        dessin = Drawing(utile, 50 * mm)
+        marge = (large - colonne * len(criteres)) / 2
+        dessin = Drawing(large, 41 * mm)
         for rang, c in enumerate(criteres):
             cx = marge + colonne * rang + colonne / 2
             part = _part(c["conformes"], c["soumis"])
-            anneau(dessin, cx, 35 * mm, 13 * mm, 3 * mm, part)
-            texte(dessin, cx, 33.6 * mm, fmt_pct(part), 11, True, marine, "middle")
+            anneau(dessin, cx, 28.5 * mm, 12 * mm, 2.8 * mm, part)
+            texte(dessin, cx, 27.1 * mm, fmt_pct(part), 11, True, marine, "middle")
             # Un libellé plus large que sa colonne passe sur deux lignes au lieu d'empiéter.
-            y = 17 * mm
+            y = 11.6 * mm
             for morceau in lignes_a_largeur(c["libelle"], "Helvetica-Bold", 7.8, colonne - 3 * mm):
                 texte(dessin, cx, y, morceau, 7.8, True, marine, "middle")
                 y -= 3.4 * mm
@@ -664,30 +671,30 @@ def build_pdf(d: dict[str, Any]) -> bytes:
 
     def carte_categories() -> Drawing:
         lignes = d["par_categorie"]
-        pas = 9 * mm
-        dessin = Drawing(utile, 8 * mm + pas * len(lignes))
-        legende(dessin, 0, dessin.height - 4 * mm, [(libelle, couleur, "") for _, libelle, couleur, _ in etats])
-        y = dessin.height - 8 * mm
+        pas = 7.2 * mm
+        dessin = Drawing(large, 6 * mm + pas * len(lignes))
+        legende(dessin, 0, dessin.height - 3.4 * mm, [(libelle, couleur, "") for _, libelle, couleur, _ in etats])
+        y = dessin.height - 6 * mm
         for ligne in lignes:
             y -= pas
-            texte(dessin, 0, y + 2.4 * mm, ligne["categorie"], 8, True, marine)
-            barre(dessin, 32 * mm, y + 0.6 * mm, utile - 46 * mm, 6.4 * mm, [(ligne[cle], couleur, encre) for cle, _, couleur, encre in etats], ligne["total"], True)
-            texte(dessin, utile, y + 2.4 * mm, str(ligne["total"]), 8.5, True, marine, "end")
+            texte(dessin, 0, y + 2.2 * mm, ligne["categorie"], 8, True, marine)
+            barre(dessin, 32 * mm, y + 0.4 * mm, large - 46 * mm, 5.8 * mm, [(ligne[cle], couleur, encre) for cle, _, couleur, encre in etats], ligne["total"], True)
+            texte(dessin, large, y + 2.2 * mm, str(ligne["total"]), 8.5, True, marine, "end")
         return dessin
 
     def carte_profil() -> Drawing:
         profils = d["profil"]
-        colonne = utile / 3
-        dessin = Drawing(utile, 34 * mm)
+        colonne = large / 3
+        dessin = Drawing(large, 27 * mm)
         for rang, (rubrique, aide, parts) in enumerate(profils):
             x = colonne * rang
             somme = sum(n for _, n in parts)
-            texte(dessin, x, 29 * mm, rubrique, 9, True, marine)
-            texte(dessin, x + stringWidth(rubrique, "Helvetica-Bold", 9) + 2 * mm, 29 * mm, f"{aide} · {somme}", 7.2)
+            texte(dessin, x, 22.5 * mm, rubrique, 9, True, marine)
+            texte(dessin, x + stringWidth(rubrique, "Helvetica-Bold", 9) + 2 * mm, 22.5 * mm, f"{aide} · {somme}", 7.2)
             # Deux parts nommées, puis « Non renseigné » s'il y en a : le gris lui revient toujours.
             teintes = TEINTES_PROFIL[:len(parts)]
-            barre(dessin, x, 22 * mm, colonne - 8 * mm, 4 * mm, [(n, teinte, "FFFFFF") for (_, n), teinte in zip(parts, teintes)], somme, False)
-            legende(dessin, x, 15.5 * mm, [(libelle, teinte, f"{n} · {fmt_pct(_part(n, somme))}") for (libelle, n), teinte in zip(parts, teintes)], pas=4.6 * mm)
+            barre(dessin, x, 15.6 * mm, colonne - 8 * mm, 4 * mm, [(n, teinte, "FFFFFF") for (_, n), teinte in zip(parts, teintes)], somme, False)
+            legende(dessin, x, 9.4 * mm, [(libelle, teinte, f"{n} · {fmt_pct(_part(n, somme))}") for (libelle, n), teinte in zip(parts, teintes)], pas=4.6 * mm)
         return dessin
 
     def lignes_a_largeur(contenu: str, police: str, taille: float, largeur_max: float) -> list[str]:
@@ -701,7 +708,26 @@ def build_pdf(d: dict[str, Any]) -> bytes:
         return lignes
 
     def carte(titre: str, aide: str, dessin: Drawing) -> KeepTogether:
-        return KeepTogether([Paragraph(escape(titre), h2), Paragraph(escape(aide), petit), dessin, Spacer(1, 2 * mm)])
+        """Carte encadrée, dans le dessin de la fiche d'informations : bandeau pâle portant
+        le titre et, à droite, ce que le graphique mesure ; le graphique dessous."""
+        t = Table(
+            [[Paragraph(escape(titre), titre_carte), Paragraph(escape(aide), aide_carte)], [dessin, ""]],
+            colWidths=[utile * 0.4, utile * 0.6], hAlign="LEFT",
+        )
+        t.setStyle(TableStyle([
+            ("SPAN", (0, 1), (1, 1)),
+            ("BOX", (0, 0), (-1, -1), 0.8, filet),
+            ("BACKGROUND", (0, 0), (-1, 0), piste),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.8, marque),
+            ("VALIGN", (0, 0), (-1, 0), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), marge_carte),
+            ("RIGHTPADDING", (0, 0), (-1, -1), marge_carte),
+            ("TOPPADDING", (0, 0), (-1, 0), 3.5),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 3.5),
+            ("TOPPADDING", (0, 1), (-1, 1), 7),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 5),
+        ]))
+        return KeepTogether([t, Spacer(1, 3 * mm)])
 
     def pastille_conclusion(valeur: Any) -> tuple[str, str] | None:
         """Fond pâle et encre soutenue de la conclusion, comme les badges d'état d'Odoo."""
@@ -844,32 +870,13 @@ def build_pdf(d: dict[str, Any]) -> bytes:
             ("Généré le", fdate(ctx.genere_le)),
             ("Membres", str(total)),
         ]),
-        Spacer(1, 7 * mm),
+        Spacer(1, 4 * mm),
     ]
 
-    # D'abord la liste ; la première section suit le titre, les autres ouvrent une page.
-    tailles = {"N°": 7, "N° d'ordre": 20, "Actif": 10, "Cotisation": 15, "Assurance valide": 15, "Chiffre d'affaires": 14, "Conclusion": 21, "NHV": 12, "NIF": 18}
-    for rang_section, section in enumerate(d["sections"]):
-        if rang_section:
-            S.append(PageBreak())
-        S.append(Paragraph(escape(section["titre"]), h1))
-        S.append(Paragraph(f"{section['total']} membres", petit))
-        # L'ancienneté reste dans l'Excel et dans les graphiques, pas dans la liste du PDF.
-        masque = {"N° téléphone", "E-mail", "Sexe", "Ancienneté", "Raison sociale", "Associé gérant", "Cabinet d'attache", "Employeur"} | ({"NIF"} if section["categorie"] != "EC Indépendant" else set())
-        gardees = [
-            i for i, entete_ in enumerate(section["entetes"])
-            if entete_ not in masque and not (entete_ == "Cotisation" and not any(ligne[i] for ligne in section["lignes"]))
-        ]
-        occupe = sum(tailles.get(section["entetes"][i], 0) for i in gardees)
-        tailles_pdf = [tailles.get(section["entetes"][i], 180 - occupe) for i in gardees]
-        lignes_liste = [["" if ligne[i] is None else (heures_txt(ligne[i]) if isinstance(ligne[i], float) else ligne[i]) for i in gardees] for ligne in section["lignes"]]
-        S.append(liste([section["entetes"][i] for i in gardees], lignes_liste, tailles_pdf))
-
-    # Ensuite les graphiques, comme sur la page Tableau, sur leur propre page.
+    # D'abord la synthèse graphique, comme sur la page Tableau : elle tient la première page.
     if total:
-        if d["sections"]:
-            S.append(PageBreak())
-        S.append(Paragraph("Graphiques", h1))
+        S.append(Paragraph(escape(TITRE_SYNTHESE), h1))
+        S.append(Spacer(1, 1.5 * mm))
         S.append(carte("Conformité de la base", f"Tableau {verdict_engine.annee_tableau(ctx.exercice)} · {total} membres", carte_conformite()))
         if d["criteres"]:
             S.append(carte("Conformité par critère", "Part des membres soumis au critère qui le remplissent", carte_criteres()))
@@ -879,6 +886,23 @@ def build_pdf(d: dict[str, Any]) -> bytes:
             S.append(carte("Profil des membres", "Qui compose la base de l'exercice", carte_profil()))
     else:
         S.append(Paragraph("Aucun membre dans ce périmètre.", corps))
+
+    # Ensuite la liste : chaque section ouvre sa page.
+    tailles = {"N°": 7, "N° d'ordre": 20, "Actif": 10, "Cotisation": 15, "Assurance valide": 15, "Chiffre d'affaires": 14, "Conclusion": 21, "NHV": 12, "NIF": 18}
+    for section in d["sections"]:
+        S.append(PageBreak())
+        S.append(Paragraph(escape(section["titre"]), h1))
+        S.append(Paragraph(f"{section['total']} membres", petit))
+        # L'ancienneté reste dans l'Excel et dans la synthèse graphique, pas dans la liste du PDF.
+        masque = {"N° téléphone", "E-mail", "Sexe", "Ancienneté", "Raison sociale", "Associé gérant", "Cabinet d'attache", "Employeur"} | ({"NIF"} if section["categorie"] != "EC Indépendant" else set())
+        gardees = [
+            i for i, entete_ in enumerate(section["entetes"])
+            if entete_ not in masque and not (entete_ == "Cotisation" and not any(ligne[i] for ligne in section["lignes"]))
+        ]
+        occupe = sum(tailles.get(section["entetes"][i], 0) for i in gardees)
+        tailles_pdf = [tailles.get(section["entetes"][i], 180 - occupe) for i in gardees]
+        lignes_liste = [["" if ligne[i] is None else (heures_txt(ligne[i]) if isinstance(ligne[i], float) else ligne[i]) for i in gardees] for ligne in section["lignes"]]
+        S.append(liste([section["entetes"][i] for i in gardees], lignes_liste, tailles_pdf))
 
     if ctx.signature:
         signe = ParagraphStyle("signe", fontName="Helvetica-Bold", fontSize=9.5, leading=13, textColor=marine, alignment=TA_RIGHT)

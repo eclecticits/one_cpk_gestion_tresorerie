@@ -48,6 +48,7 @@ from app.utils.upload_validation import read_upload_limited
 router = APIRouter()
 
 PERMISSION_IMPORT = "treso.experts_comptables.import_notes_debit"
+PERMISSION_ATTESTER = "treso.experts_comptables.attester_cotisation"
 TAILLE_MAX = 5 * 1024 * 1024
 EXTENSIONS = (".xlsx", ".xlsm")
 
@@ -612,7 +613,12 @@ async def situation_membres(
     annee: int | None = Query(default=None, ge=2000, le=2100),
     q: str | None = Query(default=None, description="N° d'ordre ou nom du membre"),
     type_client: str | None = Query(default=None, pattern="^(expert_comptable|sec)$"),
-    statut: str = Query(default="toutes", pattern="^(toutes|en_retard|partiel|en_regle|en_avance)$"),
+    statut: str = Query(default="toutes", pattern="^(toutes|en_retard|partiel|en_regle|en_avance|sans_note)$"),
+    attestation: str | None = Query(
+        default=None,
+        pattern="^(attestes|non_attestes)$",
+        description="Les seuls membres attestés en ordre par la comptabilité, ou les seuls qui ne le sont pas",
+    ),
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     tenant_id: int = Depends(get_current_tenant_id),
@@ -627,9 +633,16 @@ async def situation_membres(
     surplus n'apparaît jamais comme un reste négatif : il devient une avance.
     La recherche est celle de l'encaissement : mots dans n'importe quel ordre,
     sans accents ni séparateurs, le plus proche d'abord.
+
+    Les membres en exercice au Tableau qui n'ont aucune note y figurent aussi,
+    sans montant et sous le statut « sans_note » : la situation ne se limite
+    pas à ceux qui sont passés par la caisse ou la banque.
     """
     from app.api.v1.endpoints.experts import _identite_conditions, _mots_recherches
 
+    if not isinstance(attestation, str):
+        # Appel direct (tests, autres services) sans ce filtre.
+        attestation = None
     courant = await _exercice_de_travail(db, tenant_id)
     annee = annee or courant
     conditions: list[Any] = [*_identite_conditions(q)]
@@ -647,9 +660,45 @@ async def situation_membres(
     groupes = calculer_situation(lignes, articles, rattachements, annee)
     zero = Decimal("0.00")
 
+    # Attestations comptables de l'exercice : elles s'affichent à côté de la
+    # situation de caisse, sans en changer un seul montant.
+    from app.services.cotisations_attestations import attestations_de
+
+    attestations = await attestations_de(db, tenant_id, annee)
+    auteurs: dict[uuid.UUID, str | None] = {}
+    ids_auteurs = {a.created_by for a in attestations.values() if a.created_by}
+    if ids_auteurs:
+        auteurs = {
+            u.id: _nom_utilisateur(u)
+            for u in (await db.execute(select(User).where(User.id.in_(ids_auteurs)))).scalars().all()
+        }
+
+    from app.services.notes_debit_situation import membres_tableau_sans_note
+
+    mots = _mots_recherches(q)
+    recherche_vide = bool(q and q.strip()) and not mots
+    sans_note: list[tuple[uuid.UUID | None, dict[str, Any]]] = []
+    for membre in await membres_tableau_sans_note(db, tenant_id, annee):
+        if type_client and membre["type_client"] != type_client:
+            continue
+        identite = membre["expert"]
+        cherchable = [
+            re.sub(r"[^a-z0-9]", "", _sans_accents_minuscules(identite[champ] or ""))
+            for champ in ("numero_ordre", "nom")
+        ]
+        if recherche_vide or not all(any(mot in texte for texte in cherchable) for mot in mots):
+            continue
+        sans_note.append((uuid.UUID(identite["id"]) if identite["id"] else None, membre))
+
     resultat: list[dict[str, Any]] = []
-    for groupe in groupes.values():
-        if groupe["reste_du"] > 0:
+    for expert_id, groupe in [*groupes.items(), *sans_note]:
+        attestee = attestations.get(expert_id) if expert_id else None
+        if attestation and (attestee is None) == (attestation == "attestes"):
+            continue
+        if groupe["nb_notes"] == 0:
+            # Rien d'émis : ni « en règle » ni « en retard », la caisse n'en sait rien.
+            etat = "sans_note"
+        elif groupe["reste_du"] > 0:
             etat = "partiel" if groupe["reglements"] > 0 else "en_retard"
         elif groupe["avance_n_plus_1"] > 0:
             etat = "en_avance"
@@ -661,14 +710,20 @@ async def situation_membres(
             {
                 **{k: v for k, v in groupe.items() if k != "restes"},
                 "statut": etat,
+                "attestation": (
+                    {
+                        "le": attestee.created_at.isoformat(),
+                        "par": auteurs.get(attestee.created_by) if attestee.created_by else None,
+                    }
+                    if attestee
+                    else None
+                ),
                 **{
                     cle: _argent(groupe[cle])
                     for cle in _CHAMPS_SITUATION
                 },
             }
         )
-
-    mots = _mots_recherches(q)
 
     def proximite(item: dict[str, Any]) -> int:
         # Même rang que `experts._identite_ordre` : numéro exact, numéro qui
@@ -704,6 +759,52 @@ async def situation_membres(
         "totaux": totaux,
         "rattachements": await poste_par_colonne(db, tenant_id),
     }
+
+
+class AttestationsIn(BaseModel):
+    expert_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+    annee: int | None = Field(default=None, ge=2000, le=2100)
+    #: True : attester « en ordre » ; False : retirer l'attestation.
+    en_ordre: bool = True
+
+
+@router.post("/attestations", dependencies=[Depends(has_permission(PERMISSION_ATTESTER))])
+async def attester_cotisations(
+    payload: AttestationsIn,
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """La comptabilité déclare des membres en ordre de cotisation pour l'exercice — ou le retire.
+
+    Aucun montant, aucun encaissement : le Tableau lit la cotisation comme
+    réglée, et la caisse solde les notes à son rythme, une seule fois.
+    """
+    from app.services.cotisations_attestations import attester, retirer
+
+    annee = payload.annee or await _exercice_de_travail(db, tenant_id)
+    ids = list(dict.fromkeys(payload.expert_ids))
+    connus = set(
+        (await db.execute(select(ExpertComptable.id).where(ExpertComptable.id.in_(ids)))).scalars().all()
+    )
+    if len(connus) != len(ids):
+        raise HTTPException(status_code=404, detail="Membre introuvable")
+    user_id = getattr(user, "id", None)
+    if payload.en_ordre:
+        touches = await attester(db, tenant_id, annee, ids, user_id)
+    else:
+        touches = await retirer(db, tenant_id, annee, ids)
+    for expert_id in touches:
+        await log_action(
+            db,
+            user_id=user_id,
+            action="COTISATION_ATTESTEE" if payload.en_ordre else "COTISATION_ATTESTATION_RETIREE",
+            target_table="experts_comptables",
+            target_id=str(expert_id),
+            new_value={"exercice": annee, "en_ordre": payload.en_ordre},
+        )
+    await db.commit()
+    return {"annee": annee, "en_ordre": payload.en_ordre, "modifies": len(touches)}
 
 
 class RattachementIn(BaseModel):
@@ -934,8 +1035,17 @@ async def regularite_membres(
         if reste > 0:
             m["reste_du"] = str((Decimal(m["reste_du"]) + reste).quantize(Decimal("0.01")))
             m["nb_notes_dues"] += 1
-    for m in membres.values():
-        if m["nb_notes_dues"]:
+    from app.services.cotisations_attestations import attestations_de
+
+    attestes = await attestations_de(db, tenant_id, annee, ids)
+    for cle, m in membres.items():
+        # `atteste` : raccourci pour la commission du Tableau. La comptabilité
+        # déclare le membre en règle, pénalités et autres créances comprises ;
+        # le reste dû et le nombre de notes dues restent ceux de la caisse.
+        m["atteste"] = uuid.UUID(cle) in attestes
+        if m["atteste"]:
+            m["statut"] = "en_regle"
+        elif m["nb_notes_dues"]:
             m["statut"] = "non_en_regle"
         elif m["nb_notes_annee"]:
             m["statut"] = "en_regle"

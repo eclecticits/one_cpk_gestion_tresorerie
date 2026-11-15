@@ -629,6 +629,13 @@ async def record_encaissement_payment(
         },
         ip_address=ip_address,
     )
+    # L'attestation comptable du membre s'efface au premier encaissement, caisse
+    # ou banque : la situation des notes fait de nouveau foi.
+    from app.services.cotisations_attestations import retirer_au_paiement
+
+    await retirer_au_paiement(
+        db, organisation_id=organisation_id, note=encaissement, annee_paiement=payment_date.year, user_id=user_id
+    )
     await db.flush()
     return payment
 

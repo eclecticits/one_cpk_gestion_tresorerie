@@ -106,14 +106,96 @@
 }
 
 /* Filtres */
+/* Une seule barre compacte : la recherche, les filtres en pastilles, les exports à droite. */
 .filtres {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   align-items: center;
+  padding: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
 }
 
 .filtres select,
+.filtreAnnee {
+  min-height: var(--control-h-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-muted);
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.filtres select {
+  appearance: none;
+  max-width: 172px;
+  padding: 0 26px 0 10px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.filtres select:hover:not(:disabled),
+.filtreAnnee:hover,
+.rechercheBoite input:hover {
+  border-color: var(--color-border-strong);
+}
+
+/* Un filtre qui restreint la liste se distingue de ceux laissés par défaut. */
+.filtres select.filtreActif,
+.filtreAnnee.filtreActif {
+  background-color: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 12%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 35%, transparent);
+  color: var(--tenant-primary, #1f6b5c);
+}
+
+.rechercheBoite {
+  position: relative;
+  display: flex;
+  flex: 1 1 200px;
+  min-width: 180px;
+  max-width: 320px;
+  color: var(--color-text-muted);
+}
+
+.rechercheBoite svg {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.effacerFiltres {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--control-h-sm);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.effacerFiltres:hover {
+  background: var(--color-bg-muted);
+}
+
+.filtres .exports .secondaryBtn {
+  min-height: var(--control-h-sm);
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .champ select,
 .table select {
   min-height: var(--control-h);
@@ -125,22 +207,19 @@
 }
 
 .recherche {
-  flex: 1 1 260px;
-  min-height: var(--control-h);
-  padding: 0 12px;
-  border: 1px solid var(--color-border-strong);
+  width: 100%;
+  min-height: var(--control-h-sm);
+  padding: 0 10px 0 32px;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  background: var(--color-bg-muted);
+  font-size: 13px;
+  color: var(--color-title);
 }
 
 .filtreAnnee {
-  width: 120px;
-  min-height: var(--control-h);
-  padding: 0 10px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  font-size: 14px;
+  width: 92px;
+  padding: 0 8px;
 }
 
 .puceFiltre {
@@ -259,20 +338,19 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: var(--control-h);
+  min-height: var(--control-h-sm);
   padding-left: 10px;
-  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   color: var(--color-text-muted);
-  background: var(--color-surface);
+  background: var(--color-bg-muted);
   font-size: 12px;
   font-weight: 700;
 }
 
-.filtreAvecLabel select {
-  border: 0;
-  border-left: 1px solid var(--color-border);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+.filtres .filtreAvecLabel select {
+  padding-left: 4px;
+  background-color: transparent;
+  color: var(--color-title);
 }
 
 /* Tableau dense */
@@ -757,7 +835,27 @@
   }
 }
 
+@media (max-width: 768px) {
+  .rechercheBoite {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .filtres select {
+    flex: 1 1 calc(50% - 6px);
+    max-width: none;
+  }
+}
+
 @media (pointer: coarse) {
+  .filtres select,
+  .filtreAnnee,
+  .recherche,
+  .effacerFiltres,
+  .filtres .exports .secondaryBtn {
+    min-height: var(--control-h-touch);
+  }
+
   .primaryBtn,
   .secondaryBtn,
   .onglet,
@@ -1360,4 +1458,56 @@ li.barreLigne:hover {
 
 .posteEnteteManquant {
   color: #b45309;
+}
+
+/* Attestation comptable, sous la situation de caisse. */
+.badgeAttestation {
+  display: flex;
+  width: fit-content;
+  margin-top: 4px;
+}
+
+/* Situation des membres : choix des colonnes de détail affichées. */
+.cardHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menuColonnes {
+  position: relative;
+}
+
+.menuColonnes > summary {
+  list-style: none;
+}
+
+.menuColonnes > summary::-webkit-details-marker {
+  display: none;
+}
+
+.menuColonnesPanneau {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 200px;
+  padding: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--elev-2);
+}
+
+.menuColonnesPanneau label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
 }

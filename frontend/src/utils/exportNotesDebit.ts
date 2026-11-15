@@ -190,7 +190,14 @@ export const LIBELLE_SITUATION_MEMBRE: Record<SituationMembre['statut'], string>
   partiel: 'Partiel',
   en_regle: 'En règle',
   en_avance: 'En avance N+1',
+  sans_note: 'Sans note',
 }
+
+/** La situation de caisse, suivie de l'attestation comptable quand il y en a une. */
+const libelleSituation = (ligne: SituationMembre) =>
+  ligne.attestation
+    ? `${LIBELLE_SITUATION_MEMBRE[ligne.statut]} — en ordre (attesté compta)`
+    : LIBELLE_SITUATION_MEMBRE[ligne.statut]
 
 export interface ExportSituation {
   situation: SituationNotesDebit
@@ -257,7 +264,7 @@ export async function exporterSituationPDF({ situation, filtres }: ExportSituati
       formatAmount(ligne.reglements),
       formatAmount(ligne.reste_du),
       formatAmount(ligne.avance_n_plus_1),
-      LIBELLE_SITUATION_MEMBRE[ligne.statut],
+      libelleSituation(ligne),
     ]),
     footRow: [
       'TOTAL (USD)',
@@ -327,7 +334,7 @@ export async function exporterSituationExcel({ situation, filtres, organisation 
       toNumber(ligne.reglements),
       toNumber(ligne.reste_du),
       toNumber(ligne.avance_n_plus_1),
-      LIBELLE_SITUATION_MEMBRE[ligne.statut],
+      libelleSituation(ligne),
       ligne.nb_notes,
     ]),
     widths: [14, 34, 14, 14, 14, 14, 14, 14, 30, 15, 15, 15, 14, 16, 7],

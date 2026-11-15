@@ -2320,7 +2320,7 @@ export default function TableauModulePage() {
                 {canExport && <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', flex: 1, minWidth: '280px' }}>
                   <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Rapport complet (PDF et Excel)</h3>
                   <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
-                    La liste des membres, puis les graphiques (en tête dans l'Excel).
+                    La synthèse graphique en tête, puis la liste des membres.
                   </p>
                   <label style={{ display: 'block', fontSize: '12px', color: '#4b5563', marginBottom: '8px' }}>
                     Périmètre

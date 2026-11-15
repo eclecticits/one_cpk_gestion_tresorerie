@@ -113,7 +113,7 @@ def test_rapport_limite_a_une_categorie():
     assert [s["categorie"] for s in donnees["sections"]] == ["Société"]
     assert donnees["stagiaires"] == []
     assert R.titre_rapport(donnees["ctx"]) == "Rapport Tableau 2027 – Société"
-    assert openpyxl.load_workbook(io.BytesIO(R.build_excel(donnees))).sheetnames == ["Graphiques", "SOCIETES"]
+    assert openpyxl.load_workbook(io.BytesIO(R.build_excel(donnees))).sheetnames == [R.TITRE_SYNTHESE, "SOCIETES"]
     assert "Rapport Tableau 2027 – Société" in _texte_pdf(donnees)[0]
 
 
@@ -138,8 +138,8 @@ def test_excel_tableau_de_bord_puis_la_liste():
         _dossier(2, "EC/16.00002"),
     ])
     wb = openpyxl.load_workbook(io.BytesIO(R.build_excel(donnees)))
-    assert wb.sheetnames == ["Graphiques", "EC EN CABINET"]
-    graphiques = wb["Graphiques"]._charts
+    assert wb.sheetnames == [R.TITRE_SYNTHESE, "EC EN CABINET"]
+    graphiques = wb[R.TITRE_SYNTHESE]._charts
     assert len(graphiques) == 2  # l'anneau des conclusions, les barres des critères
     barres = graphiques[1]
     assert barres.grouping == "percentStacked"
@@ -152,19 +152,19 @@ def test_excel_tableau_de_bord_puis_la_liste():
     assert not liste._charts
 
 
-def test_pdf_la_liste_puis_le_tableau_de_bord():
+def test_pdf_la_synthese_graphique_puis_la_liste():
     donnees = _donnees([_dossier(1, "EC/16.00001"), _dossier(2, "EC/16.00002", V.NON_INSCRIT, heures_forco=10.0)])
     pages = _texte_pdf(donnees)
-    # La liste suit le titre, sur la première page ; les graphiques viennent à la fin.
+    # La synthèse graphique suit le titre, sur la première page ; la liste ouvre la suivante.
     assert "10 janvier 2026" in pages[0]
-    assert "SECTION A1" in pages[0]
-    assert "Conformité de la base" not in pages[0]
-    # Sous l'en-tête répété de page (organisation), la page s'ouvre sur les graphiques.
-    assert pages[-1].split("\n")[1].startswith("Graphiques")
-    assert "Conformité de la base" in pages[-1]
-    assert "Conformité par critère" in pages[-1]
-    assert "50 %" in pages[-1]
-    assert "Synthèse" not in "\n".join(pages)
+    assert "Synthèse graphique" in pages[0]
+    assert "Conformité de la base" in pages[0]
+    assert "Conformité par critère" in pages[0]
+    assert "50 %" in pages[0]
+    assert "SECTION A1" not in pages[0]
+    # Sous l'en-tête répété de page (organisation), la page suivante s'ouvre sur la liste.
+    assert pages[1].split("\n")[1].startswith("SECTION A1")
+    assert "Synthèse graphique" not in "\n".join(pages[1:])
 
 
 def test_pdf_tolere_un_import_vide_et_des_caracteres_a_echapper():
@@ -203,7 +203,7 @@ class TestExportBoutEnBout:
         await run_analyse(db_session, test_admin_user, org, outcome.imp.id)
         contenu, nom = await export_rapport_complet(db_session, org, outcome.imp.id, "xlsx", categorie="EC Cabinet")
         assert nom == f"Rapport_Tableau_2063_{outcome.imp.id}_EC_Cabinet.xlsx"
-        assert openpyxl.load_workbook(io.BytesIO(contenu)).sheetnames == ["Graphiques", "EC EN CABINET"]
+        assert openpyxl.load_workbook(io.BytesIO(contenu)).sheetnames == [R.TITRE_SYNTHESE, "EC EN CABINET"]
         with pytest.raises(HTTPException) as vide:
             await export_rapport_complet(db_session, org, outcome.imp.id, "pdf", categorie="Société")
         assert vide.value.status_code == 409
@@ -374,7 +374,7 @@ def test_membres_sans_dossier_sans_conclusion_inventee():
     assert donnees["conclusions"]["sans_conclusion"] == 2
     assert _critere(donnees, "cotisation")["inconnus"] == 2
     assert dict(next(parts for rubrique, _, parts in donnees["profil"] if rubrique == "Actifs"))["Actifs"] == 2
-    assert "Sans conclusion" in _texte_pdf(donnees)[-1]
+    assert "Sans conclusion" in _texte_pdf(donnees)[0]
     liste = openpyxl.load_workbook(io.BytesIO(R.build_excel(donnees)))["EC EN CABINET"]
     entetes = [c.value for c in liste[4]]
     assert liste.cell(5, entetes.index("Actif") + 1).value == "OUI"
@@ -407,7 +407,7 @@ def test_assurance_et_ca_reserves_aux_societes_et_aux_independants():
     assert feuille["A1"].value.startswith("SECTION A1")
     assert "Assurance valide" not in [c.value for c in feuille[4]]
     # Plusieurs catégories : le tableau de bord ajoute les conclusions par catégorie.
-    assert len(classeur["Graphiques"]._charts) == 3
+    assert len(classeur[R.TITRE_SYNTHESE]._charts) == 3
     assert R.build_pdf(donnees).startswith(b"%PDF")
 
 
@@ -485,5 +485,5 @@ def test_le_pdf_n_affiche_pas_la_colonne_anciennete():
     donnees = _donnees([_dossier(1, "EC/16.00001")])
     assert "Ancienneté" in donnees["sections"][0]["entetes"]  # l'Excel la garde
     pages = _texte_pdf(donnees)
-    assert "Ancienneté" not in pages[0]
-    assert "Ancienneté" in pages[-1]  # le graphique du profil la garde
+    assert "Ancienneté" in pages[0]  # le graphique du profil la garde
+    assert "Ancienneté" not in "\n".join(pages[1:])
