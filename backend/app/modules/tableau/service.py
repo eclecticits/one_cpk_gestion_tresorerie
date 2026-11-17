@@ -14,7 +14,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy.orm import selectinload
-from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.orm.attributes import flag_modified, set_committed_value
 
 from app.models.user import User
 from app.models.organisation import Organisation
@@ -1962,6 +1962,52 @@ async def get_base_tableau(
         etat = verdict_engine.etat_cotisation(categorie, situation, None, reglages_par_conseil[org_id])
         return {**situation, "etat": etat, "payee": etat == "payee"}
 
+    async def _conclure_dossiers(lignes: list[TableauDossier]) -> None:
+        """La conclusion des dossiers suit les réglages en vigueur, à la lecture.
+
+        Mêmes entrées que l'analyse (`_analyser_dossiers`), et la décision de la
+        commission prime de la même façon. Rien n'est écrit : la conclusion
+        enregistrée par la dernière analyse reste celle de l'export et du PV.
+        """
+        par_conseil: dict[int, list[TableauDossier]] = {}
+        for dossier in lignes:
+            if dossier.organisation_id is not None:
+                par_conseil.setdefault(dossier.organisation_id, []).append(dossier)
+        for org_id, groupe in par_conseil.items():
+            await _charger_conseil(org_id)
+            reglages = reglages_par_conseil[org_id]
+            verdicts: dict[int, dict] = {}
+            for dossier in groupe:
+                notes = dossier.cotisation_notes
+                etat = notes.get("etat") if notes else None
+                if notes is None:
+                    payee = dossier.cotisation_payee
+                else:
+                    payee = None if etat is None else etat == "payee"
+                verdicts[dossier.id] = verdict_engine.evaluer({
+                    "categorie": dossier.categorie,
+                    "numero_ordre": dossier.numero_ordre,
+                    "cotisation_payee": payee,
+                    "cotisation_partielle": etat == "partielle",
+                    "heures_forco": float(dossier.heures_forco) if dossier.heures_forco is not None else None,
+                    "assurance": dossier.assurance_valide,
+                    "chiffre_affaires": dossier.chiffre_affaires,
+                    "hformation": (dossier.raw_data or {}).get("hformation"),
+                    "anciennete": dossier.anciennete,
+                    "age": dossier.age,
+                }, annee_exercice, reglages)
+            _appliquer_decisions(groupe, verdicts, await _decisions_par_membre(db, org_id, exercice))
+            for dossier in groupe:
+                if dossier.sortie:
+                    # Sorti du Tableau : plus de verdict, comme pour les membres sans dossier.
+                    conclusion, motif = None, dossier.sortie["libelle"]
+                else:
+                    verdict = verdicts[dossier.id]
+                    conclusion, motif = verdict["conclusion"], verdict["motif"]
+                # Valeurs d'affichage : la session ne doit pas les voir comme une modification.
+                set_committed_value(dossier, "conclusion", conclusion)
+                set_committed_value(dossier, "conclusion_motif", motif)
+
     actifs = await actifs_par_membre(db, organisation_ids, exercice)
     sorties = await sorties_par_membre(db, organisation_ids, exercice)
 
@@ -1993,6 +2039,7 @@ async def get_base_tableau(
              "hformation": (dossier.raw_data or {}).get("hformation"), "anciennete": dossier.anciennete},
             annee_exercice, reglages_par_conseil.get(dossier.organisation_id),
         )
+    await _conclure_dossiers(dossiers)
     membres_a_completer: list[dict[str, Any]] = []
     for ligne in lignes_a_completer:
         membre = {

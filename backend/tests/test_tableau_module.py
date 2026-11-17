@@ -61,6 +61,7 @@ from app.modules.tableau.service import (
     import_excel,
     run_analyse,
     run_analyse_base,
+    set_reglages,
     valider_date_situation,
 )
 
@@ -707,6 +708,46 @@ class TestBaseTableauConsolidee:
         assert float(par_numero["EC/18.10001"].heures_forco) == 120
         assert float(par_numero["EC/18.10002"].heures_forco) == 20
         assert base["imports_couverts"] == sorted(base["imports_couverts"])
+
+    @pytest.mark.asyncio
+    async def test_la_conclusion_de_la_base_suit_les_reglages_sans_analyse(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(db_session, test_admin_user, org, "base.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10101", "heures": 60, "cotisation": "OUI"},
+        ), "2087", date_situation=date(2087, 3, 1))
+
+        base = await get_base_tableau(db_session, [org], exercice="2087")
+        assert base["dossiers"][0].conclusion == V.NON_INSCRIT
+
+        # 60 h suffisent avec un minimum de 50 h (palier : 20 h par an sur 3 ans).
+        await set_reglages(db_session, org, outcome.imp.id, {"heures_formation_min": 50})
+        base = await get_base_tableau(db_session, [org], exercice="2087")
+        assert base["dossiers"][0].conclusion == V.INSCRIT
+        assert base["dossiers"][0].conclusion_motif == "Tous les critères sont satisfaits"
+
+        # Rien n'est écrit : la conclusion enregistrée reste celle de la dernière analyse.
+        assert not db_session.dirty
+        stockee = (await db_session.execute(
+            select(TableauDossier.conclusion).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+        assert stockee is None
+
+    @pytest.mark.asyncio
+    async def test_la_base_fait_primer_la_decision_de_la_commission(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(db_session, test_admin_user, org, "base.xlsx", _make_import_bytes(
+            {"numero_ordre": "EC/18.10102", "heures": 10, "cotisation": "NON"},
+        ), "2088", date_situation=date(2088, 3, 1))
+        dossier = (await db_session.execute(
+            select(TableauDossier).where(TableauDossier.import_id == outcome.imp.id)
+        )).scalar_one()
+        await create_decision(db_session, test_admin_user, org, TableauDecisionCreate(
+            dossier_id=dossier.id, type_decision="deliberation", decision="INSCRIT", motif="Dérogation",
+        ))
+
+        base = await get_base_tableau(db_session, [org], exercice="2088")
+        assert base["dossiers"][0].conclusion == V.INSCRIT
+        assert base["dossiers"][0].conclusion_motif == "Dérogation"
 
     @pytest.mark.asyncio
     async def test_un_reimport_plus_ancien_ne_fait_pas_reculer_la_base(self, db_session, test_admin_user):
