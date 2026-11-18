@@ -205,6 +205,25 @@ def _date_fr(valeur: Any) -> str:
     return date.today().strftime("%d/%m/%Y")
 
 
+def _periode_formation(
+    membre: dict[str, Any], reglages: verdict_engine.TableauReglages, exercice_annee: int | None,
+) -> str:
+    """La période sur laquelle les heures sont validées : « sur les 3 dernières années ».
+
+    Les anciens (dernière ligne des paliers) relèvent du règlement FORCO : les
+    3 dernières années, quelles que soient les colonnes cochées. Les plus jeunes :
+    autant d'années que de colonnes jugées par leur palier.
+    """
+    palier = reglages.palier_formation(membre.get("numero_ordre"), exercice_annee)
+    if not palier or not palier["colonnes"]:
+        return ""
+    if palier is reglages.formation_paliers[-1]:
+        annees = verdict_engine.PERIODE_FORMATION_ANCIENS_ANS
+    else:
+        annees = len(palier["colonnes"])
+    return " sur la dernière année" if annees == 1 else f" sur les {annees} dernières années"
+
+
 def criteres_releve(
     membre: dict[str, Any], reglages: verdict_engine.TableauReglages, exercice_annee: int | None = None,
 ) -> list[tuple[str, str, bool | None]]:
@@ -217,21 +236,24 @@ def criteres_releve(
     for critere in verdict_engine.criteres_requis(categorie, reglages) or []:
         if critere == "cotisation":
             etat = membre.get("cotisation_etat")
+            # La ligne juge la cotisation et ses pénalités (Art. 12 du RI).
+            libelle = "Cotisation (pénalités comprises)"
             # Ni note de débit ni valeur importée : un tiret, sans rien affirmer.
             if not etat:
-                lignes.append(("Cotisation", "-", None))
+                lignes.append((libelle, "-", None))
             else:
-                lignes.append(("Cotisation", "soldée" if etat == "payee" else "non soldée", etat == "payee"))
+                lignes.append((libelle, "en ordre" if etat == "payee" else "non en ordre", etat == "payee"))
         elif critere == "formation":
             etat = membre.get("formation_etat")
             nhv = membre.get("nhv")
             # Le minimum opposable au membre : celui du palier de son ancienneté.
             minimum = reglages.seuil_formation(membre, exercice_annee)
+            periode = _periode_formation(membre, reglages, exercice_annee)
             conforme = {"atteint": True, "non_requis": True, "insuffisant": False}.get(etat or "")
             if etat == "non_requis":
                 texte = "non requise (nouveau membre)"
             elif nhv is not None:
-                texte = f"{_heures(float(nhv))} h validées sur {_heures(minimum)} h requises"
+                texte = f"{_heures(float(nhv))} h validées{periode} (minimum requis : {_heures(minimum)} h)"
                 if conforme is None:
                     conforme = float(nhv) >= minimum
             else:
@@ -246,27 +268,36 @@ def criteres_releve(
     return lignes
 
 
-_DEMARCHES = {
-    "cotisation": "effectué un paiement",
-    "formation": "suivi une formation",
-    "assurance": "souscrit une assurance",
-    "chiffre_affaires": "déclaré {possessif} chiffre d'affaires",
-}
-
-
 def consigne_declaration(categorie: str | None, reglages: verdict_engine.TableauReglages, societe: bool) -> str:
-    """« Si vous avez effectué un paiement ou suivi une formation… » : les seules démarches de la catégorie."""
-    possessif = "son" if societe else "votre"
-    demarches = [
-        _DEMARCHES[c].format(possessif=possessif)
-        for c in verdict_engine.criteres_requis(categorie, reglages) or []
-        if c in _DEMARCHES
-    ]
-    if not demarches:
+    """La phrase type de la catégorie : ce qui peut ne pas apparaître, et quoi faire.
+
+    * un paiement fait en banque non pris en compte : la preuve, à nous transmettre ;
+    * une formation suivie, l'assurance, le chiffre d'affaires : à déclarer sur
+      l'espace membre, seulement ceux que la catégorie exige.
+    """
+    criteres = verdict_engine.criteres_requis(categorie, reglages) or []
+    phrases: list[str] = []
+    if "cotisation" in criteres:
+        preuve = "la preuve de paiement" if societe else "votre preuve de paiement"
+        phrases.append(
+            "Si un paiement effectué à la banque n'a pas été pris en compte, "
+            f"merci de nous transmettre {preuve} (bordereau ou avis de virement)."
+        )
+    if societe:
+        objets = {"assurance": "l'assurance", "chiffre_affaires": "le chiffre d'affaires"}
+    else:
+        objets = {"formation": "une formation suivie", "assurance": "votre assurance",
+                  "chiffre_affaires": "votre chiffre d'affaires"}
+    elements = [objets[c] for c in ("formation", "assurance", "chiffre_affaires") if c in criteres and c in objets]
+    if elements:
+        liste = elements[0] if len(elements) == 1 else ", ".join(elements[:-1]) + " ou " + elements[-1]
+        if societe:
+            liste += " de votre société"
+        pronom = "la" if elements == ["une formation suivie"] else "le"
+        phrases.append(f"Si {liste} n'apparaît pas ci-dessus, merci de {pronom} déclarer sur votre espace membre.")
+    if not phrases:
         return "Pour toute mise à jour de votre dossier, merci de la déclarer sur votre espace membre."
-    liste = demarches[0] if len(demarches) == 1 else ", ".join(demarches[:-1]) + " ou " + demarches[-1]
-    sujet = "Si votre société a" if societe else "Si vous avez"
-    return f"{sujet} {liste} et que cela n'apparaît pas ci-dessus, merci de le déclarer sur votre espace membre."
+    return " ".join(phrases)
 
 
 def _empreinte(exercice: str, numero: str, conclusion: str, lignes: list[str]) -> str:
@@ -433,6 +464,12 @@ def html_releve(releve: Releve) -> str:
     )
 
 
+def _libelle_whatsapp(label: str) -> str:
+    """« *Cotisation* _(pénalités comprises)_ » : la précision en italique, WhatsApp n'ayant pas de gris."""
+    principal, sep, precision = label.partition(" (")
+    return f"*{principal}* _({precision}_" if sep else f"*{label}*"
+
+
 def variables_whatsapp(releve: Releve) -> dict[str, str]:
     """Les trous du gabarit TABLEAU_SITUATION, mis en forme comme les autres messages."""
     if est_morale(releve.categorie):
@@ -443,7 +480,7 @@ def variables_whatsapp(releve: Releve) -> dict[str, str]:
         "reference": releve.reference,
         "salutation": "\n".join(salutation) + "\n",
         "message": releve.annonce,
-        "resume": "".join(f"▸ *{label} :* {valeur}\n" for label, valeur in releve.criteres).rstrip("\n"),
+        "resume": "".join(f"▸ {_libelle_whatsapp(label)} : {valeur}\n" for label, valeur in releve.criteres).rstrip("\n"),
         "conclusion": releve.conclusion_libelle,
         "consigne": f"{releve.consigne}\n{ESPACE_MEMBRE_URL}" if releve.consigne else "",
         "organisation": releve.organisation or MARQUE,

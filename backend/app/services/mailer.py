@@ -1534,13 +1534,24 @@ def _releve_situation_html(
     p = _PALETTES_RELEVE[en_regle]
     lignes_entete = "".join(f'<div style="margin:0 0 2px;">{e(texte)}</div>' for texte in entete)
 
+    def libelle(label: str) -> str:
+        # « Cotisation (pénalités comprises) » : la précision entre parenthèses en gris
+        # et en italique, sans gras.
+        principal, sep, precision = label.partition(" (")
+        if not sep:
+            return e(label)
+        return (
+            f'{e(principal)} <span style="color:{_GRIS_RELEVE}; font-weight:400; font-style:italic;">'
+            f'({e(precision)}</span>'
+        )
+
     def ligne(label: str, valeur: str, conforme: bool | None) -> str:
         # Une pastille dessinée, pas un caractère : les e-mails ne portent aucun pictogramme.
         teinte = _GRIS_RELEVE if conforme is None else _PALETTES_RELEVE[bool(conforme)]["fort"]
         return (
             '<tr><td style="padding:7px 0; border-bottom:1px solid #eef2f7;">'
             f'<span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:{teinte}; margin-right:8px;"></span>'
-            f'<strong>{e(label)} :</strong> <span style="color:{teinte}; font-weight:700;">{e(valeur)}</span>'
+            f'<strong>{libelle(label)} :</strong> <span style="color:{teinte}; font-weight:700;">{e(valeur)}</span>'
             "</td></tr>"
         )
 

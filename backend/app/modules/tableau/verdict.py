@@ -43,9 +43,13 @@ DEFAULT_NOUVEAU_ANS = 3
 # palier vaut pour son ancienneté et au-delà, jusqu'au palier suivant ; il nomme
 # les colonnes d'heures validées du bilan Forco qu'il juge. Sans colonne, la
 # formation est non applicable. `par_an_min` s'exige de chaque colonne ; `cumul`
-# exige de leur somme le minimum d'heures de la catégorie (`heures_min`).
+# exige de leur somme le minimum d'heures de la catégorie (`heures_min`). Le
+# dernier palier (« et plus ») exige toujours ce cumul.
 # Réglable ; une liste vide rend la main à `nouveau_anciennete_ans`.
 COLONNES_BILAN_FORCO: tuple[str, ...] = ("Hv1", "Hv2", "Hv3", "Hv4")
+# Règlement FORCO 2022 : les anciens doivent le minimum d'heures sur les
+# 3 dernières années. C'est la période que nomment les relevés.
+PERIODE_FORMATION_ANCIENS_ANS = 3
 DEFAULT_FORMATION_PALIERS: list[dict[str, Any]] = [
     {"anciennete": 0, "colonnes": [], "par_an_min": None, "cumul": False},
     {"anciennete": 1, "colonnes": ["Hv4"], "par_an_min": 20.0, "cumul": False},
@@ -250,7 +254,12 @@ def _paliers_valides(data: Any) -> list[dict[str, Any]]:
             "par_an_min": heures(brut.get("par_an_min")) if colonnes else None,
             "cumul": bool(colonnes) and brut.get("cumul") is True,
         }
-    return [paliers[a] for a in sorted(paliers)]
+    tries = [paliers[a] for a in sorted(paliers)]
+    # Le minimum de « Conditions pour être en règle » vaut pour les anciens : la
+    # dernière ligne (« et plus ») l'exige toujours, case cochée ou non.
+    if tries and tries[-1]["colonnes"]:
+        tries[-1]["cumul"] = True
+    return tries
 
 
 def _definitions_valides(data: Any) -> dict[str, dict[str, Any]]:

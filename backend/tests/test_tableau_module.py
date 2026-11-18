@@ -207,6 +207,20 @@ class TestVerdict:
         # Liste vide : l'exemption « nouveau membre » de trois ans reprend la main.
         sans = V.TableauReglages.from_dict({"formation_paliers": []})
         assert V.est_nouveau({"numero_ordre": "EC/24.00001"}, 2026, sans) is True
+        # La dernière ligne exige toujours le minimum de la catégorie, même décochée ;
+        # les lignes précédentes gardent ce qui y est exigé.
+        anciens = V.TableauReglages.from_dict({"formation_paliers": [
+            {"anciennete": 0, "colonnes": [], "par_an_min": None, "cumul": False},
+            {"anciennete": 1, "colonnes": ["Hv4"], "par_an_min": 20, "cumul": False},
+            {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": 40, "cumul": False},
+            {"anciennete": 3, "colonnes": ["Hv1", "Hv2", "Hv3", "Hv4"], "par_an_min": None, "cumul": False},
+        ]})
+        assert [p["cumul"] for p in anciens.formation_paliers] == [False, False, False, True]
+        ancien = {"numero_ordre": "EC/16.00114", "categorie": "EC Indépendant"}
+        assert anciens.seuil_formation(ancien, 2026) == 120
+        assert anciens.seuil_formation({"numero_ordre": "EC/24.00001", "categorie": "EC Indépendant"}, 2026) == 80
+        assert anciens.seuil_formation({"numero_ordre": "EC/25.00001", "categorie": "EC Indépendant"}, 2026) == 20
+        assert V._formation_ok({**ancien, "heures_bilan": {"Hv1": 10, "Hv2": 10, "Hv3": 10, "Hv4": 10}}, False, anciens, 2026) is False
         # Réglages enregistrés avant les paliers : ceux par défaut s'appliquent.
         assert V.TableauReglages.from_dict({"age_seuil": 70}).formation_paliers == V.DEFAULT_FORMATION_PALIERS
 

@@ -69,13 +69,18 @@ def test_ec_cabinet_non_en_regle_sans_assurance_ni_montant():
     assert r.sujet == "Votre situation au Tableau de l'Ordre 2027"
     assert r.corps.startswith("Cher Expert-Comptable,\nMonsieur MUKENDI Patrick – N° d'ordre : EC/18.00245\n")
     assert "arrêtée au 05/11/2026 :" in r.corps
-    assert "- Cotisation : non soldée" in r.corps
-    assert "- Formation (NHV) : 80 h validées sur 120 h requises" in r.corps
+    assert "- Cotisation (pénalités comprises) : non en ordre" in r.corps
+    assert "- Formation (NHV) : 80 h validées sur les 3 dernières années (minimum requis : 120 h)\n" in r.corps
     assert "Assurance" not in r.corps
     assert "USD" not in r.corps
     assert "Conclusion : NON EN RÈGLE" in r.corps
     assert ESPACE_MEMBRE_URL in r.corps
-    assert "Si vous avez effectué un paiement ou suivi une formation et que cela n'apparaît pas ci-dessus" in r.corps
+    assert r.consigne == (
+        "Si un paiement effectué à la banque n'a pas été pris en compte, merci de nous transmettre votre "
+        "preuve de paiement (bordereau ou avis de virement). Si une formation suivie n'apparaît pas ci-dessus, "
+        "merci de la déclarer sur votre espace membre."
+    )
+    assert r.consigne in r.corps
     assert "Veuillez agréer, Monsieur, l'expression de nos salutations distinguées." in r.corps
     assert r.corps.endswith("La Commission Tableau\nONEC-RDC – Conseil Provincial de Kinshasa")
     assert "sanction" not in r.corps
@@ -89,7 +94,7 @@ def test_membre_du_bureau_en_regle_appele_par_sa_fonction():
         "Chère Experte-Comptable,\nMadame KASONGO Esther, Trésorière du Bureau – N° d'ordre : EC/18.00245\n"
     )
     assert "Nous avons le plaisir de vous informer" in r.corps
-    assert "- Cotisation : soldée" in r.corps
+    assert "- Cotisation (pénalités comprises) : en ordre" in r.corps
     assert "Conclusion : EN RÈGLE" in r.corps
     assert ESPACE_MEMBRE_URL not in r.corps
     assert "Veuillez agréer, Madame la Trésorière, l'expression de notre haute considération." in r.corps
@@ -114,8 +119,11 @@ def test_societe_a_l_attention_de_l_associe_gerant():
     assert "- Chiffre d'affaires : non déclaré" in r.corps
     assert "- Assurance : non valide" in r.corps
     assert "Formation" not in r.corps
-    assert ("Si votre société a effectué un paiement, souscrit une assurance ou déclaré son chiffre d'affaires "
-            "et que cela n'apparaît pas ci-dessus") in r.corps
+    assert r.consigne == (
+        "Si un paiement effectué à la banque n'a pas été pris en compte, merci de nous transmettre la preuve "
+        "de paiement (bordereau ou avis de virement). Si l'assurance ou le chiffre d'affaires de votre société "
+        "n'apparaît pas ci-dessus, merci de le déclarer sur votre espace membre."
+    )
 
 
 def test_rien_ne_part_pour_un_dossier_a_deliberer_un_sorti_ou_sans_contact():
@@ -141,15 +149,33 @@ def test_formation_suit_les_reglages_de_la_categorie():
         {"definitions_par_categorie": {"EC Cabinet": {"heures_formation_min": 60}}}
     )
     r = construire_releve(_membre(), exercice="2026", reglages=reglages, organisation="")
-    assert "80 h validées sur 60 h requises" in r.corps
+    assert "80 h validées sur les 3 dernières années (minimum requis : 60 h)" in r.corps
+
+
+def test_periode_de_formation_selon_l_anciennete():
+    reglages = verdict_engine.TableauReglages.from_dict({"formation_paliers": [
+        {"anciennete": 0, "colonnes": []},
+        {"anciennete": 1, "colonnes": ["Hv4"], "par_an_min": 20},
+        {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": 20},
+        # Hv1 cochée : le relevé nomme quand même les 3 dernières années.
+        {"anciennete": 3, "colonnes": ["Hv1", "Hv2", "Hv3", "Hv4"]},
+    ]})
+
+    def formation(numero):
+        r = construire_releve(_membre(numero_ordre=numero, nhv=15.0), exercice="2026", reglages=reglages, organisation="")
+        return dict(r.criteres)["Formation (NHV)"]
+
+    assert formation("EC/25.00001") == "15 h validées sur la dernière année (minimum requis : 20 h)"
+    assert formation("EC/24.00001") == "15 h validées sur les 2 dernières années (minimum requis : 40 h)"
+    assert formation("EC/16.00001") == "15 h validées sur les 3 dernières années (minimum requis : 120 h)"
 
 
 def test_cotisation_inconnue_affiche_un_tiret_sans_bloquer():
     r = _releve(_membre(cotisation_etat=None))
     assert r.envoyable
-    assert "- Cotisation : -\n" in r.corps
+    assert "- Cotisation (pénalités comprises) : -\n" in r.corps
     texte = templates.render_event(TABLEAU_SITUATION, {**variables_whatsapp(r), "organisation": "CPK"})
-    assert "▸ *Cotisation :* -" in texte
+    assert "▸ *Cotisation* _(pénalités comprises)_ : -" in texte
 
 
 def test_cotisation_ignoree_par_les_reglages_ne_bloque_pas():
@@ -175,7 +201,7 @@ def test_whatsapp_et_email_reprennent_la_mise_en_forme_existante():
     assert texte.startswith("*ONEC-RDC – Conseil Provincial de Kinshasa* · ONEC Smart\n━━━━━━━━━━━━━━\n*SITUATION AU TABLEAU*\n_Tableau 2027 · N° d'ordre EC/18.00245_")
     assert "Cher Expert-Comptable,\nMonsieur MUKENDI Patrick – N° d'ordre" in texte
     assert texte.endswith("_La Commission Tableau – ONEC-RDC – Conseil Provincial de Kinshasa_")
-    assert "▸ *Cotisation :* non soldée" in texte
+    assert "▸ *Cotisation* _(pénalités comprises)_ : non en ordre" in texte
     assert "Conclusion : *NON EN RÈGLE*" in texte
     assert ESPACE_MEMBRE_URL in texte
     page = html_releve(r)
@@ -347,11 +373,11 @@ def test_couleurs_de_l_email_selon_la_conclusion():
 
 def test_conformite_de_chaque_critere():
     r = _releve(_membre(cotisation_etat=None))
-    assert r.criteres == [("Cotisation", "-"), ("Formation (NHV)", "80 h validées sur 120 h requises")]
+    assert r.criteres == [("Cotisation (pénalités comprises)", "-"), ("Formation (NHV)", "80 h validées sur les 3 dernières années (minimum requis : 120 h)")]
     assert r.conformites == [None, False]
     # Aucune donnée inconnue n'est signalée comme manquante : un tiret, partout.
     sans_nhv = _releve(_membre(cotisation_etat=None, nhv=None, formation_etat=None))
-    assert sans_nhv.criteres == [("Cotisation", "-"), ("Formation (NHV)", "-")]
+    assert sans_nhv.criteres == [("Cotisation (pénalités comprises)", "-"), ("Formation (NHV)", "-")]
     assert "renseign" not in sans_nhv.corps.lower() and "manquant" not in sans_nhv.corps.lower()
 
 
@@ -411,3 +437,25 @@ def test_l_exercice_d_import_prepare_le_tableau_suivant():
     assert annee_tableau("2027") == "2028"
     assert annee_tableau(2030) == "2031"
     assert annee_tableau("") == ""
+
+
+def test_consigne_type_selon_la_categorie():
+    def consigne(categorie):
+        return _releve(_membre(categorie=categorie)).consigne
+
+    assert consigne("EC Indépendant") == (
+        "Si un paiement effectué à la banque n'a pas été pris en compte, merci de nous transmettre votre "
+        "preuve de paiement (bordereau ou avis de virement). Si une formation suivie, votre assurance ou "
+        "votre chiffre d'affaires n'apparaît pas ci-dessus, merci de le déclarer sur votre espace membre."
+    )
+    assert consigne("EC Salarié") == consigne("EC Cabinet")
+
+
+def test_ligne_cotisation_penalites_et_arrieres():
+    from app.modules.tableau.releves import html_releve
+
+    r = _releve(_membre(cotisation_etat="payee"))
+    assert r.criteres[0] == ("Cotisation (pénalités comprises)", "en ordre")
+    # La précision entre parenthèses est grisée dans l'e-mail.
+    html = html_releve(r)
+    assert "<strong>Cotisation <span style=\"color:" in html and "(pénalités comprises)</span> :</strong>" in html

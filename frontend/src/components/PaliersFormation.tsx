@@ -24,6 +24,15 @@ const cellule: React.CSSProperties = { padding: '8px 10px', borderTop: '1px soli
 const entete: React.CSSProperties = { padding: '8px 10px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#374151' }
 const champ: React.CSSProperties = { border: '1px solid #d1d5db', borderRadius: '5px', padding: '5px 8px', fontSize: '13px', width: '70px' }
 
+// Miroir de `PERIODE_FORMATION_ANCIENS_ANS` (verdict.py) : règlement FORCO 2022.
+const PERIODE_ANCIENS_ANS = 3
+
+// Miroir de `_paliers_valides` (verdict.py) : la dernière ligne exige toujours
+// le minimum de « Conditions pour être en règle ».
+function cumulImpose(palier: PalierFormation, dernier: boolean): boolean {
+  return dernier && palier.colonnes.length > 0
+}
+
 export default function PaliersFormation({ paliers, heuresMin, modifiable, onChange }: PaliersFormationProps) {
   const tries = [...paliers].sort((a, b) => a.anciennete - b.anciennete)
   const modifier = (index: number, modif: Partial<PalierFormation>) => {
@@ -44,7 +53,8 @@ export default function PaliersFormation({ paliers, heuresMin, modifiable, onCha
       <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>Formation selon l'ancienneté</h3>
       <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 8px' }}>
         L'ancienneté se compte par le N° d'ordre : exercice moins l'année d'inscription. Chaque ligne vaut
-        pour son ancienneté et au-delà, jusqu'à la ligne suivante.
+        pour son ancienneté et au-delà, jusqu'à la ligne suivante. La dernière ligne exige toujours les {heuresMin} h
+        de « Conditions pour être en règle » ; les lignes précédentes, ce qui y est exigé.
       </p>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '13px', border: '1px solid #e5e7eb' }}>
@@ -60,6 +70,7 @@ export default function PaliersFormation({ paliers, heuresMin, modifiable, onCha
             {tries.map((palier, index) => {
               const dernier = index === tries.length - 1
               const annees = palier.colonnes.length
+              const impose = cumulImpose(palier, dernier)
               return (
                 <tr key={index}>
                   <td style={cellule}>
@@ -86,13 +97,25 @@ export default function PaliersFormation({ paliers, heuresMin, modifiable, onCha
                           />
                           h au minimum chaque année
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <label
+                          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                          title={impose ? 'Le minimum de « Conditions pour être en règle » s\'applique toujours ici.' : undefined}
+                        >
                           <input
-                            type="checkbox" checked={palier.cumul} disabled={!modifiable}
+                            type="checkbox" checked={impose || palier.cumul} disabled={!modifiable || impose}
                             onChange={e => modifier(index, { cumul: e.target.checked })}
                           />
-                          {heuresMin} h sur {annees > 1 ? `les ${annees} années` : "l'année"}
+                          {impose
+                            ? `${heuresMin} h sur les ${PERIODE_ANCIENS_ANS} dernières années`
+                            : `${heuresMin} h sur ${annees > 1 ? `les ${annees} années` : "l'année"}`}
+                          {impose && <span style={{ color: '#6b7280' }}>(Conditions pour être en règle)</span>}
                         </label>
+                        {!impose && (
+                          <span style={{ width: '100%', fontSize: '12px', color: '#6b7280' }}>
+                            Relevé : minimum requis {Math.max((palier.par_an_min ?? 0) * annees, palier.cumul ? heuresMin : 0)} h
+                            sur {annees > 1 ? `les ${annees} dernières années` : 'la dernière année'}
+                          </span>
+                        )}
                       </div>
                     )}
                   </td>
