@@ -49,6 +49,8 @@ export interface PalierFormation {
   par_an_min: number | null
   /** Exiger de leur somme le minimum d'heures de formation. */
   cumul: boolean
+  /** À défaut de `cumul`, total exigé de leur somme (40 h sur 2 ans) ; absent = aucun. */
+  total_min?: number | null
 }
 
 export interface DefinitionsCategorie {
@@ -56,6 +58,8 @@ export interface DefinitionsCategorie {
   heures_formation_min?: number
   /** Les arriérés de cotisation doivent être soldés (défaut : oui). */
   cotisation_arrieres?: boolean
+  /** Les pénalités dues doivent être soldées (défaut : oui). */
+  cotisation_penalites?: boolean
   /** Cotisation commencée mais pas soldée (défaut : à délibérer). */
   cotisation_partielle?: 'a_deliberer' | 'bloquant'
   /** Date (AAAA-MM-JJ) jusqu'à laquelle l'assurance doit au moins couvrir ; absente = date de situation. */

@@ -680,3 +680,23 @@ class TableauReleveLot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     termine_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+
+class TableauReglagesConseil(Base):
+    """Les réglages du Tableau d'un conseil, valables pour tous les exercices.
+
+    Rangés autrefois dans chaque import : un nouvel import (fichier source)
+    arrivait sans eux et la page revenait aux valeurs initiales. Ici, seul
+    l'écran Réglages les écrit ; aucun import n'y touche.
+    """
+
+    __tablename__ = "tableau_reglages_conseil"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organisations.id", ondelete="CASCADE"), nullable=False, unique=True,
+    )
+    reglages: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    modifie_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

@@ -198,8 +198,8 @@ class TestVerdict:
             {"anciennete": "x", "colonnes": ["Hv4"]},
         ]})
         assert reglages.formation_paliers == [
-            {"anciennete": 0, "colonnes": [], "par_an_min": None, "cumul": False},
-            {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": 10.0, "cumul": True},
+            {"anciennete": 0, "colonnes": [], "par_an_min": None, "cumul": False, "total_min": None},
+            {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": 10.0, "cumul": True, "total_min": None},
         ]
         # Un an d'ancienneté retombe sur le palier 0 : non applicable.
         assert V.est_nouveau({"numero_ordre": "EC/25.00001"}, 2026, reglages) is True
@@ -223,6 +223,43 @@ class TestVerdict:
         assert V._formation_ok({**ancien, "heures_bilan": {"Hv1": 10, "Hv2": 10, "Hv3": 10, "Hv4": 10}}, False, anciens, 2026) is False
         # Réglages enregistrés avant les paliers : ceux par défaut s'appliquent.
         assert V.TableauReglages.from_dict({"age_seuil": 70}).formation_paliers == V.DEFAULT_FORMATION_PALIERS
+
+    def test_un_palier_peut_exiger_un_total_sur_ses_annees(self):
+        reglages = V.TableauReglages.from_dict({"formation_paliers": [
+            {"anciennete": 0, "colonnes": []},
+            {"anciennete": 1, "colonnes": ["Hv4"], "par_an_min": None, "total_min": 20},
+            # Sans minimum annuel : une année vide se compense par l'autre.
+            {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": None, "total_min": 40},
+            {"anciennete": 3, "colonnes": ["Hv2", "Hv3", "Hv4"], "par_an_min": 20, "total_min": 60},
+        ]})
+        paliers = reglages.formation_paliers
+        assert [p["total_min"] for p in paliers] == [None, 20.0, 40.0, None]
+        # La dernière ligne exige toujours le minimum de la catégorie, pas le total saisi.
+        assert paliers[-1]["cumul"] is True
+
+        def conclusion(numero, bilan):
+            d = _dossier(numero_ordre=numero, heures_forco=999.0, heures_bilan=bilan)
+            return V.evaluer(d, 2026, reglages)
+
+        assert conclusion("EC/24.00594", {"Hv3": None, "Hv4": 45})["conclusion"] == V.INSCRIT
+        court = conclusion("EC/24.00001", {"Hv3": 10, "Hv4": 25})
+        assert court["conclusion"] == V.NON_INSCRIT
+        assert court["motif"] == "heures de formation insuffisantes (40 h sur 2 ans)"
+        un_an = conclusion("EC/25.00001", {"Hv4": 19})
+        assert un_an["conclusion"] == V.NON_INSCRIT
+        assert un_an["motif"] == "heures de formation insuffisantes (20 h sur 1 an)"
+        assert reglages.seuil_formation({"numero_ordre": "EC/24.00001", "categorie": "EC Cabinet"}, 2026) == 40
+
+        # Minimum annuel et total ensemble : 20 h chaque année ET 60 h sur les deux.
+        les_deux = V.TableauReglages.from_dict({"formation_paliers": [
+            {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": 20, "total_min": 60},
+            {"anciennete": 3, "colonnes": ["Hv2", "Hv3", "Hv4"], "par_an_min": 20},
+        ]})
+        d = _dossier(numero_ordre="EC/24.00001", heures_forco=999.0, heures_bilan={"Hv3": 20, "Hv4": 30})
+        assert V.evaluer(d, 2026, les_deux)["motif"] == "heures de formation insuffisantes (20 h par an, 60 h sur 2 ans)"
+        assert V.evaluer({**d, "heures_bilan": {"Hv3": 20, "Hv4": 40}}, 2026, les_deux)["conclusion"] == V.INSCRIT
+        # Sans bilan, le NHV global se compare au plus exigeant des deux.
+        assert les_deux.seuil_formation({"numero_ordre": "EC/24.00001", "categorie": "EC Cabinet"}, 2026) == 60
 
     def test_stagiaire_soumis_a_la_cotisation_seulement(self):
         assert V.evaluer(_dossier(categorie="Stagiaire", heures_forco=0.0))["conclusion"] == V.INSCRIT
@@ -2400,6 +2437,33 @@ def test_chaque_categorie_definit_ce_qu_est_etre_en_regle_avec_la_cotisation():
     assert V.etat_cotisation("EC Cabinet", None, None, par_defaut) is None
     # Attestée par la comptabilité : réglée, quel que soit le reste des notes.
     assert V.etat_cotisation("EC Cabinet", {**notes, "attestee": True}, False, par_defaut) == "payee"
+
+
+def test_des_penalites_dues_rendent_la_cotisation_non_en_regle():
+    par_defaut = V.TableauReglages()
+    soldee = {"du_n": "600", "reste_n": "0", "du_anterieur": "0", "reste_anterieur": "0",
+              "reste_penalites_n": "0", "reste_penalites_anterieures": "0"}
+    assert V.etat_cotisation("EC Cabinet", soldee, None, par_defaut) == "payee"
+    # Cotisation soldée, pénalités de N dues : non en règle, pas renvoyé au conseil.
+    assert V.etat_cotisation("EC Cabinet", {**soldee, "reste_penalites_n": "50"}, None, par_defaut) == "non_payee"
+    # Paiement partiel avec pénalités : non en règle aussi, et non « partielle ».
+    partiel = {**soldee, "reste_n": "200", "reste_penalites_n": "50"}
+    assert V.etat_cotisation("EC Cabinet", partiel, None, par_defaut) == "non_payee"
+    assert V.etat_cotisation("EC Cabinet", partiel, None, par_defaut, penalites=False) == "partielle"
+    # Les pénalités antérieures suivent les arriérés.
+    anterieures = {**soldee, "reste_penalites_anterieures": "50"}
+    assert V.etat_cotisation("EC Cabinet", anterieures, None, par_defaut) == "non_payee"
+    sans_arrieres = V.TableauReglages.from_dict({"definitions_par_categorie": {"EC Cabinet": {"cotisation_arrieres": False}}})
+    assert V.etat_cotisation("EC Cabinet", anterieures, None, sans_arrieres) == "payee"
+    # L'attestation comptable couvre tout, pénalités comprises.
+    assert V.etat_cotisation("EC Cabinet", {**soldee, "reste_penalites_n": "50", "attestee": True}, None, par_defaut) == "payee"
+    # Réglage par catégorie : les pénalités peuvent ne pas compter.
+    sans_penalites = V.TableauReglages.from_dict({"definitions_par_categorie": {"EC Cabinet": {"cotisation_penalites": False}}})
+    assert sans_penalites.definitions_par_categorie == {"EC Cabinet": {"cotisation_penalites": False}}
+    assert V.etat_cotisation("EC Cabinet", {**soldee, "reste_penalites_n": "50"}, None, sans_penalites) == "payee"
+    assert V.etat_cotisation("EC Salarié", {**soldee, "reste_penalites_n": "50"}, None, sans_penalites) == "non_payee"
+    # Notes d'avant ce calcul, sans le reste des pénalités : rien ne change.
+    assert V.etat_cotisation("EC Cabinet", {"du_n": "600", "reste_n": "0"}, None, par_defaut) == "payee"
 
 
 def test_une_cotisation_partielle_peut_etre_rendue_bloquante_par_categorie():

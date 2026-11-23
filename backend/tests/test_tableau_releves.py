@@ -14,7 +14,7 @@ from sqlalchemy import delete, select
 
 from app.modules.tableau import releves as releves_module
 from app.modules.tableau import verdict as verdict_engine
-from app.modules.tableau.models import TableauImport, TableauReleve, TableauReleveLot
+from app.modules.tableau.models import TableauImport, TableauReglagesConseil, TableauReleve, TableauReleveLot
 from app.modules.tableau.releves import (
     ESPACE_MEMBRE_URL,
     appel_confraternel,
@@ -237,13 +237,15 @@ async def base_releves(db_session, test_admin_user):
     # Inscrits en 2032 : nouveaux, la formation ne leur est pas demandée ; la
     # cotisation est écartée par les réglages. La conclusion est donc tranchée
     # (En règle) sans notes de débit.
-    for ligne in (await db_session.execute(
-        select(TableauImport).where(TableauImport.organisation_id == org, TableauImport.exercice == "2032")
-    )).scalars().all():
-        ligne.metadata_json = {**(ligne.metadata_json or {}), "reglages": {"criteres_par_categorie": {"EC Cabinet": {"cotisation": "ignore"}}}}
+    # Un envoi enregistre la session : la ligne d'un test précédent peut être restée.
+    await db_session.execute(delete(TableauReglagesConseil).where(TableauReglagesConseil.organisation_id == org))
+    db_session.add(TableauReglagesConseil(
+        organisation_id=org, reglages={"criteres_par_categorie": {"EC Cabinet": {"cotisation": "ignore"}}},
+    ))
     await db_session.flush()
     yield org
     await db_session.rollback()
+    await db_session.execute(delete(TableauReglagesConseil).where(TableauReglagesConseil.organisation_id == org))
     await db_session.execute(delete(TableauReleve).where(TableauReleve.numero_ordre.like("%.9607%")))
     await db_session.execute(delete(TableauReleveLot).where(TableauReleveLot.exercice == "2032"))
     await db_session.commit()
@@ -459,3 +461,109 @@ def test_ligne_cotisation_penalites_et_arrieres():
     # La précision entre parenthèses est grisée dans l'e-mail.
     html = html_releve(r)
     assert "<strong>Cotisation <span style=\"color:" in html and "(pénalités comprises)</span> :</strong>" in html
+
+
+def test_motifs_sous_la_conclusion_d_un_membre_non_en_regle():
+    r = _releve(_membre())
+    assert r.motifs == [
+        "Cotisation partiellement réglée : le solde reste à régler.",
+        "Formation insuffisante : 80 h validées sur 120 h requises sur les 3 dernières années, soit 40 h à compléter.",
+    ]
+    assert (
+        "Conclusion : NON EN RÈGLE\nMotifs :\n- Cotisation partiellement réglée" in r.corps
+    )
+    texte = templates.render_event(TABLEAU_SITUATION, variables_whatsapp(r))
+    assert "Conclusion : *NON EN RÈGLE*\n*Motifs*\n▸ Cotisation partiellement réglée" in texte
+    page = html_releve(r)
+    assert "Motifs" in page and "soit 40 h à compléter" in page
+
+    # Société : données absentes et défauts, chacun nommé.
+    societe = _releve(_membre(categorie="Société", numero_ordre="SEC/20.00031", cotisation_etat=None,
+                              chiffre_affaires=False, assurance=None))
+    assert societe.motifs == [
+        "Cotisation : aucun paiement n'est enregistré à votre dossier.",
+        "Assurance : aucune attestation valide n'est enregistrée au dossier.",
+        "Chiffre d'affaires non déclaré : la déclaration de l'exercice est à faire.",
+    ]
+
+
+def test_motifs_absents_en_regle_et_decision_sans_critere_en_defaut():
+    en_regle = _releve(_membre(conclusion="INSCRIT", cotisation_etat="payee", nhv=132.0, formation_etat="atteint"))
+    assert en_regle.motifs == [] and "Motif" not in en_regle.corps
+    assert "Motif" not in templates.render_event(TABLEAU_SITUATION, variables_whatsapp(en_regle))
+    # Tout est conforme, mais la commission a conclu autrement.
+    tranche = _releve(_membre(cotisation_etat="payee", nhv=132.0, formation_etat="atteint"))
+    assert tranche.motifs == [releves_module.MOTIF_DECISION]
+    assert "Motif :\n- Décision de la Commission Tableau." in tranche.corps
+    # L'empreinte ne bouge pas : un relevé déjà envoyé ne repart pas.
+    assert tranche.empreinte == releves_module._empreinte(
+        "2026", "EC/18.00245", "NON INSCRIT",
+        [f"{label} : {valeur}" for label, valeur in tranche.criteres],
+    )
+
+
+
+def _notes(reste_n="0", reste_penalites_n="0", reste_penalites_anterieures="0"):
+    return {"du_n": "600", "reste_n": reste_n, "du_anterieur": "0", "reste_anterieur": "0",
+            "reste_penalites_n": reste_penalites_n, "reste_penalites_anterieures": reste_penalites_anterieures}
+
+
+def test_penalites_citees_dans_le_motif_seulement_si_elles_restent_dues():
+    def motif(etat, notes):
+        return _releve(_membre(nhv=132.0, formation_etat="atteint", cotisation_etat=etat,
+                               cotisation_notes=notes)).motifs[0]
+
+    assert motif("non_payee", _notes(reste_penalites_n="50")) == (
+        "Pénalités non réglées : la cotisation est payée, mais des pénalités restent dues."
+    )
+    assert motif("non_payee", _notes(reste_n="200", reste_penalites_anterieures="50")) == (
+        "Cotisation partiellement réglée : le solde reste à régler, ainsi que les pénalités dues."
+    )
+    assert motif("non_payee", _notes(reste_n="600", reste_penalites_n="50")) == (
+        "Cotisation non réglée : elle reste due, ainsi que les pénalités."
+    )
+    # Aucune pénalité due, ou aucune note pour le savoir : le mot n'apparaît pas.
+    assert motif("non_payee", _notes(reste_n="600")) == "Cotisation non réglée : elle reste due."
+    assert "pénalit" not in motif("partielle", None)
+
+
+
+def test_penalites_hors_releve_quand_la_categorie_ne_les_compte_pas():
+    reglages = verdict_engine.TableauReglages.from_dict(
+        {"definitions_par_categorie": {"EC Cabinet": {"cotisation_penalites": False}}})
+    r = construire_releve(
+        _membre(nhv=132.0, formation_etat="atteint", cotisation_etat="non_payee",
+                cotisation_notes=_notes(reste_n="600", reste_penalites_n="50")),
+        exercice="2026", reglages=reglages, organisation="Conseil Provincial de Kinshasa",
+    )
+    assert "pénalit" not in r.corps
+    assert r.motifs == ["Cotisation non réglée : elle reste due."]
+
+
+
+
+@pytest.mark.asyncio
+async def test_un_import_ne_fait_pas_revenir_les_reglages_aux_valeurs_initiales(base_releves, db_session, test_admin_user):
+    from app.modules.tableau import service
+
+    org = base_releves
+    imp = (await db_session.execute(
+        select(TableauImport).where(TableauImport.organisation_id == org, TableauImport.exercice == "2032")
+    )).scalars().first()
+    try:
+        await service.set_reglages(db_session, org, imp.id, {"age_seuil": 77})
+        # Un fichier source plus récent arrive : les réglages ne bougent pas.
+        pp = _xlsx(
+            ["N° Ordre", "Nom", "Statut", "Sexe", "Email", "Actif"],
+            [["EC/32.96072", "KALALA Ana", "en cabinet", "F", None, "Oui"]],
+        )
+        recent = await import_source_snapshot(
+            db_session, test_admin_user, org, "pp-2032b.xlsx", pp, "personnes_physiques", "2032", date(2032, 9, 1),
+        )
+        reglages = await service.get_reglages(db_session, org, recent.imp.id)
+        assert reglages["age_seuil"] == 77
+        # Ceux de la fixture, enregistrés avant, sont toujours là.
+        assert reglages["criteres_par_categorie"] == {"EC Cabinet": {"cotisation": "ignore"}}
+        assert (await service.reglages_conseil(db_session, org)).age_seuil == 77
+    finally:
+        await db_session.rollback()

@@ -219,6 +219,7 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "{{resume}}\n"
         "\n"
         "Conclusion : *{{conclusion}}*\n"
+        "{{motifs}}\n"
         "\n"
         "{{consigne}}\n"
         "\n"

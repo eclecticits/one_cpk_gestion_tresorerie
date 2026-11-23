@@ -337,6 +337,7 @@ function ReglesParCategorie({
     // Ne garder que ce qui s'écarte des définitions par défaut.
     if (ligne.heures_formation_min === undefined || ligne.heures_formation_min === minimumGeneral) delete ligne.heures_formation_min
     if (ligne.cotisation_arrieres !== false) delete ligne.cotisation_arrieres
+    if (ligne.cotisation_penalites !== false) delete ligne.cotisation_penalites
     if (ligne.cotisation_partielle !== 'bloquant') delete ligne.cotisation_partielle
     if (!ligne.assurance_fin_min) delete ligne.assurance_fin_min
     if (!ligne.ca_declaration_min) delete ligne.ca_declaration_min
@@ -455,6 +456,20 @@ function ReglesParCategorie({
                               onChange={event => definir(categorie, { cotisation_arrieres: event.target.checked })}
                             />
                             cotisation de l'exercice et arriérés de cotisation soldés
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <input
+                              type="checkbox"
+                              disabled={!modifiable}
+                              checked={definitions[categorie]?.cotisation_penalites !== false}
+                              onChange={event => definir(categorie, { cotisation_penalites: event.target.checked })}
+                            />
+                            pénalités soldées
+                            <span style={{ color: '#6b7280' }}>
+                              {definitions[categorie]?.cotisation_penalites !== false
+                                ? '(des pénalités dues rendent non en règle)'
+                                : '(les pénalités dues ne comptent pas)'}
+                            </span>
                           </label>
                           <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             si partiellement réglée :
@@ -973,7 +988,7 @@ export default function TableauModulePage() {
     setError(null)
     try {
       await updateTableauReglages(selectedImport.id, reglages)
-      // Les réglages sont communs à l'exercice : recalculer le même périmètre.
+      // Les réglages sont ceux du conseil, communs à tous les exercices : recalculer le même périmètre.
       if (analysisScope === 'base') {
         const result = await runTableauAnalyseBase(selectedImport.exercice)
         setAnalyse(result.analyses[0] || null)

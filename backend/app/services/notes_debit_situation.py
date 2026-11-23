@@ -375,6 +375,9 @@ async def cotisations_par_numero(db: AsyncSession, organisation_id: int, annee: 
             "reste_n": argent(reste_n),
             "du_anterieur": argent(du_anterieur),
             "reste_anterieur": argent(reste_anterieur),
+            # Pénalités encore dues : le Tableau ne tient pas en règle un membre qui en doit.
+            "reste_penalites_n": argent(groupe["restes"]["penalites_n"]),
+            "reste_penalites_anterieures": argent(groupe["restes"]["penalites_anterieures"]),
             "nb_notes": groupe["nb_notes"],
         }
 

@@ -34,6 +34,7 @@ from .models import (
     TableauMemberIdentity,
     TableauPersonneMoraleSnapshot,
     TableauPersonnePhysiqueSnapshot,
+    TableauReglagesConseil,
     TableauReport,
     TableauSourceRow,
 )
@@ -787,22 +788,8 @@ async def import_excel(
     if date_situation is not None:
         valider_date_situation(exercice, date_situation)
 
-    # Les règles appartiennent à l'exercice. Un import partiel plus récent ne doit
-    # pas rétablir silencieusement les valeurs par défaut.
-    reglages_res = await db.execute(
-        select(TableauImport.metadata_json)
-        .where(
-            TableauImport.organisation_id == organisation_id,
-            TableauImport.exercice == exercice,
-        )
-        .order_by(TableauImport.date_situation.desc().nullslast(), TableauImport.created_at.desc())
-    )
-    reglages_herites = None
-    for metadata in reglages_res.scalars().all():
-        if (metadata or {}).get("reglages"):
-            reglages_herites = dict(metadata["reglages"])
-            break
-
+    # Les réglages ne voyagent pas avec les imports : `reglages_conseil` les lit à
+    # part, et aucun import ne peut les faire revenir aux valeurs initiales.
     imp = TableauImport(
         organisation_id=organisation_id,
         user_id=user.id,
@@ -819,7 +806,7 @@ async def import_excel(
         rejected_rows=0,
         error_count=len(errors),
         error_message="; ".join(errors) if errors else None,
-        metadata_json={"reglages": reglages_herites} if reglages_herites else None,
+        metadata_json=None,
     )
     db.add(imp)
     await db.flush()
@@ -1908,13 +1895,13 @@ async def get_base_tableau(
         couvertures_par_conseil[org_id] = await _couvertures_par_numero(db, org_id, exercice)
         ca_par_conseil[org_id] = await _declarations_ca(db, org_id, exercice)
         dernier = (await db.execute(
-            select(TableauImport.metadata_json, TableauImport.date_situation)
+            select(TableauImport.date_situation)
             .where(TableauImport.organisation_id == org_id, TableauImport.exercice == exercice)
             .order_by(TableauImport.date_situation.desc(), TableauImport.id.desc())
             .limit(1)
         )).first()
-        reglages_par_conseil[org_id] = verdict_engine.TableauReglages.from_dict(((dernier[0] if dernier else None) or {}).get("reglages"))
-        situation_par_conseil[org_id] = dernier[1] if dernier else None
+        reglages_par_conseil[org_id] = await reglages_conseil(db, org_id)
+        situation_par_conseil[org_id] = dernier[0] if dernier else None
 
     async def _assurance_base(org_id: int | None, numero: str | None, categorie: str | None, valeur: bool | None) -> bool | None:
         """L'assurance selon la période de validité définie pour la catégorie."""
@@ -2347,7 +2334,7 @@ async def _analyser_dossiers(
         .with_for_update()
     )
     exercice_annee = _exercice_annee(imp.exercice)
-    reglages = verdict_engine.TableauReglages.from_dict((imp.metadata_json or {}).get("reglages"))
+    reglages = await reglages_conseil(db, organisation_id)
     import_id = imp.id
 
     # La cotisation se lit dans les notes de débit quand le membre en a : la
@@ -2748,13 +2735,25 @@ async def get_reglages(
     imp = await get_import(db, organisation_id, import_id)
     if imp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
-    reglages = verdict_engine.TableauReglages.from_dict((imp.metadata_json or {}).get("reglages"))
+    reglages = await reglages_conseil(db, organisation_id)
     return {**reglages.__dict__, "bareme": _bareme_reglages()}
 
 
 def _bareme_reglages() -> dict[str, dict[str, str]]:
     """Le barème d'origine par catégorie : la page de réglages en part et y revient."""
     return {categorie: verdict_engine.bareme_categorie(categorie) for categorie in verdict_engine.CATEGORIES_REGLABLES}
+
+
+async def _ligne_reglages(db: AsyncSession, organisation_id: int) -> TableauReglagesConseil | None:
+    return (await db.execute(
+        select(TableauReglagesConseil).where(TableauReglagesConseil.organisation_id == organisation_id)
+    )).scalar_one_or_none()
+
+
+async def reglages_conseil(db: AsyncSession, organisation_id: int) -> verdict_engine.TableauReglages:
+    """Les réglages du conseil, les mêmes pour tous les exercices et quel que soit l'import."""
+    ligne = await _ligne_reglages(db, organisation_id)
+    return verdict_engine.TableauReglages.from_dict(ligne.reglages if ligne else None)
 
 
 async def set_reglages(
@@ -2767,24 +2766,23 @@ async def set_reglages(
     imp = await get_import(db, organisation_id, import_id)
     if imp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
-    meta = dict(imp.metadata_json or {})
-    current = dict(meta.get("reglages") or {})
+    ligne = await _ligne_reglages(db, organisation_id)
+    current = dict((ligne.reglages if ligne else None) or {})
     current.update({k: v for k, v in reglages.items() if v is not None})
     # valider via le dataclass (ignore les clés inconnues)
     validated = verdict_engine.TableauReglages.from_dict(current)
     reglages_valides = validated.__dict__
-    imports_exercice = (await db.execute(
-        select(TableauImport).where(
-            TableauImport.organisation_id == organisation_id,
-            TableauImport.exercice == imp.exercice,
-        )
+    if ligne is None:
+        ligne = TableauReglagesConseil(organisation_id=organisation_id)
+        db.add(ligne)
+    ligne.reglages = dict(reglages_valides)
+    flag_modified(ligne, "reglages")
+    # Les mêmes réglages valent pour tous les exercices : chacun est à recalculer.
+    exercices = (await db.execute(
+        select(TableauImport.exercice).where(TableauImport.organisation_id == organisation_id).distinct()
     )).scalars().all()
-    for import_exercice in imports_exercice:
-        import_meta = dict(import_exercice.metadata_json or {})
-        import_meta["reglages"] = reglages_valides
-        import_exercice.metadata_json = import_meta
-        flag_modified(import_exercice, "metadata_json")
-    await _invalider_analyses(db, organisation_id, imp.exercice)
+    for exercice in exercices:
+        await _invalider_analyses(db, organisation_id, exercice)
     await db.commit()
     return {**reglages_valides, "bareme": _bareme_reglages()}
 
@@ -2811,7 +2809,7 @@ async def export_tableau(
         )
 
     exercice_annee = _exercice_annee(imp.exercice)
-    reglages = verdict_engine.TableauReglages.from_dict((imp.metadata_json or {}).get("reglages"))
+    reglages = await reglages_conseil(db, organisation_id)
     dossier_rows = await _dossiers_de_l_analyse(db, organisation_id, import_id, analyse, scope)
     cotisations = await _cotisations_notes(db, organisation_id, imp.exercice)
     couvertures = await _couvertures_par_numero(db, organisation_id, imp.exercice)
@@ -3045,7 +3043,7 @@ async def export_rapport_complet(
     dossier_rows = await _dossiers_de_l_analyse(db, organisation_id, import_id, analyse, scope) if analyse else []
     actifs = await actifs_par_membre(db, [organisation_id], imp.exercice)
     cotisations = await _cotisations_notes(db, organisation_id, imp.exercice)
-    reglages_rapport = verdict_engine.TableauReglages.from_dict((imp.metadata_json or {}).get("reglages"))
+    reglages_rapport = await reglages_conseil(db, organisation_id)
     couvertures = await _couvertures_par_numero(db, organisation_id, imp.exercice)
     dossiers = [
         {

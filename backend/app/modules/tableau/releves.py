@@ -6,7 +6,9 @@ Le relevé dit au membre ce que dit la Base du Tableau, ni plus ni moins :
   (`verdict.criteres_requis`) — un EC Cabinet n'a pas de ligne Assurance ;
 * **la conclusion est celle de la colonne Conclusion** ;
 * la cotisation se lit « soldée » ou « non soldée », sans montant ;
-* la formation donne les heures validées (NHV) face au minimum de la catégorie.
+* la formation donne les heures validées (NHV) face au minimum de la catégorie ;
+* un membre qui n'est pas en règle lit, sous la conclusion, **pourquoi** : un
+  motif par critère non satisfait, chiffré quand c'est possible (heures manquantes).
 
 Rien ne part pour un dossier « À délibérer » (la commission n'a pas tranché),
 non analysé, ou d'un membre sorti du Tableau.
@@ -65,7 +67,7 @@ from app.utils.hierarchie_fonctions import rang_fonction
 from . import verdict as verdict_engine
 from .audit import record_tableau_audit
 from .models import TableauDossier, TableauImport, TableauReleve, TableauReleveLot
-from .service import _norm_numero_ordre, get_base_tableau
+from .service import _norm_numero_ordre, get_base_tableau, reglages_conseil
 from .sorties import est_morale
 
 logger = logging.getLogger("onec_cpk_api.tableau.releves")
@@ -183,6 +185,8 @@ class Releve:
     # Pour chaque critère : True conforme, False à régulariser, None inconnu.
     conformites: list[bool | None] = field(default_factory=list)
     conclusion_libelle: str = ""
+    # Sous la conclusion, pourquoi le membre n'est pas en règle : un motif par critère.
+    motifs: list[str] = field(default_factory=list)
     en_regle: bool = False
     consigne: str = ""
     politesse: str = ""
@@ -236,8 +240,8 @@ def criteres_releve(
     for critere in verdict_engine.criteres_requis(categorie, reglages) or []:
         if critere == "cotisation":
             etat = membre.get("cotisation_etat")
-            # La ligne juge la cotisation et ses pénalités (Art. 12 du RI).
-            libelle = "Cotisation (pénalités comprises)"
+            # La ligne juge la cotisation, et ses pénalités si la catégorie les compte (Art. 12 du RI).
+            libelle = "Cotisation (pénalités comprises)" if reglages.cotisation_penalites(categorie) else "Cotisation"
             # Ni note de débit ni valeur importée : un tiret, sans rien affirmer.
             if not etat:
                 lignes.append((libelle, "-", None))
@@ -266,6 +270,91 @@ def criteres_releve(
             valeur = membre.get("chiffre_affaires")
             lignes.append(("Chiffre d'affaires", "-" if valeur is None else ("déclaré" if valeur else "non déclaré"), valeur))
     return lignes
+
+
+#: Quand aucun critère n'explique la conclusion, c'est que la commission l'a tranchée.
+MOTIF_DECISION = "Décision de la Commission Tableau."
+
+
+def motifs_releve(
+    membre: dict[str, Any], reglages: verdict_engine.TableauReglages, exercice_annee: int | None = None,
+) -> list[str]:
+    """Pourquoi le membre n'est pas en règle, dans l'ordre des critères du relevé.
+
+    Chaque motif dit ce qui manque, pas seulement ce qui ne va pas : le solde de
+    la cotisation, les heures à compléter, l'attestation à transmettre. Une
+    donnée absente du dossier est un motif à part entière (la règle la tient
+    pour non conforme), dit comme tel. Aucun montant n'est cité.
+    """
+    categorie = membre.get("categorie")
+    motifs: list[str] = []
+    for critere in verdict_engine.criteres_requis(categorie, reglages) or []:
+        if critere == "cotisation":
+            etat = membre.get("cotisation_etat")
+            notes = membre.get("cotisation_notes")
+            # Les pénalités ne sont citées que si le membre en doit encore ; le
+            # motif dit alors où en est la cotisation elle-même.
+            penalites = reglages.cotisation_penalites(categorie) and (
+                verdict_engine.penalites_dues(notes, reglages.cotisation_arrieres(categorie)) is True
+            )
+            if penalites:
+                etat = verdict_engine.etat_cotisation(categorie, notes, None, reglages, penalites=False)
+            if not etat:
+                motifs.append("Cotisation : aucun paiement n'est enregistré à votre dossier.")
+            elif etat == "payee" and penalites:
+                motifs.append("Pénalités non réglées : la cotisation est payée, mais des pénalités restent dues.")
+            elif etat == "partielle":
+                motifs.append(
+                    "Cotisation partiellement réglée : le solde reste à régler"
+                    + (", ainsi que les pénalités dues." if penalites else ".")
+                )
+            elif etat != "payee":
+                motifs.append(
+                    "Cotisation non réglée : elle reste due"
+                    + (", ainsi que les pénalités." if penalites else ".")
+                )
+        elif critere == "formation":
+            etat = membre.get("formation_etat")
+            if etat in ("atteint", "non_requis"):
+                continue
+            nhv = membre.get("nhv")
+            minimum = reglages.seuil_formation(membre, exercice_annee)
+            periode = _periode_formation(membre, reglages, exercice_annee)
+            if nhv is None:
+                if etat == "insuffisant":
+                    motifs.append(f"Formation insuffisante : le minimum requis est de {_heures(minimum)} h{periode}.")
+                else:
+                    motifs.append("Formation : aucune heure validée n'est enregistrée à votre dossier.")
+            elif float(nhv) < minimum:
+                manque = minimum - float(nhv)
+                motifs.append(
+                    f"Formation insuffisante : {_heures(float(nhv))} h validées sur {_heures(minimum)} h requises"
+                    f"{periode}, soit {_heures(manque)} h à compléter."
+                )
+            elif etat == "insuffisant":
+                # Le total suffit, mais une année reste sous le minimum annuel du palier.
+                palier = reglages.palier_formation(membre.get("numero_ordre"), exercice_annee)
+                par_an = palier.get("par_an_min") if palier else None
+                if par_an:
+                    motifs.append(
+                        f"Formation insuffisante : le minimum de {_heures(float(par_an))} h "
+                        "n'est pas atteint chaque année."
+                    )
+                else:
+                    motifs.append("Formation insuffisante au regard du minimum requis.")
+        elif critere == "assurance":
+            valeur = membre.get("assurance")
+            if valeur is None:
+                motifs.append("Assurance : aucune attestation valide n'est enregistrée au dossier.")
+            elif not valeur:
+                motifs.append("Assurance non valide : une attestation en cours de validité est à transmettre.")
+        elif critere == "chiffre_affaires":
+            valeur = membre.get("chiffre_affaires")
+            if valeur is None:
+                motifs.append("Chiffre d'affaires : aucune déclaration n'est enregistrée à votre dossier.")
+            elif not valeur:
+                motifs.append("Chiffre d'affaires non déclaré : la déclaration de l'exercice est à faire.")
+    return motifs or [MOTIF_DECISION]
 
 
 def consigne_declaration(categorie: str | None, reglages: verdict_engine.TableauReglages, societe: bool) -> str:
@@ -350,7 +439,8 @@ def construire_releve(
     libelle = CONCLUSIONS_ENVOYABLES[verdict]
     en_regle = verdict == verdict_engine.INSCRIT
     annee = re.search(r"(?:19|20)\d{2}", str(exercice or ""))
-    evalues = criteres_releve(membre, reglages, int(annee.group(0)) if annee else None)
+    exercice_annee = int(annee.group(0)) if annee else None
+    evalues = criteres_releve(membre, reglages, exercice_annee)
     criteres = [(label, valeur) for label, valeur, _ in evalues]
     arretee = _date_fr(membre.get("date_situation"))
     # Les données de l'exercice X préparent le Tableau X+1 : c'est lui que l'on nomme.
@@ -394,12 +484,15 @@ def construire_releve(
     releve.conformites = [conforme for _, _, conforme in evalues]
     releve.conclusion_libelle = libelle
     releve.en_regle = en_regle
+    releve.motifs = [] if en_regle else motifs_releve(membre, reglages, exercice_annee)
     releve.consigne = "" if en_regle else consigne_declaration(categorie, reglages, societe)
     releve.politesse = f"Veuillez agréer, {formule}, l'expression de {politesse}."
     organisation = libelle_organisation(organisation)
     releve.organisation = organisation
 
     releve.corps = composer_corps(releve)
+    # Les motifs découlent des critères : ils restent hors de l'empreinte, sans quoi
+    # chaque relevé déjà envoyé paraîtrait nouveau et repartirait.
     lignes = [f"{label} : {valeur}" for label, valeur in criteres]
     releve.empreinte = _empreinte(exercice, numero, verdict, lignes)
     if not releve.emails and not releve.telephone:
@@ -416,11 +509,18 @@ def composer_corps(releve: Releve) -> str:
         corps = [releve.appel, *releve.entete, ""]
     corps += [releve.annonce, ""]
     corps += [f"- {label} : {valeur}" for label, valeur in releve.criteres]
-    corps += ["", f"Conclusion : {releve.conclusion_libelle}", ""]
+    corps += ["", f"Conclusion : {releve.conclusion_libelle}"]
+    if releve.motifs:
+        corps += [f"{titre_motifs(releve.motifs)} :", *(f"- {motif}" for motif in releve.motifs)]
+    corps += [""]
     if releve.consigne:
         corps += [releve.consigne, ESPACE_MEMBRE_URL, ""]
     corps += [releve.politesse, "", "La Commission Tableau", releve.organisation]
     return "\n".join(corps)
+
+
+def titre_motifs(motifs: list[str]) -> str:
+    return "Motif" if len(motifs) == 1 else "Motifs"
 
 
 #: Longueur maximale d'un passage modifié à la main.
@@ -455,6 +555,8 @@ def html_releve(releve: Releve) -> str:
         annonce=releve.annonce,
         criteres=[(label, valeur, conforme) for (label, valeur), conforme in zip(releve.criteres, releve.conformites)],
         conclusion=releve.conclusion_libelle,
+        motifs=releve.motifs,
+        titre_motifs=titre_motifs(releve.motifs),
         apercu_boite=f"Conclusion : {releve.conclusion_libelle} – {releve.reference}",
         en_regle=releve.en_regle,
         consigne=releve.consigne,
@@ -482,6 +584,11 @@ def variables_whatsapp(releve: Releve) -> dict[str, str]:
         "message": releve.annonce,
         "resume": "".join(f"▸ {_libelle_whatsapp(label)} : {valeur}\n" for label, valeur in releve.criteres).rstrip("\n"),
         "conclusion": releve.conclusion_libelle,
+        # Titre sans deux-points : le rendu retire une ligne « Étiquette : » seule.
+        "motifs": (
+            f"*{titre_motifs(releve.motifs)}*\n" + "\n".join(f"▸ {motif}" for motif in releve.motifs)
+            if releve.motifs else ""
+        ),
         "consigne": f"{releve.consigne}\n{ESPACE_MEMBRE_URL}" if releve.consigne else "",
         "organisation": releve.organisation or MARQUE,
     }
@@ -507,6 +614,7 @@ def _membre_depuis_dossier(dossier: TableauDossier) -> dict[str, Any]:
         "conclusion": dossier.conclusion,
         "sortie": dossier.sortie,
         "cotisation_etat": etat,
+        "cotisation_notes": notes,
         "nhv": float(dossier.heures_forco) if dossier.heures_forco is not None else None,
         "formation_etat": dossier.formation_etat,
         "assurance": dossier.assurance_valide,
@@ -526,19 +634,14 @@ def _membre_depuis_ligne(ligne: dict[str, Any]) -> dict[str, Any]:
         )},
         "prenom": None,
         "cotisation_etat": notes.get("etat") if notes else None,
+        "cotisation_notes": notes,
         "assurance": ligne.get("assurance_valide"),
     }
 
 
 async def _reglages(db: AsyncSession, organisation_id: int, exercice: str) -> verdict_engine.TableauReglages:
-    """Ceux du dernier import de l'exercice, comme la Base."""
-    meta = (await db.execute(
-        select(TableauImport.metadata_json)
-        .where(TableauImport.organisation_id == organisation_id, TableauImport.exercice == exercice)
-        .order_by(TableauImport.date_situation.desc(), TableauImport.id.desc())
-        .limit(1)
-    )).scalar_one_or_none()
-    return verdict_engine.TableauReglages.from_dict((meta or {}).get("reglages"))
+    """Ceux du conseil, comme la Base."""
+    return await reglages_conseil(db, organisation_id)
 
 
 async def _organisation(db: AsyncSession, organisation_id: int) -> str:

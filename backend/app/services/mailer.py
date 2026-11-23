@@ -1527,6 +1527,8 @@ def _releve_situation_html(
     politesse: str,
     brand_label: str,
     apercu_boite: str = "",
+    motifs: list[str] | None = None,
+    titre_motifs: str = "Motifs",
 ) -> str:
     """Carte du relevé, sur le modèle des notifications de réquisition (bandeau,
     détails encadrés, bouton, pied), aux couleurs de la conclusion."""
@@ -1556,6 +1558,18 @@ def _releve_situation_html(
         )
 
     lignes_criteres = "".join(ligne(*c) for c in criteres)
+    # Sous la conclusion, pourquoi le membre n'est pas en règle.
+    bloc_motifs = (
+        f"""
+              <div style="margin-top:10px; padding:10px 12px; border-radius:10px; background:{p['clair']}; border:1px solid {p['bord']};">
+                <div style="font-weight:800; color:{p['texte']}; margin-bottom:4px;">{e(titre_motifs)}</div>
+                <ul style="margin:0; padding-left:18px; color:#374151; font-size:14px;">
+                  {"".join(f'<li style="margin:2px 0;">{e(m)}</li>' for m in motifs)}
+                </ul>
+              </div>"""
+        if motifs
+        else ""
+    )
     bloc_lien = (
         f"""
             <div style="margin:18px 0 4px; padding:14px 16px; border:1px solid {p['bord']}; border-radius:12px; background:{p['clair']};">
@@ -1601,7 +1615,7 @@ def _releve_situation_html(
               </table>
               <div style="margin-top:12px; padding:10px 12px; border-radius:10px; background:{p['fort']}; color:#ffffff; font-weight:800; letter-spacing:.02em;">
                 Conclusion : {e(conclusion)}
-              </div>
+              </div>{bloc_motifs}
             </div>{bloc_lien}
             <p style="margin:18px 0 0;">{e(politesse)}</p>
             <p style="margin:14px 0 0; font-weight:700;">La Commission Tableau — {e(brand_label)}</p>

@@ -43,18 +43,20 @@ DEFAULT_NOUVEAU_ANS = 3
 # palier vaut pour son ancienneté et au-delà, jusqu'au palier suivant ; il nomme
 # les colonnes d'heures validées du bilan Forco qu'il juge. Sans colonne, la
 # formation est non applicable. `par_an_min` s'exige de chaque colonne ; `cumul`
-# exige de leur somme le minimum d'heures de la catégorie (`heures_min`). Le
-# dernier palier (« et plus ») exige toujours ce cumul.
+# exige de leur somme le minimum d'heures de la catégorie (`heures_min`) ;
+# `total_min`, à défaut, un total d'heures fixé pour la ligne (40 h sur 2 ans) :
+# une année faible peut alors être compensée par une autre. Le dernier palier
+# (« et plus ») exige toujours le minimum de la catégorie.
 # Réglable ; une liste vide rend la main à `nouveau_anciennete_ans`.
 COLONNES_BILAN_FORCO: tuple[str, ...] = ("Hv1", "Hv2", "Hv3", "Hv4")
 # Règlement FORCO 2022 : les anciens doivent le minimum d'heures sur les
 # 3 dernières années. C'est la période que nomment les relevés.
 PERIODE_FORMATION_ANCIENS_ANS = 3
 DEFAULT_FORMATION_PALIERS: list[dict[str, Any]] = [
-    {"anciennete": 0, "colonnes": [], "par_an_min": None, "cumul": False},
-    {"anciennete": 1, "colonnes": ["Hv4"], "par_an_min": 20.0, "cumul": False},
-    {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": 20.0, "cumul": False},
-    {"anciennete": 3, "colonnes": ["Hv2", "Hv3", "Hv4"], "par_an_min": 20.0, "cumul": True},
+    {"anciennete": 0, "colonnes": [], "par_an_min": None, "cumul": False, "total_min": None},
+    {"anciennete": 1, "colonnes": ["Hv4"], "par_an_min": 20.0, "cumul": False, "total_min": None},
+    {"anciennete": 2, "colonnes": ["Hv3", "Hv4"], "par_an_min": 20.0, "cumul": False, "total_min": None},
+    {"anciennete": 3, "colonnes": ["Hv2", "Hv3", "Hv4"], "par_an_min": 20.0, "cumul": True, "total_min": None},
 ]
 
 # Rétro-compatibilité (constantes lues ailleurs)
@@ -174,8 +176,11 @@ class TableauReglages:
         return atteints[-1] if atteints and anciennete >= 0 else None
 
     def total_palier(self, palier: dict[str, Any], categorie: str | None) -> float | None:
-        """Cumul exigé par le palier : le minimum d'heures de la catégorie, s'il l'exige."""
-        return self.heures_min(categorie) if palier.get("cumul") else None
+        """Total exigé de la somme des colonnes : le minimum de la catégorie, ou celui de la ligne."""
+        if palier.get("cumul"):
+            return self.heures_min(categorie)
+        total = palier.get("total_min")
+        return float(total) if total is not None else None
 
     def minimum_palier(self, palier: dict[str, Any], categorie: str | None) -> float:
         """Heures qu'il faut au moins pour satisfaire le palier, toutes colonnes réunies."""
@@ -213,6 +218,10 @@ class TableauReglages:
         """Les arriérés de cotisation doivent-ils être soldés pour être en règle ?"""
         return bool(self._definition(categorie, "cotisation_arrieres"))
 
+    def cotisation_penalites(self, categorie: str | None) -> bool:
+        """Les pénalités dues doivent-elles être soldées pour être en règle ?"""
+        return bool(self._definition(categorie, "cotisation_penalites"))
+
     def cotisation_partielle(self, categorie: str | None) -> str:
         """Ce que donne une cotisation commencée mais pas soldée : a_deliberer ou bloquant."""
         return str(self._definition(categorie, "cotisation_partielle"))
@@ -222,6 +231,8 @@ class TableauReglages:
 DEFINITIONS: dict[str, Any] = {
     "heures_formation_min": None,
     "cotisation_arrieres": True,
+    # Des pénalités encore dues rendent non en règle (Art. 12 du RI) ; réglable.
+    "cotisation_penalites": True,
     "cotisation_partielle": "a_deliberer",
     # Date (AAAA-MM-JJ) jusqu'à laquelle l'assurance doit au moins couvrir ;
     # absente = la date de situation du fichier analysé.
@@ -254,11 +265,16 @@ def _paliers_valides(data: Any) -> list[dict[str, Any]]:
             "par_an_min": heures(brut.get("par_an_min")) if colonnes else None,
             "cumul": bool(colonnes) and brut.get("cumul") is True,
         }
+        # Un total propre à la ligne ; le minimum de la catégorie, s'il est exigé, le remplace.
+        paliers[anciennete]["total_min"] = (
+            heures(brut.get("total_min")) if colonnes and not paliers[anciennete]["cumul"] else None
+        )
     tries = [paliers[a] for a in sorted(paliers)]
     # Le minimum de « Conditions pour être en règle » vaut pour les anciens : la
     # dernière ligne (« et plus ») l'exige toujours, case cochée ou non.
     if tries and tries[-1]["colonnes"]:
         tries[-1]["cumul"] = True
+        tries[-1]["total_min"] = None
     return tries
 
 
@@ -278,6 +294,8 @@ def _definitions_valides(data: Any) -> dict[str, dict[str, Any]]:
                 propres["heures_formation_min"] = float(heures)
         if isinstance(valeurs.get("cotisation_arrieres"), bool) and valeurs["cotisation_arrieres"] != DEFINITIONS["cotisation_arrieres"]:
             propres["cotisation_arrieres"] = valeurs["cotisation_arrieres"]
+        if isinstance(valeurs.get("cotisation_penalites"), bool) and valeurs["cotisation_penalites"] != DEFINITIONS["cotisation_penalites"]:
+            propres["cotisation_penalites"] = valeurs["cotisation_penalites"]
         if valeurs.get("cotisation_partielle") in (BLOQUANT, A_DELIBERER_MODE) and valeurs["cotisation_partielle"] != DEFINITIONS["cotisation_partielle"]:
             propres["cotisation_partielle"] = valeurs["cotisation_partielle"]
         if "assurance" in CRITERES_APPLICABLES.get(categorie, []) and valeurs.get("assurance_fin_min"):
@@ -375,12 +393,20 @@ def etat_cotisation(
     notes: dict[str, Any] | None,
     valeur_import: bool | None,
     reglages: "TableauReglages | None" = None,
+    *,
+    penalites: bool = True,
 ) -> str | None:
     """« payee », « partielle », « non_payee » ou None, selon la définition de la catégorie.
 
     Les notes de débit font foi quand le membre en a : la cotisation de N doit
     être soldée et, si la catégorie l'exige, les arriérés de cotisation aussi.
     Sans note, la valeur de l'import (Oui/Non) décide.
+
+    Si la catégorie compte les pénalités (par défaut), des pénalités encore dues
+    (Art. 12 du RI) rendent le membre non en règle, cotisation soldée ou non :
+    « non_payee », jamais « partielle », qui renverrait au conseil. Celles de N
+    comptent toujours, les antérieures avec les arriérés.
+    `penalites=False` dit où en est la cotisation seule (le motif du relevé).
     """
     reglages = reglages or TableauReglages()
     if not notes:
@@ -395,6 +421,8 @@ def etat_cotisation(
         return Decimal(str(notes.get(cle) or 0))
 
     avec_arrieres = reglages.cotisation_arrieres(categorie)
+    if penalites and reglages.cotisation_penalites(categorie) and penalites_dues(notes, avec_arrieres):
+        return "non_payee"
     du = nombre("du_n") + (nombre("du_anterieur") if avec_arrieres else 0)
     reste = nombre("reste_n") + (nombre("reste_anterieur") if avec_arrieres else 0)
     if du <= 0:
@@ -403,6 +431,23 @@ def etat_cotisation(
     if reste <= 0:
         return "payee"
     return "partielle" if reste < du else "non_payee"
+
+
+def penalites_dues(notes: dict[str, Any] | None, avec_arrieres: bool = True) -> bool | None:
+    """Reste-t-il des pénalités à payer selon les notes de débit ? None quand on ne sait pas."""
+    if not notes or notes.get("attestee"):
+        return None if not notes else False
+    if notes.get("reste_penalites_n") is None:
+        return None
+    from decimal import Decimal, InvalidOperation
+
+    try:
+        reste = Decimal(str(notes.get("reste_penalites_n") or 0))
+        if avec_arrieres:
+            reste += Decimal(str(notes.get("reste_penalites_anterieures") or 0))
+    except InvalidOperation:
+        return None
+    return reste > 0
 
 
 def _criteres_valides(data: Any) -> dict[str, dict[str, str]]:
@@ -548,10 +593,13 @@ def libelle_palier(palier: dict[str, Any], reglages: TableauReglages, categorie:
     def h(valeur: float) -> str:
         return f"{int(valeur) if float(valeur).is_integer() else valeur} h"
     annees = len(palier["colonnes"])
+    total = reglages.total_palier(palier, categorie)
+    if annees == 1 and total is not None:
+        # Une seule année : minimum annuel et total se confondent, le plus exigeant compte.
+        return f"{h(max(total, float(palier['par_an_min'] or 0)))} sur 1 an"
     morceaux = []
     if palier["par_an_min"] is not None:
         morceaux.append(f"{h(palier['par_an_min'])} par an")
-    total = reglages.total_palier(palier, categorie)
     if total is not None:
         morceaux.append(f"{h(total)} sur {annees} an{'s' if annees > 1 else ''}")
     return ", ".join(morceaux)

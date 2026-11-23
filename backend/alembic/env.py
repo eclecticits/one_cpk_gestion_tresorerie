@@ -124,6 +124,7 @@ from app.modules.tableau.models import (  # noqa: F401
     TableauPersonnePhysiqueSnapshot,
     TableauReferenceMember,
     TableauReferenceSnapshot,
+    TableauReglagesConseil,
     TableauReport,
     TableauSortieMembre,
     TableauSourceRow,
