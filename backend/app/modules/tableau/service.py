@@ -21,6 +21,7 @@ from app.models.organisation import Organisation
 from . import verdict as verdict_engine
 from .audit import record_tableau_audit
 from .analyzer import compute_analyse_stats, detect_anomalies
+from .rapport_complet import est_fiche_essai
 from .comparison import compare_exercices
 from .excel_import import parse_excel_bytes
 from .models import (
@@ -2813,7 +2814,11 @@ async def export_tableau(
     dossier_rows = await _dossiers_de_l_analyse(db, organisation_id, import_id, analyse, scope)
     cotisations = await _cotisations_notes(db, organisation_id, imp.exercice)
     couvertures = await _couvertures_par_numero(db, organisation_id, imp.exercice)
-    dossiers = [_dossier_pour_sortie(d, cotisations, reglages, couvertures, imp) for d in dossier_rows]
+    # Une analyse antérieure à la règle, ou celle d'un import, peut encore compter une fiche d'essai.
+    dossiers = [
+        _dossier_pour_sortie(d, cotisations, reglages, couvertures, imp) for d in dossier_rows
+        if not est_fiche_essai(d.nom, d.numero_ordre)
+    ]
     content = build_workbook(dossiers, imp.exercice, reglages, exercice_annee, organisation_nom)
     suffixe = "base" if scope == "base" else str(import_id)
     # Les données de l'exercice X préparent le Tableau X+1.
@@ -3085,7 +3090,7 @@ async def export_rapport_complet(
                 membre["conclusion_motif"] = verdict["motif"]
                 dossiers.append(membre)
     ecartes = await _numeros_ecartes(db, organisation_id, imp.exercice)
-    dossiers = [d for d in dossiers if not rapport_complet.est_fiche_essai(d.get("nom"))]
+    dossiers = [d for d in dossiers if not rapport_complet.est_fiche_essai(d.get("nom"), d.get("numero_ordre"))]
     numeros_ecartes = {
         numero_normalise
         for numero in ecartes

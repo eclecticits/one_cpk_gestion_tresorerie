@@ -456,6 +456,14 @@ def test_fiche_d_essai_reconnue():
     assert not R.est_fiche_essai(None)
 
 
+def test_numero_d_ordre_factice_reconnu():
+    assert R.est_fiche_essai("WEBLOGIX", "SEC/99.99999")
+    assert R.est_fiche_essai("BITOTA KABEYA Laurène", "EC/17.00000")
+    assert not R.est_fiche_essai("KABONGO Jean", "EC/16.00001")
+    assert not R.est_fiche_essai("KABONGO Jean", "EC/99.00012")
+    assert not R.est_fiche_essai("KABONGO Jean", "EC/16.10000")
+
+
 def test_une_seule_colonne_formation_au_choix_de_l_auteur():
     dossiers = [_dossier(1, "EC/16.00001", heures_forco=120.0), _dossier(2, "EC/16.00002", heures_forco=0.0)]
     for formation, attendu in (("heures", [120.0, 0.0]), ("oui_non", ["OUI", "NON"])):

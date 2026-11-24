@@ -13,6 +13,7 @@ commission comprises. Le module ne fait que lire : rien n'est écrit en base.
 from __future__ import annotations
 
 import io
+import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date
@@ -93,10 +94,18 @@ class ContexteRapport:
     actif: str = "tous"
 
 
-def est_fiche_essai(nom: Any) -> bool:
-    """Fiche d'essai laissée dans un fichier source (« TEST TESTU Toto ») : pas un membre."""
+#: Numéro d'ordre factice : « SEC/99.99999 », ou un rang « .00000 » qu'aucun membre ne porte.
+NUMERO_FACTICE = r"(99[./]99999|[./]00000)\s*$"
+
+
+def est_fiche_essai(nom: Any, numero_ordre: Any = None) -> bool:
+    """Fiche d'essai laissée dans un fichier source : pas un membre.
+
+    Un nom dont le premier mot est « test » (« TEST TESTU Toto »), ou un numéro
+    d'ordre factice (« SEC/99.99999 », « EC/17.00000 »).
+    """
     mots = _txt(nom).casefold().split()
-    return bool(mots) and mots[0] == "test"
+    return (bool(mots) and mots[0] == "test") or bool(re.search(NUMERO_FACTICE, _txt(numero_ordre)))
 
 
 def fdate(valeur: date | None) -> str:

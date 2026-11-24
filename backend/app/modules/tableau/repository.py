@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from .excel_import import _strip_accents
+from .rapport_complet import NUMERO_FACTICE
 from .models import (
     TableauAnomalie,
     TableauAnalyse,
@@ -62,7 +63,10 @@ async def list_dossiers(
     exercice: str | None = None,
     anomalie_only: bool = False,
 ) -> list[TableauDossier]:
-    q = select(TableauDossier).where(TableauDossier.organisation_id == organisation_id)
+    q = select(TableauDossier).where(
+        TableauDossier.organisation_id == organisation_id,
+        pas_une_fiche_essai(TableauDossier.nom, TableauDossier.numero_ordre),
+    )
     if import_id:
         q = q.where(TableauDossier.import_id == import_id)
     if exercice:
@@ -192,6 +196,18 @@ _SEPARATEURS = " -'’./_,"
 
 def _sans_accents_sql(colonne):
     return func.lower(func.translate(colonne, _LETTRES_ACCENTUEES, _LETTRES_SIMPLES))
+
+
+def pas_une_fiche_essai(nom, numero_ordre):
+    """Écarte la fiche d'essai laissée dans un fichier source.
+
+    Même règle que `rapport_complet.est_fiche_essai` : le premier mot du nom est
+    « test », ou le numéro d'ordre est factice (« SEC/99.99999 », « EC/17.00000 »).
+    """
+    return and_(
+        or_(nom.is_(None), ~func.lower(nom).op("~")(r"^\s*test(\s|$)")),
+        or_(numero_ordre.is_(None), ~numero_ordre.op("~")(NUMERO_FACTICE)),
+    )
 
 
 def _compact_sql(colonne):
@@ -340,6 +356,7 @@ def _base_filtrage(
     actif: bool | None = None,
     situation: str | None = "en_exercice",
 ):
+    q = q.where(pas_une_fiche_essai(TableauDossier.nom, TableauDossier.numero_ordre))
     condition = filtre_situation(TableauDossier.organisation_id, TableauDossier.numero_ordre, exercice, situation)
     if condition is not None:
         q = q.where(condition)
@@ -606,6 +623,7 @@ def _membres_a_completer(
         union.c.rang == 1,
         or_(union.c.identity_id.is_not(None), union.c.rang_import == 1),
         ~a_un_dossier,
+        pas_une_fiche_essai(union.c.nom, union.c.numero_ordre),
     ]
     filtres.extend(_recherche_conditions(recherche, [
         union.c.numero_ordre,

@@ -1399,7 +1399,7 @@ async def test_un_numero_posterieur_a_l_exercice_est_a_verifier(db_session, admi
 
     outcome = await import_source_snapshot(
         db_session, admin_isole, admin_isole.organisation_id, "pm-provisoire.xlsx",
-        _xlsx(["N° Ordre", "Société", "Numéro impôt"], [["SEC/99.99999", "PROVISOIRE SA", "A1X"]]),
+        _xlsx(["N° Ordre", "Société", "Numéro impôt"], [["SEC/99.00001", "PROVISOIRE SA", "A1X"]]),
         "personnes_morales", "2026", date(2026, 10, 31),
     )
     assert [e["message"] for e in outcome.errors] == ["Année du N° d'ordre postérieure à l'exercice"]
@@ -1624,3 +1624,19 @@ async def test_bilan_forco_s_importe_comme_une_source(db_session, test_admin_use
     assert outcome.total == 2 and outcome.imported == 2
     colonnes = next(iter(outcome.imp.metadata_json["colonnes_source"].values()))
     assert colonnes == _FORCO_COLONNES
+
+
+@pytest.mark.asyncio
+async def test_la_base_ecarte_les_fiches_de_test(db_session, admin_isole):
+    await _pp(db_session, admin_isole, "pp-essai.xlsx", [
+        ["EC/16.99841", "KABONGO Jean", "indépendant", None],
+        ["EC/16.99842", "TEST TESTU Toto", "indépendant", None],
+        ["EC/16.99843", "TESTARD Marie", "indépendant", None],
+        ["EC/17.00000", "NUMERO FACTICE", "indépendant", None],
+    ])
+    base = await _base(db_session, admin_isole)
+    # Comme au rapport complet : un premier mot « test » ou un numéro factice fait la fiche d'essai.
+    assert sorted(m["nom"] for m in base["membres_a_completer"]) == ["KABONGO Jean", "TESTARD Marie"]
+    assert base["total_membres"] == 2
+    stats = await tableau_service.get_stats_tableau(db_session, admin_isole.organisation_id, actif="tous")
+    assert stats["membres_total"] == 2

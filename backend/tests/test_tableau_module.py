@@ -1779,6 +1779,37 @@ class TestFiabilisationTableau:
             await export_tableau(db_session, org, outcome.imp.id)
         assert obsolete.value.status_code == 409
 
+    @pytest.mark.asyncio
+    async def test_analyse_et_export_ecartent_les_fiches_d_essai(self, db_session, test_admin_user):
+        org = test_admin_user.organisation_id
+        outcome = await import_excel(
+            db_session,
+            test_admin_user,
+            org,
+            "export-essai.xlsx",
+            _make_import_bytes(
+                {"numero_ordre": "EC/18.70060", "nom": "KABONGO Jean"},
+                {"numero_ordre": "EC/18.70061", "nom": "TEST TESTU Toto"},
+                {"numero_ordre": "EC/17.00000", "nom": "NUMERO FACTICE"},
+            ),
+            "2096",
+            date_situation=date(2096, 5, 1),
+        )
+        analyse = await run_analyse(db_session, test_admin_user, org, outcome.imp.id)
+        # Le PV et le rapport d'analyse reprennent ces statistiques.
+        assert analyse.total_dossiers == 1
+        contenu, _nom = await export_tableau(db_session, org, outcome.imp.id)
+        noms = [
+            cellule.value
+            for feuille in openpyxl.load_workbook(io.BytesIO(contenu)).worksheets
+            for ligne in feuille.iter_rows(min_row=6)
+            for cellule in ligne
+            if isinstance(cellule.value, str)
+        ]
+        assert "KABONGO Jean" in noms
+        assert "TEST TESTU Toto" not in noms
+        assert "NUMERO FACTICE" not in noms
+
 
 class TestDecisionsSansNumeroDOrdre:
     """Une décision prise sur un membre « à compléter » doit survivre à l'analyse."""
