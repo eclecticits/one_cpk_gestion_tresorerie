@@ -9,6 +9,49 @@ import { estAffectable } from '../api/mouvementsHorsBudget'
 import NatureMouvementBadge from './NatureMouvementBadge'
 import styles from '../pages/Encaissements.module.css'
 
+/**
+ * Recette à identifier dont tout l'argent est parti vers ses destinations : elle
+ * reste à 0,00 pour la traçabilité. Ce n'est ni une note impayée, ni une saisie
+ * vide — l'afficher « Non payé » le laissait croire.
+ */
+function estRecetteSoldee(enc: Encaissement): boolean {
+  return enc.nature_mouvement === 'A_IDENTIFIER' && toNumber(enc.montant_total || enc.montant || 0) <= 0
+}
+
+function StatutPaiementBadge({ enc }: { enc: Encaissement }) {
+  if (estRecetteSoldee(enc)) {
+    const vers = enc.identifiee_vers ?? []
+    const libelle = enc.hors_budget_status === 'REMBOURSEE' ? 'Remboursée' : 'Identifiée'
+    return (
+      <span
+        className={styles.statutBadge}
+        data-statut="complet"
+        title={vers.length ? `Argent transféré vers ${vers.join(', ')}` : 'Argent transféré vers ses destinations'}
+      >
+        {libelle}
+      </span>
+    )
+  }
+  return (
+    <span className={styles.statutBadge} data-statut={enc.statut_paiement || 'complet'}>
+      {enc.statut_paiement === 'non_paye'
+        ? 'Non payé'
+        : enc.statut_paiement === 'partiel'
+        ? 'Partiel'
+        : enc.statut_paiement === 'avance'
+        ? 'Avance'
+        : 'Payé'}
+    </span>
+  )
+}
+
+/** « Transférée vers ND-2026-00012, ND-2026-00015 » sous le montant d'une recette soldée. */
+function NoteTransfert({ enc, className }: { enc: Encaissement; className: string }) {
+  if (!estRecetteSoldee(enc)) return null
+  const vers = enc.identifiee_vers ?? []
+  return <div className={className}>{vers.length ? `Transférée vers ${vers.join(', ')}` : 'Transférée vers ses destinations'}</div>
+}
+
 interface EncaissementTableProps {
   encaissements: Encaissement[]
   hasActiveFilters: boolean
@@ -191,6 +234,7 @@ export default function EncaissementTable({
                   <td>{enc.description}</td>
                   <td>
                     <strong>{formatCurrency(enc.montant_total || enc.montant || 0)}</strong>
+                    <NoteTransfert enc={enc} className={styles.inlineNote} />
                     {enc.devise_perception === 'CDF' && (
                       <div className={styles.inlineNote}>
                         Perçu: {formatCurrency(enc.montant_percu)} CDF
@@ -216,20 +260,13 @@ export default function EncaissementTable({
                     ) : (enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? (
                       <span className={styles.cancelledBadge} title={enc.motif_annulation || undefined}>Annulé</span>
                     ) : (
-                      <span className={styles.statutBadge} data-statut={enc.statut_paiement || 'complet'}>
-                        {enc.statut_paiement === 'non_paye'
-                          ? 'Non payé'
-                          : enc.statut_paiement === 'partiel'
-                          ? 'Partiel'
-                          : enc.statut_paiement === 'avance'
-                          ? 'Avance'
-                          : 'Payé'}
-                      </span>
+                      <StatutPaiementBadge enc={enc} />
                     )}
                   </td>
                   <td className={styles.actionsCell}>
                     {!enc.is_deleted &&
                       (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' &&
+                      !estRecetteSoldee(enc) &&
                       (enc.statut_paiement === 'partiel' || enc.statut_paiement === 'non_paye') && (
                         <button
                           type="button"
@@ -268,7 +305,7 @@ export default function EncaissementTable({
                           >
                             <Wallet size={15} />
                             <span>
-                              {enc.statut_paiement === 'non_paye' || enc.statut_paiement === 'partiel'
+                              {!estRecetteSoldee(enc) && (enc.statut_paiement === 'non_paye' || enc.statut_paiement === 'partiel')
                                 ? 'Compléter le paiement'
                                 : 'Gérer les paiements'}
                             </span>
@@ -366,15 +403,7 @@ export default function EncaissementTable({
                     <span className={styles.cancelledBadge}>Annulé</span>
                   ) : (
                     <>
-                      <span className={styles.statutBadge} data-statut={enc.statut_paiement || 'complet'}>
-                        {enc.statut_paiement === 'non_paye'
-                          ? 'Non payé'
-                          : enc.statut_paiement === 'partiel'
-                          ? 'Partiel'
-                          : enc.statut_paiement === 'avance'
-                          ? 'Avance'
-                          : 'Payé'}
-                      </span>
+                      <StatutPaiementBadge enc={enc} />
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -445,6 +474,7 @@ export default function EncaissementTable({
                     Perçu: {formatCurrency(enc.montant_percu)} CDF
                   </div>
                 )}
+                <NoteTransfert enc={enc} className={styles.cardNote} />
                 {enc.statut_paiement === 'partiel' && (
                   <div className={styles.cardNoteWarn}>
                     Reste: {formatCurrency(toNumber(enc.montant_total || enc.montant || 0) - toNumber(enc.montant_paye || 0))}

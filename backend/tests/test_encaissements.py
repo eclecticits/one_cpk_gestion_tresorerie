@@ -2034,22 +2034,39 @@ async def test_flux_encaissements_reprend_les_notes_sans_versement(db_session):
     assert Decimal(res.scalar_one() or 0) == Decimal("500.00")
 
 
+_LISTE = dict(
+    include=None, date_debut=None, date_fin=None, statut_paiement=None, numero_recu=None, client=None,
+    budget_poste_id=None, type_client=None, mode_paiement=None, canal=None, compte_bancaire_id=None,
+    expert_comptable_id=None, operation_status="ACTIVE", est_proforma=False, order="numero_recu.asc",
+    limit=100, offset=0, deleted_status="all", include_summary=True, nature_mouvement=None,
+    inclure_recettes_identifiees=False,
+)
+
+
 @pytest.mark.asyncio
-async def test_une_operation_a_zero_ne_fait_pas_tomber_la_liste(db_session):
-    """Une recette à identifier entièrement déplacée reste à 0,00 : la liste doit la montrer."""
+async def test_une_recette_identifiee_a_zero_ne_figure_pas_parmi_les_encaissements(db_session):
+    """Identifiée en totalité, une recette descend à 0,00 : elle n'est montrée que cherchée."""
     org = await _enc_org(db_session)
     user = await _enc_user(db_session, org)
     normale = await _encaissement_row(db_session, org, user, montant_paye=Decimal("100"))
-    a_zero = await _encaissement_row(db_session, org, user)
-    a_zero.montant = Decimal("0.00")
-    a_zero.montant_total = Decimal("0.00")
+    soldee = await _encaissement_row(db_session, org, user)
+    soldee.nature_mouvement = "A_IDENTIFIER"
+    soldee.hors_budget_status = "IDENTIFIE"
+    soldee.montant = Decimal("0.00")
+    soldee.montant_total = Decimal("0.00")
+    db_session.add(PaymentHistory(
+        organisation_id=org.id, encaissement_id=normale.id, montant=Decimal("100"),
+        identification_source_id=soldee.id,
+    ))
     await db_session.commit()
+    commun = {**_LISTE, "tenant_id": org.id, "user": user, "db": db_session}
 
-    lignes = await list_encaissements(
-        include=None, date_debut=None, date_fin=None, statut_paiement=None, numero_recu=None, client=None,
-        budget_poste_id=None, type_client=None, mode_paiement=None, canal=None, compte_bancaire_id=None,
-        expert_comptable_id=None, operation_status="ACTIVE", est_proforma=False, order="numero_recu.asc",
-        limit=100, offset=0, tenant_id=org.id, user=user, db=db_session,
-        deleted_status="all", include_summary=True,
-    )
-    assert {str(item.id) for item in lignes.items} == {str(normale.id), str(a_zero.id)}
+    par_defaut = await list_encaissements(**commun)
+    assert [str(item.id) for item in par_defaut.items] == [str(normale.id)]
+    assert par_defaut.total == 1
+
+    for filtre in ({"numero_recu": soldee.numero_recu}, {"nature_mouvement": "A_IDENTIFIER"}, {"inclure_recettes_identifiees": True}):
+        trouve = await list_encaissements(**{**commun, **filtre})
+        recette = next(item for item in trouve.items if str(item.id) == str(soldee.id))
+        assert recette.montant_total == Decimal("0.00")
+        assert recette.identifiee_vers == [normale.numero_recu]

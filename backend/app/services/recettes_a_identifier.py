@@ -75,6 +75,44 @@ def est_recette_a_identifier(encaissement: Encaissement) -> bool:
     return (encaissement.nature_mouvement or "").upper() == NATURE_A_IDENTIFIER
 
 
+def condition_hors_recettes_soldees():
+    """Écarte les recettes à identifier entièrement déplacées vers leurs destinations.
+
+    Identifiée en totalité, une recette descend à 0,00 : son argent est compté sur
+    ses destinations (reçus, notes réglées). La lister parmi les encaissements la
+    faisait passer pour une saisie vide ; elle reste lisible dans « Recettes à
+    identifier », et une recherche par son numéro la retrouve.
+    """
+    return or_(
+        Encaissement.nature_mouvement.is_(None),
+        Encaissement.nature_mouvement != NATURE_A_IDENTIFIER,
+        func.coalesce(Encaissement.montant_total, 0) > 0,
+    )
+
+
+async def destinations_identification(
+    db: AsyncSession, organisation_id: int, source_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, list[str]]:
+    """Numéros des opérations qui ont reçu l'argent de chaque recette identifiée."""
+    if not source_ids:
+        return {}
+    rows = (await db.execute(
+        select(PaymentHistory.identification_source_id, Encaissement.numero_recu)
+        .join(Encaissement, Encaissement.id == PaymentHistory.encaissement_id)
+        .where(
+            PaymentHistory.organisation_id == organisation_id,
+            PaymentHistory.identification_source_id.in_(source_ids),
+            PaymentHistory.annule_le.is_(None),
+        )
+        .order_by(PaymentHistory.date_paiement, PaymentHistory.created_at)
+    )).all()
+    destinations: dict[uuid.UUID, list[str]] = {}
+    for source_id, numero in rows:
+        if numero and numero not in destinations.setdefault(source_id, []):
+            destinations[source_id].append(numero)
+    return destinations
+
+
 def tranche_anciennete(age_jours: int) -> str:
     for libelle, borne in TRANCHES:
         if borne is None or age_jours <= borne:

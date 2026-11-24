@@ -163,6 +163,8 @@ export interface Encaissement {
   nature_mouvement?: NatureMouvement | null
   impact_budgetaire?: boolean | null
   hors_budget_status?: HorsBudgetStatus | null
+  /** Recette à identifier : numéros des opérations qui ont reçu son argent. */
+  identifiee_vers?: string[]
   fonds_tiers_display_name?: string | null
   fonds_tiers_type?: 'ORGANISATION' | 'EXTERNE' | 'LEGACY' | null
   /** Part déjà imputée au budget par régularisation ; le reste à affecter s'en déduit. */

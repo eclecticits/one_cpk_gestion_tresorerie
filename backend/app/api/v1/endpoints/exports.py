@@ -41,6 +41,7 @@ from app.services.budget_execution import (
     realise_par_poste,
     valider_periode_exercice,
 )
+from app.services.recettes_a_identifier import condition_hors_recettes_soldees
 from app.services.export_jobs import serialiser_job, soumettre, types_asynchrones
 from app.services.export_queue import publier
 from app.db.session import get_db
@@ -2183,6 +2184,9 @@ async def construire_classeur_encaissements(
     # Filtres qui portent sur la NOTE et pas sur sa date : la feuille des
     # versements les reprend, pour ne pas contredire la liste qu'elle complète.
     filtres_note: list = []
+    # Comme la liste : une recette à identifier soldée n'apparaît que cherchée par son numéro.
+    if not numero_recu:
+        filtres_note.append(condition_hors_recettes_soldees())
     if statut_paiement:
         filtres_note.append(Encaissement.statut_paiement == statut_paiement)
     if numero_recu:

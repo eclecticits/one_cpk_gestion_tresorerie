@@ -85,7 +85,12 @@ from app.services.mouvements_budgetaires import (
     normalize_nature,
     sum_active_by_encaissement,
 )
-from app.services.recettes_a_identifier import engagements_recettes, est_recette_a_identifier
+from app.services.recettes_a_identifier import (
+    condition_hors_recettes_soldees,
+    destinations_identification,
+    engagements_recettes,
+    est_recette_a_identifier,
+)
 from app.services.regularisations_budgetaires import affecter_encaissement_hors_budget
 from app.services.reimputation_encaissement import (
     apercu_reimputation_encaissement,
@@ -1616,6 +1621,9 @@ async def list_encaissements(
     limit: int = Query(default=50, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
     include_summary: bool = Query(default=False),
+    inclure_recettes_identifiees: bool = Query(
+        default=False, description="Montrer aussi les recettes à identifier entièrement identifiées (0,00)",
+    ),
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -1672,8 +1680,13 @@ async def list_encaissements(
     if type_client:
         conditions.append(Encaissement.type_client == type_client)
     # Appelée en direct (tests), la fonction reçoit l'objet `Query` par défaut.
-    if isinstance(nature_mouvement, str) and nature_mouvement.strip():
+    nature_demandee = isinstance(nature_mouvement, str) and nature_mouvement.strip()
+    if nature_demandee:
         conditions.append(Encaissement.nature_mouvement == nature_mouvement.strip().upper())
+    # Une recette à identifier soldée (0,00) n'est montrée que si on la cherche :
+    # par son numéro, par sa nature, ou expressément.
+    if not nature_demandee and not numero_recu and inclure_recettes_identifiees is not True:
+        conditions.append(condition_hors_recettes_soldees())
     if mode_paiement:
         conditions.append(Encaissement.mode_paiement == mode_paiement)
     # Caisse ou banque : selon les versements de la note, l'en-tête à défaut.
@@ -1804,6 +1817,14 @@ async def list_encaissements(
             )
             for enc in encaissements
         ]
+
+    # Une recette à identifier dit où son argent est parti.
+    a_identifier = [uuid.UUID(item["id"]) for item in items if item.get("nature_mouvement") == "A_IDENTIFIER"]
+    if a_identifier:
+        destinations = await destinations_identification(db, tenant_id, a_identifier)
+        for item in items:
+            if item.get("nature_mouvement") == "A_IDENTIFIER":
+                item["identifiee_vers"] = destinations.get(uuid.UUID(item["id"]), [])
 
     if not include_summary:
         return items

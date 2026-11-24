@@ -254,6 +254,8 @@ class EncaissementResponse(EncaissementBase):
     #: destinations reste lisible à 0,00. Le refuser ici faisait tomber toute la
     #: liste (erreur 500) dès qu'une telle ligne entrait dans la période.
     montant_total: Decimal = Field(ge=0)
+    #: Recette à identifier : numéros des opérations qui ont reçu son argent.
+    identifiee_vers: list[str] = []
     date_encaissement: datetime
     relance_count: int = 0
     derniere_relance_le: datetime | None = None
