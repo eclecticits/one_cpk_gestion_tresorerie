@@ -31,6 +31,7 @@ from app.models.fonds_tiers_operation import FondsTiersOperation
 from app.models.fonds_tiers_versement import RequisitionFondsTiers
 from app.models.remboursement_transport import RemboursementTransport
 from app.models.sortie_fonds import SortieFonds
+from app.services.projets_activites import resoudre_projet_activite
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
 from app.models.user import User
@@ -2485,6 +2486,79 @@ async def reimputer(
     # mémorisés diraient encore l'ancienne ventilation le temps du TTL.
     await invalidate_report_summary_cache(tenant_id)
     return ReimputationOut(**{k: v for k, v in resultat.items() if k in ReimputationOut.model_fields})
+
+
+class RattachementActiviteIn(BaseModel):
+    """Projet ou activité de la réquisition ; `None` retire le rattachement."""
+    project_activity_id: int | None = None
+    motif: str = Field(min_length=3, max_length=500)
+
+
+@router.post(
+    "/{requisition_id}/projet-activite",
+    summary="Rattacher une réquisition à un projet ou une activité, même payée",
+    dependencies=[Depends(has_permission("treso.requisitions.reimputer"))],
+)
+async def rattacher_activite(
+    requisition_id: str,
+    payload: RattachementActiviteIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict:
+    """Corrige le projet ou l'activité d'une réquisition, quel que soit son statut.
+
+    C'est une imputation analytique, pas budgétaire : ni le poste, ni les
+    montants, ni la trésorerie ne bougent. On l'avait oubliée à la saisie ; la
+    réquisition validée est verrouillée, et payée, elle ne passe plus par la
+    modification. Ses sorties de fonds suivent : celles qui héritent du projet
+    de la réquisition le lisent à la volée, celles qui portaient l'ancien sont
+    reportées sur le nouveau. Une sortie rattachée à un autre projet, choisi
+    pour elle, garde le sien.
+    """
+    req = await _requisition_pour_reimputation(db, requisition_id, tenant_id)
+    req = (
+        await db.execute(select(Requisition).where(Requisition.id == req.id).with_for_update())
+    ).scalar_one()
+    ancien = req.project_activity_id
+    nouveau = payload.project_activity_id
+    if nouveau == ancien:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La réquisition est déjà rattachée à ce projet ou à cette activité.",
+        )
+    nouveau = await resoudre_projet_activite(db, nouveau, tenant_id)
+    req.project_activity_id = nouveau
+
+    sorties_reportees: list[str] = []
+    if ancien is not None:
+        sorties = (await db.execute(
+            select(SortieFonds).where(
+                SortieFonds.requisition_id == req.id,
+                SortieFonds.project_activity_id == ancien,
+            )
+        )).scalars().all()
+        for sortie in sorties:
+            sortie.project_activity_id = nouveau
+            sorties_reportees.append(str(sortie.id))
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="requisition.rattachement_activite",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"project_activity_id": ancien, "statut": req.status},
+        new_value={
+            "project_activity_id": nouveau,
+            "motif": payload.motif.strip(),
+            "sorties_reportees": sorties_reportees,
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    return {"id": str(req.id), "project_activity_id": nouveau, "sorties_reportees": len(sorties_reportees)}
 
 
 class ChangementCanalIn(BaseModel):

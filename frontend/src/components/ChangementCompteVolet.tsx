@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { usePilotageExterne } from '../hooks/usePilotageExterne'
 import { AlertTriangle, ArrowRightLeft, X } from 'lucide-react'
 import { apiRequest, ApiError } from '../lib/apiClient'
 import { usePermissions } from '../hooks/usePermissions'
@@ -13,6 +14,10 @@ interface Props {
   lignes: LigneRequisition[]
   comptesBancaires: CompteBancaire[]
   onChange?: () => void
+  /** Ouverture depuis un menu : compteur incrémenté par le parent ; le bouton propre disparaît. */
+  declenchement?: number
+  /** Dit au menu si cette correction s'applique à la réquisition. */
+  onDisponible?: (disponible: boolean) => void
 }
 
 // Une pièce payée a payé par ses comptes ; une pièce close n'en a plus.
@@ -30,7 +35,7 @@ interface VoletBanque {
  * décaissement : la caisse a pu payer sa part pendant que le virement attend.
  * Le serveur refuse si un ordre ou une sortie existe déjà sur l'ancien compte.
  */
-export default function ChangementCompteVolet({ requisitionId, statut, lignes, comptesBancaires, onChange }: Props) {
+export default function ChangementCompteVolet({ requisitionId, statut, lignes, comptesBancaires, onChange, declenchement, onDisponible }: Props) {
   const { hasPermission } = usePermissions()
   const { showSuccess } = useNotification()
   const [ouvert, setOuvert] = useState(false)
@@ -54,9 +59,13 @@ export default function ChangementCompteVolet({ requisitionId, statut, lignes, c
     return Array.from(map.values())
   }, [lignes])
 
-  if (!hasPermission('treso.requisitions.changer_canal')) return null
-  if (STATUTS_FIGES.has(String(statut || '').toUpperCase())) return null
-  if (volets.length === 0) return null
+  const disponible =
+    hasPermission('treso.requisitions.changer_canal')
+    && !STATUTS_FIGES.has(String(statut || '').toUpperCase())
+    && volets.length > 0
+  const ouvrirRef = usePilotageExterne(declenchement, disponible, onDisponible)
+
+  if (!disponible) return null
 
   const nomCompte = (id: number | string) => {
     const c = comptesBancaires.find((x) => String(x.id) === String(id))
@@ -71,6 +80,7 @@ export default function ChangementCompteVolet({ requisitionId, statut, lignes, c
     setErreur(null)
     setOuvert(true)
   }
+  ouvrirRef.current = ouvrir
 
   const interdit = enCours || !ancienId || !nouveauId || ancienId === nouveauId || motif.trim().length < 3
 
@@ -96,15 +106,17 @@ export default function ChangementCompteVolet({ requisitionId, statut, lignes, c
 
   return (
     <>
-      <button
-        type="button"
-        className={styles.declencheur}
-        onClick={ouvrir}
-        title="Changer le compte bancaire d'un volet qui n'a encore rien décaissé"
-      >
-        <ArrowRightLeft size={15} aria-hidden="true" />
-        Changer le compte bancaire
-      </button>
+      {declenchement === undefined && (
+        <button
+          type="button"
+          className={styles.declencheur}
+          onClick={ouvrir}
+          title="Changer le compte bancaire d'un volet qui n'a encore rien décaissé"
+        >
+          <ArrowRightLeft size={15} aria-hidden="true" />
+          Changer le compte bancaire
+        </button>
+      )}
 
       {ouvert && (
         <div

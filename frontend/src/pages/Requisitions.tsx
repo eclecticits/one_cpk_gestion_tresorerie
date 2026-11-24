@@ -17,6 +17,8 @@ import { toNumber } from '../utils/amount'
 import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import RequisitionEditModal from '../components/RequisitionEditModal'
 import ReimputationBudgetaire from '../components/ReimputationBudgetaire'
+import RattachementActivite from '../components/RattachementActivite'
+import RowActionsMenu, { type ActionLigne as ActionEnTete } from '../components/RowActionsMenu'
 import ChangementCanalPaiement from '../components/ChangementCanalPaiement'
 import ChangementCompteVolet from '../components/ChangementCompteVolet'
 import { peutModifierRequisition } from '../utils/requisitionLock'
@@ -28,7 +30,7 @@ import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
 import FiltresMobileToggle from '../components/FiltresMobileToggle'
 import { format, subDays } from 'date-fns'
-import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, X, MoreHorizontal, Loader2, Copy, RotateCcw, AlertTriangle } from 'lucide-react'
+import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, X, MoreHorizontal, Loader2, Copy, RotateCcw, AlertTriangle, ArrowRightLeft, FolderKanban, Landmark } from 'lucide-react'
 // jsPDF/jspdf-autotable sont lourds : on charge ../utils/pdfGenerator dynamiquement,
 // au moment de l'action (impression/téléchargement), plutôt qu'au chargement de la page.
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
@@ -385,6 +387,17 @@ export default function Requisitions() {
   // /sorties-fonds/nouvelle) : le formulaire occupe toute la largeur de .main.
   const isCreatePage = location.pathname === '/requisitions/nouvelle'
   const [showDetailModal, setShowDetailModal] = useState(false)
+  // Corrections de la fiche ouvertes depuis le menu « Actions » de l'en-tête :
+  // chaque composant dit s'il s'applique, le menu ne propose que celles-là.
+  type CorrectionFiche = 'poste' | 'activite' | 'canal' | 'compte'
+  const [ouvertures, setOuvertures] = useState<Record<CorrectionFiche, number>>({ poste: 0, activite: 0, canal: 0, compte: 0 })
+  const [correctionsDisponibles, setCorrectionsDisponibles] = useState<Record<CorrectionFiche, boolean>>({
+    poste: false, activite: false, canal: false, compte: false,
+  })
+  const ouvrirCorrection = (cle: CorrectionFiche) => setOuvertures(prev => ({ ...prev, [cle]: prev[cle] + 1 }))
+  const signalerCorrection = useCallback((cle: CorrectionFiche) => (disponible: boolean) => {
+    setCorrectionsDisponibles(prev => (prev[cle] === disponible ? prev : { ...prev, [cle]: disponible }))
+  }, [])
   const [requisitionAModifier, setRequisitionAModifier] = useState<any | null>(null)
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -4069,87 +4082,125 @@ export default function Requisitions() {
             <div className={styles.modalHeader}>
               <h2>Détails de la réquisition {selectedRequisition.numero_requisition}</h2>
               <div className={styles.modalHeaderActions}>
-                {/* Le bouton ne disparaît plus sur une pièce close : le
-                    bénéficiaire, souvent inconnu au départ, s'y renseigne
-                    encore. La modale n'ouvre alors que ce champ — le reste est
-                    ce que les validateurs ont signé. */}
-                <button
-                  type="button"
-                  className={styles.editReqBtn}
-                  onClick={() => setRequisitionAModifier(selectedRequisition)}
-                >
-                  <Pencil size={14} aria-hidden="true" />
-                  {peutModifierRequisition(selectedRequisition as any, user?.id)
-                    ? 'Modifier'
-                    : 'Bénéficiaire'}
-                </button>
-                {/* La correction d'imputation ne dépend pas de `peutModifierRequisition` :
-                    elle existe précisément pour les réquisitions que ce verrou protège,
-                    validées et payées. */}
-                <ReimputationBudgetaire
-                  requisitionId={String(selectedRequisition.id)}
-                  lignes={selectedLignes}
-                  onReimpute={() => void viewDetails(selectedRequisition)}
-                />
-                {/* Même logique : la pièce est verrouillée, mais le canal se
-                    corrige encore tant qu'elle n'est pas payée. Une réquisition
-                    à décaissement progressif porte ce bouton dans son plan, où
-                    il reste ouvert entre deux tranches. */}
-                {!(selectedRequisition as any).decaissement_progressif && (
-                <ChangementCanalPaiement
-                  requisitionId={String(selectedRequisition.id)}
-                  statut={String((selectedRequisition as any).status ?? (selectedRequisition as any).statut ?? '')}
-                  modeActuel={String(selectedRequisition.mode_paiement || '')}
-                  compteActuelId={(selectedRequisition as any).compte_bancaire_id ?? null}
-                  comptesBancaires={comptesBancaires}
-                  onChange={(canal) => {
-                    const corrigee = { ...selectedRequisition, ...canal } as Requisition
-                    void viewDetails(corrigee)
-                    void refetchRequisitions()
-                  }}
-                />
-                )}
-                {/* Plus étroit que le canal : le compte d'un volet bancaire se change
-                    encore en décaissement, tant que ce volet n'a rien décaissé. */}
-                <ChangementCompteVolet
-                  requisitionId={String(selectedRequisition.id)}
-                  statut={String((selectedRequisition as any).status ?? (selectedRequisition as any).statut ?? '')}
-                  lignes={selectedLignes}
-                  comptesBancaires={comptesBancaires}
-                  onChange={() => {
-                    void viewDetails(selectedRequisition)
-                    void refetchRequisitions()
-                  }}
-                />
-                {/* Rapport de décaissement : dès qu'une réquisition peut être payée,
-                    ce qui est sorti, ce qui reste, et les justificatifs attendus. */}
-                {['APPROUVEE', 'EN_DECAISSEMENT', 'PAYEE'].includes(
-                  String((selectedRequisition as any).status ?? selectedRequisition.statut ?? '').toUpperCase()
-                ) && (
-                  <button
-                    type="button"
-                    className={styles.editReqBtn}
-                    onClick={() => void imprimerRapportDecaissement(selectedRequisition)}
-                    disabled={rapportDecaissementEnCours}
-                    title="Imprimer le rapport de décaissement"
-                  >
-                    {rapportDecaissementEnCours
-                      ? <Loader2 size={14} className={styles.spin} aria-hidden="true" />
-                      : <Printer size={14} aria-hidden="true" />}
-                    Rapport de décaissement
-                  </button>
-                )}
-                {canDupliquer && (
-                  <button
-                    type="button"
-                    className={styles.editReqBtn}
-                    onClick={() => dupliquerRequisition(selectedRequisition)}
-                    title="Créer une nouvelle réquisition pré-remplie avec celle-ci"
-                  >
-                    <Copy size={14} aria-hidden="true" />
-                    Dupliquer et modifier
-                  </button>
-                )}
+                {(() => {
+                  const statutFiche = String((selectedRequisition as any).status ?? (selectedRequisition as any).statut ?? '')
+                  const payable = ['APPROUVEE', 'EN_DECAISSEMENT', 'PAYEE'].includes(statutFiche.toUpperCase())
+                  const progressif = Boolean((selectedRequisition as any).decaissement_progressif)
+                  const actions: ActionEnTete[] = []
+                  // Corriger : chacune existe pour une pièce que le verrou protège,
+                  // validée ou payée ; le composant sait quand elle s'applique.
+                  if (correctionsDisponibles.poste) {
+                    actions.push({ cle: 'poste', libelle: 'Corriger le poste budgétaire', icone: <ArrowRightLeft size={15} />, onSelect: () => ouvrirCorrection('poste'), description: 'Même payée' })
+                  }
+                  if (correctionsDisponibles.activite) {
+                    actions.push({
+                      cle: 'activite',
+                      libelle: selectedRequisition.project_activity_id ? "Changer l'activité" : 'Rattacher à une activité',
+                      icone: <FolderKanban size={15} />,
+                      onSelect: () => ouvrirCorrection('activite'),
+                      description: 'Même payée',
+                    })
+                  }
+                  if (!progressif && correctionsDisponibles.canal) {
+                    actions.push({ cle: 'canal', libelle: 'Changer le canal de paiement', icone: <Landmark size={15} />, onSelect: () => ouvrirCorrection('canal'), description: 'Tant que rien n’est payé' })
+                  }
+                  if (correctionsDisponibles.compte) {
+                    actions.push({ cle: 'compte', libelle: 'Changer le compte bancaire', icone: <ArrowRightLeft size={15} />, onSelect: () => ouvrirCorrection('compte'), description: "D'un volet qui n'a rien décaissé" })
+                  }
+                  // Documents : un trait les sépare des corrections.
+                  if (payable) {
+                    actions.push({
+                      cle: 'rapport',
+                      libelle: 'Rapport de décaissement',
+                      icone: rapportDecaissementEnCours ? <Loader2 size={15} className={styles.spin} /> : <Printer size={15} />,
+                      onSelect: () => void imprimerRapportDecaissement(selectedRequisition),
+                      disabled: rapportDecaissementEnCours,
+                      description: 'Ce qui est sorti, ce qui reste, les justificatifs attendus',
+                      separateurAvant: actions.length > 0,
+                    })
+                  }
+                  if (canDupliquer) {
+                    actions.push({
+                      cle: 'dupliquer',
+                      libelle: 'Dupliquer et modifier',
+                      icone: <Copy size={15} />,
+                      onSelect: () => dupliquerRequisition(selectedRequisition),
+                      description: 'Nouvelle réquisition pré-remplie avec celle-ci',
+                      separateurAvant: actions.length > 0 && !payable,
+                    })
+                  }
+                  return (
+                    <>
+                      {/* Le bouton ne disparaît plus sur une pièce close : le
+                          bénéficiaire, souvent inconnu au départ, s'y renseigne
+                          encore. La modale n'ouvre alors que ce champ — le reste est
+                          ce que les validateurs ont signé. */}
+                      <button
+                        type="button"
+                        className={styles.editReqBtn}
+                        onClick={() => setRequisitionAModifier(selectedRequisition)}
+                      >
+                        <Pencil size={14} aria-hidden="true" />
+                        {peutModifierRequisition(selectedRequisition as any, user?.id)
+                          ? 'Modifier'
+                          : 'Bénéficiaire'}
+                      </button>
+                      <RowActionsMenu
+                        items={actions}
+                        libelle={`Actions sur la réquisition ${selectedRequisition.numero_requisition}`}
+                        libelleDeclencheur="Actions"
+                      />
+                      {/* Sans bouton propre : ouvertes depuis le menu, elles gardent leurs règles. */}
+                      <ReimputationBudgetaire
+                        requisitionId={String(selectedRequisition.id)}
+                        lignes={selectedLignes}
+                        onReimpute={() => void viewDetails(selectedRequisition)}
+                        declenchement={ouvertures.poste}
+                        onDisponible={signalerCorrection('poste')}
+                      />
+                      <RattachementActivite
+                        requisitionId={String(selectedRequisition.id)}
+                        projetActuelId={selectedRequisition.project_activity_id}
+                        onChange={(projetId) => {
+                          void viewDetails({ ...selectedRequisition, project_activity_id: projetId } as Requisition)
+                          void refetchRequisitions()
+                        }}
+                        declenchement={ouvertures.activite}
+                        onDisponible={signalerCorrection('activite')}
+                      />
+                      {/* Une réquisition à décaissement progressif porte le changement
+                          de canal dans son plan, où il reste ouvert entre deux tranches. */}
+                      {!progressif && (
+                        <ChangementCanalPaiement
+                          requisitionId={String(selectedRequisition.id)}
+                          statut={statutFiche}
+                          modeActuel={String(selectedRequisition.mode_paiement || '')}
+                          compteActuelId={(selectedRequisition as any).compte_bancaire_id ?? null}
+                          comptesBancaires={comptesBancaires}
+                          onChange={(canal) => {
+                            const corrigee = { ...selectedRequisition, ...canal } as Requisition
+                            void viewDetails(corrigee)
+                            void refetchRequisitions()
+                          }}
+                          declenchement={ouvertures.canal}
+                          onDisponible={signalerCorrection('canal')}
+                        />
+                      )}
+                      <ChangementCompteVolet
+                        requisitionId={String(selectedRequisition.id)}
+                        statut={statutFiche}
+                        lignes={selectedLignes}
+                        comptesBancaires={comptesBancaires}
+                        onChange={() => {
+                          void viewDetails(selectedRequisition)
+                          void refetchRequisitions()
+                        }}
+                        declenchement={ouvertures.compte}
+                        onDisponible={signalerCorrection('compte')}
+                      />
+                    </>
+                  )
+                })()}
                 <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn} aria-label="Fermer la fiche"><X size={18} aria-hidden="true" /></button>
               </div>
             </div>

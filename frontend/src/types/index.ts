@@ -302,6 +302,8 @@ export interface OrdreDecaissement {
 export interface Requisition {
   id: string
   numero_requisition: string
+  /** Projet ou activité que la dépense finance ; ses sorties en héritent. */
+  project_activity_id?: number | null
   reference_numero?: string | null
   objet: string
   type_requisition?: string | null

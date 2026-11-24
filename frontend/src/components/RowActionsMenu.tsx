@@ -15,6 +15,8 @@ export type ActionLigne = {
   description?: string
   /** Action destructrice : signalee en rouge et separee des autres. */
   destructive?: boolean
+  /** Ouvre un nouveau groupe : un trait le separe du precedent. */
+  separateurAvant?: boolean
 }
 
 /**
@@ -32,7 +34,16 @@ export type ActionLigne = {
  * qui a deja valide) et une ligne de description, qui recueille les reperes de
  * circuit auparavant affiches en clair dans la cellule.
  */
-export default function RowActionsMenu({ items, libelle }: { items: ActionLigne[]; libelle: string }) {
+export default function RowActionsMenu({
+  items,
+  libelle,
+  libelleDeclencheur,
+}: {
+  items: ActionLigne[]
+  libelle: string
+  /** Texte a cote des trois points, pour un menu d'en-tete plutot que de ligne. */
+  libelleDeclencheur?: string
+}) {
   const [ouvert, setOuvert] = useState(false)
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null)
   const [indexActif, setIndexActif] = useState(0)
@@ -49,7 +60,7 @@ export default function RowActionsMenu({ items, libelle }: { items: ActionLigne[
     const rect = declencheurRef.current?.getBoundingClientRect()
     if (!rect) return
     const largeur = 268
-    const separateurs = items.some((item) => item.destructive) ? 9 : 0
+    const separateurs = items.filter((item, index) => index > 0 && (item.destructive || item.separateurAvant)).length * 9
     // Une entree a description occupe deux lignes : la bascule doit le savoir,
     // sinon un menu de six entrees commentees sortirait de l'ecran.
     const hauteur = items.reduce((total, item) => total + (item.description ? 50 : 34), 8) + separateurs
@@ -129,15 +140,16 @@ export default function RowActionsMenu({ items, libelle }: { items: ActionLigne[
       <button
         type="button"
         ref={declencheurRef}
-        className={`${styles.actionIconBtn} ${styles.actionMenuBtn}`}
+        className={`${styles.actionIconBtn} ${styles.actionMenuBtn} ${libelleDeclencheur ? styles.actionMenuBtnLibelle : ''}`}
         onClick={() => (ouvert ? fermer(true) : ouvrir())}
         onKeyDown={surToucheDeclencheur}
         aria-haspopup="menu"
         aria-expanded={ouvert}
-        title="Autres actions"
+        title={libelleDeclencheur ? undefined : 'Autres actions'}
         aria-label={libelle}
       >
         <MoreHorizontal size={16} aria-hidden="true" />
+        {libelleDeclencheur && <span>{libelleDeclencheur}</span>}
       </button>
       {ouvert && position && createPortal(
         <div
@@ -150,7 +162,7 @@ export default function RowActionsMenu({ items, libelle }: { items: ActionLigne[
         >
           {items.map((item, index) => (
             <Fragment key={item.cle}>
-              {item.destructive && index > 0 && (
+              {(item.destructive || item.separateurAvant) && index > 0 && (
                 <div className={styles.rowMenuSeparator} role="separator" />
               )}
               <button

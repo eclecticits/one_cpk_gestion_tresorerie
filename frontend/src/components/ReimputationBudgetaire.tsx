@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { usePilotageExterne } from '../hooks/usePilotageExterne'
 import { AlertTriangle, ArrowRight, ArrowRightLeft, X } from 'lucide-react'
 import { getBudgetPostes } from '../api/budget'
 import {
@@ -18,6 +19,10 @@ interface Props {
   /** Les lignes de la réquisition : on corrige les lignes, pas la réquisition. */
   lignes: LigneRequisition[]
   onReimpute?: () => void
+  /** Ouverture depuis un menu : compteur incrémenté par le parent ; le bouton propre disparaît. */
+  declenchement?: number
+  /** Dit au menu si cette correction s'applique à la réquisition. */
+  onDisponible?: (disponible: boolean) => void
 }
 
 const montant = (valeur: string | number | undefined) =>
@@ -34,10 +39,11 @@ const montant = (valeur: string | number | undefined) =>
  * à l'autre — engagement, réalisé et imputations figées du paiement. Ce qui va
  * bouger se lit avant d'être décidé, jamais dans un rapport le mois suivant.
  */
-export default function ReimputationBudgetaire({ requisitionId, lignes, onReimpute }: Props) {
+export default function ReimputationBudgetaire({ requisitionId, lignes, onReimpute, declenchement, onDisponible }: Props) {
   const { hasPermission } = usePermissions()
   const { showSuccess } = useNotification()
   const autorise = hasPermission('treso.requisitions.reimputer')
+  const ouvrirRef = usePilotageExterne(declenchement, autorise, onDisponible)
 
   const [ouvert, setOuvert] = useState(false)
   const [postes, setPostes] = useState<BudgetPosteSummary[]>([])
@@ -100,6 +106,7 @@ export default function ReimputationBudgetaire({ requisitionId, lignes, onReimpu
   }, [ouvert, posteId, requisitionId, cleSelection, partielle, selection.length])
 
   if (!autorise) return null
+  ouvrirRef.current = () => setOuvert(true)
 
   const bloqueParLaCompta = (apercu?.sorties_comptabilisees.length ?? 0) > 0
   const incomplet = !posteId || motif.trim().length < 3 || selection.length === 0
@@ -154,15 +161,17 @@ export default function ReimputationBudgetaire({ requisitionId, lignes, onReimpu
 
   return (
     <>
-      <button
-        type="button"
-        className={styles.declencheur}
-        onClick={() => setOuvert(true)}
-        title="Corriger le poste budgétaire de cette réquisition"
-      >
-        <ArrowRightLeft size={15} aria-hidden="true" />
-        Corriger le poste budgétaire
-      </button>
+      {declenchement === undefined && (
+        <button
+          type="button"
+          className={styles.declencheur}
+          onClick={() => setOuvert(true)}
+          title="Corriger le poste budgétaire de cette réquisition"
+        >
+          <ArrowRightLeft size={15} aria-hidden="true" />
+          Corriger le poste budgétaire
+        </button>
+      )}
 
       {ouvert && (
         <div

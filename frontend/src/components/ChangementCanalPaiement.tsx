@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { usePilotageExterne } from '../hooks/usePilotageExterne'
 import { AlertTriangle, Landmark, X } from 'lucide-react'
 import { apiRequest, ApiError } from '../lib/apiClient'
 import { usePermissions } from '../hooks/usePermissions'
@@ -18,6 +19,10 @@ interface Props {
   /** Décaissement progressif : le canal du reste à payer se change encore entre deux tranches. */
   decaissementProgressif?: boolean
   onChange?: (canal: { mode_paiement: string; compte_bancaire_id: number | null }) => void
+  /** Ouverture depuis un menu : compteur incrémenté par le parent ; le bouton propre disparaît. */
+  declenchement?: number
+  /** Dit au menu si cette correction s'applique à la réquisition. */
+  onDisponible?: (disponible: boolean) => void
 }
 
 // L'argent est sorti, ou sort : le canal est celui par lequel il est passé.
@@ -41,6 +46,8 @@ export default function ChangementCanalPaiement({
   estInitiateur = false,
   decaissementProgressif = false,
   onChange,
+  declenchement,
+  onDisponible,
 }: Props) {
   const { hasPermission } = usePermissions()
   const { showSuccess } = useNotification()
@@ -55,8 +62,12 @@ export default function ChangementCanalPaiement({
   // Entamée mais pas soldée : seul le reste à payer change de canal.
   const entamee = decaissementProgressif && statutNormalise === 'EN_DECAISSEMENT'
 
-  if (!(estInitiateur && decaissementProgressif) && !hasPermission('treso.requisitions.changer_canal')) return null
-  if (STATUTS_FIGES.has(statutNormalise) && !entamee) return null
+  const disponible =
+    (estInitiateur && decaissementProgressif || hasPermission('treso.requisitions.changer_canal'))
+    && !(STATUTS_FIGES.has(statutNormalise) && !entamee)
+  const ouvrirRef = usePilotageExterne(declenchement, disponible, onDisponible)
+
+  if (!disponible) return null
 
   const ouvrir = () => {
     const banque = modeActuel === 'virement'
@@ -66,6 +77,7 @@ export default function ChangementCanalPaiement({
     setErreur(null)
     setOuvert(true)
   }
+  ouvrirRef.current = ouvrir
 
   const inchange =
     mode === modeActuel &&
@@ -103,19 +115,21 @@ export default function ChangementCanalPaiement({
 
   return (
     <>
-      <button
-        type="button"
-        className={styles.declencheur}
-        onClick={ouvrir}
-        title={
-          entamee
-            ? 'Changer le canal de paiement de ce qui reste à payer'
-            : 'Changer le canal de paiement de cette réquisition (avant paiement)'
-        }
-      >
-        <Landmark size={15} aria-hidden="true" />
-        Changer le canal de paiement
-      </button>
+      {declenchement === undefined && (
+        <button
+          type="button"
+          className={styles.declencheur}
+          onClick={ouvrir}
+          title={
+            entamee
+              ? 'Changer le canal de paiement de ce qui reste à payer'
+              : 'Changer le canal de paiement de cette réquisition (avant paiement)'
+          }
+        >
+          <Landmark size={15} aria-hidden="true" />
+          Changer le canal de paiement
+        </button>
+      )}
 
       {ouvert && (
         <div

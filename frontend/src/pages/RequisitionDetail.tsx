@@ -7,6 +7,7 @@ import { useNotification } from '../contexts/NotificationContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import ReimputationBudgetaire from '../components/ReimputationBudgetaire'
+import RattachementActivite from '../components/RattachementActivite'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { toNumber } from '../utils/amount'
 import type { Money, Requisition } from '../types'
@@ -372,6 +373,11 @@ export default function RequisitionDetail() {
               requisitionId={String(requisition.id)}
               lignes={lignes}
               onReimpute={() => setRafraichirLignes(v => v + 1)}
+            />
+            <RattachementActivite
+              requisitionId={String(requisition.id)}
+              projetActuelId={requisition.project_activity_id}
+              onChange={(projetId) => setRequisition({ ...requisition, project_activity_id: projetId })}
             />
           </div>
         </section>
