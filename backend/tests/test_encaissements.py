@@ -2032,3 +2032,24 @@ async def test_flux_encaissements_reprend_les_notes_sans_versement(db_session):
         )
     )
     assert Decimal(res.scalar_one() or 0) == Decimal("500.00")
+
+
+@pytest.mark.asyncio
+async def test_une_operation_a_zero_ne_fait_pas_tomber_la_liste(db_session):
+    """Une recette à identifier entièrement déplacée reste à 0,00 : la liste doit la montrer."""
+    org = await _enc_org(db_session)
+    user = await _enc_user(db_session, org)
+    normale = await _encaissement_row(db_session, org, user, montant_paye=Decimal("100"))
+    a_zero = await _encaissement_row(db_session, org, user)
+    a_zero.montant = Decimal("0.00")
+    a_zero.montant_total = Decimal("0.00")
+    await db_session.commit()
+
+    lignes = await list_encaissements(
+        include=None, date_debut=None, date_fin=None, statut_paiement=None, numero_recu=None, client=None,
+        budget_poste_id=None, type_client=None, mode_paiement=None, canal=None, compte_bancaire_id=None,
+        expert_comptable_id=None, operation_status="ACTIVE", est_proforma=False, order="numero_recu.asc",
+        limit=100, offset=0, tenant_id=org.id, user=user, db=db_session,
+        deleted_status="all", include_summary=True,
+    )
+    assert {str(item.id) for item in lignes.items} == {str(normale.id), str(a_zero.id)}
