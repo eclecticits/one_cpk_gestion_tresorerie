@@ -1323,7 +1323,8 @@ async def test_filtre_actif_sur_les_membres_et_les_dossiers(db_session, admin_is
         assert base["total_membres"] == len(base["dossiers"]) + len(base["membres_a_completer"])
         return sorted([d.nom for d in base["dossiers"]] + [m["nom"] for m in base["membres_a_completer"]])
 
-    assert await noms(actif=True) == ["ACTIF Jean", "DOSSIER Actif"]
+    # Une société sans statut déclaré est tenue pour active.
+    assert await noms(actif=True) == ["ACTIF Jean", "DOSSIER Actif", "SOCIETE SA"]
     assert await noms(actif=False) == ["DOSSIER Inactif", "INACTIF Marie"]
     assert len(await noms()) == 6
     # La colonne affichée et le filtre disent la même chose.
@@ -1555,7 +1556,7 @@ async def test_la_base_montre_le_statut_actif(db_session, admin_isole):
     )
     base = await _base(db_session, admin_isole)
     actifs = {m["nom"]: m["actif"] for m in base["membres_a_completer"]}
-    assert actifs == {"ACTIF Jean": True, "INACTIF Marie": False, "SOCIETE SA": None}
+    assert actifs == {"ACTIF Jean": True, "INACTIF Marie": False, "SOCIETE SA": True}
     assert [d.actif for d in base["dossiers"]] == [False]
 
 

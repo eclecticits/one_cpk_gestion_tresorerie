@@ -283,14 +283,16 @@ def _parts(comptes: Counter, libelles: list[tuple[str, str]], total: int) -> lis
 
 
 def dans_le_filtre(dossier: dict[str, Any], personne: str, actif: str) -> bool:
-    """Filtre personne / statut du tableau de bord. Le statut « Actif » ne se dit que
-    d'une personne physique : il ne filtre jamais les personnes morales."""
+    """Filtre personne / statut du tableau de bord. Une société sans statut déclaré
+    est tenue pour active."""
     morale = norm_categorie(dossier.get("categorie")) == "Société"
     if (personne == "physique" and morale) or (personne == "morale" and not morale):
         return False
-    if morale or actif == "tous":
+    if actif == "tous":
         return True
     valeur = dossier.get("actif")
+    if valeur is None and morale:
+        valeur = True
     return ("inconnu" if valeur is None else ("oui" if valeur else "non")) == actif
 
 
@@ -301,9 +303,11 @@ def libelle_filtre(ctx: ContexteRapport) -> str:
         morceaux.append("Personnes physiques")
     elif ctx.personne == "morale":
         morceaux.append("Personnes morales")
-    if ctx.personne != "morale" and ctx.actif != "tous":
+    if ctx.actif != "tous":
         statut = {"oui": "actives", "non": "non actives", "inconnu": "statut actif non renseigné"}[ctx.actif]
-        morceaux.append(statut if ctx.personne == "physique" else f"personnes physiques {statut}")
+        morceaux.append(statut if ctx.personne in ("physique", "morale") else {
+            "oui": "membres actifs", "non": "membres non actifs", "inconnu": "statut actif non renseigné",
+        }[ctx.actif])
     return " · ".join(morceaux)
 
 

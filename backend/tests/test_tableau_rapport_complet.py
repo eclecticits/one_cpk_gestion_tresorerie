@@ -478,13 +478,15 @@ def test_filtres_personne_et_statut_du_rapport():
         _dossier(2, "EC/16.00002", actif=False),
         _dossier(3, "EC/16.00003", actif=None),
         _dossier(4, "SEC/16.00004", categorie="SEC", actif=None),
+        _dossier(5, "SEC/16.00005", categorie="SEC", actif=False),
     ]
-    assert _donnees(dossiers)["total"] == 4
+    assert _donnees(dossiers)["total"] == 5
     defaut = _donnees(dossiers, personne="physique", actif="oui")
     assert defaut["total"] == 1
     assert "Personnes physiques · actives" in _texte_pdf(defaut)[0]
-    # Le statut ne filtre jamais les personnes morales.
+    # Une société sans statut déclaré est active ; déclarée inactive, elle ne l'est plus.
     assert _donnees(dossiers, personne="morale", actif="oui")["total"] == 1
+    assert _donnees(dossiers, personne="morale", actif="non")["total"] == 1
     assert _donnees(dossiers, personne="toutes", actif="non")["total"] == 2
     assert _donnees(dossiers, personne="physique", actif="inconnu")["total"] == 1
 

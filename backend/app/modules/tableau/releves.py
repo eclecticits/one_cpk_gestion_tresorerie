@@ -484,7 +484,14 @@ def construire_releve(
     releve.conformites = [conforme for _, _, conforme in evalues]
     releve.conclusion_libelle = libelle
     releve.en_regle = en_regle
-    releve.motifs = [] if en_regle else motifs_releve(membre, reglages, exercice_annee)
+    deliberation = membre.get("deliberation")
+    if en_regle:
+        releve.motifs = []
+    elif deliberation and deliberation.get("motif"):
+        # Retrait décidé par la commission : son motif, et non des critères peut-être remplis.
+        releve.motifs = [f"Décision de la Commission Tableau : {deliberation['motif'].rstrip('.')}."]
+    else:
+        releve.motifs = motifs_releve(membre, reglages, exercice_annee)
     releve.consigne = "" if en_regle else consigne_declaration(categorie, reglages, societe)
     releve.politesse = f"Veuillez agréer, {formule}, l'expression de {politesse}."
     organisation = libelle_organisation(organisation)
@@ -613,6 +620,7 @@ def _membre_depuis_dossier(dossier: TableauDossier) -> dict[str, Any]:
         "categorie": dossier.categorie,
         "conclusion": dossier.conclusion,
         "sortie": dossier.sortie,
+        "deliberation": getattr(dossier, "deliberation", None),
         "cotisation_etat": etat,
         "cotisation_notes": notes,
         "nhv": float(dossier.heures_forco) if dossier.heures_forco is not None else None,
@@ -631,6 +639,7 @@ def _membre_depuis_ligne(ligne: dict[str, Any]) -> dict[str, Any]:
         **{k: ligne.get(k) for k in (
             "numero_ordre", "nom", "sexe", "email", "telephone", "categorie", "conclusion", "sortie",
             "nhv", "formation_etat", "chiffre_affaires", "raison_sociale", "associe_gerant", "date_situation",
+            "deliberation",
         )},
         "prenom": None,
         "cotisation_etat": notes.get("etat") if notes else None,
@@ -729,21 +738,23 @@ async def charger_releve(db: AsyncSession, organisation_id: int, exercice: str |
 #: les noms sont ceux de `get_base_tableau`.
 FILTRES_BASE = (
     "recherche", "categorie", "personne", "province", "sexe", "anciennete", "actif", "situation",
-    "conclusion", "cotisation", "assurance", "chiffre_affaires", "formation", "anomalie_only",
+    "conclusion", "cotisation", "assurance", "chiffre_affaires", "formation", "anomalie_only", "deliberation",
 )
 
 
-async def releves_selection(
+async def membres_selection(
     db: AsyncSession,
     organisation_id: int,
     *,
     exercice: str | None,
     numeros: list[str] | None = None,
     filtres: dict[str, Any] | None = None,
-) -> tuple[list[Releve], str]:
-    """Les relevés d'une sélection : des n° d'ordre choisis, ou tous les membres d'un filtre.
+) -> tuple[list[dict[str, Any]], str]:
+    """Les membres d'une sélection : des n° d'ordre choisis, ou tous les membres d'un filtre.
 
-    La Base n'est consolidée qu'une fois pour toute la sélection.
+    La Base n'est consolidée qu'une fois pour toute la sélection. Sert à l'envoi
+    groupé des relevés comme à la délibération groupée : les deux visent les
+    mêmes membres.
     """
     if numeros is not None:
         voulus = list(dict.fromkeys(n for n in (_norm_numero_ordre(x) for x in numeros) if n))
@@ -765,7 +776,19 @@ async def releves_selection(
             if cle not in vus:
                 vus.add(cle)
                 membres.append(membre)
-    exercice = base["exercice"]
+    return membres, base["exercice"]
+
+
+async def releves_selection(
+    db: AsyncSession,
+    organisation_id: int,
+    *,
+    exercice: str | None,
+    numeros: list[str] | None = None,
+    filtres: dict[str, Any] | None = None,
+) -> tuple[list[Releve], str]:
+    """Les relevés d'une sélection : des n° d'ordre choisis, ou tous les membres d'un filtre."""
+    membres, exercice = await membres_selection(db, organisation_id, exercice=exercice, numeros=numeros, filtres=filtres)
     if not membres:
         return [], exercice
     ctx = await _contexte(db, organisation_id, exercice)

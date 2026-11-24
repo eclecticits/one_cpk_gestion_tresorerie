@@ -32,6 +32,7 @@ from .schemas import (
     TableauComparisonOut,
     TableauComparisonRequest,
     TableauDecisionCreate,
+    TableauDeliberationOut,
     TableauDecisionOut,
     TableauDossierCorrection,
     TableauDossierOut,
@@ -42,6 +43,7 @@ from .schemas import (
     TableauReportCreate,
     TableauReportOut,
     TableauSortieOut,
+    TableauStatutActifOut,
     TableauStatsOut,
     TableauActualisationListOut, TableauActualisationOut, TableauActualisationRowsOut,
     TableauActualisationRowOut, TableauActualisationStatsOut, TableauActualisationDetailOut,
@@ -67,6 +69,8 @@ from .service import (
 from .actualisation_service import get_current_tableau_actualisation
 from .import_lignes import lignes_import
 from .sorties import annuler_sortie, declarer_sortie, sortie_payload
+from . import deliberations as deliberations_service
+from . import statuts_actifs as statuts_actifs_service
 from . import releves as releves_service
 
 logger = logging.getLogger(__name__)
@@ -235,6 +239,7 @@ async def get_base(
     assurance: FiltreOuiNon | None = Query(default=None),
     chiffre_affaires: FiltreOuiNon | None = Query(default=None),
     formation: FiltreFormation | None = Query(default=None),
+    deliberation: Literal["oui", "non"] | None = Query(default=None, description="Membres délibérés par la commission"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -276,6 +281,7 @@ async def get_base(
         chiffre_affaires=chiffre_affaires,
         formation=formation,
         situation=situation,
+        deliberation=deliberation,
         limit=limit,
         offset=offset,
     )
@@ -612,6 +618,147 @@ async def annuler_sortie_membre(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get(
+    "/deliberations",
+    summary="Situation d'un membre à délibérer, historique de ses délibérations et motifs proposés",
+    dependencies=[Depends(has_permission("tableau.decide"))],
+)
+async def deliberations_du_membre(
+    numero_ordre: str = Query(..., min_length=1, max_length=50),
+    exercice: str | None = Query(default=None, max_length=20),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    membre = await deliberations_service.situation_du_membre(db, tenant_id, exercice, numero_ordre)
+    return {
+        **membre,
+        "historique": await deliberations_service.historique(db, tenant_id, membre["exercice"], numero_ordre),
+        "motifs_suggeres": deliberations_service.motifs_suggeres(membre["categorie"]),
+    }
+
+
+@router.post(
+    "/deliberations",
+    response_model=TableauDeliberationOut,
+    summary="Délibérer un membre : le mettre en règle, ou l'en retirer, avec un motif",
+    dependencies=[Depends(has_permission("tableau.decide"))],
+)
+async def deliberer_membre(
+    numero_ordre: str = Form(..., max_length=50),
+    conclusion: Literal["INSCRIT", "NON INSCRIT", "À DÉLIBÉRER"] = Form(...),
+    motif: str = Form(..., max_length=2000),
+    exercice: str | None = Form(default=None, max_length=20),
+    criteres: list[str] = Form(default_factory=list),
+    reference_seance: str | None = Form(default=None, max_length=200),
+    observation: str | None = Form(default=None, max_length=2000),
+    piece: UploadFile | None = File(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
+) -> object:
+    # Nom, catégorie et verdict automatique sont relus dans la Base, jamais pris du client.
+    membre = await deliberations_service.situation_du_membre(db, tenant_id, exercice, numero_ordre)
+    deliberation = await deliberations_service.deliberer(
+        db, user, tenant_id, tenant_uuid,
+        exercice=membre["exercice"], numero_ordre=membre["numero_ordre"], nom=membre["nom"],
+        categorie=membre["categorie"], conclusion=conclusion,
+        conclusion_automatique=membre["conclusion_automatique"], criteres=criteres, motif=motif,
+        reference_seance=reference_seance, observation=observation, piece=piece,
+    )
+    return deliberations_service.deliberation_payload(deliberation, membre["conclusion_automatique"])
+
+
+class TableauRevocationIn(BaseModel):
+    motif: str = Field(..., min_length=1, max_length=2000)
+
+
+@router.post(
+    "/deliberations/{deliberation_id}/revocation",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Révoquer une délibération, avec un motif : le calcul automatique reprend la main",
+    dependencies=[Depends(has_permission("tableau.decide"))],
+)
+async def revoquer_deliberation(
+    deliberation_id: int,
+    payload: TableauRevocationIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> Response:
+    await deliberations_service.revoquer(db, user, tenant_id, deliberation_id, payload.motif)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/statuts-actifs",
+    summary="Statut « Actif » d'un membre : ce qui est retenu, ce que dit le fichier, l'historique",
+    dependencies=[Depends(has_permission("tableau.correct"))],
+)
+async def statut_actif_du_membre(
+    numero_ordre: str = Query(..., min_length=1, max_length=50),
+    exercice: str | None = Query(default=None, max_length=20),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    membre = await statuts_actifs_service.situation_du_membre(db, tenant_id, exercice, numero_ordre)
+    return {
+        **membre,
+        "historique": await statuts_actifs_service.historique(db, tenant_id, numero_ordre),
+        "motifs_suggeres": {
+            etat: motifs[membre["personne"]] for etat, motifs in statuts_actifs_service.MOTIFS_SUGGERES.items()
+        },
+    }
+
+
+@router.post(
+    "/statuts-actifs",
+    response_model=TableauStatutActifOut,
+    summary="Déclarer un membre actif ou inactif : la déclaration prime sur le fichier",
+    dependencies=[Depends(has_permission("tableau.correct"))],
+)
+async def declarer_statut_actif(
+    numero_ordre: str = Form(..., max_length=50),
+    actif: bool = Form(...),
+    date_effet: date = Form(...),
+    motif: str = Form(..., max_length=2000),
+    exercice: str | None = Form(default=None, max_length=20),
+    reference: str | None = Form(default=None, max_length=200),
+    observation: str | None = Form(default=None, max_length=2000),
+    piece: UploadFile | None = File(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
+) -> object:
+    # Nom, catégorie et statut du fichier sont relus dans la Base, jamais pris du client.
+    membre = await statuts_actifs_service.situation_du_membre(db, tenant_id, exercice, numero_ordre)
+    declaration = await statuts_actifs_service.declarer(
+        db, user, tenant_id, tenant_uuid, membre=membre, actif=actif, date_effet=date_effet,
+        motif=motif, reference=reference, observation=observation, piece=piece,
+    )
+    return statuts_actifs_service.statut_payload(declaration)
+
+
+@router.post(
+    "/statuts-actifs/{declaration_id}/annulation",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Annuler une déclaration de statut : le fichier fait de nouveau foi",
+    dependencies=[Depends(has_permission("tableau.correct"))],
+)
+async def annuler_statut_actif(
+    declaration_id: int,
+    payload: TableauRevocationIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> Response:
+    await statuts_actifs_service.annuler(db, user, tenant_id, declaration_id, payload.motif)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 class TableauReleveEnvoiIn(BaseModel):
     numero_ordre: str = Field(..., min_length=1, max_length=50)
     exercice: str | None = Field(default=None, max_length=20)
@@ -671,6 +818,7 @@ class TableauReleveFiltres(BaseModel):
     assurance: FiltreOuiNon | None = None
     chiffre_affaires: FiltreOuiNon | None = None
     formation: FiltreFormation | None = None
+    deliberation: Literal["oui", "non"] | None = None
     anomalie_only: bool = False
 
     def en_criteres(self) -> dict[str, Any]:
@@ -679,14 +827,12 @@ class TableauReleveFiltres(BaseModel):
         return donnees
 
 
-class TableauReleveSelectionIn(BaseModel):
+class TableauSelectionMembresIn(BaseModel):
     """Des n° d'ordre choisis un à un, ou tous les membres d'un filtre de la Base."""
 
     exercice: str | None = Field(default=None, max_length=20)
     numeros: list[str] | None = Field(default=None, max_length=releves_service.MAX_LOT)
     filtres: TableauReleveFiltres | None = None
-    canaux: list[CanalReleve] = Field(default_factory=lambda: ["email", "whatsapp"])
-    renvoyer: bool = False
 
     def selection(self) -> dict[str, Any]:
         if self.numeros is None and self.filtres is None:
@@ -695,6 +841,46 @@ class TableauReleveSelectionIn(BaseModel):
             "numeros": self.numeros,
             "filtres": None if self.numeros is not None else self.filtres.en_criteres(),
         }
+
+
+class TableauReleveSelectionIn(TableauSelectionMembresIn):
+    canaux: list[CanalReleve] = Field(default_factory=lambda: ["email", "whatsapp"])
+    renvoyer: bool = False
+
+
+class TableauDeliberationLotIn(TableauSelectionMembresIn):
+    conclusion: Literal["INSCRIT", "NON INSCRIT", "À DÉLIBÉRER"]
+    motif: str = Field(..., min_length=1, max_length=2000)
+    criteres: list[str] = Field(default_factory=list)
+    reference_seance: str | None = Field(default=None, max_length=200)
+    observation: str | None = Field(default=None, max_length=2000)
+
+
+@router.post(
+    "/deliberations/lot",
+    summary="Délibération groupée : même décision, même motif pour toute une sélection",
+    dependencies=[Depends(has_permission("tableau.decide"))],
+)
+async def deliberer_selection(
+    payload: TableauDeliberationLotIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict[str, Any]:
+    return await deliberations_service.deliberer_lot(
+        db, user, tenant_id,
+        exercice=payload.exercice, conclusion=payload.conclusion, criteres=payload.criteres, motif=payload.motif,
+        reference_seance=payload.reference_seance, observation=payload.observation, **payload.selection(),
+    )
+
+
+@router.get(
+    "/deliberations/motifs",
+    summary="Motifs proposés pour une délibération, selon qu'elle vise des sociétés ou non",
+    dependencies=[Depends(has_permission("tableau.decide"))],
+)
+async def motifs_de_deliberation(categorie: str | None = Query(default=None, max_length=50)) -> dict[str, list[str]]:
+    return deliberations_service.motifs_suggeres(categorie)
 
 
 @router.post(

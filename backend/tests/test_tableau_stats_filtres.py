@@ -34,11 +34,12 @@ async def test_par_defaut_les_personnes_physiques_actives(base):
     assert s["hors_filtre_actif_inconnu"] == 1
 
 
-async def test_le_statut_ne_filtre_jamais_les_personnes_morales(base):
+async def test_une_societe_sans_statut_declare_compte_parmi_les_actives(base):
     morales = await service.get_stats_tableau(None, 1, personne="morale", actif="oui")
     assert (morales["membres_base"], morales["a_deliberer"], morales["hors_filtre_actif_inconnu"]) == (1, 1, 0)
+    assert (await service.get_stats_tableau(None, 1, personne="morale", actif="non"))["membres_base"] == 0
     toutes = await service.get_stats_tableau(None, 1, personne="toutes", actif="non")
-    assert (toutes["membres_base"], toutes["non_en_regle"], toutes["a_deliberer"]) == (2, 1, 1)
+    assert (toutes["membres_base"], toutes["non_en_regle"], toutes["a_deliberer"]) == (1, 1, 0)
 
 
 async def test_tous_et_non_renseigne(base):

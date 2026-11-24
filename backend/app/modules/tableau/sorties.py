@@ -112,7 +112,9 @@ def _refus(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=message)
 
 
-async def _enregistrer_piece(piece: UploadFile, tenant_uuid: str, numero: str) -> tuple[str, str]:
+async def _enregistrer_piece(
+    piece: UploadFile, tenant_uuid: str, numero: str, racine: str = "tableau-sorties",
+) -> tuple[str, str]:
     nom = piece.filename or "piece"
     ext = os.path.splitext(nom)[1].lower()
     if ext not in PIECE_EXT:
@@ -123,7 +125,7 @@ async def _enregistrer_piece(piece: UploadFile, tenant_uuid: str, numero: str) -
     if len(contenu) > PIECE_TAILLE_MAX:
         raise _refus("Pièce justificative trop volumineuse (5 Mo au plus).")
     maintenant = datetime.now(timezone.utc)
-    segment = f"tableau-sorties/{maintenant.year:04d}/{maintenant.month:02d}"
+    segment = f"{racine}/{maintenant.year:04d}/{maintenant.month:02d}"
     dossier = os.path.join(UPLOAD_ROOT, "tenants", tenant_uuid, *segment.split("/"))
     os.makedirs(dossier, exist_ok=True)
     sur = "".join(c if c.isalnum() else "-" for c in numero).strip("-") or "membre"

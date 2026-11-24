@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -611,6 +611,97 @@ class TableauSortieMembre(Base):
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class TableauDeliberation(Base):
+    """Délibération de la commission sur un membre, pour un exercice.
+
+    Elle fixe la conclusion (en règle, non en règle, à délibérer) à la place du
+    calcul automatique, qui reste conservé : si les données changent ensuite,
+    l'écart est signalé, jamais appliqué en silence. Comme la sortie, elle tient
+    au membre (conseil + n° d'ordre) et non à un dossier ; un réimport ne la fait
+    pas disparaître. Une seule est en vigueur par membre et par exercice : une
+    révocation la garde dans l'historique.
+    """
+
+    __tablename__ = "tableau_deliberations"
+    __table_args__ = (
+        CheckConstraint("personne IN ('PP', 'PM')", name="ck_tableau_deliberation_personne"),
+        CheckConstraint(
+            "conclusion IN ('INSCRIT', 'NON INSCRIT', 'À DÉLIBÉRER')",
+            name="ck_tableau_deliberation_conclusion",
+        ),
+        Index("ix_tableau_deliberations_membre", "organisation_id", "exercice", "numero_ordre"),
+        Index(
+            "uq_tableau_deliberation_en_vigueur", "organisation_id", "exercice", "numero_ordre",
+            unique=True, postgresql_where=text("revoquee_le IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    exercice: Mapped[str] = mapped_column(String(20), nullable=False)
+    # N° d'ordre normalisé (majuscules, sans espaces), comme `_norm_numero_ordre`.
+    numero_ordre: Mapped[str] = mapped_column(String(50), nullable=False)
+    nom: Mapped[str] = mapped_column(String(300), nullable=False)
+    personne: Mapped[str] = mapped_column(String(2), nullable=False)
+    conclusion: Mapped[str] = mapped_column(String(30), nullable=False)
+    #: Ce que disait le calcul au moment de délibérer.
+    conclusion_automatique: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: Critères levés (mise en règle) ou retenus (retrait) : cotisation, formation, assurance, chiffre_affaires.
+    criteres: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    motif: Mapped[str] = mapped_column(Text, nullable=False)
+    reference_seance: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    observation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    piece_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    piece_nom: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    revoquee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoquee_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    motif_revocation: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class TableauStatutActif(Base):
+    """Statut « Actif » déclaré à la main pour un membre, EC ou société.
+
+    Seul le fichier des personnes physiques porte une colonne « Actif » : une
+    société n'avait jamais de statut, et un EC mal renseigné ne pouvait pas être
+    corrigé. La déclaration prime sur le fichier, vaut à partir de l'exercice de
+    sa date d'effet, et ne change pas la conclusion : elle décide seulement qui
+    compte parmi les « Actifs ». Une seule est en vigueur par membre.
+    """
+
+    __tablename__ = "tableau_statuts_actifs"
+    __table_args__ = (
+        CheckConstraint("personne IN ('PP', 'PM')", name="ck_tableau_statut_actif_personne"),
+        Index("ix_tableau_statuts_actifs_membre", "organisation_id", "numero_ordre"),
+        Index(
+            "uq_tableau_statut_actif_en_vigueur", "organisation_id", "numero_ordre",
+            unique=True, postgresql_where=text("annule_le IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    # N° d'ordre normalisé (majuscules, sans espaces), comme `_norm_numero_ordre`.
+    numero_ordre: Mapped[str] = mapped_column(String(50), nullable=False)
+    nom: Mapped[str] = mapped_column(String(300), nullable=False)
+    personne: Mapped[str] = mapped_column(String(2), nullable=False)
+    actif: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    #: Ce que disait le fichier des personnes physiques au moment de déclarer (None pour une société).
+    actif_fichier: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    date_effet: Mapped[Date] = mapped_column(Date, nullable=False)
+    motif: Mapped[str] = mapped_column(Text, nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    observation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    piece_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    piece_nom: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    annule_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    annule_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    motif_annulation: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class TableauReleve(Base):

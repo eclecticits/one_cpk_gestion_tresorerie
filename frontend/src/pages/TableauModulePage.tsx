@@ -1,8 +1,12 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Columns3, Download, FileSpreadsheet, FileText, GitCompare, Layers, Pencil, RefreshCw, Save, Search, Send, Settings, Table2, UserX, X, XCircle } from 'lucide-react'
+import { AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronLeft, ChevronRight, Columns3, Download, FileSpreadsheet, FileText, Gavel, GitCompare, Layers, Pencil, Power, PowerOff, RefreshCw, Save, Search, Send, Settings, Table2, UserX, X, XCircle } from 'lucide-react'
 import TableauAssistantChat from '../components/TableauAssistantChat'
 import SortieMembreModal, { type MembreSortie } from '../components/SortieMembreModal'
+import RowActionsMenu, { type ActionLigne } from '../components/RowActionsMenu'
+import DeliberationMembreModal, { type MembreDeliberation } from '../components/DeliberationMembreModal'
+import DeliberationLotModal from '../components/DeliberationLotModal'
+import StatutActifModal, { type MembreStatutActif } from '../components/StatutActifModal'
 import ReleveSituationModal, { type MembreReleve } from '../components/ReleveSituationModal'
 import RelevesLotModal from '../components/RelevesLotModal'
 import ImportsParSource from '../components/ImportsParSource'
@@ -28,6 +32,8 @@ import {
   LIBELLES_SITUATION_SORTIE,
   type TableauDernierReleve,
   type TableauSortie,
+  type TableauDeliberation,
+  type TableauStatutActif,
   runTableauAnalyseBase,
   getTableauStats,
   FILTRE_STATS_DEFAUT,
@@ -122,6 +128,10 @@ const TITRES: Record<TabKey, string> = {
 const LIBELLES_AUDIT: Record<string, string> = {
   'tableau.dossier.correct': 'Correction d\'un dossier',
   'tableau.decision.create': 'Décision de commission',
+  'tableau.deliberation.create': 'Délibération sur un membre',
+  'tableau.deliberation.revoke': 'Délibération révoquée',
+  'tableau.statut_actif.declare': 'Statut « Actif » déclaré',
+  'tableau.statut_actif.annule': 'Statut « Actif » annulé',
   'tableau.assistant.chat': 'Question à l\'assistant',
 }
 
@@ -572,6 +582,14 @@ function FiltresConditions({
           <option value="SANS">Sans conclusion</option>
         </select>
       </label>
+      <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
+        Délibération
+        <select value={valeurs.deliberation || ''} onChange={event => onChange({ ...valeurs, deliberation: event.target.value as FiltresRegles['deliberation'] })} style={style}>
+          <option value="">Tous</option>
+          <option value="oui">Délibérés par la commission</option>
+          <option value="non">Non délibérés</option>
+        </select>
+      </label>
       {conditionsActives(categorie, reglages).map(critere => (
         <label key={critere} style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
           {OPTIONS_FILTRE[critere].libelle}
@@ -602,20 +620,23 @@ function BadgeSortie({ sortie }: { sortie: TableauSortie }) {
   )
 }
 
-function BoutonSortie({ membre, onOpen }: { membre: MembreSortie; onOpen: (membre: MembreSortie) => void }) {
-  const morale = membre.categorie === 'Société' || membre.categorie === 'SEC'
-  const titre = membre.sortie ? 'Modifier la sortie du Tableau' : morale ? "Déclarer que la société a cessé d'exister" : 'Déclarer une sortie (décès, démission, radiation, omission)'
+const COULEURS_CONCLUSION: Record<string, string> = { INSCRIT: '#166534', 'NON INSCRIT': '#991b1b', 'À DÉLIBÉRER': '#92400e' }
+
+/** Conclusion fixée par la commission : le libellé, la mention « délibéré », et l'alerte si le calcul a changé. */
+function BadgeDeliberation({ deliberation }: { deliberation: TableauDeliberation }) {
+  const titre = [
+    deliberation.libelle,
+    `Calcul automatique : ${libelleConclusion(deliberation.verdict_automatique) || 'sans conclusion'}`,
+    deliberation.observation,
+  ].filter(Boolean).join(' — ')
   return (
-    <button
-      type="button"
-      className={styles.secondaryButton}
-      onClick={() => onOpen({ numero_ordre: membre.numero_ordre, nom: membre.nom, categorie: membre.categorie, sortie: membre.sortie })}
-      disabled={!membre.numero_ordre}
-      title={membre.numero_ordre ? titre : "Sans N° d'ordre, la sortie ne peut pas être déclarée"}
-      aria-label={`${titre} : ${membre.nom}`}
-    >
-      <UserX size={14} />
-    </button>
+    <span title={titre} style={{ display: 'inline-flex', flexDirection: 'column', gap: '2px' }}>
+      <span style={{ fontWeight: 600, color: COULEURS_CONCLUSION[deliberation.conclusion] }}>{libelleConclusion(deliberation.conclusion)}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#4338ca' }}>
+        <Gavel size={11} /> Délibéré
+        {deliberation.diverge && <span style={{ color: '#92400e', display: 'inline-flex', alignItems: 'center', gap: '2px' }}><AlertTriangle size={11} /> à revoir</span>}
+      </span>
+    </span>
   )
 }
 
@@ -623,37 +644,7 @@ function BoutonSortie({ membre, onOpen }: { membre: MembreSortie; onOpen: (membr
 interface MembreCoche {
   numero: string
   nom: string
-}
-
-/** Envoie au membre sa situation ; la date du dernier envoi s'affiche sous le bouton. */
-function BoutonReleve({ membre, dernier, onOpen }: {
-  membre: { numero_ordre: string | null; nom: string }
-  dernier?: TableauDernierReleve
-  onOpen: (membre: MembreReleve) => void
-}) {
-  const { numero_ordre: numero, nom } = membre
-  const titre = dernier
-    ? `Envoyer sa situation au membre (dernier envoi le ${new Date(dernier.date).toLocaleDateString('fr-FR')})`
-    : 'Envoyer sa situation au membre'
-  return (
-    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-      <button
-        type="button"
-        className={styles.secondaryButton}
-        onClick={() => { if (numero) onOpen({ numero_ordre: numero, nom }) }}
-        disabled={!numero}
-        title={numero ? titre : "Sans N° d'ordre, la situation ne peut pas être envoyée"}
-        aria-label={`${titre} : ${nom}`}
-      >
-        <Send size={14} />
-      </button>
-      {dernier && (
-        <span style={{ fontSize: '11px', color: '#6b7280', whiteSpace: 'nowrap' }}>
-          {new Date(dernier.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}
-        </span>
-      )}
-    </span>
-  )
+  categorie: string
 }
 
 function booleanStatus(value: boolean | null) {
@@ -718,6 +709,7 @@ export default function TableauModulePage() {
   const canGeneratePv = hasPermission('tableau.generate_pv')
   const canExport = hasPermission('tableau.export')
   const canCorrect = hasPermission('tableau.correct')
+  const canDecide = hasPermission('tableau.decide')
   const canNotify = hasPermission('tableau.notify')
   const canSettings = hasPermission('tableau.settings')
   const canUseAssistant = hasPermission('tableau.use_assistant')
@@ -752,14 +744,17 @@ export default function TableauModulePage() {
     try { localStorage.setItem(CLE_COLONNES_BASE_MASQUEES, JSON.stringify(suivant)) } catch { /* sans effet */ }
   }
   const [sortieMembre, setSortieMembre] = useState<MembreSortie | null>(null)
+  const [deliberationMembre, setDeliberationMembre] = useState<MembreDeliberation | null>(null)
+  const [statutActifMembre, setStatutActifMembre] = useState<MembreStatutActif | null>(null)
   const [releveMembre, setReleveMembre] = useState<MembreReleve | null>(null)
   const [derniersReleves, setDerniersReleves] = useState<Record<string, TableauDernierReleve>>({})
   const [relevesRefresh, setRelevesRefresh] = useState(0)
   // Envoi groupé : des membres cochés (n° d'ordre → nom, conservés d'une page à
   // l'autre), ou tous les membres du filtre courant.
-  const [selectionReleves, setSelectionReleves] = useState<Map<string, string>>(new Map())
+  const [selectionReleves, setSelectionReleves] = useState<Map<string, Omit<MembreCoche, 'numero'>>>(new Map())
   const [selectionFiltre, setSelectionFiltre] = useState(false)
   const [lotOuvert, setLotOuvert] = useState(false)
+  const [lotDeliberationOuvert, setLotDeliberationOuvert] = useState(false)
   const rafraichirReleves = useCallback(() => setRelevesRefresh(valeur => valeur + 1), [])
   const [baseRegles, setBaseRegles] = useState<FiltresRegles>({})
   const baseReglesCle = JSON.stringify(baseRegles)
@@ -1139,7 +1134,7 @@ export default function TableauModulePage() {
   useEffect(() => {
     setSelectionReleves(new Map())
   }, [exerciceBase, baseNational])
-  const selectionPossible = canNotify && !baseNational
+  const selectionPossible = (canNotify || canDecide) && !baseNational
   const filtresBaseActifs = [
     baseSearch, baseCategorie, basePersonne, baseProvince, baseSexe, baseAnciennete, baseActif,
     baseSituation !== 'en_exercice' ? baseSituation : '',
@@ -1161,8 +1156,8 @@ export default function TableauModulePage() {
   const basculerSelection = (membres: MembreCoche[], coche: boolean) => {
     setSelectionReleves(courante => {
       const suivante = new Map(courante)
-      for (const { numero, nom } of membres) {
-        if (coche) suivante.set(cleNumero(numero), nom)
+      for (const { numero, nom, categorie } of membres) {
+        if (coche) suivante.set(cleNumero(numero), { nom, categorie })
         else suivante.delete(cleNumero(numero))
       }
       return suivante
@@ -1170,8 +1165,8 @@ export default function TableauModulePage() {
   }
   const selectionnablesPage: MembreCoche[] = base
     ? [
-        ...base.dossiers.filter(d => d.numero_ordre && !d.sortie).map(d => ({ numero: cleNumero(d.numero_ordre!), nom: nomComplet(d.nom, d.prenom) })),
-        ...base.membres_a_completer.filter(m => m.numero_ordre && !m.sortie).map(m => ({ numero: cleNumero(m.numero_ordre!), nom: m.nom })),
+        ...base.dossiers.filter(d => d.numero_ordre && !d.sortie).map(d => ({ numero: cleNumero(d.numero_ordre!), nom: nomComplet(d.nom, d.prenom), categorie: d.categorie })),
+        ...base.membres_a_completer.filter(m => m.numero_ordre && !m.sortie).map(m => ({ numero: cleNumero(m.numero_ordre!), nom: m.nom, categorie: m.categorie })),
       ]
     : []
   const pageEntierementCochee = selectionnablesPage.length > 0 && selectionnablesPage.every(m => selectionReleves.has(m.numero))
@@ -1189,16 +1184,21 @@ export default function TableauModulePage() {
     situation: baseSituation,
     ...Object.fromEntries(Object.entries(baseRegles).filter(([, valeur]) => valeur)),
   }
+  // Catégorie commune à la sélection : elle choisit les motifs et les critères proposés au lot.
+  const categoriesCochees = selectionFiltre
+    ? (baseCategorie ? [baseCategorie] : basePersonne === 'morale' ? ['Société'] : [])
+    : [...new Set([...selectionReleves.values()].map(m => (m.categorie === 'SEC' ? 'Société' : m.categorie)))]
+  const categorieLot = categoriesCochees.length === 1 ? categoriesCochees[0] : ''
   const ligneCochee = (numero: string | null | undefined) =>
     selectionPossible && !!numero && (selectionFiltre || selectionReleves.has(cleNumero(numero)))
-  const caseSelection = (numero: string | null | undefined, nom: string, sortie: TableauSortie | null | undefined) => (
+  const caseSelection = (numero: string | null | undefined, nom: string, sortie: TableauSortie | null | undefined, categorie: string) => (
     <td style={{ ...baseTdStyle, width: '28px' }}>
       {numero && !sortie && (
         <input
           type="checkbox"
           checked={ligneCochee(numero)}
           disabled={selectionFiltre}
-          onChange={event => basculerSelection([{ numero, nom }], event.target.checked)}
+          onChange={event => basculerSelection([{ numero, nom, categorie }], event.target.checked)}
           aria-label={`Sélectionner ${nom}`}
         />
       )}
@@ -1339,6 +1339,89 @@ export default function TableauModulePage() {
   const nbColonnesMasquees = colonnesVue.length - colonnesBase.length
   const libelleColonneBase = (colonne: ColonneBase) =>
     LIBELLES_BASE_PAR_CATEGORIE[baseCategorie]?.[colonne] ?? LIBELLES_COLONNES_BASE[colonne]
+  /** Toutes les actions d'une ligne de la Base, dans le menu « … » ; la date du dernier relevé reste visible. */
+  const celluleActions = (
+    membre: {
+      numero_ordre: string | null
+      nom: string
+      categorie: string
+      conclusion?: string | null
+      actif?: boolean | null
+      sortie?: TableauSortie | null
+      deliberation?: TableauDeliberation | null
+    },
+    dossier?: TableauDossier,
+  ) => {
+    const numero = membre.numero_ordre
+    const morale = membre.categorie === 'Société' || membre.categorie === 'SEC'
+    const sansNumero = numero ? undefined : "Sans N° d'ordre : corrigez-le d'abord"
+    const dernier = dernierReleve(numero)
+    const designation = { numero_ordre: numero, nom: membre.nom, categorie: membre.categorie }
+    const items: ActionLigne[] = []
+    if (dossier && canCorrect) {
+      items.push({ cle: 'corriger', libelle: 'Corriger le dossier', icone: <Pencil size={15} />, onSelect: () => openCorrection(dossier) })
+    }
+    if (canNotify && !membre.sortie) {
+      items.push({
+        cle: 'releve',
+        libelle: 'Envoyer sa situation',
+        icone: <Send size={15} />,
+        onSelect: () => { if (numero) setReleveMembre({ numero_ordre: numero, nom: membre.nom }) },
+        disabled: !numero,
+        description: sansNumero ?? (dernier ? `Dernier envoi le ${new Date(dernier.date).toLocaleDateString('fr-FR')}` : undefined),
+      })
+    }
+    if (canDecide && !membre.sortie) {
+      items.push({
+        cle: 'deliberer',
+        libelle: membre.deliberation
+          ? 'Revoir la délibération'
+          : membre.conclusion === 'INSCRIT' ? 'Délibérer : retirer du Tableau' : 'Délibérer : déclarer en règle',
+        icone: <Gavel size={15} />,
+        onSelect: () => setDeliberationMembre(designation),
+        disabled: !numero,
+        description: sansNumero ?? (membre.deliberation ? `Délibéré : ${libelleConclusion(membre.deliberation.conclusion)}` : undefined),
+      })
+    }
+    if (canCorrect && !membre.sortie) {
+      const inactif = membre.actif === false
+      items.push({
+        cle: 'statut-actif',
+        libelle: inactif
+          ? (morale ? 'Réactiver la société' : 'Réactiver le membre')
+          : (morale ? 'Déclarer la société inactive' : 'Déclarer le membre inactif'),
+        icone: inactif ? <Power size={15} /> : <PowerOff size={15} />,
+        onSelect: () => setStatutActifMembre(designation),
+        disabled: !numero,
+        description: sansNumero,
+      })
+    }
+    if (canCorrect) {
+      items.push({
+        cle: 'sortie',
+        libelle: membre.sortie
+          ? 'Modifier la sortie du Tableau'
+          : morale ? "Déclarer que la société a cessé d'exister" : 'Déclarer une sortie du Tableau',
+        icone: <UserX size={15} />,
+        onSelect: () => setSortieMembre({ ...designation, sortie: membre.sortie }),
+        disabled: !numero,
+        description: sansNumero ?? (membre.sortie ? undefined : morale ? 'Dissolution, fusion, radiation' : 'Décès, démission, radiation, omission'),
+        // Une sortie retire le membre du Tableau : à part, en rouge, comme les actions graves ailleurs.
+        destructive: !membre.sortie,
+      })
+    }
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        {dernier && !membre.sortie && (
+          <span title={`Dernier relevé envoyé le ${new Date(dernier.date).toLocaleDateString('fr-FR')}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+            <Send size={11} /> {new Date(dernier.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}
+          </span>
+        )}
+        <RowActionsMenu items={items} libelle={`Actions pour ${membre.nom}`} />
+      </span>
+    )
+  }
+
   const cellulesBase = (ligne: {
     rang: number
     numero_ordre: string | null
@@ -1350,6 +1433,7 @@ export default function TableauModulePage() {
     province: string | null | undefined
     sexe: string | null
     actif: boolean | null
+    statut_actif?: TableauStatutActif | null
     telephone: string | null
     email: string | null
     cabinet: string | null
@@ -1386,7 +1470,12 @@ export default function TableauModulePage() {
       categorie: <td style={baseTdStyle}>{ligne.categorie}</td>,
       province: <td style={baseTdStyle}>{ligne.province || '—'}</td>,
       sexe: <td style={baseTdStyle}>{ligne.sexe || '—'}</td>,
-      actif: <td style={baseTdStyle}>{booleanStatus(ligne.actif)}</td>,
+      actif: (
+        <td style={baseTdStyle} title={ligne.statut_actif?.libelle}>
+          {booleanStatus(ligne.actif)}
+          {ligne.statut_actif && <span style={{ display: 'block', fontSize: '11px', color: '#6b7280' }}>déclaré</span>}
+        </td>
+      ),
       telephone: (
         <td style={{ ...baseTdStyle, whiteSpace: 'nowrap' }}>
           {ligne.telephone ? <a href={`tel:${ligne.telephone.replace(/[^\d+]/g, '')}`}>{ligne.telephone}</a> : '—'}
@@ -1486,15 +1575,14 @@ export default function TableauModulePage() {
                 </div>
                 <div className={styles.filtreGroupe}>
                   <span className={styles.filtreLibelle}>Statut</span>
-                  {/* Le statut « Actif » ne se dit que d'une personne physique. */}
-                  <div className={styles.segment} title={filtreStats.personne === 'morale' ? 'Sans objet pour les personnes morales' : undefined}>
+                  {/* Une société sans statut déclaré compte parmi les actives. */}
+                  <div className={styles.segment}>
                     {([['tous', 'Tous'], ['oui', 'Actifs'], ['non', 'Non actifs'], ['inconnu', 'Non renseigné']] as const).map(([valeur, libelle]) => (
                       <button
                         key={valeur}
                         type="button"
-                        disabled={filtreStats.personne === 'morale'}
-                        aria-pressed={filtreStats.personne !== 'morale' && filtreStats.actif === valeur}
-                        className={filtreStats.personne !== 'morale' && filtreStats.actif === valeur ? styles.segmentActif : undefined}
+                        aria-pressed={filtreStats.actif === valeur}
+                        className={filtreStats.actif === valeur ? styles.segmentActif : undefined}
                         onClick={() => setFiltreStats(f => ({ ...f, actif: valeur }))}
                       >
                         {libelle}
@@ -1659,7 +1747,6 @@ export default function TableauModulePage() {
                     // Une catégorie, un sexe ou un statut sans rapport viderait la liste sans dire pourquoi.
                     if (personne === 'morale') {
                       setBaseSexe('')
-                      setBaseActif('')
                       if (baseCategorie !== 'Société') setBaseCategorie('')
                       if (SITUATIONS_PHYSIQUES.includes(baseSituation)) setBaseSituation('sortis')
                     } else if (personne === 'physique') {
@@ -1700,7 +1787,7 @@ export default function TableauModulePage() {
               </label>
               <label style={{ display: 'grid', gap: '4px', fontSize: '12px' }}>
                 Actif
-                <select value={baseActif} onChange={event => setBaseActif(event.target.value)} disabled={basePersonne === 'morale'} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
+                <select value={baseActif} onChange={event => setBaseActif(event.target.value)} style={{ padding: '7px 9px', border: '1px solid #c9ccd2', borderRadius: '5px' }}>
                   <option value="">Tous</option>
                   <option value="true">Oui</option>
                   <option value="false">Non</option>
@@ -1873,9 +1960,16 @@ export default function TableauModulePage() {
                     )}
                     {(selectionFiltre || selectionReleves.size > 0) && (
                       <>
-                        <button type="button" className={styles.secondaryButton} style={{ background: '#0f7b62', borderColor: '#0f7b62', color: '#ffffff' }} onClick={() => setLotOuvert(true)}>
-                          <Send size={14} /> Envoyer leur situation
-                        </button>
+                        {canNotify && (
+                          <button type="button" className={styles.secondaryButton} style={{ background: '#0f7b62', borderColor: '#0f7b62', color: '#ffffff' }} onClick={() => setLotOuvert(true)}>
+                            <Send size={14} /> Envoyer leur situation
+                          </button>
+                        )}
+                        {canDecide && (
+                          <button type="button" className={styles.secondaryButton} style={{ color: '#4338ca', borderColor: '#c7d2fe' }} onClick={() => setLotDeliberationOuvert(true)}>
+                            <Gavel size={14} /> Délibérer la sélection
+                          </button>
+                        )}
                         <button
                           type="button"
                           className={styles.secondaryButton}
@@ -1927,6 +2021,7 @@ export default function TableauModulePage() {
                           province: dossier.province,
                           sexe: dossier.sexe,
                           actif: dossier.actif ?? null,
+                          statut_actif: dossier.statut_actif,
                           telephone: dossier.telephone,
                           email: dossier.email,
                           cabinet: dossier.cabinet,
@@ -1941,22 +2036,12 @@ export default function TableauModulePage() {
                           assurance: dossier.assurance_valide !== undefined ? dossier.assurance_valide : dossier.assurance,
                           conclusion: dossier.sortie
                             ? <BadgeSortie sortie={dossier.sortie} />
+                            : dossier.deliberation
+                            ? <BadgeDeliberation deliberation={dossier.deliberation} />
                             : libelleConclusion(dossier.conclusion) || 'À analyser',
                           date_situation: dossier.date_situation,
                           source_file_name: dossier.source_file_name,
-                          action: (
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                              {canCorrect && (
-                                <button type="button" className={styles.secondaryButton} onClick={() => openCorrection(dossier)} title="Corriger le dossier" aria-label={`Corriger ${dossier.nom}`}>
-                                  <Pencil size={14} />
-                                </button>
-                              )}
-                              {canCorrect && <BoutonSortie membre={dossier} onOpen={setSortieMembre} />}
-                              {canNotify && !dossier.sortie && (
-                                <BoutonReleve membre={dossier} dernier={dernierReleve(dossier.numero_ordre)} onOpen={setReleveMembre} />
-                              )}
-                            </div>
-                          ),
+                          action: celluleActions({ ...dossier, nom: nomComplet(dossier.nom, dossier.prenom) }, dossier),
                         })
                         return (
                           <tr
@@ -1964,7 +2049,7 @@ export default function TableauModulePage() {
                             className={`${styles.baseRow} ${ligneCochee(dossier.numero_ordre) ? styles.baseRowSelected : ''}`}
                             style={dossier.sortie ? STYLE_LIGNE_SORTIE : undefined}
                           >
-                            {selectionPossible && caseSelection(dossier.numero_ordre, nomComplet(dossier.nom, dossier.prenom), dossier.sortie)}
+                            {selectionPossible && caseSelection(dossier.numero_ordre, nomComplet(dossier.nom, dossier.prenom), dossier.sortie, dossier.categorie)}
                             {colonnesBase.map(colonne => <Fragment key={colonne}>{cellules[colonne]}</Fragment>)}
                           </tr>
                         )
@@ -1982,6 +2067,7 @@ export default function TableauModulePage() {
                           province: membre.province,
                           sexe: membre.sexe,
                           actif: membre.actif,
+                          statut_actif: membre.statut_actif,
                           telephone: membre.telephone,
                           email: membre.email,
                           cabinet: membre.cabinet,
@@ -1996,6 +2082,8 @@ export default function TableauModulePage() {
                           assurance: membre.assurance_valide !== undefined ? membre.assurance_valide : membre.assurance,
                           conclusion: membre.sortie
                             ? <BadgeSortie sortie={membre.sortie} />
+                            : membre.deliberation
+                            ? <BadgeDeliberation deliberation={membre.deliberation} />
                             : membre.conclusion
                             ? <span title={membre.conclusion_motif || undefined} style={{ fontWeight: 600, color: membre.conclusion === 'INSCRIT' ? '#166534' : membre.conclusion === 'NON INSCRIT' ? '#991b1b' : '#92400e' }}>
                                 {libelleConclusion(membre.conclusion)}
@@ -2003,14 +2091,7 @@ export default function TableauModulePage() {
                             : <span style={{ color: '#92400e', fontWeight: 600 }}>À compléter</span>,
                           date_situation: membre.date_situation,
                           source_file_name: membre.source_file_name,
-                          action: (
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                              {canCorrect && <BoutonSortie membre={membre} onOpen={setSortieMembre} />}
-                              {canNotify && !membre.sortie && (
-                                <BoutonReleve membre={membre} dernier={dernierReleve(membre.numero_ordre)} onOpen={setReleveMembre} />
-                              )}
-                            </div>
-                          ),
+                          action: celluleActions(membre),
                         })
                         return (
                           <tr
@@ -2019,7 +2100,7 @@ export default function TableauModulePage() {
                             style={membre.sortie ? STYLE_LIGNE_SORTIE : signale ? { background: '#fee2e2' } : undefined}
                             title={signale ? membre.signalements.join(' ; ') : undefined}
                           >
-                            {selectionPossible && caseSelection(membre.numero_ordre, membre.nom, membre.sortie)}
+                            {selectionPossible && caseSelection(membre.numero_ordre, membre.nom, membre.sortie, membre.categorie)}
                             {colonnesBase.map(colonne => <Fragment key={colonne}>{cellules[colonne]}</Fragment>)}
                           </tr>
                         )
@@ -2454,12 +2535,12 @@ export default function TableauModulePage() {
                         <option value="morale">Personne morale</option>
                       </select>
                     </label>
-                    <label style={{ flex: 1, fontSize: '12px', color: '#4b5563' }} title={rapportPersonne === 'morale' ? 'Sans objet pour les personnes morales' : undefined}>
+                    <label style={{ flex: 1, fontSize: '12px', color: '#4b5563' }}>
                       Statut
                       <select
-                        value={rapportPersonne === 'morale' ? 'tous' : rapportActif}
+                        value={rapportActif}
                         onChange={e => setRapportActif(e.target.value as StatsActif)}
-                        disabled={rapportPersonne === 'morale' || Boolean(actionLoading?.startsWith('rapport-'))}
+                        disabled={Boolean(actionLoading?.startsWith('rapport-'))}
                         style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '100%', marginTop: '4px' }}
                       >
                         <option value="tous">Tous</option>
@@ -2790,6 +2871,24 @@ export default function TableauModulePage() {
         )}
       </div>
 
+      {lotDeliberationOuvert && (
+        <DeliberationLotModal
+          selection={{
+            exercice: base?.exercice || undefined,
+            ...(selectionFiltre ? { filtres: filtresReleves } : { numeros: [...selectionReleves.keys()] }),
+          }}
+          libelleSelection={libelleSelection}
+          categorieMotifs={categorieLot === 'Société' ? 'Société' : undefined}
+          criteres={categorieLot ? conditionsActives(categorieLot, reglages) : ['cotisation', 'formation', 'assurance', 'chiffre_affaires']}
+          onClose={() => setLotDeliberationOuvert(false)}
+          onDone={() => {
+            setSelectionFiltre(false)
+            setSelectionReleves(new Map())
+            setBaseRefresh(valeur => valeur + 1)
+          }}
+        />
+      )}
+
       {lotOuvert && (
         <RelevesLotModal
           selection={{
@@ -2808,6 +2907,31 @@ export default function TableauModulePage() {
           exercice={base?.exercice || undefined}
           onClose={() => setReleveMembre(null)}
           onSent={rafraichirReleves}
+        />
+      )}
+
+      {statutActifMembre && (
+        <StatutActifModal
+          membre={statutActifMembre}
+          exercice={base?.exercice || undefined}
+          onClose={() => setStatutActifMembre(null)}
+          onSaved={() => {
+            setStatutActifMembre(null)
+            setBaseRefresh(valeur => valeur + 1)
+          }}
+        />
+      )}
+
+      {deliberationMembre && (
+        <DeliberationMembreModal
+          membre={deliberationMembre}
+          exercice={base?.exercice || undefined}
+          criteres={conditionsActives(deliberationMembre.categorie, reglages)}
+          onClose={() => setDeliberationMembre(null)}
+          onSaved={() => {
+            setDeliberationMembre(null)
+            setBaseRefresh(valeur => valeur + 1)
+          }}
         />
       )}
 

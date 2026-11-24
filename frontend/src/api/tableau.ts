@@ -118,6 +118,74 @@ export interface TableauSortie {
   piece_nom: string | null
 }
 
+/** Statut « Actif » déclaré à la main : il prime sur le fichier des personnes physiques. */
+export interface TableauStatutActif {
+  id: number
+  actif: boolean
+  /** Ce que disait le fichier des personnes physiques en déclarant (rien pour une société). */
+  actif_fichier: boolean | null
+  date_effet: string
+  motif: string
+  libelle: string
+  reference: string | null
+  observation: string | null
+  piece_path: string | null
+  piece_nom: string | null
+  created_at: string | null
+  annule_le?: string | null
+  motif_annulation?: string | null
+}
+
+export interface TableauSituationStatutActif {
+  exercice: string
+  numero_ordre: string
+  nom: string
+  categorie: string | null
+  personne: 'PP' | 'PM'
+  /** Statut retenu : la déclaration, sinon le fichier, sinon actif pour une société. */
+  actif: boolean | null
+  actif_fichier: boolean | null
+  statut_actif: TableauStatutActif | null
+  historique: TableauStatutActif[]
+  motifs_suggeres: { actif: string[]; inactif: string[] }
+}
+
+export type ConclusionTableau = 'INSCRIT' | 'NON INSCRIT' | 'À DÉLIBÉRER'
+
+/** Délibération de la commission en vigueur : elle fixe la conclusion du membre pour l'exercice. */
+export interface TableauDeliberation {
+  id: number
+  conclusion: ConclusionTableau
+  /** Ce que disait le calcul au moment de délibérer. */
+  conclusion_automatique: string | null
+  /** Ce que dit le calcul aujourd'hui, avec les données actuelles. */
+  verdict_automatique: string | null
+  /** Les données ont changé depuis, et le calcul conclurait autrement : à revoir. */
+  diverge: boolean
+  criteres: string[]
+  motif: string
+  libelle: string
+  reference_seance: string | null
+  observation: string | null
+  piece_path: string | null
+  piece_nom: string | null
+  created_at: string | null
+  revoquee_le?: string | null
+  motif_revocation?: string | null
+}
+
+export interface TableauSituationDeliberation {
+  exercice: string
+  numero_ordre: string
+  nom: string
+  categorie: string | null
+  conclusion: string | null
+  conclusion_automatique: string | null
+  deliberation: TableauDeliberation | null
+  historique: TableauDeliberation[]
+  motifs_suggeres: { mise_en_regle: string[]; retrait: string[] }
+}
+
 export const LIBELLES_SITUATION_SORTIE: Record<SituationSortie, string> = {
   DECEDE: 'Décédé',
   DEMISSIONNAIRE: 'Démissionnaire',
@@ -168,6 +236,8 @@ export interface TableauDossier {
   /** Assurance selon la période de validité définie pour la catégorie. */
   assurance_valide?: boolean | null
   sortie?: TableauSortie | null
+  deliberation?: TableauDeliberation | null
+  statut_actif?: TableauStatutActif | null
 }
 
 export interface TableauAnalyse {
@@ -358,6 +428,8 @@ export interface TableauMembreACompleter {
   source_file_name: string | null
   signalements: string[]
   sortie?: TableauSortie | null
+  deliberation?: TableauDeliberation | null
+  statut_actif?: TableauStatutActif | null
 }
 
 export interface TableauBase {
@@ -385,6 +457,8 @@ export interface FiltresRegles {
   assurance?: '' | 'oui' | 'non' | 'inconnu'
   chiffre_affaires?: '' | 'oui' | 'non' | 'inconnu'
   formation?: '' | 'atteint' | 'insuffisant' | 'non_requis' | 'inconnu'
+  /** Membres délibérés par la commission, ou non. */
+  deliberation?: '' | 'oui' | 'non'
 }
 
 export const getTableauBase = (params?: {
@@ -455,6 +529,99 @@ export const declarerSortieMembre = (saisie: SortieSaisie) => {
 export const annulerSortieMembre = (sortieId: number) =>
   apiRequest<void>('DELETE', `${BASE}/sorties/${sortieId}`)
 
+export const getDeliberationMembre = (numeroOrdre: string, exercice?: string) => {
+  const qs = new URLSearchParams({ numero_ordre: numeroOrdre })
+  if (exercice) qs.set('exercice', exercice)
+  return apiRequest<TableauSituationDeliberation>('GET', `${BASE}/deliberations?${qs}`)
+}
+
+export interface DeliberationSaisie {
+  numero_ordre: string
+  exercice?: string
+  conclusion: ConclusionTableau
+  motif: string
+  criteres: string[]
+  reference_seance?: string
+  observation?: string
+  piece?: File | null
+}
+
+/** Délibère un membre : le mettre en règle, ou l'en retirer. Remplace la délibération en vigueur. */
+export const delibererMembre = (saisie: DeliberationSaisie) => {
+  const form = new FormData()
+  for (const [cle, valeur] of Object.entries(saisie)) {
+    if (cle === 'piece' || cle === 'criteres') continue
+    if (valeur !== undefined && valeur !== null && String(valeur).trim() !== '') form.append(cle, String(valeur))
+  }
+  for (const critere of saisie.criteres) form.append('criteres', critere)
+  if (saisie.piece) form.append('piece', saisie.piece)
+  return apiRequest<TableauDeliberation>('POST', `${BASE}/deliberations`, form)
+}
+
+export interface DeliberationLotSaisie {
+  exercice?: string
+  /** Des n° d'ordre choisis ; sinon `filtres` désigne tous les membres du filtre. */
+  numeros?: string[]
+  filtres?: FiltresBaseReleve
+  conclusion: ConclusionTableau
+  motif: string
+  criteres: string[]
+  reference_seance?: string
+  observation?: string
+}
+
+export interface TableauDeliberationLot {
+  exercice: string
+  deliberes: Array<{ numero_ordre: string | null; nom: string }>
+  ecartes: Array<{ numero_ordre: string | null; nom: string; raison: string }>
+}
+
+/** Délibère toute une sélection : même décision, même motif ; chacun garde sa propre délibération. */
+export const delibererSelection = (saisie: DeliberationLotSaisie) =>
+  apiRequest<TableauDeliberationLot>('POST', `${BASE}/deliberations/lot`, saisie)
+
+/** Motifs proposés ; une société a les siens en plus (adresse introuvable…). */
+export const getMotifsDeliberation = (categorie?: string) =>
+  apiRequest<{ mise_en_regle: string[]; retrait: string[] }>(
+    'GET', `${BASE}/deliberations/motifs${categorie ? `?categorie=${encodeURIComponent(categorie)}` : ''}`,
+  )
+
+export const getStatutActifMembre = (numeroOrdre: string, exercice?: string) => {
+  const qs = new URLSearchParams({ numero_ordre: numeroOrdre })
+  if (exercice) qs.set('exercice', exercice)
+  return apiRequest<TableauSituationStatutActif>('GET', `${BASE}/statuts-actifs?${qs}`)
+}
+
+export interface StatutActifSaisie {
+  numero_ordre: string
+  exercice?: string
+  actif: boolean
+  date_effet: string
+  motif: string
+  reference?: string
+  observation?: string
+  piece?: File | null
+}
+
+/** Déclare un membre actif ou inactif ; la déclaration prime sur le fichier. */
+export const declarerStatutActif = (saisie: StatutActifSaisie) => {
+  const form = new FormData()
+  for (const [cle, valeur] of Object.entries(saisie)) {
+    if (cle === 'piece') continue
+    if (valeur !== undefined && valeur !== null && String(valeur).trim() !== '') form.append(cle, String(valeur))
+  }
+  if (saisie.piece) form.append('piece', saisie.piece)
+  return apiRequest<TableauStatutActif>('POST', `${BASE}/statuts-actifs`, form)
+}
+
+/** Annule la déclaration : le fichier fait de nouveau foi (une société redevient active). */
+export const annulerStatutActif = (declarationId: number, motif: string) =>
+  apiRequest<void>('POST', `${BASE}/statuts-actifs/${declarationId}/annulation`, { motif })
+
+/** Révoque une délibération : le calcul automatique reprend la main. */
+export const revoquerDeliberation = (deliberationId: number, motif: string) =>
+  apiRequest<void>('POST', `${BASE}/deliberations/${deliberationId}/revocation`, { motif })
+
 export type CanalReleve = 'email' | 'whatsapp'
 export const CANAUX_RELEVE: CanalReleve[] = ['email', 'whatsapp']
 export const LIBELLES_CANAL_RELEVE: Record<CanalReleve, string> = { email: 'E-mail', whatsapp: 'WhatsApp' }
@@ -520,6 +687,7 @@ export interface FiltresBaseReleve {
   assurance?: string
   chiffre_affaires?: string
   formation?: string
+  deliberation?: string
 }
 
 export interface SelectionReleves {

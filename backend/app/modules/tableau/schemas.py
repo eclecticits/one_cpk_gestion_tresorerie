@@ -42,6 +42,44 @@ class TableauSortieOut(BaseModel):
     piece_nom: str | None = None
 
 
+class TableauStatutActifOut(BaseModel):
+    """Statut « Actif » déclaré à la main : il prime sur le fichier des personnes physiques."""
+    id: int
+    actif: bool
+    actif_fichier: bool | None = None
+    date_effet: date
+    motif: str
+    libelle: str
+    reference: str | None = None
+    observation: str | None = None
+    piece_path: str | None = None
+    piece_nom: str | None = None
+    created_at: datetime | None = None
+    annule_le: datetime | None = None
+    motif_annulation: str | None = None
+
+
+class TableauDeliberationOut(BaseModel):
+    """Délibération de la commission en vigueur : elle fixe la conclusion du membre."""
+    id: int
+    conclusion: Literal["INSCRIT", "NON INSCRIT", "À DÉLIBÉRER"]
+    #: Ce que disait le calcul au moment de délibérer, puis ce qu'il dit aujourd'hui.
+    conclusion_automatique: str | None = None
+    verdict_automatique: str | None = None
+    #: Les données ont changé depuis et le calcul conclurait autrement : à revoir.
+    diverge: bool = False
+    criteres: list[str] = Field(default_factory=list)
+    motif: str
+    libelle: str
+    reference_seance: str | None = None
+    observation: str | None = None
+    piece_path: str | None = None
+    piece_nom: str | None = None
+    created_at: datetime | None = None
+    revoquee_le: datetime | None = None
+    motif_revocation: str | None = None
+
+
 class TableauDossierOut(BaseModel):
     id: int
     import_id: int
@@ -90,6 +128,8 @@ class TableauDossierOut(BaseModel):
     formation_etat: str | None = None
     # Sortie du Tableau qui vaut pour l'exercice : le membre n'est alors plus jugé.
     sortie: TableauSortieOut | None = None
+    deliberation: TableauDeliberationOut | None = None
+    statut_actif: TableauStatutActifOut | None = None
 
     model_config = {"from_attributes": True}
 
@@ -327,6 +367,8 @@ class TableauMembreACompleterOut(BaseModel):
     source_file_name: str | None = None
     signalements: list[str] = Field(default_factory=list)
     sortie: TableauSortieOut | None = None
+    deliberation: TableauDeliberationOut | None = None
+    statut_actif: TableauStatutActifOut | None = None
 
 
 class TableauBaseOut(BaseModel):

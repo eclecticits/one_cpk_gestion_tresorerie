@@ -15,6 +15,7 @@ from sqlalchemy import (
     literal,
     or_,
     select,
+    true,
     union_all,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -34,6 +35,7 @@ from .models import (
     TableauReport,
     TableauSortieMembre,
     TableauSourceRow,
+    TableauStatutActif,
 )
 
 
@@ -156,6 +158,11 @@ def _filtre_anciennete(numero, exercice: str, anciennete: str):
 
 
 SITUATIONS_SORTIE = ("DECEDE", "DEMISSIONNAIRE", "RADIE", "OMIS", "CESSE")
+
+
+def _cle_numero(numero: str | None) -> str:
+    """Le n° d'ordre comme `cle_numero_sql`, côté Python."""
+    return "".join(str(numero or "").upper().split())
 
 
 def cle_numero_sql(colonne):
@@ -318,6 +325,42 @@ def _actifs_membres(organisation_ids: list[int], exercice: str):
     return select(classes.c.organisation_id, classes.c.numero_ordre, classes.c.actif).where(classes.c.rang == 1).subquery()
 
 
+def _statut_declare_sql(organisation, numero, exercice: str):
+    """Statut « Actif » déclaré à la main qui vaut pour l'exercice, ou NULL."""
+    conditions = [
+        TableauStatutActif.organisation_id == organisation,
+        TableauStatutActif.numero_ordre == cle_numero_sql(numero),
+        TableauStatutActif.annule_le.is_(None),
+    ]
+    reference = _annee_exercice(exercice)
+    if reference is not None:
+        conditions.append(func.extract("year", TableauStatutActif.date_effet) <= reference)
+    return select(TableauStatutActif.actif).where(*conditions).limit(1).scalar_subquery()
+
+
+def actif_effectif_sql(organisation, numero, exercice: str, actif_fichier, morale):
+    """Le statut qui fait foi : la déclaration, sinon le fichier, sinon « actif » pour une société.
+
+    Une société n'a pas de colonne « Actif » dans son fichier : elle est tenue pour
+    active tant qu'on ne l'a pas déclarée inactive.
+    """
+    return func.coalesce(_statut_declare_sql(organisation, numero, exercice), actif_fichier, case((morale, true())))
+
+
+async def statuts_declares_par_membre(
+    db: AsyncSession, organisation_ids: list[int], exercice: str | None = None
+) -> dict[tuple[int, str], TableauStatutActif]:
+    """Déclarations en vigueur, par (conseil, n° d'ordre normalisé) ; avec un exercice, celles qui y valent."""
+    q = select(TableauStatutActif).where(
+        TableauStatutActif.organisation_id.in_(organisation_ids),
+        TableauStatutActif.annule_le.is_(None),
+    )
+    reference = _annee_exercice(exercice) if exercice else None
+    if reference is not None:
+        q = q.where(func.extract("year", TableauStatutActif.date_effet) <= reference)
+    return {(d.organisation_id, d.numero_ordre): d for d in (await db.execute(q)).scalars().all()}
+
+
 async def sorties_par_membre(
     db: AsyncSession, organisation_ids: list[int], exercice: str | None = None
 ) -> dict[tuple[int, str], TableauSortieMembre]:
@@ -336,8 +379,27 @@ async def sorties_par_membre(
 async def actifs_par_membre(
     db: AsyncSession, organisation_ids: list[int], exercice: str
 ) -> dict[tuple[int, str], bool]:
+    """Statut « Actif » de chaque membre : la déclaration prime sur le fichier des personnes physiques.
+
+    Une société sans déclaration n'y figure pas : `actif_de` la tient pour active.
+    """
     lignes = (await db.execute(select(_actifs_membres(organisation_ids, exercice)))).all()
-    return {(ligne.organisation_id, ligne.numero_ordre): ligne.actif for ligne in lignes}
+    actifs = {(ligne.organisation_id, ligne.numero_ordre): ligne.actif for ligne in lignes}
+    # Les numéros du fichier sont gardés tels quels ; une déclaration porte le numéro normalisé.
+    normalises = {(org, _cle_numero(numero)): (org, numero) for org, numero in actifs}
+    for (org, numero), declaration in (await statuts_declares_par_membre(db, organisation_ids, exercice)).items():
+        actifs[normalises.get((org, numero), (org, numero))] = declaration.actif
+    return actifs
+
+
+def actif_de(actifs: dict[tuple[int, str], bool], organisation_id: int | None, numero: str | None, categorie: str | None) -> bool | None:
+    """Le statut d'un membre lu dans `actifs_par_membre`, une société étant active par défaut."""
+    valeur = actifs.get((organisation_id, numero)) if organisation_id is not None and numero else None
+    if valeur is None and organisation_id is not None and numero:
+        valeur = actifs.get((organisation_id, _cle_numero(numero)))
+    if valeur is None and categorie in CATEGORIES_MORALES:
+        return True
+    return valeur
 
 
 def _base_filtrage(
@@ -377,15 +439,18 @@ def _base_filtrage(
         ))
     if actif is not None:
         actifs = _actifs_membres(organisation_ids, exercice)
-        q = q.where(
-            select(actifs.c.numero_ordre)
+        actif_fichier = (
+            select(actifs.c.actif)
             .where(
                 actifs.c.organisation_id == TableauDossier.organisation_id,
                 actifs.c.numero_ordre == TableauDossier.numero_ordre,
-                actifs.c.actif.is_(actif),
             )
-            .exists()
+            .scalar_subquery()
         )
+        q = q.where(actif_effectif_sql(
+            TableauDossier.organisation_id, TableauDossier.numero_ordre, exercice,
+            actif_fichier, TableauDossier.categorie.in_(CATEGORIES_MORALES),
+        ).is_(actif))
     if province:
         provinces = _provinces_membres(organisation_ids, exercice)
         q = q.where(
@@ -594,7 +659,7 @@ def _membres_a_completer(
                 _nhv_bilan_forco(pp.organisation_id, pp.numero_ordre, exercice),
                 pp.pourcentage_120_for,
             ),
-            pp.actif,
+            actif_effectif_sql(pp.organisation_id, pp.numero_ordre, exercice, pp.actif, literal(False)),
             cast(literal(None), String),
             cast(literal(None), String),
             _ligne_bilan_forco(pp.organisation_id, pp.numero_ordre, exercice, lambda ligne: ligne.raw_data),
@@ -602,7 +667,7 @@ def _membres_a_completer(
         lignes(
             pm, "PM", pm.societe, literal("Société"), pm.numero_impot,
             cast(literal(None), String), cast(literal(None), String), cast(literal(None), Numeric(8, 2)),
-            cast(literal(None), Boolean),
+            actif_effectif_sql(pm.organisation_id, pm.numero_ordre, exercice, cast(literal(None), Boolean), literal(True)),
             pm.associe_gerant,
             pm.raison_sociale,
             cast(literal(None), JSONB),

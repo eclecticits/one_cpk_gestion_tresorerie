@@ -18,6 +18,8 @@ from sqlalchemy.orm.attributes import flag_modified, set_committed_value
 
 from app.models.user import User
 from app.models.organisation import Organisation
+from . import deliberations as deliberations_service
+from . import statuts_actifs as statuts_actifs_service
 from . import verdict as verdict_engine
 from .audit import record_tableau_audit
 from .analyzer import compute_analyse_stats, detect_anomalies
@@ -50,7 +52,9 @@ from .repository import (
     get_import,
     get_stats,
     list_anomalies,
+    actif_de,
     actifs_par_membre,
+    statuts_declares_par_membre,
     sorties_par_membre,
     list_membres_a_completer,
     provinces_par_membre,
@@ -1759,6 +1763,7 @@ async def get_base_tableau(
     chiffre_affaires: str | None = None,
     formation: str | None = None,
     situation: str | None = "en_exercice",
+    deliberation: str | None = None,
 ) -> dict[str, Any]:
     """Base consolidée du Tableau pour un exercice.
 
@@ -1771,7 +1776,7 @@ async def get_base_tableau(
     """
     filtres_calcules = {
         "conclusion": conclusion, "cotisation": cotisation, "assurance": assurance,
-        "chiffre_affaires": chiffre_affaires, "formation": formation,
+        "chiffre_affaires": chiffre_affaires, "formation": formation, "deliberation": deliberation,
     }
     if any(filtres_calcules.values()):
         complet = await get_base_tableau(
@@ -1986,18 +1991,25 @@ async def get_base_tableau(
                 }, annee_exercice, reglages)
             _appliquer_decisions(groupe, verdicts, await _decisions_par_membre(db, org_id, exercice))
             for dossier in groupe:
+                dossier.deliberation = None
                 if dossier.sortie:
                     # Sorti du Tableau : plus de verdict, comme pour les membres sans dossier.
                     conclusion, motif = None, dossier.sortie["libelle"]
                 else:
-                    verdict = verdicts[dossier.id]
+                    verdict = deliberations_service.appliquer(
+                        verdicts[dossier.id],
+                        deliberations_service.pour_membre(deliberations, dossier.organisation_id, dossier.numero_ordre),
+                    )
                     conclusion, motif = verdict["conclusion"], verdict["motif"]
+                    dossier.deliberation = verdict["deliberation"]
                 # Valeurs d'affichage : la session ne doit pas les voir comme une modification.
                 set_committed_value(dossier, "conclusion", conclusion)
                 set_committed_value(dossier, "conclusion_motif", motif)
 
     actifs = await actifs_par_membre(db, organisation_ids, exercice)
+    statuts_declares = await statuts_declares_par_membre(db, organisation_ids, exercice)
     sorties = await sorties_par_membre(db, organisation_ids, exercice)
+    deliberations = await deliberations_service.deliberations_en_vigueur(db, organisation_ids, exercice)
 
     def _sortie(org_id: int | None, numero: str | None) -> dict[str, Any] | None:
         cle = _norm_numero_ordre(numero)
@@ -2009,7 +2021,10 @@ async def get_base_tableau(
         # affiche la sortie à sa place, un membre sorti n'étant plus jugé).
         dossier.sortie = _sortie(dossier.organisation_id, dossier.numero_ordre)
         dossier.province = provinces.get((dossier.organisation_id, dossier.numero_ordre))
-        dossier.actif = actifs.get((dossier.organisation_id, dossier.numero_ordre))
+        dossier.actif = actif_de(actifs, dossier.organisation_id, dossier.numero_ordre, dossier.categorie)
+        dossier.statut_actif = statuts_actifs_service.statut_payload(
+            statuts_declares.get((dossier.organisation_id, _norm_numero_ordre(dossier.numero_ordre) or "")),
+        )
         dossier.anciennete_libelle = (
             verdict_engine.libelle_anciennete(dossier.numero_ordre, annee_exercice) or dossier.anciennete
         )
@@ -2060,13 +2075,20 @@ async def get_base_tableau(
             )),
         }
         membre["sortie"] = _sortie(ligne.organisation_id, ligne.numero_ordre)
+        membre["statut_actif"] = statuts_actifs_service.statut_payload(
+            statuts_declares.get((ligne.organisation_id, _norm_numero_ordre(ligne.numero_ordre) or "")),
+        )
         if membre["sortie"]:
             # Sorti du Tableau : plus de verdict.
             membre["conclusion"] = None
             membre["conclusion_motif"] = membre["sortie"]["libelle"]
         else:
             # Les règles de délibération s'appliquent aussi aux membres sans dossier.
-            verdict = await _verdict_membre(ligne, membre["cotisation_notes"], membre["assurance_valide"])
+            verdict = deliberations_service.appliquer(
+                await _verdict_membre(ligne, membre["cotisation_notes"], membre["assurance_valide"]),
+                deliberations_service.pour_membre(deliberations, ligne.organisation_id, ligne.numero_ordre),
+            )
+            membre["deliberation"] = verdict["deliberation"]
             membre["conclusion"] = verdict["conclusion"]
             membre["conclusion_motif"] = verdict["motif"]
         membre["chiffre_affaires"] = verdict_engine.ca_declare(
@@ -2108,8 +2130,8 @@ async def get_stats_tableau(
     """Chiffres du tableau de bord, lus dans la base consolidée.
 
     `personne` : « toutes », « physique » ou « morale » (les sociétés).
-    `actif` : « tous », « oui », « non » ou « inconnu ». Le statut ne se dit que
-    d'une personne physique : il ne filtre jamais les personnes morales.
+    `actif` : « tous », « oui », « non » ou « inconnu ». Une société n'a de statut
+    que déclaré à la main : sans déclaration, elle compte parmi les actives.
 
     La base compte aussi les membres venus des seuls fichiers personnes physiques
     et morales, sans dossier du classeur Tableau : leur conclusion est calculée à
@@ -2150,13 +2172,16 @@ async def get_stats_tableau(
 
     def statut(ligne: Any) -> str:
         valeur = lire(ligne, "actif")
+        if valeur is None and est_morale(ligne):
+            # Une société sans statut déclaré compte parmi les actives.
+            return "oui"
         return "inconnu" if valeur is None else ("oui" if valeur else "non")
 
     def garde(ligne: Any) -> bool:
         morale = est_morale(ligne)
         if (personne == "physique" and morale) or (personne == "morale" and not morale):
             return False
-        return morale or actif == "tous" or statut(ligne) == actif
+        return actif == "tous" or statut(ligne) == actif
 
     toutes = [*base["dossiers"], *base["membres_a_completer"]]
     retenues = [ligne for ligne in toutes if garde(ligne)]
@@ -2246,6 +2271,8 @@ def _filtrer_base(base: dict[str, Any], filtres: dict[str, str | None], limit: i
         if filtres["chiffre_affaires"] and oui_non(lire(ligne, "chiffre_affaires")) != filtres["chiffre_affaires"]:
             return False
         if filtres["formation"] and (lire(ligne, "formation_etat") or "inconnu") != filtres["formation"]:
+            return False
+        if filtres.get("deliberation") and ("oui" if lire(ligne, "deliberation") else "non") != filtres["deliberation"]:
             return False
         return True
 
@@ -2370,6 +2397,12 @@ async def _analyser_dossiers(
     # faire avant le calcul des statistiques pour que les deux concordent.
     decisions = await _decisions_par_membre(db, organisation_id, imp.exercice)
     decisions_appliquees = _appliquer_decisions(dossier_rows, verdicts, decisions)
+    # La délibération sur le membre prime à son tour, comme dans la Base.
+    deliberations = await deliberations_service.deliberations_en_vigueur(db, [organisation_id], imp.exercice)
+    for d in dossier_rows:
+        verdicts[d.id] = deliberations_service.appliquer(
+            verdicts[d.id], deliberations_service.pour_membre(deliberations, organisation_id, d.numero_ordre),
+        )
 
     anomaly_dicts = detect_anomalies(dossier_dicts, exercice_annee, reglages)
     stats = compute_analyse_stats(dossier_dicts, anomaly_dicts, verdicts)
@@ -3053,13 +3086,14 @@ async def export_rapport_complet(
     dossiers = [
         {
             **_dossier_pour_sortie(d, cotisations, reglages_rapport, couvertures, imp),
-            "actif": actifs.get((organisation_id, d.numero_ordre)),
+            "actif": actif_de(actifs, organisation_id, d.numero_ordre, d.categorie),
         }
         for d in dossier_rows
     ]
     if scope == "base":
         membres, _ = await list_membres_a_completer(db, [organisation_id], imp.exercice)
         if membres:
+            deliberations = await deliberations_service.deliberations_en_vigueur(db, [organisation_id], imp.exercice)
             declarations_ca = await _declarations_ca(db, organisation_id, imp.exercice)
             # Jugé membre par membre : la date à partir de laquelle une déclaration compte dépend de la catégorie.
             ca = {
@@ -3081,10 +3115,13 @@ async def export_rapport_complet(
                     )
                 # Mêmes règles de délibération que la Base : le membre sans dossier
                 # reçoit sa conclusion, calculée sur ce que les fichiers disent de lui.
-                verdict = verdict_engine.evaluer(
-                    {**membre, "anciennete": verdict_engine.libelle_anciennete(m.numero_ordre, _exercice_annee(imp.exercice))},
-                    _exercice_annee(imp.exercice),
-                    reglages_rapport,
+                verdict = deliberations_service.appliquer(
+                    verdict_engine.evaluer(
+                        {**membre, "anciennete": verdict_engine.libelle_anciennete(m.numero_ordre, _exercice_annee(imp.exercice))},
+                        _exercice_annee(imp.exercice),
+                        reglages_rapport,
+                    ),
+                    deliberations_service.pour_membre(deliberations, organisation_id, m.numero_ordre),
                 )
                 membre["conclusion"] = verdict["conclusion"]
                 membre["conclusion_motif"] = verdict["motif"]
